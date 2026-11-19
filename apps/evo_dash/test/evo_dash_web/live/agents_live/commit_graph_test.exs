@@ -2,26 +2,38 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
   @moduledoc """
   Pure unit tests for EvoDashWeb.AgentsLive.CommitGraph — the assembler behind
   the Agents page TEMPORAL (git commit history) view, rendered as a VERTICAL,
-  commit-centric DAG: ONE VISIBLE ROW per commit, GLOBALLY interleaved across
+  agent-centric DAG: ONE VISIBLE ROW per NODE, GLOBALLY interleaved across
   agents (sorted by topological layer, then date, then sha), ONE LANE PER AGENT
   in the left gutter (plus a NEUTRAL lane 0 for unowned commits when any
   exist), commit → parent edges plus the agent-level `:spawn` / `:merge_back`
   edges between the rows.
 
+  The view shows the AGENT dag (fork → work → merge back), not a GitLens
+  commit list, so folding is ON BY DEFAULT: each lane's interior commits
+  collapse into ONE synthesized `kind: :gap` node carrying `hidden_count` (the
+  run length) and a `fold_key`. The nodes that are NEVER hidden are the
+  ANCHORS — the lane owner's START (its oldest progress commit) and END (its
+  tip), any node named in any `start_ids` / `end_ids`, any node carrying
+  `refs`, every `:base` / `:noop` stub, and every UNOWNED (neutral-lane) node.
+  `build/2` is the collapsed default, `build/3` takes the `expanded` fold keys
+  (a MapSet — a plain list behaves identically — anything else collapses) and
+  re-emits an expanded run's commits while keeping its gap node as the collapse
+  control, and `fold_keys/2` lists every fold key of a fixture.
+
   These are pure data transformations over plain maps — no LiveView, socket,
   repo I/O, or app-env seam. Every fixture is hand-crafted, so each assertion
   traces back to a rule documented on the module: node synthesis (fetched
   commits + one `kind: :base` node per uncovered agent `base_commit` + one
-  `kind: :noop` stub per no-op child), the global row order
-  (`{layer, date_unix, sha}`), the per-agent lane assignment (the agent's
-  index in the DFS SUBTREE-CONTIGUOUS order — pre-order from the roots,
-  children visited recursively in stable `{task_local_id, agent_id}` order,
-  cycle-safe with fallback roots — shifted right by one when unowned nodes
-  exist), ownership and the
-  first-parent progress path, the `:parent` / `:merge` / `:spawn` /
-  `:merge_back` edges (incl. the drop rule and virtual landings), the
-  `start_ids` / `end_ids` annotations, the vertical `agents` list (that same
-  DFS order) and the depth → hue colors.
+  `kind: :noop` stub per no-op child + one `kind: :gap` node per folded run),
+  the global row order (`{layer, date_unix, sha}`, so a gap node keeps the run
+  head's row slot), the per-agent lane assignment (the agent's index in the DFS
+  SUBTREE-CONTIGUOUS order — pre-order from the roots, children visited
+  recursively in stable `{task_local_id, agent_id}` order, cycle-safe with
+  fallback roots — shifted right by one when unowned nodes exist), ownership
+  and the first-parent progress path, the `:parent` / `:merge` / `:spawn` /
+  `:merge_back` edges (incl. the drop rule and the below → above → dropped
+  landing preference), the `start_ids` / `end_ids` annotations, the vertical
+  `agents` list (that same DFS order) and the depth → hue colors.
   """
 
   use ExUnit.Case, async: true
@@ -67,6 +79,19 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
   @k1 "k1000000"
   @k2 "k2000000"
   @mv "mv000000"
+  # Fold fixtures: @a1..@a6 one lane's linear chain (with @x1 forked at @a3, so
+  # two of its interior runs fold) and @d1..@d4 a SECOND lane's own chain.
+  @a1 "a1000000"
+  @a2 "a2000000"
+  @a3 "a3000000"
+  @a4 "a4000000"
+  @a5 "a5000000"
+  @a6 "a6000000"
+  @x1 "x1000000"
+  @d1 "d1000000"
+  @d2 "d2000000"
+  @d3 "d3000000"
+  @d4 "d4000000"
 
   # Exact depth→hue pins: hue = Integer.mod(round(depth * 137.508) + 265, 360),
   # then ThemeColor.hsl_to_hex(hue, 70, 54) — the documented formula.
@@ -199,12 +224,19 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       # The exact key sets also prove the retired horizontal keys (:x/:y/:from/:to/
       # :lanes/:lane_count/:max_x) are gone from every level of the view.
       assert keys(repo) ==
-               ~w(agents column_count edge_count edges node_count nodes repo_dom_id repo_key repo_name row_count truncated)a
+               ~w(agents column_count edge_count edges fold_count node_count nodes repo_dom_id repo_key repo_name row_count truncated)a
 
       assert [node | _] = repo.nodes
 
       assert keys(node) ==
                ~w(author_name column date depth end_ids kind message owner_id refs row sha short_sha start_ids)a
+
+      # A synthesized gap node adds exactly the fold bookkeeping on top of that
+      # node contract (its run's key, its run length and the expansion flag).
+      assert [gap] = Enum.filter(repo.nodes, &(&1.kind == :gap))
+
+      assert keys(gap) ==
+               ~w(author_name column date depth end_ids expanded fold_key hidden_count kind message owner_id refs row sha short_sha start_ids)a
 
       assert [edge | _] = repo.edges
 
@@ -221,6 +253,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       assert repo.node_count == length(repo.nodes)
       assert repo.edge_count == length(repo.edges)
       assert repo.row_count == repo.node_count
+      # Exactly the one interior commit (@c2) folded, so one gap node exists.
+      assert repo.fold_count == 1
       assert repo.column_count == (repo.nodes |> Enum.map(& &1.column) |> Enum.max()) + 1
       assert repo.column_count == 1
       assert hd(repo.agents).lane == 0
@@ -258,13 +292,25 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       ]
 
       a = agent(1, nil, base_commit: nil, current_commit: @c3)
+      raw_by_repo = %{"primary" => raw(commits)}
 
-      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
+      [repo] = CommitGraph.build(raw_by_repo, [a])
 
+      # The interior commit (@c2) folds into ONE gap row between the lane's two
+      # anchors — its start (@c1) and its tip (@c3).
       assert repo.node_count == 3
-      assert Enum.all?(repo.nodes, &(&1.kind == :commit))
+      assert Enum.map(repo.nodes, & &1.kind) == [:commit, :gap, :commit]
+      assert node_shas(repo) == [@c1, "gap-1|11111111|33333333", @c3]
+
+      # Expanded, every ADDRESSABLE fetched commit is its own node — the
+      # duplicate @c2 collapsed and the shapeless/garbage entries dropped.
+      [expanded] = CommitGraph.build(raw_by_repo, [a], CommitGraph.fold_keys(raw_by_repo, [a]))
+
+      assert Enum.count(expanded.nodes, &(&1.kind == :commit)) == 3
+      assert Enum.sort(for n <- expanded.nodes, n.kind == :commit, do: n.sha) == [@c1, @c2, @c3]
       # Layer order oldest → newest (c1 is the root, each child one deeper).
-      assert node_shas(repo) == [@c1, @c2, @c3]
+      assert node(expanded, @c1).row < node(expanded, @c2).row
+      assert node(expanded, @c2).row < node(expanded, @c3).row
     end
 
     test "a base_commit covered by the fetch is NOT synthesized; an uncovered one is" do
@@ -344,8 +390,10 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       ]
 
       a = agent(1, nil, base_commit: @c1, current_commit: @c4)
+      raw_by_repo = %{"primary" => raw(commits)}
 
-      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
+      # Per-commit metadata: expand the lane's fold so every commit has its own row.
+      [repo] = CommitGraph.build(raw_by_repo, [a], CommitGraph.fold_keys(raw_by_repo, [a]))
 
       assert node(repo, @c2).short_sha == "abcdef12"
       # Blank / non-binary short_sha falls back to the first 8 characters of the sha.
@@ -453,11 +501,26 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       scrambled = graph([{@c3, [@c2]}, {@c1, []}, {@c4, [@c3]}, {@c2, [@c1]}])
 
       a = agent(1, nil, base_commit: nil, current_commit: @c4)
+      raw_by_repo = %{"primary" => raw(scrambled)}
 
-      [repo] = CommitGraph.build(%{"primary" => raw(scrambled)}, [a])
+      # Collapsed, the lane's interior run (@c2, @c3) folds between its two anchors.
+      [repo] = CommitGraph.build(raw_by_repo, [a])
 
-      assert node_shas(repo) == [@c1, @c2, @c3, @c4]
-      assert Enum.map(repo.nodes, & &1.row) == [0, 1, 2, 3]
+      assert node_shas(repo) == [@c1, "gap-1|11111111|44444444", @c4]
+      assert Enum.map(repo.nodes, & &1.row) == [0, 1, 2]
+
+      # Expanded, every commit keeps its LAYER-ordered position regardless of the
+      # scrambled fetch order.
+      keys = CommitGraph.fold_keys(raw_by_repo, [a])
+      [expanded] = CommitGraph.build(raw_by_repo, [a], keys)
+
+      assert for(n <- expanded.nodes, n.kind == :commit, do: n.sha) == [@c1, @c2, @c3, @c4]
+      # The gap node STAYS in an expanded build as that run's collapse control,
+      # so the expanded repo has one row per commit PLUS one per gap.
+      gap = "gap-1|11111111|44444444"
+      assert node(expanded, gap).expanded == true
+      assert Enum.sort(Enum.map(expanded.nodes, & &1.row)) == [0, 1, 2, 3, 4]
+      assert expanded.row_count == expanded.node_count
 
       # The same graph in the opposite input order yields the same nodes.
       [bwd] = CommitGraph.build(%{"primary" => raw(Enum.reverse(scrambled))}, [a])
@@ -472,7 +535,10 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
 
-      assert {node(repo, @m).row, node(repo, @c4).row} == {2, 3}
+      # @m is an interior commit of the lane, so it folds into the gap row that
+      # takes its slot (layer 1, between @s1 and @c4).
+      assert [gap] = Enum.filter(repo.nodes, &(&1.kind == :gap))
+      assert {gap.row, gap.hidden_count, node(repo, @c4).row} == {2, 1, 3}
       # The two layer-0 roots tie, broken by sha ascending.
       assert {node(repo, @c1).row, node(repo, @s1).row} == {0, 1}
 
@@ -663,29 +729,33 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       assert edge_list(repo) == [{:parent, @c2, @c1}, {:parent, @c3, @c2}]
     end
 
-    test "a folded side branch produces :merge; the first present parent stays :parent" do
+    test "a folded side branch produces :merge; hidden ancestors are aliased to the gap" do
       commits = graph([{@m, [@c3, @s1]}, {@c3, [@c2]}, {@s1, [@c2]}, {@c2, [@c1]}, {@c1, []}])
 
       a = agent(1, nil, base_commit: nil, current_commit: @m)
 
       [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
 
-      assert repo.edge_count == 5
+      # @c2/@c3 fold into ONE gap node on the owning agent's lane, so the edges
+      # that used to reach them now reach that gap.
+      gap = "gap-1|11111111|mmmmmmmm"
+
+      assert repo.edge_count == 4
       # The merge edge keeps the child's owner and both endpoints' row/lane. @s1 is
       # unowned (nobody walks it, no first-parent child), so it sits in the neutral
       # lane 0 while the owned nodes shift to lane 1.
-      assert edge_t(edge(repo, @m, @s1)) == {@m, @s1, :merge, 1, 4, 0, 3, 1}
+      assert edge_t(edge(repo, @m, @s1)) == {@m, @s1, :merge, 1, 3, 0, 2, 1}
 
-      # @m's first parent @c3 stays :parent, as do the folded branch's own edges.
+      # @m's first parent @c3 is hidden, so its :parent edge lands on the gap, as
+      # does the folded branch's own @c2 -> @c1 edge.
       assert edge_list(repo) == [
-               {:parent, @c2, @c1},
-               {:parent, @c3, @c2},
-               {:parent, @m, @c3},
+               {:parent, gap, @c1},
+               {:parent, @m, gap},
                {:merge, @m, @s1},
-               {:parent, @s1, @c2}
+               {:parent, @s1, gap}
              ]
 
-      assert node_shas(repo) == [@c1, @c2, @c3, @s1, @m]
+      assert node_shas(repo) == [@c1, gap, @s1, @m]
     end
 
     test "an absent parent produces no edge, and the first PRESENT parent is :parent" do
@@ -754,11 +824,13 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       # rule: same unordered sha pair).
       refute edge(repo, @c3, @c2)
 
-      # The remaining commit edges plus the agent-level ones.
+      # The remaining commit edges plus the agent-level ones. Nothing sits BELOW
+      # the child tip in the root's lane, so the merge_back lands on the nearest
+      # root-owned node ABOVE it (@c2, the fork itself).
       assert edge_list(repo) == [
                {:parent, @c2, @c1},
                {:parent, @c4, @c3},
-               {:merge_back, @c4, nil},
+               {:merge_back, @c4, @c2},
                {:spawn, @c2, @c3}
              ]
 
@@ -794,10 +866,9 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       assert repo.edge_count == 4
     end
 
-    test "a merge_back with nothing below in the parent lane lands on a VIRTUAL node" do
-      # The root never continues below the child, so the child's return has no
-      # parent-lane node to land on: to_sha is nil and the column/row fields are
-      # authoritative (the parent's lane at the source's own row).
+    test "a merge_back with nothing below the source lands on the nearest parent-owned node ABOVE" do
+      # The root never continues below the child, so the only root-owned node on
+      # the way back is the fork itself (@c2, ABOVE the child tip).
       agents = [
         agent(1, nil, depth: 0, base_commit: nil, current_commit: @c2),
         agent(2, 1, depth: 1, base_commit: @c2, current_commit: @c4)
@@ -805,20 +876,31 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3, @c4]))}, agents)
 
-      assert edge_t(edge(repo, @c4, nil)) == {@c4, nil, :merge_back, 1, 3, 0, 3, 2}
+      # The landing is a REAL node on the parent's lane, at that node's own row —
+      # never a synthetic “virtual” landing at the source's own row.
+      assert edge_t(edge(repo, @c4, @c2)) == {@c4, @c2, :merge_back, 1, 3, 0, 1, 2}
+
+      # Every emitted edge therefore names two REAL node shas, and no edge is a
+      # self-loop (a virtual landing would have been one).
+      shas = node_shas(repo)
+
+      assert Enum.all?(repo.edges, fn e ->
+               e.to_sha in shas and e.from_sha in shas and e.from_sha != e.to_sha
+             end)
     end
 
-    test "parallel children each spawn from the shared fork and return virtually" do
+    test "parallel children each spawn from the shared fork and return onto it" do
       [repo] = CommitGraph.build(%{"primary" => raw(fork_commits())}, fork_agents())
 
       # Commit edges first ({from, to} sorted), then agent edges ({kind, owner_key,
-      # from, to} sorted — merge_back before spawn).
+      # from, to} sorted — merge_back before spawn). Neither child has a parent-lane
+      # node to land on, so both merge_backs land on the fork itself (@r2).
       assert Enum.map(repo.edges, &{&1.kind, &1.from_sha, &1.to_sha, &1.owner_id}) == [
                {:parent, @r2, @r1, "root"},
                {:parent, @u2, @u1, "child-a"},
                {:parent, @v2, @v1, "child-b"},
-               {:merge_back, @u2, nil, "child-a"},
-               {:merge_back, @v2, nil, "child-b"},
+               {:merge_back, @u2, @r2, "child-a"},
+               {:merge_back, @v2, @r2, "child-b"},
                {:spawn, @r2, @u1, "child-a"},
                {:spawn, @r2, @v1, "child-b"}
              ]
@@ -901,7 +983,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       assert {repo.node_count, repo.edge_count} == {4, 4}
     end
 
-    test "a no-op child with nothing below in the parent lane lands virtually" do
+    test "a no-op child with nothing below the stub lands on the parent node ABOVE it" do
       commits = graph([{@p2, [@p1]}, {@p1, []}])
 
       agents = [
@@ -911,7 +993,11 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       [repo] = CommitGraph.build(%{"primary" => raw(commits)}, agents)
 
-      assert edge_t(edge(repo, "noop-2", nil)) == {"noop-2", nil, :merge_back, 1, 2, 0, 2, 2}
+      # The root owns no node below the stub row, so the merge_back climbs to the
+      # root's only node — @p2 (its tip, one row above).
+      assert edge_t(edge(repo, "noop-2", @p2)) == {"noop-2", @p2, :merge_back, 1, 2, 0, 1, 2}
+      assert {repo.node_count, repo.edge_count} == {3, 3}
+      assert node_shas(repo) == [@p1, @p2, "noop-2"]
     end
 
     test "an UNRESOLVABLE parent id contributes NO agent-level edges and NO stub" do
@@ -975,19 +1061,40 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       [repo] = CommitGraph.build(%{"primary" => raw(commits)}, agents)
 
-      # Layers: @p1 0, @p2 1, @k1 2, @k2 3, @p3 4, @p4 5 — one node per layer, and
-      # both continuations are the root's (the deeper child wins only @k1/@k2).
+      # Layers: @p1 0, @p2 1, @k1 2, @k2 3, then a FOLD holding @p3 (the root's first
+      # continuation, which roots the lane's interior run) at row 4, and @p4 at row 5.
+      gap = "gap-1|p2000000|p4000000"
+
       assert Enum.map(repo.nodes, &{&1.sha, &1.row, &1.owner_id}) == [
                {@p1, 0, 1},
                {@p2, 1, 1},
                {@k1, 2, 2},
                {@k2, 3, 2},
-               {@p3, 4, 1},
+               {gap, 4, 1},
                {@p4, 5, 1}
              ]
 
-      # The child tip (row 3) lands on the TOPMOST root-owned node below it.
-      assert edge_t(edge(repo, @k2, @p3)) == {@k2, @p3, :merge_back, 1, 3, 0, 4, 2}
+      assert [gap_node] = Enum.filter(repo.nodes, &(&1.kind == :gap))
+      assert {gap_node.hidden_count, gap_node.column, gap_node.depth} == {1, 0, 0}
+
+      # Expanding the run proves BOTH continuations are the root's, so the fold is
+      # purely a display decision — the topological facts are unchanged.
+      expanded =
+        CommitGraph.build(
+          %{"primary" => raw(commits)},
+          agents,
+          CommitGraph.fold_keys(%{"primary" => raw(commits)}, agents)
+        )
+
+      [expanded_repo] = expanded
+
+      assert {node(expanded_repo, @p3).owner_id, node(expanded_repo, @p3).kind} == {1, :commit}
+      assert {node(expanded_repo, @p4).owner_id, node(expanded_repo, @p4).kind} == {1, :commit}
+
+      # The child tip (row 3) lands on the TOPMOST root-owned node below it — the
+      # folded run's head slot, whose gap node aliases @p3.
+      assert edge_t(edge(repo, @k2, gap)) == {@k2, gap, :merge_back, 1, 3, 0, 4, 2}
+      refute edge(repo, @k2, @p3)
       refute edge(repo, @k2, @p4)
     end
   end
@@ -1107,8 +1214,26 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       # If the merge's second parent were walked, the deeper agent would win @s1.
       assert {node(repo, @s1).owner_id, node(repo, @s1).column} == {1, 0}
 
-      assert {node(repo, @m).owner_id, node(repo, @m).column, node(repo, @c3).owner_id} ==
-               {2, 1, 2}
+      assert {node(repo, @m).owner_id, node(repo, @m).column} == {2, 1}
+
+      # The whole walked line below the tip belongs to agent 2: its two interior
+      # commits fold into ONE gap node ON agent 2's lane.
+      assert [gap] = Enum.filter(repo.nodes, &(&1.kind == :gap))
+      assert {gap.owner_id, gap.column, gap.hidden_count} == {2, 1, 2}
+
+      # Expanding the run addresses every walked commit again.
+      raw_by_repo = %{"primary" => raw(commits)}
+
+      [expanded] =
+        CommitGraph.build(
+          raw_by_repo,
+          [shallow, deep],
+          CommitGraph.fold_keys(raw_by_repo, [shallow, deep])
+        )
+
+      assert {node(expanded, @c3).owner_id, node(expanded, @c3).column} == {2, 1}
+      assert {node(expanded, @c2).owner_id, node(expanded, @c2).column} == {2, 1}
+      assert node(expanded, @s1).owner_id == 1
     end
 
     test "the walk excludes the agent's base_commit" do
@@ -1139,9 +1264,15 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
 
       # The path is c3 -> c2 -> c1; @b0 is neither a node nor an edge target.
-      assert node_shas(repo) == [@c1, @c2, @c3]
+      # @c2 is interior to that path, so it folds into ONE gap node between the
+      # lane's two anchors (@c3 the tip, @c1 the oldest walked commit).
+      assert [gap] = Enum.filter(repo.nodes, &(&1.kind == :gap))
+      assert {gap.sha, gap.owner_id, gap.hidden_count} == {"gap-1|11111111|33333333", 1, 1}
+
+      assert node_shas(repo) == [@c1, gap.sha, @c3]
       refute @b0 in node_shas(repo)
       assert repo.edge_count == 2
+      assert edge_list(repo) == [{:parent, @c3, gap.sha}, {:parent, gap.sha, @c1}]
 
       # A self-parenting commit is collected once, then the seen guard stops the walk.
       [loop] =
@@ -1457,7 +1588,498 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
     end
   end
 
+  describe "folding by default — anchors survive the collapsed build" do
+    test "lane endpoints, fork points, refs and stub nodes are never folded away" do
+      raw_repo = raw(anchor_commits(), anchor_refs())
+      repo = repo_view(raw_repo, anchor_agents())
+
+      # Only @c2 — a plain interior commit — folds; every anchor keeps its row.
+      assert {repo.fold_count, repo.node_count} == {1, 8}
+      assert [gap] = gap_nodes(repo)
+
+      assert {gap.fold_key, gap.hidden_count, gap.row, gap.column} ==
+               {"1|" <> @c1 <> "|" <> @c3, 1, 3, 1}
+
+      # The lane's own start (@c1) and tip (@c4) are anchors.
+      assert {node(repo, @c1).row, node(repo, @c1).owner_id} == {0, 1}
+      assert {node(repo, @c4).end_ids, node(repo, @c4).owner_id} == {[1], 1}
+
+      # So is another agent's fork point (@c3) and its tip (@k1).
+      assert node(repo, @c3).start_ids == [2]
+      assert node(repo, @k1).owner_id == 2
+
+      # A refs-carrying node is an anchor even when nothing else pins it …
+      assert node(repo, @c4).refs == ["tag: v1"]
+
+      # … and the synthesized :base / :noop stubs are never hidden.
+      assert {node(repo, @b0).kind, node(repo, "noop-3").kind} == {:base, :noop}
+      refute @c2 in node_shas(repo)
+      assert_graph_invariants!(repo)
+    end
+
+    test "an unowned (neutral-lane) node is never folded, even mid-lane" do
+      repo = repo_view(raw(side_commits()), side_agents())
+
+      # @c2 sits off the first-parent progress path, so it owns no lane.
+      assert {node(repo, @c2).owner_id, node(repo, @c2).column} == {nil, 0}
+      assert node(repo, @c2).row == 1
+
+      # The only fold is the OWNED run between the endpoints.
+      assert [gap] = gap_nodes(repo)
+
+      assert {gap.fold_key, gap.owner_id, gap.column, gap.hidden_count} ==
+               {"1|" <> @c1 <> "|" <> @m, 1, 1, 1}
+
+      assert_graph_invariants!(repo)
+    end
+  end
+
+  describe "folding by default — one gap node per interior run" do
+    test "a middle run collapses into ONE :gap node in the run head's row slot" do
+      repo = repo_view(raw(fold_run_commits()), fold_run_agents())
+
+      assert repo.fold_count == 1
+      assert [gap] = gap_nodes(repo)
+      # The gap IS the run: its sha is derived from the fold key, and it carries
+      # the run owner's lane plus the number of commits it stands for.
+      assert gap.sha == "gap-1|" <> @c1 <> "|" <> @s1
+
+      assert {gap.fold_key, gap.hidden_count, gap.owner_id, gap.column} ==
+               {"1|" <> @c1 <> "|" <> @s1, 4, 1, 0}
+
+      # A gap is a pure placeholder: no metadata, no memberships, not expanded.
+      assert {gap.short_sha, gap.message, gap.author_name, gap.date} == {"", "", nil, nil}
+      assert {gap.refs, gap.start_ids, gap.end_ids, gap.expanded} == {[], [], [], false}
+      # It occupies the run HEAD's row slot, so the lane reads head → gap → tip.
+      assert rows(repo) == [{@c1, 0, 0}, {gap.sha, 1, 0}, {@s1, 2, 0}]
+      assert_graph_invariants!(repo)
+    end
+
+    test "each run of a two-fold lane gets its own gap and rows stay gapless" do
+      raw_repo = raw(multi_fold_commits())
+      agents = multi_fold_agents()
+      repo = repo_view(raw_repo, agents)
+
+      first = "gap-1|" <> @a1 <> "|" <> @a3
+      second = "gap-1|" <> @a3 <> "|" <> @a6
+
+      assert fold_keys(raw_repo, agents) ==
+               MapSet.new(["1|" <> @a1 <> "|" <> @a3, "1|" <> @a3 <> "|" <> @a6])
+
+      assert repo.fold_count == 2
+      assert [head_gap, tail_gap] = gap_nodes(repo)
+      assert {head_gap.sha, head_gap.hidden_count, head_gap.row} == {first, 1, 1}
+      assert {tail_gap.sha, tail_gap.hidden_count, tail_gap.row} == {second, 2, 3}
+
+      # The lane's anchors stay: @a1 (head), @a3 (fork point) and @a6 (tip).
+      assert rows(repo) == [
+               {@a1, 0, 0},
+               {first, 1, 0},
+               {@a3, 2, 0},
+               {second, 3, 0},
+               {@x1, 4, 1},
+               {@a6, 5, 0}
+             ]
+
+      assert {repo.node_count, repo.row_count, repo.column_count} == {6, 6, 2}
+      assert Enum.map(repo.nodes, & &1.row) == Enum.to_list(0..5)
+      assert_graph_invariants!(repo)
+
+      # The fully expanded build re-emits both runs and stays gapless too.
+      expanded = repo_view(raw_repo, agents, fold_keys(raw_repo, agents))
+      assert {expanded.fold_count, expanded.node_count, expanded.row_count} == {2, 9, 9}
+      assert Enum.map(expanded.nodes, & &1.row) == Enum.to_list(0..8)
+      assert Enum.all?(gap_nodes(expanded), & &1.expanded)
+      assert_graph_invariants!(expanded)
+    end
+  end
+
+  describe "folding by default — runs never cross lanes" do
+    test "two lanes with interior commits fold separately, each into its own gap" do
+      repo = repo_view(raw(two_lane_commits()), two_lane_agents())
+
+      assert repo.fold_count == 2
+      assert [left, right] = gap_nodes(repo)
+      # Each gap belongs to — and sits on — its OWN agent's lane.
+      assert {left.fold_key, left.owner_id, left.column, left.hidden_count} ==
+               {"1|" <> @a1 <> "|" <> @a4, 1, 0, 2}
+
+      assert {right.fold_key, right.owner_id, right.column, right.hidden_count} ==
+               {"2|" <> @d1 <> "|" <> @d4, 2, 1, 2}
+
+      assert rows(repo) == [
+               {@a1, 0, 0},
+               {@d1, 1, 1},
+               {left.sha, 2, 0},
+               {right.sha, 3, 1},
+               {@a4, 4, 0},
+               {@d4, 5, 1}
+             ]
+
+      assert {repo.node_count, repo.edge_count, repo.column_count} == {6, 4, 2}
+
+      assert edge_list(repo) == [
+               {:parent, @a4, left.sha},
+               {:parent, @d4, right.sha},
+               {:parent, left.sha, @a1},
+               {:parent, right.sha, @d1}
+             ]
+
+      assert_graph_invariants!(repo)
+    end
+  end
+
+  describe "expanding a fold (build/3)" do
+    test "a keyed run re-emits its commits and keeps its gap as the expanded control" do
+      agents = two_lane_agents()
+      left_key = "1|" <> @a1 <> "|" <> @a4
+      right_key = "2|" <> @d1 <> "|" <> @d4
+      collapsed = repo_view(raw(two_lane_commits()), agents)
+      expanded = repo_view(raw(two_lane_commits()), agents, MapSet.new([left_key]))
+
+      assert {expanded.fold_count, expanded.node_count, expanded.row_count} == {2, 8, 8}
+
+      # The expanded run's own commits come back …
+      assert @a2 in node_shas(expanded)
+      assert @a3 in node_shas(expanded)
+
+      # … while its gap node survives, flagged as the collapse control.
+      assert {node(expanded, "gap-" <> left_key).kind,
+              node(expanded, "gap-" <> left_key).expanded} ==
+               {:gap, true}
+
+      # The OTHER lane's run stays collapsed, so its interiors stay hidden.
+      other = node(expanded, "gap-" <> right_key)
+      assert {other.kind, other.expanded, other.hidden_count} == {:gap, false, 2}
+      refute @d2 in node_shas(expanded)
+      refute @d3 in node_shas(expanded)
+
+      # Every collapsed node still exists, and rows remain contiguous.
+      assert Enum.all?(collapsed.nodes, &(&1.sha in node_shas(expanded)))
+      assert Enum.map(expanded.nodes, & &1.row) == Enum.to_list(0..7)
+      assert_graph_invariants!(expanded)
+    end
+
+    test "a LIST of keys behaves like the MapSet, and fold_keys/2 names every run" do
+      raw_repo = raw(two_lane_commits())
+      agents = two_lane_agents()
+      collapsed = repo_view(raw_repo, agents)
+      keys = fold_keys(raw_repo, agents)
+
+      # fold_keys/2 is exactly the gap keys of the collapsed build.
+      assert keys == MapSet.new(Enum.map(gap_nodes(collapsed), & &1.fold_key))
+      assert keys == MapSet.new(["1|" <> @a1 <> "|" <> @a4, "2|" <> @d1 <> "|" <> @d4])
+
+      from_set = repo_view(raw_repo, agents, keys)
+      from_list = repo_view(raw_repo, agents, MapSet.to_list(keys))
+      assert from_list == from_set
+      refute from_set == collapsed
+    end
+
+    test "garbage and stale keys are ignored instead of expanding anything" do
+      raw_repo = raw(two_lane_commits())
+      agents = two_lane_agents()
+      collapsed = repo_view(raw_repo, agents)
+
+      # Only a MapSet or a LIST of binaries counts; anything else collapses.
+      garbage = [:atom, nil, %{"1|a1000000|a4000000" => true}, 42, "k", MapSet.new([:nope])]
+
+      for third <- garbage do
+        assert repo_view(raw_repo, agents, third) == collapsed
+      end
+
+      # A well-formed key naming no run is silently dropped.
+      for stale <- [MapSet.new(["1|nope|nope"]), ["2|zzz|zzz"], ["1|a1000000|a4000000|extra"]] do
+        assert repo_view(raw_repo, agents, stale) == collapsed
+      end
+    end
+
+    test "a status/depth-only rebuild keeps the same fold keys, so expansion survives a refresh" do
+      commits = multi_fold_commits()
+      agents = multi_fold_agents()
+      raw_by_repo = %{"primary" => raw(commits)}
+      keys = CommitGraph.fold_keys(raw_by_repo, agents)
+
+      refreshed = Enum.map(agents, &%{&1 | status: :finished, depth: 2})
+      assert CommitGraph.fold_keys(raw_by_repo, refreshed) == keys
+      assert keys == MapSet.new(["1|a1000000|a3000000", "1|a3000000|a6000000"])
+
+      # An expansion taken before the refresh still expands after it.
+      before = repo_view(raw(commits), agents, keys)
+      after_refresh = repo_view(raw(commits), refreshed, keys)
+      assert node_shas(after_refresh) == node_shas(before)
+      assert Enum.map(after_refresh.nodes, & &1.row) == Enum.map(before.nodes, & &1.row)
+      assert edge_list(after_refresh) == edge_list(before)
+
+      # Only the lane hues (driven by depth) move.
+      assert Enum.map(after_refresh.agents, & &1.color) != Enum.map(before.agents, & &1.color)
+      assert_graph_invariants!(after_refresh)
+    end
+  end
+
+  describe "edges after folding" do
+    test "an edge into a hidden ancestor lands on that run's gap node" do
+      repo = repo_view(raw(fold_run_commits()), fold_run_agents())
+      gap = "gap-1|" <> @c1 <> "|" <> @s1
+      hidden = [@c2, @c3, @c4, @m]
+
+      assert edge_list(repo) == [{:parent, gap, @c1}, {:parent, @s1, gap}]
+      assert edge_t(edge(repo, @s1, gap)) == {@s1, gap, :parent, 0, 2, 0, 1, 1}
+
+      # No emitted endpoint is a hidden commit — the fold rewrote them.
+      for edge <- repo.edges do
+        assert edge.from_sha not in hidden
+        assert edge.to_sha not in hidden
+      end
+
+      # Expanding replays the real parent links instead.
+      expanded = repo_view(raw(fold_run_commits()), fold_run_agents(), ["1|11111111|ssssssss"])
+
+      assert edge_list(expanded) == [
+               {:parent, @c2, @c1},
+               {:parent, @c3, @c2},
+               {:parent, @c4, @c3},
+               {:parent, @m, @c4},
+               {:parent, @s1, @m}
+             ]
+
+      assert_graph_invariants!(expanded)
+    end
+
+    test "every fixture's edges stay internal to its own view — no dangling ends, no self-loops" do
+      fixtures = [
+        {raw(fold_run_commits()), fold_run_agents()},
+        {raw(multi_fold_commits()), multi_fold_agents()},
+        {raw(two_lane_commits()), two_lane_agents()},
+        {raw(side_commits()), side_agents()},
+        {raw(anchor_commits(), anchor_refs()), anchor_agents()},
+        {raw(above_landing_commits()), above_landing_agents()},
+        {raw(none_landing_commits()), none_landing_agents()},
+        {raw(fork_commits()), fork_agents()},
+        {raw(chain([@c1, @c2, @c3, @c4])), chained_agents()}
+      ]
+
+      for {raw_repo, agents} <- fixtures do
+        collapsed = repo_view(raw_repo, agents)
+        expanded = repo_view(raw_repo, agents, fold_keys(raw_repo, agents))
+
+        for repo <- [collapsed, expanded] do
+          assert_graph_invariants!(repo)
+          refute Enum.any?(repo.edges, &(&1.from_sha == &1.to_sha))
+        end
+      end
+    end
+  end
+
+  describe "merge_back landing preference (below → above → dropped)" do
+    test "a parent-owned node BELOW wins even when the parent also owns nodes above" do
+      repo = repo_view(raw(multi_fold_commits()), multi_fold_agents())
+      child = node(repo, @x1)
+      # The root lane owns @a3 above the child tip and @a6 below it.
+      assert node(repo, @a3).row < child.row
+      assert node(repo, @a6).row > child.row
+      assert {node(repo, @a3).owner_id, node(repo, @a6).owner_id} == {1, 1}
+
+      assert edge_t(edge(repo, @x1, @a6)) == {@x1, @a6, :merge_back, 1, 4, 0, 5, 2}
+      refute edge(repo, @x1, @a3)
+    end
+
+    test "with nothing below, the landing is the parent's node ABOVE the child tip" do
+      repo = repo_view(raw(above_landing_commits()), above_landing_agents())
+
+      assert node(repo, @c1).row < node(repo, @c3).row
+      assert edge_t(edge(repo, @c3, @c1)) == {@c3, @c1, :merge_back, 2, 1, 1, 0, 2}
+      # The :spawn edge is unaffected by the landing choice.
+      assert edge_t(edge(repo, @c2, @c3)) == {@c2, @c3, :spawn, 0, 2, 2, 1, 2}
+      # No virtual landing: nothing points at a nil sha, and no self-loop appears.
+      refute Enum.any?(repo.edges, &is_nil(&1.to_sha))
+      assert {repo.node_count, repo.edge_count} == {3, 3}
+      assert_graph_invariants!(repo)
+    end
+
+    test "a parent owning NO node at all drops the :merge_back but keeps the :spawn" do
+      repo = repo_view(raw(none_landing_commits()), none_landing_agents())
+
+      assert {repo.node_count, repo.edge_count} == {2, 1}
+      assert edge_list(repo) == [{:spawn, @c2, @c3}]
+      refute edge(repo, @c3, @c2)
+      refute edge(repo, @c3, nil)
+      refute Enum.any?(repo.edges, &(&1.kind == :merge_back))
+      assert_graph_invariants!(repo)
+    end
+
+    test "no emitted :merge_back lands on its own source row and column" do
+      fixtures = [
+        {raw(fold_run_commits()), fold_run_agents()},
+        {raw(multi_fold_commits()), multi_fold_agents()},
+        {raw(two_lane_commits()), two_lane_agents()},
+        {raw(side_commits()), side_agents()},
+        {raw(anchor_commits(), anchor_refs()), anchor_agents()},
+        {raw(above_landing_commits()), above_landing_agents()},
+        {raw(fork_commits()), fork_agents()}
+      ]
+
+      for {raw_repo, agents} <- fixtures do
+        repo = repo_view(raw_repo, agents)
+
+        refute Enum.any?(repo.edges, fn edge ->
+                 edge.kind == :merge_back and edge.to_row == edge.from_row and
+                   edge.to_column == edge.from_column
+               end)
+      end
+    end
+  end
+
+  describe "folding by default — total reads" do
+    test "garbage repo maps read as zero folds instead of crashing" do
+      agents = fold_run_agents()
+
+      garbage = [
+        %{},
+        %{"primary" => %{}},
+        %{"primary" => %{commits: "nope"}},
+        %{"primary" => %{commits: [nil, :nope]}},
+        %{"primary" => %{commits: [%{sha: "x", parents: "nope"}]}},
+        "x",
+        nil,
+        42
+      ]
+
+      for raw_by_repo <- garbage do
+        assert CommitGraph.fold_keys(raw_by_repo, agents) == MapSet.new()
+
+        for repo <- CommitGraph.build(raw_by_repo, agents) do
+          assert {repo.fold_count, gap_nodes(repo)} == {0, []}
+        end
+
+        for repo <- CommitGraph.build(raw_by_repo, agents, MapSet.new(["1|x|y"])) do
+          assert {repo.fold_count, gap_nodes(repo)} == {0, []}
+        end
+      end
+
+      # The count is the number of runs, not a guess.
+      raw_repo = raw(fold_run_commits())
+      assert MapSet.size(CommitGraph.fold_keys(%{"primary" => raw_repo}, agents)) == 1
+      assert repo_view(raw_repo, agents).fold_count == 1
+    end
+  end
+
   # --- fixtures -------------------------------------------------------------
+
+  # The graph body for the single primary repo: collapsed by default (arity 2),
+  # or with the given expanded fold keys (arity 3). Exactly ONE repo is built, so
+  # a pattern match documents that expectation.
+  defp repo_view(raw_repo, agents), do: repo_view(raw_repo, agents, nil)
+
+  defp repo_view(raw_repo, agents, nil) do
+    [view] = CommitGraph.build(%{"primary" => raw_repo}, agents)
+    view
+  end
+
+  defp repo_view(raw_repo, agents, expanded) do
+    [view] = CommitGraph.build(%{"primary" => raw_repo}, agents, expanded)
+    view
+  end
+
+  # The fold keys of a single-repo build (bare binaries, no "gap-" prefix).
+  defp fold_keys(raw_repo, agents), do: CommitGraph.fold_keys(%{"primary" => raw_repo}, agents)
+
+  # The synthesized fold placeholders of a build.
+  defp gap_nodes(repo), do: Enum.filter(repo.nodes, &(&1.kind == :gap))
+
+  # Every emitted edge must connect two nodes of ITS OWN view (a hidden endpoint
+  # is aliased to the run's gap node) and never loop on itself.
+  defp assert_graph_invariants!(repo) do
+    shas = node_shas(repo)
+
+    for edge <- repo.edges do
+      assert edge.from_sha in shas, "edge from a sha that is not a node: #{inspect(edge)}"
+      assert edge.to_sha in shas, "edge to a sha that is not a node: #{inspect(edge)}"
+      assert edge.from_sha != edge.to_sha, "self loop: #{inspect(edge)}"
+    end
+
+    repo
+  end
+
+  # A middle run with anchors around it: @c1 (lane start) → @c2 (folded) → @c3
+  # (fork point of agent 2) → @c4 (refs + lane tip), a child tip @k1, an
+  # unowned commit and a base stub.
+  defp anchor_commits do
+    chain([@c1, @c2, @c3, @c4]) ++
+      [commit(@k1, parents: [@c3]), commit(@orphan, parents: [])]
+  end
+
+  defp anchor_refs, do: %{@c4 => ["tag: v1"]}
+
+  defp anchor_agents do
+    [
+      agent(1, nil, depth: 0, base_commit: nil, current_commit: @c4),
+      agent(2, 1, depth: 1, base_commit: @c3, current_commit: @k1),
+      agent(3, 1, depth: 1, base_commit: @b0, current_commit: nil)
+    ]
+  end
+
+  # One lane whose whole interior folds between its two endpoints.
+  defp fold_run_commits, do: chain([@c1, @c2, @c3, @c4, @m, @s1])
+
+  defp fold_run_agents, do: [agent(1, nil, depth: 0, base_commit: nil, current_commit: @s1)]
+
+  # One lane with TWO separate interior runs, split by the fork point @a3 of a
+  # side branch that merges back into the tip.
+  defp multi_fold_commits do
+    chain([@a1, @a2, @a3, @a4, @a5, @a6]) ++ [commit(@x1, parents: [@a3])]
+  end
+
+  defp multi_fold_agents do
+    [
+      agent(1, nil, depth: 0, base_commit: nil, current_commit: @a6),
+      agent(2, 1, depth: 1, base_commit: @a3, current_commit: @x1)
+    ]
+  end
+
+  # Two independent lanes, each a whole-lane interior run between its endpoints.
+  defp two_lane_commits, do: chain([@a1, @a2, @a3, @a4]) ++ chain([@d1, @d2, @d3, @d4])
+
+  defp two_lane_agents do
+    [
+      agent(1, nil, depth: 0, base_commit: nil, current_commit: @a4),
+      agent(2, nil, depth: 1, base_commit: nil, current_commit: @d4)
+    ]
+  end
+
+  # @c1 ← @c2 ← @c3 with a side branch off @c1 that merges @c3 back in, so @c2
+  # stays off the first-parent progress path (unowned, neutral lane).
+  defp side_commits do
+    chain([@c1, @c2]) ++
+      [
+        commit(@c3, parents: [@c2]),
+        commit(@s1, parents: [@c1]),
+        commit(@m, parents: [@s1, @c3])
+      ]
+  end
+
+  defp side_agents, do: [agent(1, nil, depth: 0, base_commit: nil, current_commit: @m)]
+
+  # A child tip with NO parent-owned node below it, so the :merge_back must land
+  # on the parent's nearest node ABOVE (its tip @c1).
+  defp above_landing_commits, do: chain([@c1, @c2]) ++ [commit(@c3, parents: [])]
+
+  defp above_landing_agents do
+    [
+      agent(1, nil, depth: 0, base_commit: nil, current_commit: @c1),
+      agent(2, 1, depth: 1, base_commit: @c2, current_commit: @c3)
+    ]
+  end
+
+  # The parent owns no node at all, so the :merge_back is dropped entirely.
+  defp none_landing_commits, do: chain([@c2, @c3])
+
+  defp none_landing_agents do
+    [
+      agent(1, nil, depth: 0, base_commit: nil, current_commit: nil),
+      agent(2, 1, depth: 1, base_commit: @c2, current_commit: @c3)
+    ]
+  end
 
   # An agent map carrying the keys the graph assembler reads, defaulted for the
   # ones a test does not care about (repo_id defaults to the primary group).
