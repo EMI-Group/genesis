@@ -24,8 +24,11 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Fold do
 
   A gap row fires `toggle_commit_fold` with `phx-value-fold-key`; while the
   repo has any fold its header offers `expand_all_commit_folds` /
-  `collapse_all_commit_folds`. Nothing here is stateful — `expanded` comes
-  from the model.
+  `collapse_all_commit_folds`. The row also publishes its RAW run key as
+  `data-cg-fold-key` (omitted when the model has no such binary), so the
+  client hook's delegated keyboard activation can tell a gap row apart from a
+  commit row and toggle that run instead of selecting the agent. Nothing here
+  is stateful — `expanded` comes from the model.
 
   A gap node is never a `:base` / `:noop` stub: it never renders start/end
   markers, selection rings or agent/ref tags.
@@ -110,6 +113,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Fold do
       data-commit-graph-anim="row"
       data-cg-sha={Map.get(@node, :sha)}
       data-cg-agent-id={Map.get(@node, :owner_id)}
+      data-cg-fold-key={raw_fold_key(@node)}
       title={hidden_label(@node)}
       role="button"
       tabindex="0"
@@ -127,6 +131,18 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Fold do
 
   defp fold_icon(node) do
     if expanded?(node), do: "hero-chevron-up", else: "hero-chevron-down"
+  end
+
+  # The run's identity as published for the client hook (`data-cg-fold-key`):
+  # the RAW `fold_key` model string, NOT the DOM-sanitized form, so the hook can
+  # match the row against the run it toggles. Absent / non-binary → nil, which
+  # makes HEEx omit the attribute entirely (the hook treats a missing key as a
+  # no-op) rather than inventing a value.
+  defp raw_fold_key(node) do
+    case Map.get(node, :fold_key) do
+      key when is_binary(key) -> key
+      _ -> nil
+    end
   end
 
   defp hidden_label(node) do
