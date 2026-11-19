@@ -4868,16 +4868,13 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
     end
   end
 
-  describe "shell seeding (async platform gating)" do
-    # handle_params/3 no longer runs the platform gating + category resolution
-    # synchronously: the FILTERED schemas map and the re-resolved active
-    # category arrive with the async NodeData result. Until then the page shell
-    # seeds — UNFILTERED schemas (every category visible in the sidebar) and
-    # the active category via seed_category/2: non-gated `?category=` params
-    # (:agents, :remote_connections, :llm, ...) resolve immediately with zero
-    # flash, gated ones (:nix / :sandbox — the platform filter may hide them)
-    # seed the current stable category (or :llm) and defer to the result
-    # handler's re-resolution.
+  describe "shell seeding (last-known filtered nav)" do
+    # The sidebar `/settings` renders ALWAYS comes from the LAST-KNOWN
+    # platform-filtered schemas map (seeded at mount from the page's own local
+    # filtering, refreshed by every async NodeData result). An explicit
+    # `?category=` therefore resolves against what the viewed node really has:
+    # a displayable category opens on the FIRST paint with zero flash, and a
+    # platform-gated one neither opens nor is ever advertised in the nav.
     #
     # The html returned by live/3 is ALWAYS the seed-shell render (the async
     # task's message cannot interleave with the mount/handle_params call), so
@@ -4886,70 +4883,60 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
     # therefore use scenarios where the seed state and the post-result state
     # coincide, and the post-delivery asserts use deliver_node_data (ours is
     # the last message processed).
-
-    test "non-gated ?category=agents renders the agents section immediately", %{conn: conn} do
+    test "displayable ?category=agents renders the agents section immediately", %{conn: conn} do
       {:ok, view, html} = mount_settings(conn, ~p"/settings?category=agents")
 
-      # Seeded directly by seed_category/2 — no async result needed. The real
-      # task's re-resolution lands on :agents too, so this holds in both states.
+      # Seeded by Navigation.seed/3 against the filtered map — no async result
+      # needed. The real task's resolution lands on :agents too.
       assert assigns(view).active_category == :agents
       assert html =~ "Add Agent"
       assert html =~ ~s(phx-value-category="agents")
     end
 
-    test "gated ?category=sandbox seeds :llm, then resolves :sandbox after delivery", %{
+    test "displayable ?category=sandbox renders its section on the first paint", %{
       conn: conn
     } do
       with_os_override(:linux)
 
-      # Seed shell: :sandbox is potentially-gated, so it seeds the default
-      # :llm — the sandbox section is NOT rendered on the first paint, even
-      # though the UNFILTERED sidebar still lists the sandbox entry. (html-only
-      # asserts: the real task may have already re-resolved to :sandbox.)
+      # Mount's own (cheap, local) filtering keeps :sandbox on Linux, so the
+      # seeded nav offers it AND the sandbox section renders immediately.
       {:ok, view, html} = mount_settings(conn, ~p"/settings?category=sandbox")
-
-      assert html =~ ~s(id="category-llm")
-      refute html =~ ~s(id="category-sandbox")
+      assert assigns(view).active_category == :sandbox
+      assert html =~ ~s(id="category-sandbox")
+      refute html =~ ~s(id="category-llm")
       assert html =~ ~s(phx-value-category="sandbox")
 
-      # After the async result (sandbox kept on Linux) the result handler
-      # re-resolves the captured param and opens the sandbox section.
+      # The async result (sandbox kept on Linux) cannot undo it.
       html = deliver_node_data(view, "sandbox")
-
       assert assigns(view).active_category == :sandbox
       assert html =~ ~s(id="category-sandbox")
     end
 
-    test "gated ?category=nix seeds :llm, then resolves :nix after delivery", %{conn: conn} do
-      # nix binary available (this module's setup default) → nix visible
-      # post-result.
+    test "displayable ?category=nix renders its section on the first paint", %{conn: conn} do
+      # nix binary available (this module's setup default) → nix displayable.
       {:ok, view, html} = mount_settings(conn, ~p"/settings?category=nix")
-
-      assert html =~ ~s(id="category-llm")
-      refute html =~ ~s(id="category-nix")
+      assert assigns(view).active_category == :nix
+      assert html =~ ~s(id="category-nix")
 
       html = deliver_node_data(view, "nix")
-
       assert assigns(view).active_category == :nix
       assert html =~ ~s(id="category-nix")
     end
 
-    test "gated ?category=nix stays :llm when the nix category is hidden", %{conn: conn} do
+    test "hidden ?category=nix stays :llm and is never advertised", %{conn: conn} do
       with_nix_available_override(false)
 
-      # Seed shell: the UNFILTERED sidebar still shows the nix entry, but the
-      # active category seeds :llm (nix is potentially-gated). The post-result
-      # state coincides (:llm — nix hidden), so the assigns assert is race-free.
+      # nix is gated on this host, so the seeded nav never offers it and the
+      # active category is the stable default — from the FIRST paint — and the
+      # sidebar stays non-empty.
       {:ok, view, html} = mount_settings(conn, ~p"/settings?category=nix")
-
       assert assigns(view).active_category == :llm
       assert html =~ ~s(id="category-llm")
-      assert html =~ ~s(phx-value-category="nix")
+      assert html =~ ~s(phx-value-category="agents")
+      refute html =~ ~s(phx-value-category="nix")
 
-      # After the async result (nix hidden: no binary + no explicit config) the
-      # category stays :llm and the sidebar entry disappears.
+      # The async result agrees, and the URL param is not rewritten.
       html = deliver_node_data(view, "nix")
-
       assert assigns(view).active_category == :llm
       refute html =~ ~s(phx-value-category="nix")
       refute html =~ ~s(id="category-nix")

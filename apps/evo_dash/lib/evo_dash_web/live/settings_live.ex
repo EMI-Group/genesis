@@ -11,6 +11,7 @@ defmodule EvoDashWeb.SettingsLive do
   alias EvoDashWeb.SettingsLive.ConfigSave
   alias EvoDashWeb.SettingsLive.CustomAgentEvents
   alias EvoDashWeb.SettingsLive.ModelProfileEvents
+  alias EvoDashWeb.SettingsLive.Navigation
   alias EvoDashWeb.SettingsLive.NodeData
   alias EvoDashWeb.SettingsLive.SearchEvents
 
@@ -246,7 +247,10 @@ defmodule EvoDashWeb.SettingsLive do
                    for the special :remote_connections pseudo-category. Carries
                    `overflow-y-auto` (md+ bounded column) so the sticky header
                    below sticks within this column's own scroll. --%>
-                <div class="flex-1 flex flex-col min-w-0 overflow-y-auto">
+                <div
+                  class="flex-1 flex flex-col min-w-0 overflow-y-auto"
+                  id="category-remote_connections"
+                >
                   <EvoDashWeb.SettingsComponents.SectionHeader.section_header
                     icon="hero-globe-alt"
                     title={gettext("Remote Connections")}
@@ -676,7 +680,10 @@ defmodule EvoDashWeb.SettingsLive do
                    save_category form (nested <form> elements are invalid
                    HTML). --%>
                 <%= if @active_category == :agents do %>
-                  <div class="flex-1 flex flex-col min-w-0 overflow-y-auto">
+                  <div
+                    class="flex-1 flex flex-col min-w-0 overflow-y-auto"
+                    id="category-agents"
+                  >
                     <EvoDashWeb.SettingsComponents.SectionHeader.section_header
                       icon="hero-user-group"
                       title={gettext("Agents")}
@@ -792,10 +799,10 @@ defmodule EvoDashWeb.SettingsLive do
     schemas_by_category = Map.put(schemas_by_category, :agents, [])
 
     # Snapshot of the UNFILTERED schemas map (all schema categories plus the
-    # two pseudo-categories, BEFORE the platform-OS/nix filtering below). The
-    # async node-data task (NodeData) re-filters it for the currently-viewed
-    # (possibly remote) node and the result handler replaces
-    # `schemas_by_category` with the filtered map — see handle_params/3.
+    # two pseudo-categories, BEFORE the platform-OS/nix filtering below). Only
+    # the search/save whitelists and the async load's error funnel read it; the
+    # RENDERED nav always comes from the filtered map (see below and
+    # handle_params/3).
     all_schemas_by_category = schemas_by_category
 
     # Platform-aware schema filtering: hide the sandbox category (or its
@@ -823,6 +830,13 @@ defmodule EvoDashWeb.SettingsLive do
     socket =
       assign(socket,
         schemas_by_category: schemas_by_category,
+        # The LAST-KNOWN platform-filtered map. It is the ONLY source of the
+        # rendered sidebar/content map (handle_params/3 re-seeds
+        # `schemas_by_category` from it, never from the unfiltered snapshot), so
+        # the shell can never advertise a platform-gated category and a
+        # navigation can never shrink the nav to empty. Refreshed by
+        # apply_node_data_results/3 (node switches re-filter for the new node).
+        known_schemas_by_category: schemas_by_category,
         all_schemas_by_category: all_schemas_by_category,
         platform_os: platform_os,
         active_category: :llm,
@@ -917,13 +931,19 @@ defmodule EvoDashWeb.SettingsLive do
       |> assign(:current_path, ~p"/settings")
       |> reconcile_config_scope()
 
-    # Seeded shell (async platform gating): the platform-filtered schemas map
-    # and the platform OS for the (possibly remote) node are computed in the
-    # async node-data task below (NodeData) — never block the LiveView render
-    # loop on cross-node RPCs. Until the result arrives, seed the UNFILTERED
-    # schemas (all categories visible) so the page shell renders immediately;
-    # the result handler re-filters and re-resolves the active category.
-    socket = assign(socket, :schemas_by_category, socket.assigns.all_schemas_by_category)
+    # The sidebar/content map is ALWAYS the last-known PLATFORM-FILTERED map —
+    # never the unfiltered snapshot. The platform OS of a (possibly remote) node
+    # and its re-filtered map arrive asynchronously in the node-data task below
+    # (NodeData); until then the shell renders the LAST-KNOWN filtered nav, so
+    # the seeded render advertises exactly what the settled page advertises (no
+    # category appears then disappears, and the nav can never shrink to empty).
+    socket =
+      assign(
+        socket,
+        :schemas_by_category,
+        socket.assigns[:known_schemas_by_category] || socket.assigns.all_schemas_by_category
+      )
+
     socket = assign(socket, :platform_os, socket.assigns.platform_os || :unknown)
 
     # The OAuth auth-status assigns must SURVIVE navigation (category switch,
@@ -935,13 +955,18 @@ defmodule EvoDashWeb.SettingsLive do
         assign(socket, auth_statuses: %{}, auth_status_seq: 0)
       end
 
-    # Seed the active category with a flash-minimizing rule: non-gated
-    # categories (`?category=agents`, `:remote_connections`, `:llm`, ...)
-    # resolve against the UNFILTERED map and render their section immediately
-    # with zero flash; potentially-gated ones (:nix / :sandbox — the platform
-    # filter may hide them) and unresolvable params defer to the result
-    # handler and seed the current stable category (or :llm) instead.
-    category = seed_category(params, socket)
+    # Seed the active category against the LAST-KNOWN filtered map: an explicit
+    # (and displayable) `?category=` wins immediately with zero flash, an absent
+    # / unknown / platform-gated one keeps the category the user is already
+    # looking at while it is still displayable, else falls back to the default.
+    # The captured param is therefore never able to hide a visible category or
+    # rewrite the URL it resolves away from.
+    category =
+      Navigation.seed(
+        params,
+        socket.assigns.active_category,
+        socket.assigns.schemas_by_category
+      )
 
     socket =
       if category != socket.assigns.active_category do
@@ -952,43 +977,39 @@ defmodule EvoDashWeb.SettingsLive do
 
     # Tag every load with a generation and full target identity. A save
     # invalidates older snapshots, and category navigation during a write must
-    # not race its authoritative receipt.
+    # not race its authoritative receipt. A category-only navigation (our own
+    # `select_category` push_patch) is NOT scope-relevant: it neither needs a
+    # fresh config read nor may it cancel the load already in flight, so the
+    # marker it left behind suppresses the redundant load exactly once.
+    {category_patch?, socket} = consume_category_patch(socket, params)
+
     socket =
-      if ConfigSave.busy?(socket),
-        do: socket,
-        else: start_node_data_load(socket, params["category"])
+      cond do
+        ConfigSave.busy?(socket) -> socket
+        category_patch? -> socket
+        true -> start_node_data_load(socket, params["category"])
+      end
 
     {:noreply, socket}
   end
 
-  # Seeds the active category for the shell render BEFORE the async node-data
-  # result arrives. Resolves `params["category"]` against the UNFILTERED
-  # schemas map (whitelist via ConfigIO.category_str_to_atom, with the
-  # "remote_connections"/"agents" pseudo-categories special-cased exactly like
-  # the pre-async code). `:nix`/`:sandbox` (potentially hidden by the platform
-  # filter) and unresolvable params (nil/unknown) seed the current
-  # active_category when it is a stable non-gated value, else the safe `:llm`
-  # default — so non-gated navigations render their section immediately, while
-  # gated ones defer to the result handler's re-resolution.
-  defp seed_category(params, socket) do
-    category_str_to_atom = ConfigIO.category_str_to_atom(socket.assigns.all_schemas_by_category)
+  # The `?node=` of the current view (nil for the local context) — carried into
+  # the `select_category` push_patch so a category click never loses the node.
+  defp nav_node(socket), do: socket.assigns[:current_node_id]
 
-    requested =
-      case params["category"] do
-        "remote_connections" -> :remote_connections
-        "agents" -> :agents
-        cat when is_binary(cat) -> Map.get(category_str_to_atom, cat)
-        _ -> nil
-      end
+  # `select_category` push_patches the URL itself; `handle_params` then runs for
+  # the params it produced. That re-entry must not start a second config load
+  # (nothing scope-relevant changed) and must not re-resolve the category from a
+  # stale snapshot. The marker is scoped to the socket's config scope and the
+  # exact category it was minted for, and is consumed exactly once.
+  defp consume_category_patch(socket, params) do
+    case socket.assigns[:category_patch] do
+      {scope, category_param} ->
+        matched? = scope == ConfigSave.scope(socket) and category_param == params["category"]
+        {matched?, assign(socket, :category_patch, nil)}
 
-    if requested in [nil, :nix, :sandbox] do
-      if socket.assigns.active_category in [nil, :nix, :sandbox] do
-        :llm
-      else
-        socket.assigns.active_category
-      end
-    else
-      requested
+      _ ->
+        {false, socket}
     end
   end
 
@@ -1507,30 +1528,40 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("select_category", %{"category" => cat_str}, socket) do
-    # Whitelist lookup: validate the client-supplied category string against the
-    # known schema category atoms. Unknown value → nil → keep current category.
-    cat =
-      Map.get(ConfigIO.category_str_to_atom(socket.assigns.schemas_by_category), cat_str) ||
-        if(cat_str == "remote_connections", do: :remote_connections) ||
-        socket.assigns.active_category
+    # Whitelist lookup against the PLATFORM-FILTERED map: a category the viewed
+    # node does not have (or an unknown/forged value) is a NO-OP — the current
+    # category and the current URL are kept, so a hidden category can never be
+    # activated and the highlight can never snap back.
+    case Navigation.category_from_param(cat_str, socket.assigns.schemas_by_category) do
+      nil ->
+        {:noreply, socket}
 
-    socket =
-      assign(socket,
-        active_category: cat,
-        search_text: "",
-        per_category_errors: %{}
-      )
+      cat ->
+        socket =
+          assign(socket,
+            active_category: cat,
+            search_text: "",
+            per_category_errors: %{},
+            # Marker for the handle_params/3 re-run this push_patch causes: the
+            # click already chose the category, so that re-entry must not start
+            # a second node-data load.
+            category_patch: {ConfigSave.scope(socket), to_string(cat)}
+          )
 
-    socket =
-      if cat == :remote_connections do
-        socket
-        |> assign(:remote_targets, safe_list_targets())
-        |> assign(:remote_statuses, safe_connection_statuses())
-      else
-        socket
-      end
+        socket =
+          if cat == :remote_connections do
+            socket
+            |> assign(:remote_targets, safe_list_targets())
+            |> assign(:remote_statuses, safe_connection_statuses())
+          else
+            socket
+          end
 
-    {:noreply, socket}
+        # The URL is the source of truth for the category, so a later
+        # handle_params (node switch, connection-status patch, retry) re-reads
+        # the SAME category instead of undoing the click.
+        {:noreply, push_patch(socket, to: Navigation.path(cat, %{"node" => nav_node(socket)}))}
+    end
   end
 
   @impl true
@@ -2728,10 +2759,23 @@ defmodule EvoDashWeb.SettingsLive do
   # failure still renders the error banner instead of a misleading "No LLM
   # Model Configured" box.
   defp apply_node_data_results(socket, category_param, results) do
+    # The node's own filtered map becomes the persisted last-known map AND the
+    # rendered one — a node switch replaces it wholesale, so a category gated on
+    # the newly viewed node disappears from the nav (and from the active
+    # selection) instead of leaking from the previous node.
+    filtered_schemas =
+      case Map.get(results, :filtered_schemas_by_category) do
+        schemas when is_map(schemas) and map_size(schemas) > 0 -> schemas
+        # A results map without a usable filtered nav (a hand-built one) keeps
+        # the last-known nav rather than rendering an empty sidebar.
+        _ -> socket.assigns[:known_schemas_by_category] || %{}
+      end
+
     socket =
       socket
       |> assign(:platform_os, results.platform_os)
-      |> assign(:schemas_by_category, results.filtered_schemas_by_category)
+      |> assign(:known_schemas_by_category, filtered_schemas)
+      |> assign(:schemas_by_category, filtered_schemas)
       |> assign_test_config(results.file_config)
       |> assign(:config_status, results.config_status)
       |> assign(
@@ -2760,11 +2804,19 @@ defmodule EvoDashWeb.SettingsLive do
           )
       end
 
-    # Re-resolve the active category against the FILTERED schemas map — the
-    # category the shell seeded against the UNFILTERED map may now be hidden
-    # (e.g. `?category=sandbox` on Windows/unknown, or `:nix` when the nix
-    # category is hidden).
-    category = resolve_category(category_param, socket)
+    # Keep the category the user is already looking at as long as it is STILL
+    # displayable on this node — a nav click made while this load was in flight
+    # (or after it started) must not be undone by the captured `?category=`
+    # param, which describes the request's start state. Only when the visible
+    # category was filtered away for this node does the captured param (then the
+    # `:llm`/first-category fallback) decide.
+    category_param =
+      if Navigation.visible?(socket.assigns.active_category, filtered_schemas),
+        do: nil,
+        else: category_param
+
+    category =
+      Navigation.resolve(category_param, socket.assigns.active_category, filtered_schemas)
 
     socket =
       if category != socket.assigns.active_category do
@@ -2800,34 +2852,6 @@ defmodule EvoDashWeb.SettingsLive do
     profiles = Schema.provider_profiles(socket.assigns.file_config || %{})
     :ok = AuthStatus.start(socket, profiles)
     socket
-  end
-
-  # Re-resolves the active category from the captured `?category=` param
-  # against the platform-FILTERED schemas map (mirrors the pre-async
-  # handle_params logic exactly): whitelist lookup via
-  # ConfigIO.category_str_to_atom (with the "remote_connections"/"agents"
-  # pseudo-categories special-cased) → fallback to the current active_category
-  # → `:llm` when the resolved category is missing from the filtered map
-  # (preserves the `:sandbox`-on-Windows fallback and the hidden-nix fallback
-  # exactly as before).
-  defp resolve_category(category_param, socket) do
-    category_str_to_atom = ConfigIO.category_str_to_atom(socket.assigns.schemas_by_category)
-
-    category =
-      case category_param do
-        "remote_connections" -> :remote_connections
-        "agents" -> :agents
-        cat when is_binary(cat) -> Map.get(category_str_to_atom, cat)
-        _ -> nil
-      end
-
-    category = category || socket.assigns.active_category
-
-    if not Map.has_key?(socket.assigns.schemas_by_category, category) do
-      :llm
-    else
-      category
-    end
   end
 
   # Compatibility adapter for callers holding a legacy FLAT scheduler map.
