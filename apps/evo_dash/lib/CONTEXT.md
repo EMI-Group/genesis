@@ -52,9 +52,9 @@ Full per-module detail: `./evo_dash/CONTEXT.md`.
 | `TasksLive` | `GET /tasks` | Task history page — status filters, pagination, archive, cancel/force-kill, review links |
 | `ReviewLive` | `GET /review/:task_id` (+ `:commit` action) | Code review page — diff viewer, merge/reject/resume, GitHub PR creation |
 | `AgentsLive` | `GET /agents` | Agent tree inspector with chat history |
-| `SettingsLive` | `GET /settings` | Config GUI editor (categories), model-profiles editor, custom agents + model-selection script editor |
+| `SettingsLive` | `GET /settings` | Config GUI editor (categories); the LLM category is one guided provider-account surface (compact account list + single expanded editor + inline create wizard + add-model mini-wizard), plus custom agents + model-selection script + custom-tools editors |
 | `SystemLive` | `GET /system` | System controls (scheduler pause/resume, restart/stop VM), self-check, update card, usage guides |
-| `WelcomeLive` | `GET /welcome` | First-run onboarding — stepwise LLM quick setup |
+| `WelcomeLive` | `GET /welcome` | First-run onboarding — six-step provider wizard (provider → auth → model → reasoning + recommended schedule → connection test → done) over the shared `EvoDashWeb.LLMSetup.*` + `SettingsComponents.ProviderWizard` foundation |
 | `WelcomeCompleteLive` | `GET /welcome/complete` | Post-setup page — example objective + "Go to Dashboard" |
 
 #### Components (`./evo_dash_web/components/`)
