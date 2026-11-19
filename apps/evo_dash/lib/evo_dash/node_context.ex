@@ -943,6 +943,83 @@ defmodule EvoDash.NodeContext do
     EvoGit.RemoteNode.forget_project(node, key)
   end
 
+  # ── VCT workspaces (pure grouping points) ────────────────────────
+
+  @doc """
+  Lists the Virtual Context Tree WORKSPACE mounts of the given node, newest
+  first.
+
+  Delegates to `EvoGit.RemoteNode.workspaces/1`. Workspace mounts live OUTSIDE
+  `vct:///projects/…`, so they never appear in `projects/1`; a workspace is a
+  pure grouping point with no OS path and is never a task execution path.
+  Workspaces are uncapped (`EvoGit.VCT.max_projects/0` never evicts them). A
+  failed remote call degrades to `[]` (the core turns a remote error into `[]`),
+  so the dashboard never crashes or blocks on the workspace list.
+  """
+  @spec workspaces(node()) :: [EvoGit.VCT.Mount.t()]
+  def workspaces(node) do
+    EvoGit.RemoteNode.workspaces(node)
+  end
+
+  @doc """
+  Creates or REPLACES a Virtual Context Tree workspace on the given node.
+
+  Delegates to `EvoGit.RemoteNode.create_workspace/4`. This is an IDEMPOTENT
+  UPSERT keyed by the SLUGIFIED `name` (`EvoGit.VCT.Table.point_segment/1`):
+  re-creating the same name REPLACES the stored name, members and description
+  and refreshes `last_opened_at` instead of adding a second row, so no duplicate
+  mount ever appears. `members` is an ORDERED list of member refs (maps carrying
+  `"point"` and/or `"path"`; nothing needs to exist) and `opts[:description]` is
+  free-form text (blank becomes `nil`).
+
+  Returns `{:ok, %EvoGit.VCT.Mount{}}` on success — a `kind: "workspace"` mount
+  with `path: nil` — or `{:error, reason}`: `:invalid_name` (a blank or
+  non-binary name), `{:member_is_workspace, point}` (workspaces never nest),
+  `{:invalid_member, ref}`, `:invalid_members` (a non-list) and
+  `:vct_unavailable` (the core VCT is not running), plus `{:error, {kind,
+  reason}}` on a remote transport failure.
+  """
+  @spec create_workspace(node(), String.t(), [map()], keyword()) ::
+          {:ok, EvoGit.VCT.Mount.t()} | {:error, term()}
+  def create_workspace(node, name, members, opts) do
+    EvoGit.RemoteNode.create_workspace(node, name, members, opts)
+  end
+
+  @doc """
+  Resolves one Virtual Context Tree workspace and its members on the given node.
+
+  Delegates to `EvoGit.RemoteNode.workspace_members/2`. `point_or_name` is a
+  workspace point (`vct:///workspaces/<name>`) or a BARE workspace name (matched
+  against the point's slug or the display name, newest first). Returns `{:ok,
+  %{workspace: mount, members: [mount], missing: [ref], nested: [ref]}}` — every
+  member resolved IN STORED ORDER, an unresolvable ref reported in `:missing`
+  (a member need not exist) and a ref naming another workspace in `:nested`
+  (workspaces never nest) — or `{:error, reason}`: `:not_found` (no such
+  workspace), `:not_a_workspace` (the point names an existing project mount),
+  `:invalid_point` (a non-binary, an OS path or an unparseable `vct:` point),
+  plus `{:error, {kind, reason}}` on a remote transport failure.
+  """
+  @spec workspace_members(node(), term()) ::
+          {:ok, EvoGit.VCT.workspace_resolution()} | {:error, term()}
+  def workspace_members(node, point_or_name) do
+    EvoGit.RemoteNode.workspace_members(node, point_or_name)
+  end
+
+  @doc """
+  Lists the workspace mounts of the given node that cover `project`.
+
+  Delegates to `EvoGit.RemoteNode.workspaces_for/2`. `project` may be a project
+  point (`vct:///projects/<name>`), a bare project name or an absolute OS path;
+  membership is metadata rather than a filesystem probe, so a workspace whose
+  member names a missing mount still covers it. Returns the covering workspaces
+  newest first, `[]` when none — and `[]` when the remote call fails, so the
+  dashboard never crashes or blocks on the lookup.
+  """
+  @spec workspaces_for(node(), term()) :: [EvoGit.VCT.Mount.t()]
+  def workspaces_for(node, project) do
+    EvoGit.RemoteNode.workspaces_for(node, project)
+  end
+
   @doc """
   Lists custom agents on the given node.
 
