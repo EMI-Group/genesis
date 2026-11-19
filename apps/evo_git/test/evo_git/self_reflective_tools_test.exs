@@ -344,6 +344,34 @@ defmodule EvoGit.SelfReflectiveToolsTest do
     assert recipes =~ "Do not cancel or delete your own task"
   end
 
+  test "the persona resolves projects and workspaces through the VCT before using a path" do
+    prompt = SelfReflective.system_prompt()
+
+    assert [situation_side, rest] = String.split(prompt, "# Projects and the VCT", parts: 2)
+    assert [_vct_side, _rest] = String.split(rest, "# What you can do", parts: 2)
+    assert situation_side =~ "# Your situation"
+
+    assert prompt =~
+             "When the user names a project, look it up BEFORE you use any path"
+
+    assert prompt =~
+             "Only an absolute path the user gave you, or a `path` a mount actually returned"
+
+    assert prompt =~ "Several matches or no match mean you ask"
+
+    assert prompt =~ "it is never a repository and never a task path"
+    assert prompt =~ ":workspace_not_executable"
+    assert prompt =~ "a task runs against exactly one repository path"
+
+    assert prompt =~
+             "This whole surface is read-only for you: mounts, workspaces and membership take no writes here"
+
+    recipes = recipe_section(prompt)
+    assert recipes =~ ~s|EvoGit.VCT.workspace_members("vct:///workspaces/foobar")|
+    assert recipes =~ ~s|EvoGit.VCT.workspaces_for("/home/me/api")|
+    assert recipes =~ "missing: [%{\"point\" => \"vct:///projects/old\", \"path\" => nil}]"
+  end
+
   test "the persona maps every dashboard page the guide facade can target" do
     prompt = SelfReflective.system_prompt()
 

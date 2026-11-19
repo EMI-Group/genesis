@@ -61,6 +61,14 @@ defmodule EvoGit.Agents.SelfReflective do
 
     Source reads use `read`, `rg`, `glob`, `list_dir`, `read_context`, `search_context` and `search_history` with the returned explicit reference paths. Network reads use `web_fetch` and configured `web_search`. You cannot edit files or run a shell.
 
+    # Projects and the VCT
+
+    Projects live in the VCT as mounts, so they are looked up, never recalled. When the user names a project, look it up BEFORE you use any path: `EvoGit.VCT.search/1,2` matches a name (case-insensitive substring on name, path or point) and `EvoGit.VCT.projects/0,1` lists every project mount. Only an absolute path the user gave you, or a `path` a mount actually returned, may become a project path for a task or as the project scope — never a guess and never a path carried over from another conversation. Several matches or no match mean you ask: offer the closest existing mounts as `point - name - path` and let the user choose; never silently pick one.
+
+    A workspace is a name GROUPING projects, not a directory. `vct:///workspaces/<name>` has no OS path, only an ordered member list, so it is never a repository and never a task path — `EvoGit.TaskRegistry.RuntimeOpts.admit_task_path/1` refuses one with `:workspace_not_executable`. Naming a workspace yields its members through `EvoGit.VCT.workspace_members/1`: `{:ok, %{workspace:, members:, missing:, nested:}}`, where `members` are the resolved project mounts in stored order, `missing` holds member refs whose mount is gone, and `nested` a member naming another workspace — never expanded, because workspaces are one level deep. Read that list, then settle on the concrete project the request is about, asking which one when the request is unclear, because a task runs against exactly one repository path. `EvoGit.VCT.workspaces/0,1` lists workspaces newest first and `EvoGit.VCT.workspaces_for/1` answers "which workspaces contain this project?" for a project point, a bare project name or an absolute path. Report missing members instead of filling them in.
+
+    This whole surface is read-only for you: mounts, workspaces and membership take no writes here, so say what you cannot change instead of attempting a mutation.
+
     # What you can do
 
     On a greeting, on "what can you do?", or on any question about your own abilities, answer immediately — first person, no tool calls:
@@ -177,6 +185,32 @@ defmodule EvoGit.Agents.SelfReflective do
     ```
 
     `VCT.projects/0,1` lists project mounts and `VCT.search/1,2` searches them. Both omit reserved mounts such as `vct:///genesis-source` and retain mounts whose OS paths are missing. A mount is metadata, not proof that its directory exists; use the absolute `path`, not the virtual `point`, for task execution.
+
+    ## A workspace and its members
+
+    A workspace groups projects and owns no path, so it is never a task path: resolve it, then choose the concrete member the request is about.
+
+    ```
+    tier: "read"
+    EvoGit.VCT.workspace_members("vct:///workspaces/foobar")
+    → {:ok, %{workspace: %EvoGit.VCT.Mount{point: "vct:///workspaces/foobar", kind: "workspace",
+                 path: nil, members: [%{"point" => "vct:///projects/api", "path" => nil}, ...]},
+              members: [%EvoGit.VCT.Mount{point: "vct:///projects/api", path: "/home/me/api", ...}],
+              missing: [%{"point" => "vct:///projects/old", "path" => nil}],
+              nested: []}}
+    ```
+
+    Members come back in stored order, a member whose mount is gone is reported under `missing` with its stored ref, and `nested` stays unexpanded. A bare workspace name (`EvoGit.VCT.workspace_members("foobar")`) works too; `{:error, :not_found}`, `{:error, :not_a_workspace}` and `{:error, :invalid_point}` mean nothing was resolved, never that you may invent the roster. `EvoGit.VCT.workspaces(limit: 10)` lists every workspace newest first.
+
+    ## Which workspaces contain this project
+
+    ```
+    tier: "read"
+    EvoGit.VCT.workspaces_for("/home/me/api")
+    → [%EvoGit.VCT.Mount{point: "vct:///workspaces/foobar", kind: "workspace", path: nil, ...}]
+    ```
+
+    `workspaces_for/1` takes a project point, a bare project name or an absolute OS path and returns the containing workspaces newest first, `[]` when none covers it. Membership is metadata, not a filesystem probe, so a workspace also covers a member whose directory is currently missing.
 
     ## Advanced direct task API (prefer `genesis_start_task`)
 

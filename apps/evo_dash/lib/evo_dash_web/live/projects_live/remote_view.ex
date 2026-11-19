@@ -40,6 +40,12 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
   attr(:palette_mode, :atom, default: :menu)
   attr(:palette_selected_index, :integer, default: 0)
   attr(:path_suggestions, :list, default: [])
+  # VCT WORKSPACE palette surface — view maps, expanded workspace points and
+  # the ordered member refs chosen in the New Workspace form. Defaults keep
+  # every existing call site (gate-state renders pass `hide_palette`) valid.
+  attr(:workspaces, :list, default: [])
+  attr(:expanded_workspaces, :list, default: [])
+  attr(:new_workspace_members, :list, default: [])
   attr(:tauri_detected, :boolean, default: false)
   attr(:platform, :string, default: "linux")
   attr(:show_project_settings, :boolean, default: false)
@@ -102,6 +108,9 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
             palette_search={@palette_search}
             palette_mode={@palette_mode}
             palette_selected_index={@palette_selected_index}
+            workspaces={@workspaces}
+            expanded_workspaces={@expanded_workspaces}
+            new_workspace_members={@new_workspace_members}
             path_suggestions={@path_suggestions}
             tauri_detected={@tauri_detected}
             platform={@platform}

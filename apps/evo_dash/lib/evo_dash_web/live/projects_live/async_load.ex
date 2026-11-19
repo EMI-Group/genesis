@@ -26,6 +26,9 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   delayed batch from replacing a newer user choice. It reports
   whether it applied anything, so the caller only runs post-apply follow-ups
   (auto-activation, GitHub detection) for results that actually landed.
+  The VCT WORKSPACE views are resolved by the SAME task but delivered as their
+  own `{:workspaces_loaded, seq, node, result}` message (monotonic
+  `workspaces_seq` + node guard), so they never ride the picker batch.
 
   The batch BODY is resolved from the `:projects_async_load_runner` app-env
   seam AT SPAWN TIME (a 0-arity fun; default
@@ -81,11 +84,13 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
 
       auto_activate? = socket.assigns[:auto_activate_candidate?] == true
       seq = System.unique_integer([:positive, :monotonic])
+      workspaces_seq = System.unique_integer([:positive, :monotonic])
       selection_snapshot = selection_candidate(socket.assigns)
 
       socket =
         socket
         |> assign(:projects_load_seq, seq)
+        |> assign(:workspaces_seq, workspaces_seq)
         |> assign(:model_selection_ready?, false)
 
       parent = self()
@@ -118,6 +123,18 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
                  end
 
                deliver.(results)
+
+               # The VCT WORKSPACE views ride the SAME supervised task but
+               # their own stale-guarded message (monotonic `workspaces_seq` +
+               # node), so a slow per-workspace resolution never delays the
+               # project/model batch and a workspace failure never invalidates
+               # the picker bundle.
+               workspaces =
+                 EvoDash.SafeCall.run(fn ->
+                   load_workspaces(remote?, current_node_id, node)
+                 end)
+
+               send(parent, {:workspaces_loaded, workspaces_seq, node, workspaces})
              end)
            end) do
         {:ok, {:ok, _pid}} -> :ok
@@ -327,6 +344,108 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
       true -> filter_absolute_projects(NodeContext.projects(node))
     end
   end
+
+  @doc """
+  The node's VCT WORKSPACE view maps, newest first — one
+  `%{workspace: mount, resolved: [mount], missing: [ref], nested: [ref]}`
+  entry per workspace (see `EvoGit.VCT.workspace_members/1` for the
+  resolution contract).
+
+  A workspace is a pure GROUPING point with `path: nil`, so its rows must
+  NEVER pass through `filter_absolute_projects/1` (that filter would drop
+  every one of them). A pending/error remote context (`remote? == false` with
+  a `current_node_id` set) returns `[]` — another node's workspaces must never
+  render.
+
+  Every workspace is resolved through the node-aware
+  `EvoDash.NodeContext.workspace_members/2`; a failed resolution degrades to
+  the workspace with EVERY stored member ref marked `missing`, which stays
+  honest instead of pretending the group is empty.
+
+  Callers must run this OUTSIDE the LiveView process (the async load batch
+  here, and `ProjectsLive`'s `{:vct_updated, node}` / workspace-create
+  continuations).
+  """
+  def load_workspaces(remote?, current_node_id, node) do
+    if not remote? and is_binary(current_node_id) do
+      []
+    else
+      node |> workspace_mounts() |> Enum.map(&workspace_view(node, &1))
+    end
+  end
+
+  @doc """
+  Creates or REPLACES a VCT workspace on `node` — an idempotent, slug-keyed
+  UPSERT: the same name replaces name/members/description and refreshes
+  `last_opened_at` instead of adding a second row.
+
+  `members` is the ORDERED list of `%{"point" => point, "path" => path}` refs.
+  Returns `{:ok, %EvoGit.VCT.Mount{}}` or `{:error, reason}`; the core's
+  validation errors (`{:member_is_workspace, point}`, `{:invalid_member, ref}`,
+  `:invalid_members`, `:invalid_name`, `:vct_unavailable`) pass through
+  verbatim so the caller can map them to a message.
+
+  Callers invoke this INSIDE a supervised task — the registry write and the
+  follow-up reload must never run in the LiveView process.
+  """
+  def create_workspace(node, name, members, opts \\ []) do
+    NodeContext.create_workspace(node, name, members, opts)
+  end
+
+  defp workspace_mounts(node) do
+    case EvoDash.SafeCall.run(fn -> NodeContext.workspaces(node) end) do
+      {:ok, list} when is_list(list) -> list
+      _ -> []
+    end
+  end
+
+  defp workspace_view(node, workspace) do
+    point = Map.get(workspace, :point)
+
+    case EvoDash.SafeCall.run(fn -> NodeContext.workspace_members(node, point) end) do
+      {:ok, {:ok, resolution}} when is_map(resolution) ->
+        %{
+          workspace: Map.get(resolution, :workspace) || workspace,
+          resolved: list_or_empty(Map.get(resolution, :members)),
+          missing: list_or_empty(Map.get(resolution, :missing)),
+          nested: list_or_empty(Map.get(resolution, :nested))
+        }
+
+      _ ->
+        %{
+          workspace: workspace,
+          resolved: [],
+          missing: workspace |> workspace_member_refs() |> Enum.map(&member_ref/1),
+          nested: []
+        }
+    end
+  end
+
+  defp workspace_member_refs(workspace) do
+    case Map.get(workspace, :members) do
+      list when is_list(list) -> list
+      _ -> []
+    end
+  end
+
+  # A stored member ref (`%{"point" => … | nil, "path" => … | nil}`) as ONE
+  # displayable string: the non-nil point, else the path.
+  defp member_ref(ref) when is_map(ref) do
+    point = Map.get(ref, "point") || Map.get(ref, :point)
+    path = Map.get(ref, "path") || Map.get(ref, :path)
+
+    cond do
+      is_binary(point) and point != "" -> point
+      is_binary(path) and path != "" -> path
+      true -> ""
+    end
+  end
+
+  defp member_ref(ref) when is_binary(ref), do: ref
+  defp member_ref(_ref), do: ""
+
+  defp list_or_empty(list) when is_list(list), do: list
+  defp list_or_empty(_other), do: []
 
   # Remote-only extras: when a remote project is active — its genesis.toml
   # config / worktree script / commands / foreign repos and the auto-detected

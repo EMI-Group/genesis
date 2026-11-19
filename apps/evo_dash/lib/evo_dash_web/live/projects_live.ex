@@ -183,6 +183,9 @@ defmodule EvoDashWeb.ProjectsLive do
                     palette_search={@palette_search}
                     palette_mode={@palette_mode}
                     palette_selected_index={@palette_selected_index}
+                    workspaces={@workspaces}
+                    expanded_workspaces={@expanded_workspaces}
+                    new_workspace_members={@new_workspace_members}
                     path_suggestions={@path_suggestions}
                     tauri_detected={@tauri_detected}
                     platform={@platform}
@@ -326,6 +329,9 @@ defmodule EvoDashWeb.ProjectsLive do
                     palette_search={@palette_search}
                     palette_mode={@palette_mode}
                     palette_selected_index={@palette_selected_index}
+                    workspaces={@workspaces}
+                    expanded_workspaces={@expanded_workspaces}
+                    new_workspace_members={@new_workspace_members}
                     path_suggestions={@path_suggestions}
                     tauri_detected={@tauri_detected}
                     platform={@platform}
@@ -560,6 +566,14 @@ defmodule EvoDashWeb.ProjectsLive do
           palette_mode: :menu,
           palette_selected_index: 0,
           projects: projects,
+          # VCT WORKSPACE views (`%{workspace: mount, resolved: [mount],
+          # missing: [ref], nested: [ref]}`) for the palette's Workspaces
+          # section, the points whose member list is expanded, and the ORDERED
+          # member refs chosen in the New Workspace form. All three are filled
+          # by the async load / palette events — never on the mount path.
+          workspaces: [],
+          expanded_workspaces: [],
+          new_workspace_members: [],
           path_suggestions: [],
           foreign_repo_path_suggestions: [],
           show_project_settings: false,
@@ -600,6 +614,15 @@ defmodule EvoDashWeb.ProjectsLive do
           # Monotonic stale-guards for the async store reads.
           task_notifications_seq: 0,
           projects_seq: 0,
+          workspaces_seq: 0,
+          # Monotonic stale-guard for the ASYNC workspace create/replace. It is
+          # deliberately SEPARATE from `workspaces_seq`: `EvoGit.VCT` broadcasts
+          # `{:vct_updated, node}` BEFORE it replies, so the broadcast's
+          # `reload_vct/1` always bumps `workspaces_seq` first and a guard on
+          # that seq would drop every `{:workspace_created, …}` continuation
+          # (losing the flash, the return to the palette menu and the expanded
+          # row). Only a newer CREATE invalidates an older create's result.
+          workspace_create_seq: 0,
           # Monotonic stale-guard for the async clear-history batch.
           clear_history_seq: 0,
           # True when this handle_params run has no `?project=` and is on the
@@ -719,6 +742,12 @@ defmodule EvoDashWeb.ProjectsLive do
         |> assign(:github_modal_open, false)
         |> assign(:github_issues, GitHub.idle_issues())
         |> assign(:github_fixing, nil)
+        # VCT workspaces are per-node registry rows: a remote view must never
+        # render (or keep expanding) another node's groups, and a half-built
+        # member selection from the old node must not be submitted here.
+        |> assign(:workspaces, [])
+        |> assign(:expanded_workspaces, [])
+        |> assign(:new_workspace_members, [])
       else
         socket
       end
@@ -914,12 +943,23 @@ defmodule EvoDashWeb.ProjectsLive do
       case mode_str do
         "open_path" -> :open_path
         "new_project" -> :new_project
+        "new_workspace" -> :new_workspace
         _ -> :menu
       end
 
     socket =
       socket
       |> assign(:palette_mode, mode)
+
+    # Entering the workspace form always starts from an EMPTY member selection:
+    # a stale selection from a previous visit must never be submitted as a
+    # group the user did not build.
+    socket =
+      if mode == :new_workspace do
+        assign(socket, :new_workspace_members, [])
+      else
+        socket
+      end
 
     # Seed path suggestions when entering open_path mode (node-aware: remote
     # suggestions resolve against the remote daemon's filesystem)
@@ -940,6 +980,61 @@ defmodule EvoDashWeb.ProjectsLive do
 
     {:noreply, socket}
   end
+
+  # Expands/collapses ONE workspace's member list in the palette. Pure UI state
+  # (no store/RPC call): a workspace is a grouping row, never an activatable
+  # project, so this event must not open, activate or launch anything.
+  @impl true
+  def handle_event("toggle_workspace", %{"point" => point}, socket)
+      when is_binary(point) and point != "" do
+    expanded = (socket.assigns[:expanded_workspaces] || []) |> toggle_member(point)
+    {:noreply, assign(socket, :expanded_workspaces, expanded)}
+  end
+
+  def handle_event("toggle_workspace", _params, socket), do: {:noreply, socket}
+
+  # Adds/removes ONE project mount in the New Workspace member selection. New
+  # members APPEND, so `new_workspace_members` IS the click order (which the
+  # workspace stores verbatim). A missing/blank point is accepted and ignored.
+  @impl true
+  def handle_event("toggle_workspace_member", %{"point" => point}, socket)
+      when is_binary(point) and point != "" do
+    members = (socket.assigns[:new_workspace_members] || []) |> toggle_member(point)
+    {:noreply, assign(socket, :new_workspace_members, members)}
+  end
+
+  def handle_event("toggle_workspace_member", _params, socket), do: {:noreply, socket}
+
+  # Creates or REPLACES a VCT workspace from the New Workspace form. ASYNC: the
+  # registry write AND the follow-up authoritative reload run in a supervised
+  # task (a registry `GenServer.call` can hang/exit and must never run in the
+  # LiveView process); the result arrives as `{:workspace_created, seq, node,
+  # result}`.
+  @impl true
+  def handle_event("create_workspace", %{"name" => name} = params, socket) do
+    node = socket.assigns[:current_node] || node()
+    seq = (socket.assigns[:workspace_create_seq] || 0) + 1
+    parent = self()
+
+    members = workspace_member_refs(socket)
+    description = workspace_description_param(params)
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      result =
+        case SafeCall.run(fn ->
+               AsyncLoad.create_workspace(node, name, members, description: description)
+             end) do
+          {:ok, value} -> value
+          {:error, reason} -> {:error, reason}
+        end
+
+      send(parent, {:workspace_created, seq, node, result})
+    end)
+
+    {:noreply, assign(socket, :workspace_create_seq, seq)}
+  end
+
+  def handle_event("create_workspace", _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_event("palette_keydown", %{"key" => key}, socket) do
@@ -2212,6 +2307,79 @@ defmodule EvoDashWeb.ProjectsLive do
     end
   end
 
+  # Continuation of the ASYNC VCT WORKSPACE reload (the AsyncLoad batch and the
+  # `{:vct_updated, node}` handler). Stale-guarded on the monotonic
+  # `workspaces_seq` and the node; a failed/missing result KEEPS the current
+  # list (the next VCT broadcast retries) and never crashes the page.
+  @impl true
+  def handle_info({:workspaces_loaded, seq, node, result}, socket) do
+    if seq != socket.assigns[:workspaces_seq] or
+         node != (socket.assigns[:current_node] || node()) do
+      {:noreply, socket}
+    else
+      case result do
+        {:ok, workspaces} when is_list(workspaces) ->
+          expanded = socket.assigns[:expanded_workspaces] || []
+          known = workspace_points(workspaces)
+
+          {:noreply,
+           socket
+           |> assign(:workspaces, workspaces)
+           |> assign(:expanded_workspaces, Enum.filter(expanded, &(&1 in known)))}
+
+        _ ->
+          {:noreply, socket}
+      end
+    end
+  end
+
+  # Continuation of the ASYNC workspace create/replace (see the
+  # `create_workspace` event). On success the form is cleared, the palette
+  # returns to the menu with the new workspace expanded, and BOTH the workspace
+  # and project lists are reloaded authoritatively off-process. A validation
+  # error keeps the form (and the chosen members) so the user can correct it.
+  # Guarded on `workspace_create_seq` (see the mount seed): the VCT broadcast
+  # for this write reloads and bumps `workspaces_seq` BEFORE this reply lands,
+  # so only a NEWER create may invalidate it.
+  @impl true
+  def handle_info({:workspace_created, seq, node, result}, socket) do
+    if seq != socket.assigns[:workspace_create_seq] or
+         node != (socket.assigns[:current_node] || node()) do
+      {:noreply, socket}
+    else
+      case result do
+        {:ok, mount} when is_map(mount) ->
+          point = Map.get(mount, :point)
+          label = Map.get(mount, :name) || point
+
+          expanded =
+            case point do
+              point when is_binary(point) ->
+                [point | List.delete(socket.assigns[:expanded_workspaces] || [], point)]
+
+              _ ->
+                socket.assigns[:expanded_workspaces] || []
+            end
+
+          socket =
+            socket
+            |> assign(:new_workspace_members, [])
+            |> assign(:palette_mode, :menu)
+            |> assign(:expanded_workspaces, expanded)
+            |> put_flash(:info, gettext("Workspace %{name} saved.", name: label))
+            |> reload_vct()
+
+          {:noreply, socket}
+
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, workspace_error_message(reason))}
+
+        _ ->
+          {:noreply, socket}
+      end
+    end
+  end
+
   # Continuation of the ASYNC optimistic project forget (see the
   # `forget_project` event). The optimistic list already dropped the row;
   # success replaces it with the authoritative filtered list, an error reloads
@@ -2283,9 +2451,9 @@ defmodule EvoDashWeb.ProjectsLive do
     end
   end
 
-  # The VCT project list is reloaded in a supervised task — the registry/RPC
-  # read must never run in the LiveView process. A pending/error remote
-  # context never consumes the reload (its own activation owns the list).
+  # The VCT project + WORKSPACE lists are reloaded in a supervised task — the
+  # registry/RPC read must never run in the LiveView process. A pending/error
+  # remote context never consumes the reload (its own activation owns the list).
   @impl true
   def handle_info({:vct_updated, node}, socket) do
     pending_remote? =
@@ -2294,17 +2462,7 @@ defmodule EvoDashWeb.ProjectsLive do
     if node != (socket.assigns[:current_node] || node()) or pending_remote? do
       {:noreply, socket}
     else
-      seq = (socket.assigns[:projects_seq] || 0) + 1
-      node_id = socket.assigns[:current_node_id]
-      remote? = socket.assigns.remote? == true
-      parent = self()
-
-      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-        result = SafeCall.run(fn -> AsyncLoad.load_projects(remote?, node_id, node) end)
-        send(parent, {:projects_loaded, seq, node_id, node, result})
-      end)
-
-      {:noreply, assign(socket, :projects_seq, seq)}
+      {:noreply, reload_vct(socket)}
     end
   end
 
@@ -2607,6 +2765,11 @@ defmodule EvoDashWeb.ProjectsLive do
     action_base = length(filtered)
     index = socket.assigns.palette_selected_index
 
+    # The workspace action sits AFTER the existing actions: locally
+    # Open by Path (+0), Create New Project (+1), New Workspace (+2); on a
+    # remote node Create New Project is hidden, so New Workspace is +1.
+    new_workspace_index = action_base + if socket.assigns[:current_node_id] != nil, do: 1, else: 2
+
     cond do
       index < action_base and index < length(filtered) ->
         # Activate the selected project via push_patch (node-aware:
@@ -2664,8 +2827,17 @@ defmodule EvoDashWeb.ProjectsLive do
           )
         )
 
+      index == new_workspace_index ->
+        # A workspace is pure VCT metadata (no OS path), so this entry point is
+        # available on LOCAL and REMOTE nodes alike. Entering the form always
+        # starts from an empty member selection.
+        socket
+        |> assign(:palette_mode, :new_workspace)
+        |> assign(:new_workspace_members, [])
+
       index == action_base + 1 ->
-        # Unreachable when remote (palette_item_count clamps to action_base)
+        # Unreachable when remote (remote indices land on the workspace action
+        # above and palette_item_count clamps at it)
         assign(socket, :palette_mode, :new_project)
 
       true ->
@@ -2707,9 +2879,9 @@ defmodule EvoDashWeb.ProjectsLive do
   end
 
   # Counts the total number of items in the palette menu list:
-  # filtered projects + 2 actions (Open by Path, Create New) locally;
-  # the "Create New Project" action is hidden in remote contexts, so the count
-  # is filtered + 1 there (keeps ArrowDown clamping in sync with the DOM).
+  # filtered projects + the actions. Locally that is Open by Path, Create New
+  # Project AND New Workspace; in remote contexts Create New Project is hidden,
+  # so it is filtered + 2 there (keeps ArrowDown clamping in sync with the DOM).
   defp palette_item_count(socket) do
     filtered =
       EvoDashWeb.ProjectComponents.filter_projects(
@@ -2717,8 +2889,116 @@ defmodule EvoDashWeb.ProjectsLive do
         socket.assigns.palette_search
       )
 
-    length(filtered) + if socket.assigns[:current_node_id] != nil, do: 1, else: 2
+    length(filtered) + if socket.assigns[:current_node_id] != nil, do: 2, else: 3
   end
+
+  # ---------------------------------------------------------------------------
+  # VCT workspaces (palette "Workspaces" section)
+  #
+  # A workspace is a pure GROUPING point (`path: nil`): it is never activated,
+  # never becomes a task path and never reaches `path_suggestions` or the
+  # persisted form state. Only its name/members/description are managed here.
+  # ---------------------------------------------------------------------------
+
+  # Authoritative VCT reload (projects + workspaces) OFF the LiveView process.
+  # Bumps BOTH monotonic seqs and delivers through the existing
+  # `{:projects_loaded, …}` / `{:workspaces_loaded, …}` messages.
+  defp reload_vct(socket) do
+    node = socket.assigns[:current_node] || node()
+    node_id = socket.assigns[:current_node_id]
+    remote? = socket.assigns.remote? == true
+    projects_seq = (socket.assigns[:projects_seq] || 0) + 1
+    workspaces_seq = (socket.assigns[:workspaces_seq] || 0) + 1
+    parent = self()
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      projects = SafeCall.run(fn -> AsyncLoad.load_projects(remote?, node_id, node) end)
+      send(parent, {:projects_loaded, projects_seq, node_id, node, projects})
+
+      workspaces = SafeCall.run(fn -> AsyncLoad.load_workspaces(remote?, node_id, node) end)
+      send(parent, {:workspaces_loaded, workspaces_seq, node, workspaces})
+    end)
+
+    socket
+    |> assign(:projects_seq, projects_seq)
+    |> assign(:workspaces_seq, workspaces_seq)
+  end
+
+  # The ordered member refs submitted with a new workspace: every chosen POINT
+  # resolves to the currently loaded project mount, so the stored ref carries
+  # that mount's OS path as this node knows it. A project that vanished from
+  # the registry since it was picked is skipped instead of being stored as a
+  # dangling ref.
+  defp workspace_member_refs(socket) do
+    projects = socket.assigns[:projects] || []
+
+    (socket.assigns[:new_workspace_members] || [])
+    |> Enum.flat_map(fn point ->
+      case Enum.find(projects, &(Map.get(&1, :point) == point)) do
+        %{} = project -> [%{"point" => point, "path" => Map.get(project, :path)}]
+        _ -> []
+      end
+    end)
+  end
+
+  defp workspace_description_param(params) do
+    case Map.get(params, "description") do
+      description when is_binary(description) -> description
+      _ -> ""
+    end
+  end
+
+  # Toggles `value` in an ordered list, APPENDING on add so the click order of
+  # the New Workspace member picker is preserved (the workspace stores it).
+  defp toggle_member(list, value) do
+    if value in list, do: List.delete(list, value), else: list ++ [value]
+  end
+
+  defp workspace_points(workspaces) do
+    workspaces
+    |> Enum.map(fn
+      %{workspace: %{point: point}} -> point
+      %{point: point} -> point
+      _ -> nil
+    end)
+    |> Enum.filter(&is_binary/1)
+  end
+
+  defp workspace_error_message(:invalid_name),
+    do: gettext("Workspace name is required.")
+
+  defp workspace_error_message({:member_is_workspace, ref}),
+    do:
+      gettext("A workspace cannot contain another workspace: %{ref}",
+        ref: workspace_ref_text(ref)
+      )
+
+  defp workspace_error_message({:invalid_member, ref}),
+    do: gettext("Invalid workspace member: %{ref}", ref: workspace_ref_text(ref))
+
+  defp workspace_error_message(:invalid_members),
+    do: gettext("The workspace members are invalid.")
+
+  defp workspace_error_message(:vct_unavailable),
+    do: gettext("The workspace registry is unavailable. Please try again.")
+
+  defp workspace_error_message(reason),
+    do: gettext("Could not save the workspace: %{reason}", reason: workspace_ref_text(reason))
+
+  defp workspace_ref_text(ref) when is_binary(ref), do: ref
+
+  defp workspace_ref_text(ref) when is_map(ref) do
+    point = Map.get(ref, "point") || Map.get(ref, :point)
+    path = Map.get(ref, "path") || Map.get(ref, :path)
+
+    cond do
+      is_binary(point) -> point
+      is_binary(path) -> path
+      true -> inspect(ref)
+    end
+  end
+
+  defp workspace_ref_text(ref), do: inspect(ref)
 
   # The add-foreign-repo form is reachable in remote mode (RemoteView renders
   # it via `show_add_foreign_repo`), so its path must be validated for the

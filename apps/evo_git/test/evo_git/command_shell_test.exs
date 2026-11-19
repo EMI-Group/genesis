@@ -782,6 +782,8 @@ defmodule EvoGit.CommandShellParsingTest do
     GuideUser.guide_user
     ListProjects.list_projects
     ListTasks.list_tasks
+    ListWorkspaces.list_workspaces
+    ShowWorkspace.workspace_members
     SpawnInvestigator.spawn_investigator
     StartTask.start_task
     SystemInfo.system_info
@@ -872,7 +874,7 @@ defmodule EvoGit.CommandShellParsingTest do
   end
 
   describe "execute/1 - help" do
-    test "help returns the catalog listing all 10 commands" do
+    test "help returns the catalog listing all 12 commands" do
       assert {:ok, output} = CommandShell.execute("help")
       assert output =~ "Available commands:"
 
@@ -905,9 +907,9 @@ defmodule EvoGit.CommandShellParsingTest do
   end
 
   describe "list_commands/0 and help/1" do
-    test "list_commands/0 returns the 10 registered paths sorted" do
+    test "list_commands/0 returns the 12 registered paths sorted" do
       assert CommandShell.list_commands() == @all_commands
-      assert length(CommandShell.list_commands()) == 10
+      assert length(CommandShell.list_commands()) == 12
     end
 
     test "help/1 returns a detail tuple or an error tuple" do

@@ -1899,7 +1899,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     # Covers the SEED-FREE half of `palette_keydown` clamping: the index bound
-    # is derived from the view's OWN loaded list (`n` rows + 2 action rows), so
+    # is derived from the view's OWN loaded list (`n` rows + 3 action rows), so
     # concurrent mounts elsewhere in the BEAM cannot skew it.
     test "forget_project resets the selection index for keyboard nav", %{
       conn: conn,
@@ -1920,7 +1920,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:palette_selected_index] == 0
 
       # ArrowDown/ArrowUp move the index by one and clamp at the action rows
-      # (n projects + 2 actions, so the last index is n + 1).
+      # (n projects + 3 actions, so the last index is n + 2).
       render_click(view, "palette_keydown", %{"key" => "ArrowDown"})
       assert assigns(view)[:palette_selected_index] == 1
       render_click(view, "palette_keydown", %{"key" => "ArrowUp"})
@@ -1928,9 +1928,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       n = length(assigns(view)[:projects])
       for _ <- 1..(n + 5), do: render_click(view, "palette_keydown", %{"key" => "ArrowDown"})
-      assert assigns(view)[:palette_selected_index] == n + 1
+      assert assigns(view)[:palette_selected_index] == n + 2
       render_click(view, "palette_keydown", %{"key" => "ArrowUp"})
-      assert assigns(view)[:palette_selected_index] == n
+      assert assigns(view)[:palette_selected_index] == n + 1
 
       html = render_click(view, "forget_project", %{"point" => mount_a.point})
 

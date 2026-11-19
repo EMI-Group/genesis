@@ -215,6 +215,23 @@ defmodule EvoGit.Agent.Tools.ElixirEval.DirectAPITest do
       assert read(ctx.fixture, code) == "Result: {true, true, true, true, nil}"
       assert_no_approval(ctx.fixture)
     end
+
+    test "workspace reads are admitted and return real Mounts and resolutions", ctx do
+      # Reads only: the node-local VCT keeps whatever other suites mounted, so
+      # these assertions are relational and this suite never creates a mount.
+      code = """
+      base = EvoGit.VCT.workspaces()
+      {EvoGit.VCT.workspaces(limit: 1) == Enum.take(base, 1),
+       EvoGit.VCT.workspaces_for("no-such-direct-project-#{ctx.fixture.agent_id}"),
+       EvoGit.VCT.workspace_members("no-such-direct-workspace-#{ctx.fixture.agent_id}"),
+       Enum.all?(base, fn mount ->
+         Atom.to_string(mount.__struct__) == "Elixir.EvoGit.VCT.Mount"
+       end)}
+      """
+
+      assert read(ctx.fixture, code) == "Result: {true, [], {:error, :not_found}, true}"
+      assert_no_approval(ctx.fixture)
+    end
   end
 
   describe "exact MFA and tier admission through genuine Dune" do
@@ -272,6 +289,14 @@ defmodule EvoGit.Agent.Tools.ElixirEval.DirectAPITest do
             "EvoGit.VCT.projects([], [])",
             "EvoGit.VCT.search()",
             "EvoGit.VCT.search(\"query\", [], [])",
+            "EvoGit.VCT.workspaces([], [])",
+            "EvoGit.VCT.workspace_members()",
+            "EvoGit.VCT.workspace_members(\"workspace\", [])",
+            "EvoGit.VCT.workspaces_for()",
+            "EvoGit.VCT.workspaces_for(\"vct:///projects/direct\", [])",
+            "EvoGit.VCT.create_workspace(\"x\", [])",
+            "EvoGit.VCT.create_workspace(\"x\", [], [])",
+            "EvoGit.VCT.forget(\"x\")",
             "EvoGit.AgentScheduler.RemoteAPI.list_agents(nil)",
             "EvoGit.AgentScheduler.RemoteAPI.reload_config(nil)",
             "EvoGit.TaskRegistry.list_tasks()",
