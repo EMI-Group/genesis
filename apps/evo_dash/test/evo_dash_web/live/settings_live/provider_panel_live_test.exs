@@ -666,5 +666,63 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       file_profile = get_in(EvoGit.Config.user_config(), ["llm", "providers"]) |> hd()
       refute Map.has_key?(file_profile, "off_peak_holidays")
     end
+
+    test "a tampered holiday calendar renders a field error instead of crashing", %{conn: conn} do
+      seed_provider_profiles([{"default", "anthropic", "claude-sonnet-5-5"}])
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_account(view, "default")
+      before = stored_providers()
+
+      # The change event only snapshots the client-controlled draft; the SAVE
+      # path is what parses the holiday calendar.
+      settings_hook(view, "provider_profile_form_change", %{
+        "profile_id" => "default",
+        "profile_id_new" => "default",
+        "provider" => "anthropic",
+        "default_model" => "claude-sonnet-5-5",
+        "models" => %{"0" => %{"model" => "claude-sonnet-5-5"}},
+        "concurrency" => "3",
+        "off_peak_holidays" => "XX"
+      })
+
+      # A calendar the <select> never offers must surface a translated field
+      # error, never a FunctionClauseError from the reason table. The event is
+      # posted directly because the rendered <select> refuses an invalid value —
+      # exactly the tampering this test covers.
+      html =
+        settings_hook(
+          view,
+          "save_provider_profile",
+          account_params("default", %{
+            "provider" => "anthropic",
+            "default_model" => "claude-sonnet-5-5",
+            "models" => [%{"model" => "claude-sonnet-5-5"}],
+            "off_peak_holidays" => "XX"
+          })
+        )
+
+      assert html =~ "provider-profile-errors"
+      assert html =~ "off_peak_holidays"
+      assert html =~ "Holiday calendar must be one of the offered calendars"
+      refute html =~ "Provider profile saved."
+      assert stored_providers() == before
+      refute Map.has_key?(hd(stored_providers()), "off_peak_holidays")
+
+      # The happy path stays: a blank selection saves and OMITS the key.
+      html =
+        settings_hook(
+          view,
+          "save_provider_profile",
+          account_params("default", %{
+            "provider" => "anthropic",
+            "default_model" => "claude-sonnet-5-5",
+            "models" => [%{"model" => "claude-sonnet-5-5"}],
+            "off_peak_holidays" => ""
+          })
+        )
+
+      assert html =~ "Provider profile saved."
+      refute Map.has_key?(hd(stored_providers()), "off_peak_holidays")
+    end
   end
 end

@@ -365,6 +365,10 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
 
   def error_message("peak_hours_overlap"), do: gettext("Peak hour windows must not overlap.")
 
+  # zh_CN: 假期日历只能取下拉框中提供的日历之一；留空表示不启用法定节假日非高峰。
+  def error_message("off_peak_holidays_invalid"),
+    do: gettext("Holiday calendar must be one of the offered calendars, or blank.")
+
   def maybe_put_gen_opt(opts, key, profile) do
     value = Map.get(profile, key) || Map.get(profile, to_string(key))
     if value != nil, do: Keyword.put(opts, key, value), else: opts
