@@ -189,10 +189,11 @@ defmodule EvoDashWeb.WelcomeLive.Presentation do
   @doc "The primary model's default reasoning effort (`\"\"` = provider default)."
   @spec primary_effort(term()) :: String.t()
   def primary_effort(draft) do
-    if custom_primary?(draft) do
-      model(draft, "default_reasoning_effort")
-    else
-      draft |> map_field("model_reasoning") |> Map.get(model(draft, "default_model"), "")
+    # Both recorded shapes go through the ONE unwrap; the custom name's flat
+    # draft field is the fallback when its entry records nothing.
+    case Wizard.model_default_effort(draft, model(draft, "default_model")) do
+      "" -> if custom_primary?(draft), do: model(draft, "default_reasoning_effort"), else: ""
+      effort -> effort
     end
   end
 
@@ -355,13 +356,6 @@ defmodule EvoDashWeb.WelcomeLive.Presentation do
     case Map.get(ensure_map(draft), key) do
       value when is_binary(value) -> String.trim(value)
       _value -> ""
-    end
-  end
-
-  defp map_field(draft, key) do
-    case Map.get(ensure_map(draft), key) do
-      %{} = map -> map
-      _value -> %{}
     end
   end
 

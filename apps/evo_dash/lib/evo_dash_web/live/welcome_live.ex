@@ -577,8 +577,15 @@ defmodule EvoDashWeb.WelcomeLive do
       end
 
     Enum.reduce(extra, existing, fn {model, value}, acc ->
-      current = ensure_map(Map.get(acc, model, %{}))
-      Map.put(acc, model, Map.put(current, "default", to_string(value)))
+      # An extra model's select submits only its default, so the recorded
+      # inventory is read back through the shared unwrap (never dropped) and the
+      # submitted value is accepted in either recorded shape.
+      entry = Map.get(acc, model)
+
+      Map.put(acc, model, %{
+        "efforts" => Wizard.model_effort_inventory(entry),
+        "default" => Wizard.model_default_effort(value)
+      })
     end)
   end
 

@@ -137,12 +137,7 @@ defmodule EvoDashWeb.WelcomeLive.ViewModel do
   defp ensure_map(map) when is_map(map), do: map
   defp ensure_map(_map), do: %{}
 
-  defp model_reasoning_default(draft, model) do
-    draft
-    |> Map.get("model_reasoning")
-    |> ensure_map()
-    |> Map.get(model, %{})
-    |> ensure_map()
-    |> Map.get("default", "")
-  end
+  # The ONE unwrap of a recorded `"model_reasoning"` entry lives in `Wizard`, so
+  # each extra model's select, the primary select and the persisted row agree.
+  defp model_reasoning_default(draft, model), do: Wizard.model_default_effort(draft, model)
 end

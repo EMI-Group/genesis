@@ -12,7 +12,7 @@ defmodule EvoDashWeb.WelcomeLive.Wizard do
         "models" => [],                   # ordered "<resolved_atom>:<model_id>"
         "custom_model" => "",             # free-text name for any other model
         "default_model" => nil,           # a model string OR the custom name
-        "model_reasoning" => %{},         # %{model_or_custom_name => effort | ""}
+        "model_reasoning" => %{},         # %{model => %{"efforts" => [...], "default" => effort}}
         "reasoning_efforts" => [],        # chips for the CUSTOM model name
         "default_reasoning_effort" => "", # custom name's default ("" = provider)
         "schedule" => %{},                # string-keyed schedule subset
@@ -250,6 +250,57 @@ defmodule EvoDashWeb.WelcomeLive.Wizard do
   @doc "The selected off-peak holiday calendar (e.g. `\"CN\"`), or `nil`."
   def holiday_value(draft), do: draft |> schedule_map() |> Map.get("off_peak_holidays")
 
+  @doc """
+  The DEFAULT reasoning effort recorded in ONE `"model_reasoning"` entry, in
+  either recorded shape: the nested
+  `%{"efforts" => [...], "default" => "high"}` map a catalog pick writes, or a
+  flat effort string. `""` when the entry records none.
+
+  This is the ONE unwrap for the draft's per-model reasoning: the reasoning
+  step's select, the done-step summary (`summary_rows/1`) and the persisted
+  model row (`EvoDashWeb.WelcomeLive.Setup`) all read defaults through it, so a
+  picked level can never survive in one place and disappear from another.
+  """
+  @spec model_default_effort(term()) :: String.t()
+  def model_default_effort(%{} = entry) do
+    entry
+    |> Map.get("default", Map.get(entry, :default))
+    |> clean()
+  end
+
+  def model_default_effort(entry), do: clean(entry)
+
+  @doc """
+  The default reasoning effort the draft records for `model` (`""` when it
+  records none), read through `model_default_effort/1` so both entry shapes
+  answer the same level.
+  """
+  @spec model_default_effort(term(), term()) :: String.t()
+  def model_default_effort(draft, model) do
+    draft
+    |> map_field("model_reasoning")
+    |> Map.get(clean(model))
+    |> model_default_effort()
+  end
+
+  @doc """
+  The reasoning INVENTORY recorded in ONE `"model_reasoning"` entry, in either
+  recorded shape: `"efforts"` from the nested entry, `[]` for a flat effort
+  string (which records no inventory).
+
+  Like `model_default_effort/1`, every reader of a recorded entry uses it, so
+  one model's entry is never read as a ladder by one surface and as a default by
+  another.
+  """
+  @spec model_effort_inventory(term()) :: [String.t()]
+  def model_effort_inventory(%{} = entry) do
+    entry
+    |> Map.get("efforts", Map.get(entry, :efforts))
+    |> Reasoning.normalize_inventory()
+  end
+
+  def model_effort_inventory(_entry), do: []
+
   @doc "Adds `model_string` to the draft's catalog picks, or removes it when present; `\"default_model\"` stays valid (first remaining selection, else `nil`) and `\"model_reasoning\"` is pruned to the survivors."
   def toggle_model(draft, model_string) do
     draft = ensure_map(draft)
@@ -477,15 +528,21 @@ defmodule EvoDashWeb.WelcomeLive.Wizard do
     end
   end
 
-  # The default's reasoning: the custom model reads its own field, a catalog
-  # pick reads the per-model map.
+  # The default's reasoning: the custom model reads its own flat field, a
+  # catalog pick reads its recorded `"model_reasoning"` entry — both through the
+  # ONE unwrap, so a nested entry never renders as a blank reasoning row.
   defp default_reasoning(draft) do
     model = clean(Map.get(draft, "default_model"))
 
     cond do
-      model == "" -> nil
-      model == clean(Map.get(draft, "custom_model")) -> Map.get(draft, "default_reasoning_effort")
-      true -> Map.get(map_field(draft, "model_reasoning"), model)
+      model == "" ->
+        ""
+
+      model == clean(Map.get(draft, "custom_model")) ->
+        model_default_effort(Map.get(draft, "default_reasoning_effort"))
+
+      true ->
+        model_default_effort(draft, model)
     end
   end
 

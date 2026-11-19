@@ -23,9 +23,8 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
 
   use Gettext, backend: EvoDashWeb.Gettext
 
-  alias EvoDashWeb.LLMSetup.Identity
-  alias EvoDashWeb.LLMSetup.Reasoning
-  alias EvoDashWeb.LLMSetup.Schedule
+  alias EvoDashWeb.LLMSetup.{Identity, Reasoning, Schedule}
+  alias EvoDashWeb.WelcomeLive.Wizard, as: Draft
   alias EvoGit.Config.LLMCatalog, as: Catalog
   alias EvoGit.Config.Schema
 
@@ -360,12 +359,21 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
   end
 
   defp model_effort(reasoning, entry) do
-    effort = reasoning |> Map.get(entry.model_string, "") |> text() |> Reasoning.canonical()
+    effort =
+      reasoning
+      |> Map.get(entry.model_string)
+      |> Draft.model_default_effort()
+      |> Reasoning.canonical()
+
     if Reasoning.level?(effort), do: effort, else: ""
   end
 
+  # Key normalization ONLY: an entry keeps its recorded shape (the nested
+  # `%{"efforts" => [...], "default" => ...}` map a catalog pick writes, or a
+  # flat effort string), because `Wizard.model_default_effort/1` is the ONE
+  # unwrap — flattening it here is what used to drop a catalog default.
   defp reasoning_map(value) when is_map(value) do
-    Map.new(value, fn {key, effort} -> {to_string(key), text(effort)} end)
+    Map.new(value, fn {key, entry} -> {to_string(key), entry} end)
   end
 
   defp reasoning_map(_value), do: %{}
