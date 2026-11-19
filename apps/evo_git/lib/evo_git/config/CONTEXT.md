@@ -201,7 +201,7 @@ The optional `[llm] default_provider_profile` selects an account by id; absent s
 Nested models accept a model id string or a map with `model` (`id` is an input alias), optional generation/context/effort overrides, and remain recursively string-keyed after config resolution.
 The `Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2` APIs delegate to `Schema.ProviderProfiles`; exact maps, precedence and error shapes are documented in `schema/CONTEXT.md`.
 
-**Legacy `[[llm.models]]` profile fields** (still accepted when providers are absent/empty): `id` (required), `model` (required), `concurrency` (per-profile LLM concurrency), `context_window` (optional positive integer, default `200_000` — the model's context window in tokens, used as the context-compression window), `auth_mode` + `oauth_file` (optional subscription-auth selection, see "OAuth / Subscription Auth"), plus optional `peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days`:
+**Legacy `[[llm.models]]` profile fields** (still accepted when providers are absent/empty): `id` (required), `model` (required), `concurrency` (per-profile LLM concurrency), `context_window` (optional positive integer, default `200_000` — the model's context window in tokens, used as the context-compression window), `auth_mode` + `oauth_file` (optional subscription-auth selection, see "OAuth / Subscription Auth"), plus optional `peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days`, `off_peak_holidays`:
 ```toml
 [[llm.models]]
 id = "deepseek"
@@ -217,6 +217,7 @@ peak_hours = [                 # optional — daily windows; local wall clock un
 ]
 timezone = "Asia/Shanghai"     # optional — IANA tz for this profile's peak windows
 off_peak_days = ["sat", "sun"] # optional — entire day off-peak: normal concurrency 24/7
+off_peak_holidays = "CN"       # optional — holiday calendar id: non-working days are off-peak whole days
 ```
 - `auth_mode` — optional enum, `"api_key"` (default) | `"oauth"`; it is bookkeeping for humans and the dashboard, while the RUNTIME decision is `Schema.LLM.oauth_profile?/1` (`auth_mode == :oauth` OR an OAuth-only provider). Validated by `EctoValidation.validate_auth_mode/2` (path `[:llm, :models, <idx>, :auth_mode]`, message `"auth_mode must be \"api_key\" or \"oauth\", got <inspect>"`; atom spellings `:api_key`/`:oauth` are accepted for programmatic callers).
 - `oauth_file` — optional non-empty path for THIS profile's managed OAuth credential file; absent → `<config_dir>/auth.json` (there is no global `[llm] oauth_file` key). Validated by `EctoValidation.validate_oauth_file/2` (path `[:llm, :models, <idx>, :oauth_file]`, message `"oauth_file must be a non-empty string path, got <inspect>"`).
