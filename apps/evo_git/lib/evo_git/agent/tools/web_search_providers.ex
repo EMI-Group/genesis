@@ -11,7 +11,7 @@ defmodule EvoGit.Agent.Tools.WebSearchProviders do
 
   The system-wide single source of truth for the provider list is the config
   schema (`EvoGit.Config.Schema.search_providers/0`). This module implements
-  adapters for the five current providers:
+  adapters for the six current providers:
 
     * `:tavily` — POST JSON (`query`/`search_depth`/`max_results`);
       `Authorization: Bearer <key>`; parses `results[]` (`title`/`url`/`content`).
@@ -31,6 +31,12 @@ defmodule EvoGit.Agent.Tools.WebSearchProviders do
     * `:brave` — GET with `q`/`count` query params; `X-Subscription-Token`;
       parses `web.results[]` (`title`/`url`/`description`). Honors `max_results`;
       `search_depth` is not applicable.
+    * `:keenable` — POST JSON (`query`/`max_results`) to Keenable; keyed calls
+      send `X-API-Key` to the configured `base_url`, while a keyless call (no
+      API key configured) uses the public endpoint `<base_url>/public` and MUST
+      send `X-Keenable-Title: <app name>` instead. Parses `results[]`
+      (`title`/`url`/`snippet`; `description` is deprecated and always empty).
+      Honors `max_results`; `search_depth` is not applicable.
 
   Unknown or nil provider atoms normalize to `:tavily` (`normalize_provider/1`).
 
@@ -42,7 +48,7 @@ defmodule EvoGit.Agent.Tools.WebSearchProviders do
       (Perplexity) or `{:error, :unexpected_format}`.
   """
 
-  @providers [:tavily, :perplexity, :exa, :bing, :brave]
+  @providers [:tavily, :perplexity, :exa, :bing, :brave, :keenable]
 
   @doc """
   Returns the list of supported provider atoms.
@@ -71,6 +77,7 @@ defmodule EvoGit.Agent.Tools.WebSearchProviders do
       :exa -> build_exa(provider_config, query, search_depth, max_results)
       :bing -> build_bing(provider_config, query, max_results)
       :brave -> build_brave(provider_config, query, max_results)
+      :keenable -> build_keenable(provider_config, query, search_depth, max_results)
     end
   end
 
@@ -90,6 +97,7 @@ defmodule EvoGit.Agent.Tools.WebSearchProviders do
       :exa -> parse_results(response_body, "text")
       :bing -> parse_bing(response_body)
       :brave -> parse_brave(response_body)
+      :keenable -> parse_keenable(response_body)
       :perplexity -> parse_perplexity(response_body)
     end
   end
@@ -159,6 +167,43 @@ defmodule EvoGit.Agent.Tools.WebSearchProviders do
      }}
   end
 
+  # Keenable speaks ONE request shape on two endpoints: the keyed endpoint at
+  # the configured `base_url` (`X-API-Key`) and a keyless public endpoint at
+  # `<base_url>/public` (`X-Keenable-Title` required, rate-limited per IP).
+  # `base_url` is ALWAYS the keyed endpoint, so the configured default yields
+  # `https://api.keenable.ai/v1/search/public`. `search_depth` has no Keenable
+  # equivalent (`mode` is pro/realtime, not a depth) and is accepted only to
+  # keep the builder shape symmetric — it is ignored.
+  defp build_keenable(provider_config, query, _search_depth, max_results) do
+    base_url = provider_config[:base_url]
+    body = %{query: query, max_results: max_results}
+
+    case provider_config[:api_key] do
+      key when is_binary(key) and key != "" ->
+        {:ok,
+         %{
+           method: :post,
+           url: base_url,
+           headers: %{"Content-Type" => "application/json", "X-API-Key" => key},
+           body: body
+         }}
+
+      _keyless ->
+        # No `X-API-Key` header at all when no key is configured — a nil/empty
+        # value must never be sent.
+        {:ok,
+         %{
+           method: :post,
+           url: String.trim_trailing(base_url || "", "/") <> "/public",
+           headers: %{
+             "Content-Type" => "application/json",
+             "X-Keenable-Title" => "Genesis"
+           },
+           body: body
+         }}
+    end
+  end
+
   defp get_url(base_url, params) do
     query_string =
       params
@@ -209,6 +254,10 @@ defmodule EvoGit.Agent.Tools.WebSearchProviders do
   end
 
   defp parse_brave(_response_body), do: {:error, :unexpected_format}
+
+  # Keenable's `results[]` carries the summary in `snippet`; `description` is
+  # deprecated and always empty, so it is never read.
+  defp parse_keenable(response_body), do: parse_results(response_body, "snippet")
 
   defp parse_perplexity(response_body) do
     case response_body do
