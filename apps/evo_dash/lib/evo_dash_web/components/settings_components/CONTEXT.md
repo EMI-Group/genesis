@@ -266,6 +266,15 @@ It is `use EvoDashWeb, :html` (pure function components), reads NO config/catalo
 `wizard-progress` (the progress rail) and `wizard-step-enter` (the step body wrapper, keyed by `id={"wizard-step-" <> step}`) are styled in `assets/css/app.css` by a separate change: the enter animation runs on each step change and MUST be disabled under `prefers-reduced-motion: reduce`. This module writes no CSS and no raw colors — tokens only, corners ≤ `rounded-xl`.
 ### Tests (not yet present — owned by the `apps/evo_dash/test` node)
 `test/evo_dash_web/components/provider_wizard_test.exs` must pin: the progress rail labels + exactly one `aria-current="step"` on the current row, the `wizard-step-enter` body id, the `next_disabled` footer and the first-step Back disable, exactly six canonical reasoning chips (no `max`, one `xhigh`) plus the hidden blank seed (7 occurrences of `name="reasoning_efforts[]"`), the inventory-scoped default select (blank "Provider default" only when the inventory is non-empty), the holiday options ("CN" → "China (CN)" plus the blank option), the always-present `name="custom_model"` input, and that each `step_*` renders only its own content.
+### Provider-identity creation and reasoning-checkbox defects (current state)
+
+- **Model-derived account identity**: `EvoDashWeb.SettingsLive.ProviderProfiles.add_model/2` (`live/settings_live/provider_profiles.ex:256-269`) sets BOTH `id` and `name` from `slug(model)` for a model spec, so a Quick-Setup-created account is named after the MODEL (`gpt-4o`, `deepseek-flash`), never the provider.
+  `add_model/2` is reached only from the catalog Quick Setup path (`ModelProfileEvents.quick_setup/5` → `save_quick_model/3`, i.e. `save_quick_setup`, `save_custom_model`, `select_llm_model_shortcut`).
+  The other creation paths are provider-correct: `ProviderProfiles.editor_identity/4` (`:94-125`) slugs the provider atom for the id and uses the provider catalog `entry.display_name` for the name; `welcome_live/setup.ex` `build_profile/6` (`:141-174`) uses `default.provider_display_name` and `"<resolved_atom>-onboarding"`.
+- **Reasoning checkboxes**: `ProviderProfileFields.reasoning_fields/1` (`provider_profile_fields.ex:82-154`) renders the effort inventory as TWO checkbox groups sharing ONE `name` (`reasoning_efforts[]`) plus a hidden blank seed (`:110`); the primary group is `selected ++ suggestions` (checked from the draft, no per-input `id`), the `<details>` "Advanced reasoning choices" group renders the complement with NO `checked` attribute and NO `id`.
+  Because the primary group's membership/order is derived from the just-submitted draft, a `phx-change` round trip MOVES the clicked effort between the two groups, so positional patching can reassign `value` on a checkbox the browser already flipped and the flat `reasoning_efforts[]` payload then carries a second effort.
+  The dashboard never renames an effort: `max` is only a CORE wire alias of `xhigh` (`EvoGit.Config.Schema.LLM.canonical_reasoning_effort/1`), and the dashboard parsers pass raw strings through.
+
 ## Constraints
 - All component modules use `use EvoDashWeb, :html`.
 - Styling is Tailwind CSS + DaisyUI.

@@ -170,6 +170,7 @@ Ownership is per LiveView rather than a distributed file lock, so remounts, othe
 
 NodeData.start/3 captures node/category/all_schemas, loads platform/config/status/agent/tool data under TaskSupervisor + SafeCall and sends {tag, node, category, {:ok, results} | {:error, reason}}.
 Results include platform_os/filtered_schemas_by_category/file_config/config_status/remote_config_error/custom_agents/custom_tools_status.
+`filtered_schemas_by_category` is ALWAYS present (`load/2` and `error_results/3` both set it from the captured unfiltered `all_schemas_by_category` plus the viewed node's platform/nix gating), so it never arrives empty or missing; the parent assigns it as the authoritative `schemas_by_category` and re-resolves the active category against it, falling back to `:llm` — a category the shell seeded from the UNFILTERED map (e.g. `:nix`/`:sandbox`) is dropped at that point.
 Local config reads ConfigIO/Config directly and remote config reads FULL get_resolved_config; error_results/3 supplies conservative platform/schema/agent/tool values and a visible remote_config_error.
 degraded_config_status/0 is %{ok?: false, missing: [], warnings: [], validation_errors: []}.
 Agent fetch tolerates odd shapes, tool fetch normalizes lists and preserves {:error, reason}, and remote status failures stay explicit.
@@ -183,6 +184,13 @@ A profile's verdict renders in its OWN credential-status block, while the page-l
 That banner is NOT fixture-driven: it renders only while `EvoGit.Config.config_status/0` is not `ok?`, and its api_key check reads ReqLLM's BEAM-global key store, so a root `mix test` (both umbrella apps in one VM, `:evo_git`'s helper installs `:req_llm, :openai_api_key`) renders no banner and no test may pin it.
 start/2 sends FLAT {:settings_auth_status_loaded, node, seq, statuses}; the parent checks node AND auth_status_seq after node-data loads, saves or explicit refresh, never polls.
 Two remote calls per OAuth account are not deduplicated and unexpected errors degrade the map through the outer SafeCall.
+
+## Category navigation defect (current state)
+
+`handle_params/3` re-inflates `schemas_by_category` to the UNFILTERED `all_schemas_by_category` on EVERY params change (`settings_live.ex:926`), while the async result later replaces it with the platform/nix-FILTERED map (`apply_node_data_results/3` :2730-2789) and re-resolves the active category (`resolve_category/2` :2813-2831, `:llm` fallback).
+`handle_event("select_category", ...)` (:1509-1534) whitelists against the CURRENT `schemas_by_category` (so `category_str_to_atom/1` can never misfire) but neither `push_patch`es nor starts a node-data load.
+Consequence: the gated categories (`:sandbox` on Windows/`:unknown`, `:nix` when unavailable) are clickable only in the window where the unfiltered map is assigned, and a click on them is then overwritten back to `:llm` by the next async result, while the nav list itself loses those items — the settings sidebar visibly shrinks and the active highlight jumps.
+The URL keeps the pre-click `?category=`, so any later `handle_params` re-seeds the category from that stale param and undoes a click on ANY category.
 
 ## Custom Agents, Tools and Peak Helpers
 
