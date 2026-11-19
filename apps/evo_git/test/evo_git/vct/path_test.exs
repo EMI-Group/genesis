@@ -7,7 +7,7 @@ defmodule EvoGit.VCT.PathTest do
 
   alias EvoGit.VCT.Path
 
-  describe "root/0 and projects/0" do
+  describe "root/0, projects/0 and workspaces/0" do
     test "root is the empty segment list" do
       assert Path.root() == %Path{segments: []}
       assert Path.format(Path.root()) == "vct:///"
@@ -16,6 +16,19 @@ defmodule EvoGit.VCT.PathTest do
     test "projects is the projects folder" do
       assert Path.projects() == %Path{segments: ["projects"]}
       assert Path.format(Path.projects()) == "vct:///projects"
+    end
+
+    test "workspaces is the workspaces folder" do
+      assert Path.workspaces() == %Path{segments: ["workspaces"]}
+      assert Path.format(Path.workspaces()) == "vct:///workspaces"
+      assert {:ok, workspaces} = Path.parse("vct:///workspaces")
+      assert workspaces == Path.workspaces()
+
+      assert Path.join(Path.workspaces(), "frontend") == %Path{
+               segments: ["workspaces", "frontend"]
+             }
+
+      assert Path.format(Path.join(Path.workspaces(), "frontend")) == "vct:///workspaces/frontend"
     end
   end
 
