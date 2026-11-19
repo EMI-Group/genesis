@@ -13,6 +13,7 @@ defmodule EvoDashWeb.SettingsLive do
   alias EvoDashWeb.SettingsLive.ModelProfileEvents
   alias EvoDashWeb.SettingsLive.Navigation
   alias EvoDashWeb.SettingsLive.NodeData
+  alias EvoDashWeb.SettingsLive.ProviderPanelEvents
   alias EvoDashWeb.SettingsLive.SearchEvents
 
   # This deliberately long page keeps the Settings shell/HEEx and node-aware
@@ -748,11 +749,8 @@ defmodule EvoDashWeb.SettingsLive do
                     errors={Map.get(@per_category_errors, @active_category, [])}
                     sandbox_backend={sandbox_backend(assigns)}
                     sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
-                    llm_providers={@llm_providers}
-                    selected_provider_id={@selected_provider_id}
-                    selected_provider_models={@selected_provider_models}
-                    selected_variant_id={@selected_variant_id}
-                    selected_model_string={@selected_model_string}
+                    provider_wizard={@provider_wizard}
+                    provider_schedule={@provider_schedule}
                     llm_test_status={@llm_test_status}
                     provider_profiles={Schema.provider_profiles(@file_config)}
                     model_selections={ConfigIO.model_selections(@file_config)}
@@ -858,11 +856,6 @@ defmodule EvoDashWeb.SettingsLive do
         config_loaded_scope: {nil, node()},
         config_status_token: nil,
         credentials: EvoGit.Config.credentials(),
-        llm_providers: EvoGit.Config.LLMCatalog.providers(),
-        selected_provider_id: nil,
-        selected_provider_models: [],
-        selected_variant_id: nil,
-        selected_model_string: nil,
         llm_test_status: :idle,
         llm_test_seq: 0,
         # Mount's config is local; a remote test waits for its own async snapshot.
@@ -881,6 +874,12 @@ defmodule EvoDashWeb.SettingsLive do
         # settings" disclosure (nil = follow the auto rule). Reset to nil by
         # every edit-session identity change in ModelProfileEvents.
         profile_advanced_open: nil,
+        # `/settings` provider-account panel state (see
+        # EvoDashWeb.SettingsLive.ProviderPanelEvents): the add-account /
+        # add-model wizard (`nil` when closed) and the expanded account's
+        # recommended-schedule strip.
+        provider_wizard: nil,
+        provider_schedule: ProviderPanelEvents.empty_schedule(),
         # Pending accent-color selection for the :appearance category (nil = no
         # pending draft). Set by `select_appearance_accent`; cleared whenever
         # file_config is replaced by an authoritative load (see
@@ -1406,10 +1405,8 @@ defmodule EvoDashWeb.SettingsLive do
       config_status: NodeData.degraded_config_status(),
       per_category_errors: %{},
       appearance_accent_draft: nil,
-      selected_provider_id: nil,
-      selected_provider_models: [],
-      selected_variant_id: nil,
-      selected_model_string: nil,
+      provider_wizard: nil,
+      provider_schedule: ProviderPanelEvents.empty_schedule(),
       auth_statuses: %{},
       auth_status_seq: (socket.assigns[:auth_status_seq] || 0) + 1
     )
@@ -1787,195 +1784,96 @@ defmodule EvoDashWeb.SettingsLive do
     end
   end
 
-  @impl true
-  def handle_event("select_llm_provider", %{"provider_id" => id_str}, socket) do
-    # Whitelist lookup: validate the client-supplied provider id against the
-    # known LLMCatalog providers. Unknown value → nil → clear selection and
-    # surface a friendly flash error instead of crashing.
-    provider = Map.get(ConfigIO.provider_by_id_str(), id_str)
-
-    if provider do
-      provider_id = provider.id
-      models = provider.models
-      _variants = provider[:variants]
-
-      socket =
-        socket
-        |> assign(:selected_provider_id, provider_id)
-        |> assign(:selected_provider_models, models)
-        |> assign(:selected_variant_id, nil)
-        # Changing provider invalidates any previously chosen model.
-        |> assign(:selected_model_string, nil)
-
-      {:noreply, socket}
-    else
-      # Unknown provider id — keep existing state, show an error flash.
-      {:noreply,
-       socket
-       |> assign(:selected_provider_id, nil)
-       |> assign(:selected_provider_models, [])
-       |> assign(:selected_variant_id, nil)
-       |> assign(:selected_model_string, nil)
-       |> put_flash(:error, gettext("Unknown provider."))}
-    end
-  end
-
-  @impl true
-  def handle_event("select_llm_variant", %{"variant_id" => variant_id_str}, socket) do
-    # Whitelist lookup: validate the client-supplied variant id against the
-    # variants of the currently selected provider. Unknown value (or no
-    # provider selected) → nil → no selection change.
-    variant_id =
-      case socket.assigns.selected_provider_id do
-        nil -> nil
-        provider_atom -> Map.get(ConfigIO.variant_id_by_str(provider_atom), variant_id_str)
-      end
-
-    # Changing variant invalidates any previously chosen model.
-    {:noreply,
-     socket
-     |> assign(:selected_variant_id, variant_id)
-     |> assign(:selected_model_string, nil)}
-  end
-
-  @impl true
-  def handle_event("select_llm_model", %{"model_string" => model_string}, socket) do
-    # Whitelist validation: accept only model strings that match one of the
-    # model shortcut buttons currently rendered for the selected provider
-    # (same provider/variant resolution and render gate as the template).
-    # Unknown or out-of-context values clear the selection instead of crashing.
-    selected_model_string =
-      if llm_model_string_known?(socket, model_string), do: model_string, else: nil
-
-    {:noreply, assign(socket, :selected_model_string, selected_model_string)}
-  end
-
-  @impl true
-  def handle_event("select_llm_model_shortcut", params, socket) do
-    ModelProfileEvents.select_llm_model_shortcut(socket, params)
-  end
-
-  @impl true
-  def handle_event("save_custom_model", params, socket) do
-    ModelProfileEvents.save_custom_model(socket, params)
-  end
-
-  @impl true
-  def handle_event("save_quick_setup", params, socket) do
-    ModelProfileEvents.save_quick_setup(socket, params)
-  end
-
-  # The provider editor uses canonical UI names; the detached event module
-  # retains its legacy public names for existing callers.
-  @impl true
-  def handle_event("add_provider_profile", params, socket),
-    do: ModelProfileEvents.add_model_profile(socket, params)
-
-  @impl true
-  def handle_event("edit_provider_profile", params, socket),
-    do: ModelProfileEvents.edit_model_profile(socket, params)
-
-  @impl true
-  def handle_event("delete_provider_profile", params, socket),
-    do: ModelProfileEvents.delete_model_profile(socket, params)
-
-  @impl true
-  def handle_event("set_default_provider_profile", params, socket),
-    do: ModelProfileEvents.set_default_provider_profile(socket, params)
-
-  @impl true
-  def handle_event("cancel_edit_provider_profile", params, socket),
-    do: ModelProfileEvents.cancel_edit_model_profile(socket, params)
-
-  @impl true
-  def handle_event("provider_profile_form_change", params, socket),
-    do: ModelProfileEvents.model_profile_form_change(socket, params)
-
-  @impl true
-  def handle_event("save_provider_profile", params, socket) do
-    # Preserve the nested UI draft for rerenders, adapting only at parse time.
-    submitted_draft =
-      EvoDashWeb.SettingsLive.ProviderProfiles.submission(
-        params,
-        socket.assigns[:profile_form_draft]
-      )
-
-    ModelProfileEvents.save_model_profile(
-      socket,
-      provider_form_params(submitted_draft),
-      submitted_draft
-    )
-  end
+  # ── Provider-account panel (delegated to ProviderPanelEvents) ──
+  #
+  # Every event below belongs to the canonical provider-account panel
+  # (`SettingsComponents.ProviderProfiles.*`): the FROZEN presentation modules
+  # emit this vocabulary and `EvoDashWeb.SettingsLive.ProviderPanelEvents` owns
+  # the wizard state machine, the recommended-schedule strip and both save
+  # paths. The page only routes.
 
   @impl true
   def handle_event(event, params, socket)
+      when event in [
+             "add_provider_profile",
+             "provider_wizard_change",
+             "provider_wizard_next",
+             "provider_wizard_back",
+             "provider_wizard_cancel",
+             "provider_wizard_save",
+             "start_add_provider_model",
+             "provider_model_change",
+             "provider_model_cancel",
+             "provider_model_save",
+             "edit_provider_profile",
+             "cancel_edit_provider_profile",
+             "save_provider_profile",
+             "provider_profile_form_change",
+             "set_default_provider_profile",
+             "delete_provider_profile",
+             "add_provider_peak_hours_row",
+             "remove_provider_peak_hours_row",
+             "apply_provider_schedule",
+             "undo_provider_schedule",
+             "dismiss_schedule_applied"
+           ],
+      do: ProviderPanelEvents.dispatch(event, params, socket)
+
+  # The model-row buttons are spelled both canonically ("provider") and with
+  # the legacy editor names; both act on the expanded account's rows.
+  @impl true
+  def handle_event(event, params, socket)
       when event in ["add_provider_model", "add_profile_model"],
-      do: ModelProfileEvents.add_profile_model(socket, params)
+      do: ProviderPanelEvents.add_provider_model(socket, params)
 
   @impl true
   def handle_event(event, params, socket)
       when event in ["remove_provider_model", "remove_profile_model"],
-      do: ModelProfileEvents.remove_profile_model(socket, params)
+      do: ProviderPanelEvents.remove_provider_model(socket, params)
+
+  # Refresh button on the panel's auth-status badges — re-reads the viewed
+  # node's OAuth credential state ASYNCHRONOUSLY (a cross-node RPC on remote
+  # nodes). Result arrives as `{:settings_auth_status_loaded, node, seq,
+  # statuses}`.
+  @impl true
+  def handle_event("refresh_auth_status", params, socket),
+    do: ProviderPanelEvents.refresh_auth_status(socket, params)
 
   @impl true
-  def handle_event("add_provider_peak_hours_row", params, socket),
-    do: ModelProfileEvents.add_peak_hours_row(socket, params)
+  def handle_event("toggle_profile_advanced", params, socket),
+    do: ProviderPanelEvents.toggle_profile_advanced(socket, params)
+
+  # ── Legacy provider/model-profile event names ──
+  #
+  # Kept for the detached editor's historical public vocabulary (and for older
+  # links/tests); the rendered panel uses the canonical names above.
+  @impl true
+  def handle_event("add_model_profile", params, socket),
+    do: ModelProfileEvents.add_model_profile(socket, params)
 
   @impl true
-  def handle_event("remove_provider_peak_hours_row", params, socket),
-    do: ModelProfileEvents.remove_peak_hours_row(socket, params)
+  def handle_event("edit_model_profile", params, socket),
+    do: ModelProfileEvents.edit_model_profile(socket, params)
 
   @impl true
-  def handle_event("add_model_profile", params, socket) do
-    ModelProfileEvents.add_model_profile(socket, params)
-  end
+  def handle_event("cancel_edit_model_profile", params, socket),
+    do: ModelProfileEvents.cancel_edit_model_profile(socket, params)
 
   @impl true
-  def handle_event("edit_model_profile", params, socket) do
-    ModelProfileEvents.edit_model_profile(socket, params)
-  end
+  def handle_event("save_model_profile", params, socket),
+    do: ModelProfileEvents.save_model_profile(socket, params)
 
   @impl true
-  def handle_event("cancel_edit_model_profile", params, socket) do
-    ModelProfileEvents.cancel_edit_model_profile(socket, params)
-  end
+  def handle_event("model_profile_form_change", params, socket),
+    do: ModelProfileEvents.model_profile_form_change(socket, params)
 
   @impl true
-  def handle_event("save_model_profile", params, socket) do
-    ModelProfileEvents.save_model_profile(socket, params)
-  end
+  def handle_event("delete_model_profile", params, socket),
+    do: ModelProfileEvents.delete_model_profile(socket, params)
 
   @impl true
-  def handle_event("model_profile_form_change", params, socket) do
-    # phx-change draft-tracking: stores the whole edit-form params so
-    # add/remove_peak_hours_row (phx-click, which does NOT send the form data)
-    # can re-render the form with every typed value preserved.
-    ModelProfileEvents.model_profile_form_change(socket, params)
-  end
-
-  @impl true
-  def handle_event("delete_model_profile", params, socket) do
-    ModelProfileEvents.delete_model_profile(socket, params)
-  end
-
-  @impl true
-  def handle_event("move_model_profile", params, socket) do
-    ModelProfileEvents.move_model_profile(socket, params)
-  end
-
-  # Refresh button on the model-profiles editor's auth-status badges — re-reads
-  # the viewed node's OAuth credential state ASYNCHRONOUSLY (a cross-node RPC on
-  # remote nodes). Result arrives as
-  # `{:settings_auth_status_loaded, node, seq, statuses}`.
-  @impl true
-  def handle_event("refresh_auth_status", _params, socket) do
-    {:noreply, start_auth_status_load(socket)}
-  end
-
-  @impl true
-  def handle_event("toggle_profile_advanced", params, socket) do
-    ModelProfileEvents.toggle_profile_advanced(socket, params)
-  end
+  def handle_event("move_model_profile", params, socket),
+    do: ModelProfileEvents.move_model_profile(socket, params)
 
   @impl true
   def handle_event("add_peak_hours_row", params, socket) do
@@ -2386,54 +2284,6 @@ defmodule EvoDashWeb.SettingsLive do
     |> Enum.uniq_by(& &1.provider_profile_id)
     |> Enum.map(&%{id: &1.provider_profile_id})
   end
-
-  # The new presentation nests generation inputs while the canonical parser
-  # deliberately accepts flat request fields. Keep UI sentinels out of storage.
-  defp provider_form_params(params) do
-    params
-    |> flatten_generation_params()
-    |> Map.update("models", [], fn rows ->
-      rows
-      |> EvoDashWeb.SettingsLive.ProviderProfiles.rows()
-      |> Enum.map(fn row ->
-        row = flatten_generation_params(row)
-
-        row =
-          case row["override_reasoning"] do
-            value when value in [false, "false"] ->
-              # Absence means inherit; [] would explicitly override inventory.
-              Map.delete(row, "reasoning_efforts")
-
-            value when value in [true, "true"] ->
-              if EvoDashWeb.SettingsLive.ProviderProfiles.string_list(row["reasoning_efforts"]) ==
-                   [] do
-                row
-                |> Map.put("reasoning_efforts", [])
-                |> Map.delete("default_reasoning_effort")
-              else
-                row
-              end
-
-            _ ->
-              row
-          end
-
-        Map.delete(row, "override_reasoning")
-      end)
-    end)
-  end
-
-  defp flatten_generation_params(params) do
-    generation = Map.get(params, "generation", %{})
-
-    keys =
-      ~w(temperature max_tokens top_p top_k frequency_penalty presence_penalty provider_options extra)
-
-    params
-    |> Map.delete("generation")
-    |> Map.merge(Map.take(generation, keys))
-  end
-
   # ───────────────────────────────────────────────────────────────────────────
   # Helpers: Config persistence
   # ───────────────────────────────────────────────────────────────────────────
@@ -2846,7 +2696,11 @@ defmodule EvoDashWeb.SettingsLive do
   # is stale-guarded by node + seq. `AuthStatus.start/2` is total — it returns
   # `:ok` even when the task supervisor is unavailable — so `:ok =` is a
   # deliberate assertion, not a case.
-  defp start_auth_status_load(socket) do
+  #
+  # Public because `ProviderPanelEvents.refresh_auth_status/2` (the provider
+  # panel's Refresh button) reuses it.
+  @doc "Fires the ASYNC OAuth credential-status reload for the viewed node."
+  def start_auth_status_load(socket) do
     seq = socket.assigns.auth_status_seq + 1
     socket = assign(socket, :auth_status_seq, seq)
     profiles = Schema.provider_profiles(socket.assigns.file_config || %{})
@@ -3224,31 +3078,4 @@ defmodule EvoDashWeb.SettingsLive do
     end
   end
 
-  # Whitelist validation for the select_llm_model event: the model_string must
-  # match a model shortcut button that is actually rendered for the currently
-  # selected provider (same provider/variant resolution and render gate as the
-  # template in settings_components.ex). Malformed or out-of-context values
-  # return false so the handler clears the selection instead of crashing.
-  defp llm_model_string_known?(socket, model_string) when is_binary(model_string) do
-    provider_id = socket.assigns.selected_provider_id
-    variant_id = socket.assigns.selected_variant_id
-    models = socket.assigns.selected_provider_models
-
-    provider = Enum.find(EvoGit.Config.LLMCatalog.providers(), &(&1.id == provider_id))
-    variants = provider && provider[:variants]
-    has_variants = is_list(variants) and length(variants) > 0
-    custom_model = provider && provider[:custom_model] == true
-
-    # Model shortcut buttons only render when no variants are needed (or a
-    # variant is selected) and the provider is not a custom-model provider.
-    provider != nil and (not has_variants or variant_id != nil) and not custom_model and
-      Enum.any?(models, fn model ->
-        resolved_atom =
-          EvoGit.Config.LLMCatalog.resolve_provider_atom(provider_id, variant_id)
-
-        "#{resolved_atom}:#{model.id}" == model_string
-      end)
-  end
-
-  defp llm_model_string_known?(_socket, _model_string), do: false
 end

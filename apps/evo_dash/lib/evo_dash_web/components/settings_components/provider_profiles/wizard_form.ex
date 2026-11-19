@@ -229,7 +229,17 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
 
   # `:auth` exists only when the account may CHOOSE its auth mode: an OAuth-only
   # provider (or one that already forced `auth_mode`) would render a dead step.
-  defp rendered_steps(draft) do
+  #
+  # Public so the wizard's owner (`EvoDashWeb.SettingsLive.ProviderPanelEvents`)
+  # steps over the SAME list this module renders — one definition, no drift.
+  @doc """
+  The step list actually rendered for `draft`.
+
+  `:auth` is dropped for an OAuth-only provider, so the owner's Next/Back
+  navigation can never land on a step the user cannot see.
+  """
+  @spec rendered_steps(map()) :: [atom()]
+  def rendered_steps(draft) do
     if text(draft, "provider") != "" and Fields.oauth_only?(draft) do
       List.delete(@rendered_steps, :auth)
     else
@@ -237,7 +247,14 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
     end
   end
 
-  defp current_step(steps, step) do
+  @doc """
+  The step to display: `step` when it is rendered, else the list's first step.
+
+  Public for the same reason as `rendered_steps/1` (a provider change can
+  shrink the list under a parked `:auth` step).
+  """
+  @spec current_step([atom()], atom()) :: atom()
+  def current_step(steps, step) do
     if step in steps, do: step, else: List.first(steps)
   end
 
