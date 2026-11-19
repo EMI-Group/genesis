@@ -820,4 +820,96 @@ defmodule EvoDashWeb.ProviderWizardTest do
       end
     end
   end
+
+  describe "label fallbacks — an unlabeled row is never blank" do
+    test "a labeled provider row keeps its label byte-for-byte" do
+      tree =
+        render_tree(&ProviderWizard.step_provider/1,
+          providers: [%{"id" => "deepseek", "label" => "DeepSeek (Vendor)"}]
+        )
+
+      assert text(one(tree, "button[phx-value-provider=\"deepseek\"]")) == "DeepSeek (Vendor)"
+    end
+
+    test "a provider label is read label → display_name → name" do
+      tree =
+        render_tree(&ProviderWizard.step_provider/1,
+          providers: [
+            %{"id" => "zai", "display_name" => "Zed AI", "name" => "Ignored"},
+            %{"id" => "deepseek", "name" => "DeepSeek Ltd"}
+          ]
+        )
+
+      assert text(one(tree, "button[phx-value-provider=\"zai\"]")) == "Zed AI"
+      assert text(one(tree, "button[phx-value-provider=\"deepseek\"]")) == "DeepSeek Ltd"
+    end
+
+    test "a nil / blank / absent provider label falls back to the provider display name" do
+      variants = [
+        [%{"id" => "zai"}],
+        [%{"id" => "zai", "label" => nil}],
+        [%{"id" => "zai", "label" => "   "}],
+        [%{"id" => "zai", "name" => ""}],
+        [%{id: :zai}]
+      ]
+
+      for providers <- variants do
+        tree = render_tree(&ProviderWizard.step_provider/1, providers: providers)
+
+        assert text(one(tree, "button[phx-value-provider=\"zai\"]")) == "Z.ai (Zhipu AI)",
+               "expected the provider display name for #{inspect(providers)}"
+      end
+    end
+
+    test "an unlabeled model row renders the model id and no duplicate id line" do
+      tree = render_tree(&ProviderWizard.step_model/1, models: [%{"id" => "bare-model-x"}])
+      row = one(tree, "button[phx-value-model=\"bare-model-x\"]")
+
+      assert text(row) == "bare-model-x"
+      # The label IS the id, so the second (mono) id line is suppressed.
+      assert row |> nodes("span.block") |> Enum.map(&text/1) == ["bare-model-x"]
+    end
+
+    test "a labeled model row keeps its label and still shows the id" do
+      tree =
+        render_tree(&ProviderWizard.step_model/1,
+          models: [%{"id" => "deepseek-flash", "label" => "DeepSeek V4.1 Flash"}]
+        )
+
+      row = one(tree, "button[phx-value-model=\"deepseek-flash\"]")
+
+      assert row |> nodes("span.block") |> Enum.map(&text/1) == [
+               "DeepSeek V4.1 Flash",
+               "deepseek-flash"
+             ]
+    end
+
+    test "an id-less provider row is dropped, leaving only the custom endpoint row" do
+      tree =
+        render_tree(&ProviderWizard.step_provider/1,
+          providers: [
+            %{"label" => "No id"},
+            %{"id" => ""},
+            %{"id" => "   "},
+            %{"id" => 42},
+            nil,
+            "  "
+          ]
+        )
+
+      assert [custom] = nodes(tree, "button[phx-click=\"select_provider\"]")
+      assert attr(custom, "phx-value-provider") == "custom"
+      assert text(custom) =~ "Custom / OpenAI-compatible endpoint"
+    end
+
+    test "an id-less model row is dropped, leaving the empty-catalog note" do
+      tree =
+        render_tree(&ProviderWizard.step_model/1,
+          models: [%{"label" => "No id"}, %{"id" => ""}, %{"model" => "   "}, 42, nil]
+        )
+
+      assert nodes(tree, "ul[role=\"list\"]") == []
+      assert text(tree) =~ "No catalog model matches this search"
+    end
+  end
 end

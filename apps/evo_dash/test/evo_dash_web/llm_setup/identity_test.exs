@@ -50,11 +50,16 @@ defmodule EvoDashWeb.LLMSetup.IdentityTest do
       assert Identity.provider_slug("acme_gateway") == "acme-gateway"
     end
 
-    test "a nil provider resolves to the custom-endpoint slug" do
-      # NOTE: the @doc claims "" for nil/blank, but the implementation routes
-      # through provider_display_name/1 (→ "Custom endpoint") instead. Pinned
-      # as implemented; reported rather than fixed.
+    test "a nil, blank or unreadable provider resolves to the custom-endpoint slug" do
+      # `provider_slug/1` resolves THROUGH `provider_display_name/1`, whose
+      # nil/blank answer is the gettext "Custom endpoint" — so the "no provider
+      # yet" slug is `"custom-endpoint"`, a meaningful account id, never the
+      # `profile-N` fallback (that only applies to a blank BASE handed straight
+      # to `unique_id/2`). Pinned as the chosen contract.
       assert Identity.provider_slug(nil) == "custom-endpoint"
+      assert Identity.provider_slug("") == "custom-endpoint"
+      assert Identity.provider_slug("   ") == "custom-endpoint"
+      assert Identity.provider_slug(42) == "custom-endpoint"
     end
   end
 
@@ -133,6 +138,29 @@ defmodule EvoDashWeb.LLMSetup.IdentityTest do
       assert Identity.default_identity(:deepseek, [
                %{"id" => "deepseek", "name" => "DeepSeek"}
              ]) == %{"id" => "deepseek-2", "name" => "DeepSeek-2"}
+    end
+
+    test "a nil provider derives the custom-endpoint identity" do
+      assert Identity.default_identity(nil, []) == %{
+               "id" => "custom-endpoint",
+               "name" => "Custom endpoint"
+             }
+
+      # `-2` on collision, exactly like any other provider-derived base.
+      assert Identity.default_identity(nil, ["custom-endpoint"]) == %{
+               "id" => "custom-endpoint-2",
+               "name" => "Custom endpoint"
+             }
+
+      # The collision is case-insensitive, and the NAME is uniquified against the
+      # names (not the slugs), so an id-only clash leaves the display name alone.
+      assert Identity.default_identity(nil, [%{"id" => "Custom-Endpoint"}])["id"] ==
+               "custom-endpoint-2"
+
+      assert Identity.default_identity(nil, [%{"name" => "Custom endpoint"}]) == %{
+               "id" => "custom-endpoint",
+               "name" => "Custom endpoint-2"
+             }
     end
 
     test "never derives identity from a model" do
