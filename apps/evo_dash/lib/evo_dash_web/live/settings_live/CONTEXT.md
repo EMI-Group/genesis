@@ -68,7 +68,7 @@ Known providers resolve through a catalog whitelist without creating atoms from 
 OAuth-only forces `oauth`; OAuth drops `api_key`/`api_key_env_var`/`api_key_env` and API-key mode drops `oauth_file`.
 Credential drafts and parsed profiles emit `api_key_env_var`; legacy `api_key_env` input is accepted, with canonical key presence winning even when blank or nil.
 Legacy `model_id`/`context_window`/`reasoning_effort` adapt to canonical fields without model/reasoning_effort shadows.
-`add_model/2` and its private `split_model/1` remain a legacy compatibility helper reachable only from the `add_model_profile` event routed through `ModelProfileHelpers.add_model_profile/2`, whose only sender is the unrendered `SettingsComponents.ModelProfilesEditor.model_profiles_editor/1`; every rendered surface creates accounts through the add-account wizard and `editor_identity/4`.
+Every provider account is created through the add-account wizard or the "Add model" mini-wizard, and an explicit typed id or the provider-derived `editor_identity/4` supplies its identity.
 `field/2`, `rows/1`, `string_list/1` and `provider_atom/1` provide shared key/row/inventory/catalog handling.
 ## ModelProfileHelpers and Detached Events
 `ModelProfileHelpers` exposes canonical delegates for `provider_profiles`, `provider_profile_draft`, `new_provider_profile_draft`, `parse_provider_profile_params`, `put_in_provider_profiles` and `set_default_provider_profile`.
