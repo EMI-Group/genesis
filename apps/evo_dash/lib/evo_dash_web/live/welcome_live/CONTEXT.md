@@ -4,6 +4,8 @@
 `Setup` owns catalog-backed onboarding drafts and canonical provider-profile construction for the local-only `WelcomeLive` page.
 `Wizard` (`wizard.ex`, `EvoDashWeb.WelcomeLive.Wizard`) is the pure string-keyed DRAFT model and transition set for the wizard-shaped onboarding flow; it delegates steps, reasoning, schedule presets and identity to `EvoDashWeb.LLMSetup`.
 The parent page owns provider/variant selection, multi-model toggles, authentication UI, write ordering and asynchronous connection-test state.
+`Presentation` (`presentation.ex`, `EvoDashWeb.WelcomeLive.Presentation`) owns the pure view-model helpers and the step copy: catalog resolution by string, provider/variant/model rows, the schedule presets, the connection-test status shape and the user-facing messages.
+`ViewModel` (`view_model.ex`, `EvoDashWeb.WelcomeLive.ViewModel`) derives every per-step render assign from the draft, calling `Presentation` for each step's values.
 `Steps` (`steps.ex`, `EvoDashWeb.WelcomeLive.Steps`) owns only the per-step HEEx BODIES the page's `render/1` inserts into `EvoDashWeb.SettingsComponents.ProviderWizard.wizard_shell/1`: `step_provider_body/1`, `step_auth_body/1`, `step_model_body/1`, `step_reasoning_schedule_body/1`, `step_test_body/1` and `step_done_body/1`, each a pure function of its declared attrs (no socket, no events, no view-model derivation).
 
 ## API Surface
