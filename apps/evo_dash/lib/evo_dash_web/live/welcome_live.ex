@@ -256,11 +256,17 @@ defmodule EvoDashWeb.WelcomeLive do
 
   def handle_event("apply_schedule_preset", params, socket) do
     preset_id = params |> Map.get("preset_id", "") |> to_string()
+    draft = socket.assigns.draft
 
-    # `Wizard.apply_preset/2` always answers `{draft, snapshot}` and leaves the
-    # draft untouched for an unknown/blank preset id, so one clause suffices.
-    {draft, _snapshot} = Wizard.apply_preset(socket.assigns.draft, preset_id)
-    {:noreply, assign(socket, draft: draft, preset_dismissed: false)}
+    # The preset id is client input: only a preset the DRAFT's provider
+    # publishes may touch its account schedule, so another provider's window
+    # can never be applied here.
+    if preset_allowed?(socket, draft, preset_id) do
+      {draft, _snapshot} = Wizard.apply_preset(draft, preset_id)
+      {:noreply, assign(socket, draft: draft, preset_dismissed: false)}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_event("undo_schedule_preset", _params, socket) do
@@ -330,14 +336,7 @@ defmodule EvoDashWeb.WelcomeLive do
 
   @impl true
   def handle_info({{:welcome_llm_test_result, seq}, guarded}, socket) do
-    result =
-      case guarded do
-        {:ok, value} -> {:ok, value}
-        {:error, reason} -> {:error, reason}
-        other -> {:error, other}
-      end
-
-    handle_info({:welcome_llm_test_result, seq, result}, socket)
+    handle_info({:welcome_llm_test_result, seq, test_answer(guarded)}, socket)
   end
 
   def handle_info({:welcome_llm_test_result, seq, result}, socket) do
@@ -535,6 +534,12 @@ defmodule EvoDashWeb.WelcomeLive do
 
   # ── Draft helpers ────────────────────────────────────────────────────────
 
+  defp preset_allowed?(socket, draft, preset_id) do
+    provider = Presentation.provider_entry(socket.assigns.llm_providers, draft["provider"])
+    variant_id = Presentation.variant_id(provider, draft["variant"])
+    Presentation.preset_allowed?(provider, variant_id, preset_id)
+  end
+
   defp invalidate_test(socket) do
     assign(socket, llm_test_seq: socket.assigns.llm_test_seq + 1, llm_test_status: :idle)
   end
@@ -667,6 +672,15 @@ defmodule EvoDashWeb.WelcomeLive do
   defp save_key(entry, key, _mode) do
     Setup.write(fn -> EvoGit.Config.save_credentials(%{entry.credential_key => key}) end)
   end
+
+  # `SafeCall` wraps the provider's OWN `{:ok, detail} | {:error, message}`
+  # answer, so exactly one level is unwrapped: only a genuine provider success
+  # may render success, and a provider-side `{:error, message}` stays an error.
+  defp test_answer({:ok, {:ok, detail}}), do: {:ok, detail}
+  defp test_answer({:ok, {:error, reason}}), do: {:error, reason}
+  defp test_answer({:ok, other}), do: {:error, {:unexpected_result, other}}
+  defp test_answer({:error, reason}), do: {:error, reason}
+  defp test_answer(other), do: {:error, other}
 
   # ── Small total helpers ──────────────────────────────────────────────────
 

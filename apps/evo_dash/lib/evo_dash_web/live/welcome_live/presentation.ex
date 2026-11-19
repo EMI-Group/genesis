@@ -107,13 +107,32 @@ defmodule EvoDashWeb.WelcomeLive.Presentation do
     end)
   end
 
-  @doc "Selectable variant chips, or `[]` for a provider that declares no variants."
-  @spec variant_options(term()) :: [%{String.t() => String.t()}]
-  def variant_options(entry) do
+  @doc """
+  Selectable variant chips for a provider, with the draft's CURRENT variant
+  marked `"selected"` (`[]` for a provider that declares no variants).
+
+  The current variant may be the catalog ATOM (what `select_wizard_variant`
+  stores) or its STRING id (what a fresh provider pick stores); both compare
+  as strings, so the selected chip renders its primary style.
+  """
+  @spec variant_options(term(), term()) :: [%{String.t() => String.t() | boolean()}]
+  def variant_options(entry, current) do
+    current = clean(current)
+
     Enum.map(variants(entry), fn variant ->
-      %{"id" => Atom.to_string(variant.id), "label" => to_string(variant.display_name)}
+      id = Atom.to_string(variant.id)
+
+      %{
+        "id" => id,
+        "label" => to_string(variant.display_name),
+        "selected" => id == current
+      }
     end)
   end
+
+  @doc "The variant chips of a provider with no variant selected."
+  @spec variant_options(term()) :: [%{String.t() => String.t() | boolean()}]
+  def variant_options(entry), do: variant_options(entry, nil)
 
   @doc "The flat-model entries as model rows (`id`/`label`/`variant`)."
   @spec model_rows(term()) :: [%{String.t() => String.t() | nil}]
@@ -199,6 +218,55 @@ defmodule EvoDashWeb.WelcomeLive.Presentation do
     end
   end
 
+  @doc """
+  `true` when `preset_id` is a preset the DRAFT's current provider publishes.
+
+  Apply events carry a client-supplied id, so the page asks this before
+  touching the draft: one provider's schedule must never be applied to another
+  provider's account.
+  """
+  @spec preset_allowed?(term(), term(), term()) :: boolean()
+  def preset_allowed?(entry, variant_id, preset_id) do
+    case clean(preset_id) do
+      "" ->
+        false
+
+      id ->
+        entry
+        |> schedule_presets(variant_id)
+        |> Enum.any?(fn
+          %{} = preset -> preset[:id] == id
+          _preset -> false
+        end)
+    end
+  end
+
+  @doc """
+  The status the connection-test step renders, from the test's OWN answer.
+
+  A genuine provider success is `{:ok, detail}` and its model/response detail
+  becomes ONE readable line; every other shape is an error, because a
+  provider-side `{:error, message}` must never look like a success.
+  """
+  @spec test_status(term()) :: term()
+  def test_status({:ok, detail}), do: {:ok, test_detail(detail)}
+  def test_status({:error, reason}), do: {:error, display_error(reason)}
+  def test_status(status), do: status
+
+  @doc """
+  The tested model and its reply as one display line (`""` when the detail
+  carries neither), so a success never renders an empty detail line.
+  """
+  @spec test_detail(term()) :: String.t()
+  def test_detail(%{} = detail) do
+    [text_field(detail, :model), text_field(detail, :response)]
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join(" · ")
+  end
+
+  def test_detail(detail) when is_binary(detail), do: String.trim(detail)
+  def test_detail(_detail), do: ""
+
   @doc "The vendor login guidance for an OAuth provider (`\"\"` when it has none)."
   @spec login_instructions(term()) :: String.t()
   def login_instructions(wire_atom) when is_atom(wire_atom) and not is_nil(wire_atom) do
@@ -283,6 +351,17 @@ defmodule EvoDashWeb.WelcomeLive.Presentation do
     case Map.get(ensure_map(draft), key) do
       %{} = map -> map
       _value -> %{}
+    end
+  end
+
+  # One readable field of a detail map (atom or string key), `""` when absent.
+  defp text_field(map, key) when is_map(map) do
+    map
+    |> Map.get(key, Map.get(map, Atom.to_string(key)))
+    |> case do
+      value when is_binary(value) -> String.trim(value)
+      value when is_atom(value) and value not in [nil, true, false] -> Atom.to_string(value)
+      _value -> ""
     end
   end
 

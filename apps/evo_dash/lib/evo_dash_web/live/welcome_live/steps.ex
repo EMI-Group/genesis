@@ -90,11 +90,13 @@ defmodule EvoDashWeb.WelcomeLive.Steps do
               id="wizard-api-key"
               type="password"
               name="api_key"
-              value={@draft["api_key"]}
               autocomplete="off"
               class="input input-sm w-full"
               placeholder={@key_placeholder}
             />
+            <p :if={key_in_draft?(@draft)} class="text-xs text-base-content/60">
+              {gettext("A key is set for this session — type to replace it")}
+            </p>
             <p :if={@key_present} class="text-xs text-base-content/60">
               {gettext("A key is already stored for this provider.")}
             </p>
@@ -104,6 +106,17 @@ defmodule EvoDashWeb.WelcomeLive.Steps do
     </ProviderWizard.step_auth>
     """
   end
+
+  # `true` when the SERVER holds a transient API key for this session; only the
+  # status line re-renders it, never the value itself.
+  defp key_in_draft?(draft) when is_map(draft) do
+    case draft["api_key"] do
+      key when is_binary(key) -> String.trim(key) != ""
+      _value -> false
+    end
+  end
+
+  defp key_in_draft?(_draft), do: false
 
   attr(:model_rows, :list, default: [])
   attr(:all_model_rows, :list, default: [])
@@ -206,9 +219,14 @@ defmodule EvoDashWeb.WelcomeLive.Steps do
   attr(:llm_test_status, :any, default: :idle)
 
   def step_test_body(assigns) do
+    # The provider's own answer arrives UNWRAPPED from the page; the shared step
+    # component renders one detail line, so the model/response detail is
+    # formatted here and a provider-side error never renders as success.
+    assigns = assign(assigns, test_state: Presentation.test_status(assigns.llm_test_status))
+
     ~H"""
     <ProviderWizard.step_test
-      test_state={@llm_test_status}
+      test_state={@test_state}
       test_event="test_connection"
       skip_event="skip_test"
     />

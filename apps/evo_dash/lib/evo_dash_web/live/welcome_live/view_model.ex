@@ -88,11 +88,7 @@ defmodule EvoDashWeb.WelcomeLive.ViewModel do
   The provider's variant rows with the draft's current variant marked selected.
   """
   def variant_options(provider, draft) do
-    current = draft["variant"]
-
-    provider
-    |> Presentation.variant_options()
-    |> Enum.map(fn row -> Map.put(row, "selected", row["id"] == to_string(current || "")) end)
+    Presentation.variant_options(provider, Map.get(ensure_map(draft), "variant"))
   end
 
   @doc """
