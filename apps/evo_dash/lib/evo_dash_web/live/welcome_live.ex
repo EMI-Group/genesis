@@ -112,7 +112,7 @@ defmodule EvoDashWeb.WelcomeLive do
           Wizard.new()
           |> Wizard.put("provider", value)
           |> Wizard.put("variant", Presentation.first_variant(entry))
-          |> Wizard.put("auth_mode", Setup.auth_mode(entry))
+          |> Wizard.put("auth_mode", auth_mode_for(entry))
 
         socket = socket |> assign(draft: draft, error: nil) |> invalidate_test()
         socket = assign(socket, wizard_active: true)
@@ -615,6 +615,16 @@ defmodule EvoDashWeb.WelcomeLive do
 
   defp oauth_only?(_wire), do: false
 
+  # `Setup.auth_mode/1` asks the catalog whether the WIRE provider atom is
+  # OAuth-only, so the entry map is resolved to that atom first (a variant can
+  # change the wire provider); an unresolvable entry degrades to `nil`, which
+  # `Setup.auth_mode/1` treats as API-key.
+  defp auth_mode_for(entry) do
+    entry
+    |> Presentation.wire_atom(Presentation.variant_id(entry, Presentation.first_variant(entry)))
+    |> Setup.auth_mode()
+  end
+
   # ── Draft helpers ────────────────────────────────────────────────────────
 
   defp invalidate_test(socket) do
@@ -713,7 +723,7 @@ defmodule EvoDashWeb.WelcomeLive do
   end
 
   defp push_runtime(socket, config) do
-    _ = ConfigIO.update_runtime_from_file_config(socket, config)
+    _ = ConfigIO.update_runtime_from_file_config(config, socket)
     socket
   end
 

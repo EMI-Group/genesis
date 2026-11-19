@@ -100,8 +100,20 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
 
   def has_model?(config), do: Schema.model_selections(config) != []
 
+  @doc """
+  The default authentication mode for a provider: `"oauth"` when the catalog
+  marks it OAuth-only, `"api_key"` otherwise (the catalog's own default for
+  providers that declare no auth modes).
+
+  Total: accepts the resolved wire provider atom, a catalog entry map, or
+  `nil` / an unknown term (which is never OAuth-only, so it yields `"api_key"`).
+  `EvoGit.Config.LLMCatalog.oauth_only?/1` is atom-only, hence the normalization.
+  """
   def auth_mode(provider) do
-    if Catalog.oauth_only?(provider), do: "oauth", else: "api_key"
+    case provider_atom(provider) do
+      nil -> "api_key"
+      atom -> if Catalog.oauth_only?(atom), do: "oauth", else: "api_key"
+    end
   end
 
   def can_save?(assigns) do
