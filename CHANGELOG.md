@@ -2,6 +2,52 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.3] - 2026-11-19
+
+### Added
+
+- Add task pause/resume support across the task registry, agent scheduler, agent sessions, dashboard task cards and Tasks page, RemoteAPI/RemoteNode, MCP task tools and task listings, including clean vs. dirty pause detection and confirmation/error feedback.
+- Add durable per-agent state persistence in a separate SQLite store, so crashed or interrupted runs resume their conversation, mid-tool-batch progress, sub-agent batches and worktree changes instead of losing them.
+- Add a "persist agent state" task option (default on) and a persistent_state option for the genesis_start_task MCP tool so agent state retention can be controlled per task.
+- Add stable agent identities across restarts, re-registering resumed runs under their original agent_id with a single warning fallback if the id is taken.
+- Add a development-only repair path for inspected SQLite stores, with diagnostics explaining why a repair is refused without exposing private data.
+- Add schema-driven Config settings APIs with partial updates, plus Assistant config discovery and read-only project lookup endpoints.
+- Add scoped approval review notification APIs with accessible approval dialogs and notifications showing the requesting identity, its authority, and execution status.
+- Add live streaming activity and atomic watch snapshots to the agents inspector and Assistant, with concise execution phase and tool feedback.
+- Add scheduler-owned per-call tool permits with resource admission, handoff and release-ownership enforcement so concurrent tool invocation is bounded.
+- Add an automatic commit fallback when the agent's commit step is missing or fails, and let explicit local skill inventory commands bypass tool permission checks.
+- Add isolated, project-aware assistant sessions with shared task operations and streamlined conversation, upload and task-following dashboard flows.
+
+### Changed
+
+- Improve resume messaging to cite the pause checkpoint commit as the guaranteed last checkpointed commit, state that uncommitted worktree changes are not preserved, and give clearer clean-pause and interruption repair details.
+- Describe dirty resumes in the dashboard as restoring the whole task tree, including still-running subagents with their conversations, worktrees and branches.
+- Anchor agent run commits under a dedicated refs/genesis/agent-state namespace so they survive branch reclamation and git gc, and bound the checkpoint writer with backlog and payload caps.
+- Move background-job completion notices and OS status probes off the registry and remove synchronous agent-state barriers from life-critical paths so turns and session finalize are non-blocking.
+- Show context compression and next-turn preparation as dedicated "Compressing context" and "Preparing next turn" activity phases instead of showing "Idle".
+- Dashboard now lists pausing and paused tasks as live sidebar entries with distinct status labels and tooltips, treating pausing as busy for the self-update gate while paused tasks remain resumable and non-blocking.
+- Show live inspector calls as tail rows with inline status in the Context Memory view, keeping history reasoning static and gating the generation animation.
+- Improve assistant dialogs and notifications with accessible focus handling, an explicit notification permission flow, and reduced-motion fallbacks.
+- Updated UI translations for multiple languages.
+- Updated Mix dependencies, including plug 1.20.4 (multipart length-limit security fix) and req_llm 1.31.0.
+
+### Fixed
+
+- Fix interactive sessions being incorrectly restored as paused dirty tasks at boot so they now fail cleanly instead of hanging, and stop interactive-session tasks from being pausable.
+- Fix task pause/resume so resumability is determined from the task's root durable record and all persisted resume facts are carried through to the spawned task, preserving the existing task roster.
+- Fix crash-resume by salvaging worktree changes into a commit, honoring retry base overrides, preserving dispatch context, and re-attaching to retained sub-agent results instead of spawning duplicates.
+- Recover gracefully when the agent hits the turn limit instead of aborting the run, and make durable agent state resilient to boot failures and repo loss.
+- Fix Assistant notifications being scoped incorrectly and properly integrate the dialog hook.
+- Reject abandoned background launches instead of accepting their detachment, and ensure pending timeout containment cleanup completes before tool tasks are shut down.
+- Fix identity collisions during legacy task-store migration by additively reconciling conflicting records instead of clobbering them, and restore normal database migration upgrades while rejecting residual or incomplete migration state.
+- Restricted or ambiguous offline process views now fail closed instead of being displayed.
+- Fix Nix build failure by refreshing the stale mixFodDeps hash and adding a fast-failing preflight check for unavailable prod dependencies.
+
+### Removed
+
+- Removed unused agent state resume helper functions and a completion alias from the public API.
+- Removed the dedicated historical reconciliation migration and reconciliation-dependent store boot preservation, so databases no longer need a standalone reconciliation step to upgrade or survive a restart.
+
 ## [0.14.2] - 2026-11-13
 
 ### Added
