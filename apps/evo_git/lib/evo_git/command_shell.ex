@@ -65,6 +65,8 @@ defmodule EvoGit.CommandShell do
     GuideUser,
     ListProjects,
     ListTasks,
+    ListWorkspaces,
+    ShowWorkspace,
     SpawnInvestigator,
     StartTask,
     SystemInfo
@@ -188,6 +190,21 @@ defmodule EvoGit.CommandShell do
       level: 1,
       summary: "Lists the node's Virtual Context Tree project mounts, newest first.",
       args: []
+    },
+    "ListWorkspaces.list_workspaces" => %{
+      module: ListWorkspaces,
+      level: 1,
+      summary: "Lists the node's Virtual Context Tree workspaces, newest first.",
+      args: []
+    },
+    "ShowWorkspace.workspace_members" => %{
+      module: ShowWorkspace,
+      level: 1,
+      summary:
+        "Shows one Virtual Context Tree workspace, its members and unresolved member refs.",
+      args: [
+        %{key: "workspace", type: :string, required: true, positional: 1, default: nil}
+      ]
     },
     "SystemInfo.system_info" => %{
       module: SystemInfo,
