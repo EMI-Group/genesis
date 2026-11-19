@@ -872,12 +872,14 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       agent -> Fold.agent_color_of(agent)
     end
   end
+
   defp edge_opacity(edge, agents_index) do
     case Fold.agent_for(agents_index, Map.get(edge, :owner_id)) do
       nil -> "0.3"
       agent -> if(Fold.agent_ended?(agent), do: "0.4", else: "0.75")
     end
   end
+
   # --- selection --------------------------------------------------------------
   # The readout data for the selected agent, or nil when nothing is selected /
   # the selection is not one of THIS repo's agents.
@@ -893,11 +895,13 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       _ -> nil
     end
   end
+
   defp readout_text(readout) do
     range =
       [readout.start_sha, readout.end_sha]
       |> Enum.reject(&is_nil/1)
       |> Enum.join(" → ")
+
     if range == "" do
       # zh_CN：图中选中智能体的标注读数（起止提交未知时只显示智能体名）
       gettext("Selected %{agent}", agent: readout.label)
@@ -906,11 +910,13 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       gettext("Selected %{agent} · %{range}", agent: readout.label, range: range)
     end
   end
+
   # The SVG's accessible name.
   defp graph_aria_label do
     # zh_CN：无障碍标签 —— 整个 git 提交历史图形的朗读名称
     gettext("Git commit history graph")
   end
+
   # ---------------------------------------------------------------------------
   # Total reads — odd shapes degrade instead of raising.
   # ---------------------------------------------------------------------------
@@ -925,6 +931,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       _ -> []
     end
   end
+
   # `start_ids` / `end_ids` are the agent ids that fork from / tip at this node;
   # any non-list shape folds to `[]`.
   defp id_list(node, key) do
@@ -933,6 +940,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       _ -> []
     end
   end
+
   defp repo_dom_id(repo) do
     case Map.get(repo, :repo_dom_id) do
       id when is_binary(id) -> id
@@ -941,15 +949,18 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       _ -> ""
     end
   end
+
   defp repo_name(repo) do
     case Map.get(repo, :repo_name) do
       name when is_binary(name) -> name
       _ -> ""
     end
   end
+
   defp sha_key_of(container, key) do
     container |> Map.get(key) |> safe_string() |> String.replace(~r/[^A-Za-z0-9_-]/, "-")
   end
+
   defp safe_string(value) when is_binary(value), do: value
   defp safe_string(value) when is_atom(value), do: Atom.to_string(value)
   defp safe_string(value) when is_integer(value), do: Integer.to_string(value)
@@ -958,6 +969,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   # feeds a value already folded through `Geometry`'s integer math.
   defp n(value) when is_number(value) do
     rounded = Float.round(value * 1.0, 2)
+
     if rounded == Float.round(rounded) do
       Integer.to_string(trunc(rounded))
     else
