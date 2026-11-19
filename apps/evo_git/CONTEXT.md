@@ -148,6 +148,7 @@ Canonical config uses `[llm] default_provider_profile` to select an account in `
 Each provider profile owns a stable account `id`, `provider`, shared authentication (`auth_mode`, `api_key_env_var` or `oauth_file`), endpoint (`base_url`/provider options), `concurrency` and peak/off-peak schedule for every model and reasoning effort in its nested ordered `models` inventory.
 OAuth paths are account settings, never a global `[llm] oauth_file`, and `LLM.profile_generation_params/1` remains the single generation/auth/provider-constraint assembly boundary.
 Provider generation/context defaults and ordered `reasoning_efforts` may be overridden by nested model settings, with explicit task effort taking final precedence.
+The user-selectable reasoning-effort ladder is `EvoGit.Config.Schema.LLM.reasoning_efforts/0` → `[:none, :minimal, :low, :medium, :high, :xhigh]` (ascending, NO `:max`), with `reasoning_effort_options/0` adding `:default` (unset = provider default), `allowed?/1` as the total acceptance predicate and `canonical_reasoning_effort/1` as the total normalizer; `max` is an accepted legacy ALIAS for `xhigh` on read and never an offered level, and the provider-documented equivalent is emitted only at the request boundary (`LLMConstraints`'s `:reasoning_effort_wire_aliases`, e.g. Z.AI GLM `xhigh -> "max"`).
 `default_model` selects a model (first model when absent), while optional `default_reasoning_effort` is never inferred from effort order.
 `Schema.provider_profiles/1` returns canonical STRING-keyed accounts, `model_selections/1` enumerates ordered model/effort choices without reading credentials or metadata, and `resolve_model_spec/2` validates a default, account id or explicit selection.
 A task `model_spec` is a STRING-keyed identity map with `provider_profile_id`, `model` and optional `reasoning_effort`, not a ReqLLM identifier, provider profile or secret-bearing generation parameters.
@@ -239,9 +240,13 @@ Slot maps, retry policy, reload/legacy behavior and pause contracts belong to `a
 
 ## Peak/Off-Peak Hour Concurrency Scheduling
 
-Provider accounts own `peak_concurrency`, `peak_hours`, `off_peak_days` and `timezone`, with `peak_concurrency = 0` a hard pause shared by all their models/efforts and exempt from the default-concurrency floor.
-`EvoGit.PeakHours` remains the single source of truth for half-open/overnight/day-scoped windows, off-peak-day precedence, local/IANA wall clocks, validation and transition math.
-`PeakHourEngine` prefers canonical provider profiles, falls back to legacy model profiles only when canonical accounts are absent, and applies one floored concurrency entry per account with explicit zero and peak exemptions preserved.
+Provider accounts own `peak_concurrency`, `peak_hours`, `off_peak_days`, `off_peak_holidays` and `timezone`, with `peak_concurrency = 0` a hard pause shared by all their models/efforts and exempt from the default-concurrency floor.
+`EvoGit.PeakHours` remains the single source of truth for half-open/overnight/day-scoped windows, the off-peak-day rule, local/IANA wall clocks, validation and transition math.
+The day-level rule is ONE predicate: a date is off-peak when its weekday is in `off_peak_days` OR (`off_peak_holidays` names a calendar AND `EvoGit.PeakHours.Holidays.non_working_day?/1` is true) — so a statutory CN holiday, an ordinary weekend and a 调休 make-up Saturday (a WORKING day) all resolve through the same path, and a make-up workday may still hit a window whose `days` include it.
+`in_peak?/4` and `next_transition/4` take `off_peak_holidays` as their last argument (`/2` and `/3` are `nil`-calendar delegators), `effective_concurrency/2` reads the key off the profile map, `/3` resolves the wall clock first so holiday dates are profile-timezone dates, and `next_transition`'s horizon is 21 days (the longest published CN block is 9 days).
+`EvoGit.PeakHours.Holidays` is a static, data-driven table (2025, 2026 and 2027 official 国办发明电 arrangements; extend it yearly per its moduledoc) — NOT a dependency, precisely to avoid a `mix.lock`/`mixFodDeps.hash` churn.
+`EvoGit.Config.ProviderPresets` ships the built-in schedule presets (DeepSeek off-peak discount, Z.AI GLM coding plan) as pure data — `schedule` is string-keyed so it merges straight into a canonical account; the caller decides when to apply one.
+`PeakHourEngine` prefers canonical provider profiles, falls back to legacy model profiles only when canonical accounts are absent, and applies one floored concurrency entry per account with explicit zero and peak exemptions preserved; it carries `{windows, off_peak_days, off_peak_holidays, tz}` through its wakeup math and needs no second code path for holidays.
 Account TOML/validation contracts belong to `config/`, engine/RPC integration to `lib/evo_git/CONTEXT.md`, and timer, queue and floor details to `agent_scheduler/`.
 
 ## Agent Loop Control Flow + Graceful Task Cancellation
