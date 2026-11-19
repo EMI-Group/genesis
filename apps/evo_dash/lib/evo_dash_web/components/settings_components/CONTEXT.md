@@ -120,6 +120,8 @@ The step list is always `LLMSetup.Wizard.steps_for/1`, the progress tuple `Wizar
 `step_provider/1` renders selectable provider cards with `aria-pressed`/`aria-current` plus an always-present custom-endpoint URL input.
 `step_auth/1` renders only the supported mode cards (no secret input — credentials arrive through the `:auth_detail` slot).
 `step_model/1` renders a searchable catalog list with `aria-current="true"` on the pick and an always-present free-text custom-model input.
+A row with no usable label is never blank: `Helpers.label_or_id/2` falls back to the id (model/preset rows), while `ProviderStep.provider_label/2` falls back to `LLMSetup.Identity.provider_display_name/1` for the provider id; every LABELLED row renders its label unchanged.
+A row without a usable id is dropped (`%{}` in `providers`/`models` renders nothing for that entry), so an empty list still renders the custom-endpoint card / the empty-search note instead of a nameless row.
 `step_reasoning_schedule/1` renders the canonical reasoning chips, the inventory-scoped default select, the applied strip, one button per schedule preset, the holiday-calendar select and the read-only summary rows.
 `step_test/1` renders `:idle`/`:testing`/success/error states with an always-available skip; `step_done/1` drops blank summary rows and offers the dashboard link.
 `wizard-progress` and `wizard-step-enter` are styled by `assets/css/app.css`, which disables the enter animation under `prefers-reduced-motion: reduce`.
