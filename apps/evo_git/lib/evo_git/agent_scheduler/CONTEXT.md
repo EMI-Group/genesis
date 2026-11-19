@@ -138,6 +138,12 @@ Scripts still override the fallback (nil/error results use it; invalid canonical
 **Per-agent-run prompt-cache identity**: `do_register_agent/8` passes `selection.llm_generation_params` through `Config.Schema.LLM.with_cache_identity/3` with the scope `"genesis-#{task_id}-#{agent_id}"` (or `"genesis-agent-#{agent_id}"`), so every turn, retry and compression call of ONE agent shares one routing key while distinct agents get distinct keys; the helper is provider-gated (`:openai`/`:openai_codex`), so other providers persist byte-identically.
 `register_agent/8` returns `{integer_agent_id, state}` or `{:error, reason}` (including `{:error, {:agent_id_taken, id}}`) and resolves both the id and the model selection before any counter or ETS mutation; subagent registration handles errors per child and inherits a locked parent's whole `model_spec` + lock first.
 
+## Peak/Off-Peak Concurrency Engine (`EvoGit.PeakHourEngine`)
+The engine reads each account's `off_peak_holidays` beside `off_peak_days` through its own tolerant, atom- or string-keyed readers, and threads a 4-tuple `{windows, off_peak_days, off_peak_holidays, tz}` through its wakeup math (the 3-tuple `{windows, off_peak_days, tz}` and 2-tuple `{windows, tz}` shapes are still accepted, with the calendar defaulting to nil).
+It includes `:off_peak_holidays` in the schedule map handed to `EvoGit.PeakHours.effective_concurrency/2` and passes the calendar to `PeakHours.in_peak?/4` and `next_transition/4`, keeping NO second code path: every peak/day/holiday decision (including the midnight edges of a holiday block) is re-derived from `PeakHours`.
+An unknown or blank calendar id degrades to "no calendar" in both the engine's reader and `PeakHours` itself, never raising.
+The 6h safety-net cap, config-PubSub (`"scheduler_config"`) re-derivation, the transition timer and the `:peak_hours_now_fun` / `:peak_hours_utc_now_fun` clock seams are unchanged by the calendar.
+
 ## Blocking Surface (ONE GenServer serves every agent)
 
 Every turn-path scheduler interaction is a plain `GenServer.call` into the single `EvoGit.AgentScheduler` mailbox, so any inline work in one handler delays every other agent's slot grant, release, config read and pause/cancel probe.
