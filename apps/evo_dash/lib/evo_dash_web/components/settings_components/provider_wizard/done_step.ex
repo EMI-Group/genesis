@@ -52,8 +52,8 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard.DoneStep do
 
   defp done_row(label, value) do
     case {clean_string(label), clean_string(value)} do
-      {"", _value} -> nil
-      {_label, ""} -> nil
+      {blank, _value} when blank in [nil, ""] -> nil
+      {_label, blank} when blank in [nil, ""] -> nil
       {label, value} -> {label, value}
     end
   end

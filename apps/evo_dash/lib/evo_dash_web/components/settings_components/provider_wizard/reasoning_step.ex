@@ -205,7 +205,11 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard.ReasoningStep do
         id = clean_string(value_of(preset, ["id"]))
         label = label_or_id(value_of(preset, ["label", "name"]), id)
         note = clean_string(value_of(preset, ["note"]))
-        if id == "", do: nil, else: %{id: id, label: label, note: note}
+
+        case id do
+          blank when blank in [nil, ""] -> nil
+          id -> %{id: id, label: label, note: note}
+        end
 
       _preset ->
         nil
