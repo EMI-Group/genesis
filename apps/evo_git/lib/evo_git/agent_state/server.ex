@@ -7,6 +7,11 @@ defmodule EvoGit.AgentState.Server do
   in this process, and one checkpoint is one transaction (scalar-row UPSERT +
   chunk INSERT) in strict arrival order.
 
+  Besides the conversation checkpoints, the writer handles the cheap bookkeeping
+  CASTS (`:mark_done`, the `:delete*` family and the `:update_volatile` per-turn
+  scalar update — never a synchronous barrier for a call) and three CALLS:
+  `:sync` (the honest durability barrier), `:prune` and `:put_pause_commit/4`.
+
   The dynamic repo pid is published in `:persistent_term` at init under
   `{EvoGit.AgentState, :repo, server_pid}` so `EvoGit.AgentState.repo/1` can
   answer without a `GenServer.call` (a call would queue behind pending
@@ -51,9 +56,11 @@ defmodule EvoGit.AgentState.Server do
   or a failing migration leaves the server DEGRADED (`repo: nil`) — it logs ONE
   warning and schedules a retry with bounded exponential backoff (1 s doubling
   to a 60 s cap; `:boot_retry_base`/`:boot_retry_max` override it for tests).
-  While degraded every public API stays total: a checkpoint is dropped, a read
-  answers its documented error value, `prune` answers `{:ok, 0}` and the prune
-  timer keeps rescheduling.
+  While degraded every public API stays total: a checkpoint and a
+  `:update_volatile` cast are dropped, a read answers its documented error
+  value, `prune` answers `{:ok, 0}` — no store means nothing could have expired,
+  which is NOT the answer a prune that ran and FAILED gives (`{:error, reason}`,
+  logged) — and the prune timer keeps rescheduling.
 
   A repo death (`{:EXIT, repo, reason}` / `{:DOWN, ...}`) is handled explicitly:
   the published repo is cleared, ONE warning is logged, the server stays alive
@@ -202,13 +209,39 @@ defmodule EvoGit.AgentState.Server do
     {:noreply, state}
   end
 
+  # The per-turn volatile scalars are a FIXED column set (`turn`, `usage`,
+  # `total_tokens`, `compression_count`, `current_commit`, `phase`,
+  # `pending_inputs`, `pending_tool_batch`, `status`), so they get ONE
+  # constant-shape UPDATE instead of re-encoding all 34 fields through the
+  # variable-width checkpoint upsert. A CAST like the other bookkeeping writes:
+  # a turn boundary must never become a synchronous barrier.
+  def handle_cast({:update_volatile, task_id, agent_id, fields}, state) when is_map(fields) do
+    with repo when is_pid(repo) <- state.repo do
+      report("update_volatile", task_id, Store.update_volatile(repo, task_id, agent_id, fields))
+    else
+      _degraded ->
+        Logger.debug("[AgentState] skipping volatile update: writer is degraded")
+    end
+
+    {:noreply, state}
+  end
+
+  # Anything unrecognized — including a `:update_volatile` whose `fields` is not
+  # a map — is ignored: total, never an error crash into a caller.
   def handle_cast(_message, state), do: {:noreply, state}
 
   ## Calls
 
   @impl true
+  # A DEGRADED writer and a non-durable task are DIFFERENT facts: the repo is
+  # simply absent (boot failed, or it died and a reboot is pending) while the
+  # task still has `:persistent_state` on. Answering
+  # `:not_persistent_state_disabled` here would send an operator to debug a flag
+  # that was never set, so this answers the tag the rest of the subsystem uses
+  # for "no usable store". Callers tolerate it: `EvoGit.Agent.Session.Pause`
+  # accepts ANY `{:error, reason}` from this call.
   def handle_call({:put_pause_commit, _task_id, _agent_id, _sha}, _from, %{repo: nil} = state) do
-    {:reply, {:error, :not_persistent_state_disabled}, state}
+    {:reply, {:error, :store_unavailable}, state}
   end
 
   def handle_call({:put_pause_commit, task_id, agent_id, sha}, _from, state) do
@@ -234,19 +267,32 @@ defmodule EvoGit.AgentState.Server do
     {:reply, reply, state}
   end
 
+  # A DEGRADED writer has NO store, so "nothing was expired" is the honest and
+  # documented answer (`{:ok, 0}`) — distinct from a prune that RAN and failed,
+  # which must never be reported as a successful empty sweep.
   def handle_call(:prune, _from, %{repo: nil} = state), do: {:reply, {:ok, 0}, state}
 
   def handle_call(:prune, _from, state) do
     reply =
       case Store.prune(state.repo, state.retention_days) do
-        {:ok, count} -> {:ok, count}
-        {:error, reason} -> log_store_error("prune", nil, reason)
+        {:ok, count} ->
+          {:ok, count}
+
+        {:error, reason} ->
+          # `log_store_error/3` returns `:ok` for its own convenience, so it can
+          # never BE the reply: a failed sweep has to answer with the failure.
+          log_store_error("prune", nil, reason)
+          {:error, reason}
       end
 
     {:reply, reply, state}
   end
 
-  def handle_call(_message, _from, state), do: {:reply, :ok, state}
+  # A client can never crash the SHARED writer, so this stays a total
+  # catch-all — but a mistyped operation must not look like `:sync`'s success.
+  def handle_call(message, _from, state) do
+    {:reply, {:error, {:unknown_call, message}}, state}
+  end
 
   ## Timers & repo lifecycle
 
