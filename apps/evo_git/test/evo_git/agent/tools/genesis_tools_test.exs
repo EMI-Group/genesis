@@ -2,6 +2,9 @@ Code.require_file("elixir_eval_fixture_helper.exs", __DIR__)
 Code.require_file("../../../fixtures/task_control/mcp_tools_baseline.fixture", __DIR__)
 
 defmodule EvoGit.Agent.Tools.GenesisToolsTest do
+  # async: false is FORCED by the app-global VCT and the app-booted
+  # `EvoGit.CommandApproval` singleton (its roster is driven here), plus the
+  # BEAM-global `:command_approval_timeout` app-env key one test shrinks.
   use EvoGit.TaskRegistryCase, async: false
 
   alias EvoGit.Agent.Tools

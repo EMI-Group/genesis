@@ -1,4 +1,6 @@
 defmodule EvoGit.AssistantTaskLinksTest do
+  # async: false is FORCED by the app-global `EvoGit.AssistantTaskLinks`
+  # singleton: every test writes and reads that one shared ETS-backed table.
   use ExUnit.Case, async: false
 
   test "conversation references are isolated, deduplicated and bounded" do

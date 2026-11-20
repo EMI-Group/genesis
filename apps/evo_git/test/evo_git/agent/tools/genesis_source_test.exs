@@ -1,6 +1,9 @@
 Code.require_file("elixir_eval_fixture_helper.exs", __DIR__)
 
 defmodule EvoGit.Agent.Tools.GenesisSourceTest do
+  # async: false is FORCED by BEAM-global knobs: the `:self_reflective_source_*`
+  # app-env keys and the `GENESIS_SOURCE_ROOT` OS env var (both read by the
+  # app-global source resolution), plus the app-global VCT mount it may touch.
   use EvoGit.TaskRegistryCase, async: false
 
   alias EvoGit.Agent.Tools
