@@ -214,6 +214,13 @@ defmodule EvoGit.ProcessManager.Control do
     end
   end
 
+  # A KILL that raises is a kill failure, a stats probe that raises is a probe
+  # failure, a signal that raises is a signal failure — never one generic tag
+  # for all three.
+  @crash_tags %{stats: :probe_failed, kill: :kill_failed, signal: :signal_failed}
+
+  defp crash_tag(operation), do: Map.get(@crash_tags, operation, :backend_failed)
+
   # Runs one backend call and contains ANY raise/exit/throw, tagging it by the
   # operation that failed (`:stats` → `:probe_failed`, `:kill` → `:kill_failed`,
   # `:signal` → `:signal_failed`).
@@ -233,13 +240,6 @@ defmodule EvoGit.ProcessManager.Control do
   end
 
   ## Internal
-
-  # A KILL that raises is a kill failure, a stats probe that raises is a probe
-  # failure, a signal that raises is a signal failure — never one generic tag
-  # for all three.
-  @crash_tags %{stats: :probe_failed, kill: :kill_failed, signal: :signal_failed}
-
-  defp crash_tag(operation), do: Map.get(@crash_tags, operation, :backend_failed)
 
   defp dispatch(_fun, handle) when not is_struct(handle, Handle), do: {:error, :no_handle}
 

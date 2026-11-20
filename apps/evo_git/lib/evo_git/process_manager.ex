@@ -293,11 +293,10 @@ defmodule EvoGit.ProcessManager do
           true -> store_sample(server, id, probe(handle))
         end
 
-      {:error, :not_found} ->
-        {:error, :not_found}
-
+      # An unknown id answers `{:error, :not_found}`, and a wedged or crashed
+      # registry passes its own reason through unchanged — a timeout or a
+      # registry exit is NOT "no such execution".
       {:error, reason} ->
-        # A wedged/crashed registry is NOT "no such execution".
         {:error, reason}
     end
   end
@@ -399,11 +398,10 @@ defmodule EvoGit.ProcessManager do
             end
         end
 
-      {:error, :not_found} ->
-        {:error, :not_found}
-
+      # An unknown id answers `{:error, :not_found}`, and a wedged or crashed
+      # registry passes its own reason through unchanged — a timeout or a
+      # registry exit is NOT "no such execution".
       {:error, reason} ->
-        # A wedged/crashed registry is NOT "no such execution".
         {:error, reason}
     end
   end
@@ -484,11 +482,10 @@ defmodule EvoGit.ProcessManager do
           true -> kill_execution(server, id, execution, handle, opts)
         end
 
-      {:error, :not_found} ->
-        {:error, :not_found}
-
+      # An unknown id answers `{:error, :not_found}`, and a wedged or crashed
+      # registry passes its own reason through unchanged — a timeout or a
+      # registry exit is NOT "no such execution".
       {:error, reason} ->
-        # A wedged/crashed registry is NOT "no such execution".
         {:error, reason}
     end
   end
