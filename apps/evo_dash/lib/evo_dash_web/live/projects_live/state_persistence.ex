@@ -7,6 +7,7 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
   """
 
   alias EvoGit.Core.ForeignRepo
+  alias EvoDashWeb.DraftScope
   alias EvoDashWeb.LLMSelection
   alias EvoDashWeb.ProjectsLive.ProjectFlow
   alias EvoDashWeb.ProjectsLive.ModelSelectionScope
@@ -15,12 +16,51 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
 
   # Speed ↔ quality segmented control values (STRING, mirrors :mode).
   @quality_levels ~w(fast balanced high_quality)
+
+  @doc """
+  Returns the task form's draft SCOPE TOKEN for the current project: its VCT
+  point (`vct:///projects/<name>`), else the raw absolute OS path, else nil.
+
+  This is the ONE computation behind both the `data-task-draft-scope` render
+  attribute and the `scope_token` field of the `persist_state` /
+  `persist_model_selection` payloads, so the browser can never store a draft
+  under a different scope than the DOM advertises.
+
+  The project is resolved from the SAME source as the payloads' `project` field
+  (`maybe_persist_state/1`): the URL/reconnect `"project"` param, else the
+  active project path. The point lookup is PURE over already-loaded data — the
+  active project's own point when it belongs to that path, else
+  `ProjectFlow.mount_point_for/2` over `@projects`, which arrives through the
+  page's async batch loader. No store/RPC read ever happens here, so the first
+  frame may still carry the raw-path token; the JS hook migrates that path-keyed
+  draft when the point lands (no server-side re-key needed).
+  """
+  @spec draft_scope(map()) :: DraftScope.token() | nil
+  def draft_scope(assigns) do
+    path = draft_path(assigns)
+
+    case draft_point(assigns, path) do
+      nil -> DraftScope.project(path)
+      # A blank/invalid point degrades to the path token, never to nil.
+      point -> DraftScope.project(point) || DraftScope.project(path)
+    end
+  end
+
+  defp draft_point(_assigns, path) when not is_binary(path), do: nil
+
+  defp draft_point(assigns, path) do
+    case assigns[:active_project] do
+      %{path: ^path, point: point} when is_binary(point) -> point
+      _ -> ProjectFlow.mount_point_for(assigns[:projects] || [], path)
+    end
+  end
+
   @doc """
   Pushes current form state to the browser for localStorage persistence.
   """
   def maybe_persist_state(socket) do
     state = %{
-      project: draft_project(socket) || socket.assigns.active_project_path,
+      project: draft_path(socket.assigns),
       task_mode: socket.assigns.task_mode,
       selected_agent_id: socket.assigns.selected_agent_id,
       quality_level: socket.assigns[:quality_level],
@@ -40,7 +80,13 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
       node: socket.assigns[:current_node_id] || "local"
     }
 
-    push_event(socket, "persist_state", Map.merge(state, model_selection_state(socket.assigns)))
+    push_event(
+      socket,
+      "persist_state",
+      state
+      |> Map.merge(model_selection_state(socket.assigns))
+      |> put_scope_token(socket.assigns)
+    )
   end
 
   @doc """
@@ -59,9 +105,10 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
         socket.assigns
         |> model_selection_state()
         |> Map.put(:node, socket.assigns[:current_node_id] || "local")
+        |> put_scope_token(socket.assigns)
 
       state =
-        case draft_project(socket) do
+        case draft_param(socket.assigns) do
           project when is_binary(project) -> Map.put(state, :project, project)
           _ -> state
         end
@@ -72,7 +119,33 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
     end
   end
 
-  defp draft_project(socket), do: get_in(socket.assigns, [:workbench_reconnect_params, "project"])
+  # The scope the draft belongs to, stamped on every persisted payload so the
+  # browser can verify the exact scope before adopting an entry.
+  #
+  # Only a VCT POINT is stamped: a raw-path token is already the payload's
+  # `project` identity, the hook stamps path scopes on its own writes, and
+  # keeping the path case byte-identical to the legacy payload shape avoids a
+  # redundant key. Absent (not nil) with no project at all, where the hook falls
+  # back to the un-scoped `dashboard_state` key.
+  defp put_scope_token(state, assigns) do
+    case draft_scope(assigns) do
+      token when is_binary(token) ->
+        if DraftScope.point?(token), do: Map.put(state, :scope_token, token), else: state
+
+      nil ->
+        state
+    end
+  end
+
+  # The URL/reconnect `"project"` param (a Review-page resume landing or a
+  # workbench reconnect) — the raw-path identity the merge-only
+  # `persist_model_selection` event carries when it is set.
+  defp draft_param(assigns), do: get_in(assigns, [:workbench_reconnect_params, "project"])
+
+  # The project path the draft belongs to: that param, else the active project
+  # path. ONE source for `maybe_persist_state/1`'s `project` field and for
+  # `draft_scope/1`, so render and persist can never disagree.
+  defp draft_path(assigns), do: draft_param(assigns) || assigns[:active_project_path]
 
   @doc """
   Serializes only the three canonical model-spec fields, never the picker
