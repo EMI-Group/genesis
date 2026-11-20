@@ -651,14 +651,22 @@ defmodule EvoGit.Agent.Tools.Shared do
 
   ## Amend (squash) opt-in — `commit_files/5`
 
-  `commit_files/5` takes a keyword `opts`; the only recognised key is
-  `amend: true` (default `[]`, i.e. this arity's plain per-call commit).
-  With `amend: true` AND exactly ONE path in `files`, HEAD is AMENDED instead of
-  a new commit being created — but only when `amendable_context_head/3` proves
-  HEAD is this tool's own auto CONTEXT.md commit for that exact file (see
-  `@context_commit_subject_prefix`) and is PRIVATE to the current branch.
-  Any failed check falls back to the plain commit; the return contract is
-  identical (`{:ok, add+amend output} | {:error, message}`).
+  `commit_files/5` takes a keyword `opts` with two recognised keys:
+
+  * `amend: true` (default `false`) — with exactly ONE path in `files`, HEAD is
+    AMENDED instead of a new commit being created, but only when
+    `amendable_context_head/3` proves HEAD is this tool's own auto CONTEXT.md
+    commit (see `@context_commit_subject_prefix`), EVERY path it changed is a
+    CONTEXT.md path, and it is PRIVATE to the current branch.
+    Any failed check falls back to the plain commit, and MORE than one path in
+    `files` always stays a plain commit (one call = one plain commit).
+  * `amend_message_fun: (paths -> message)` — invoked ONLY on the successful
+    amend path, with the union of HEAD's changed paths and the new path
+    (deduped, deterministically sorted); its binary return value replaces
+    `message` for the amend only. Absent (or not a 1-arity fun) → `message`.
+
+  The return contract is identical either way
+  (`{:ok, add+commit output} | {:error, message}`).
   """
   def commit_files(repo_path, repo_root, files, message)
       when is_binary(repo_path) and is_list(files) and is_binary(message),
@@ -708,14 +716,41 @@ defmodule EvoGit.Agent.Tools.Shared do
   # A commit that turns out to have nothing staged is a graceful no-op.
   #
   # `amend: true` + exactly ONE path + an amendable HEAD squashes into HEAD
-  # instead (a batch of same-file CONTEXT.md edits stays ONE commit).
+  # instead (a batch of CONTEXT.md edits stays ONE commit). The amend message is
+  # built from the FINAL path set ONCE here — HEAD's changed paths ∪ the new
+  # path, deduped and sorted — so `opts[:amend_message_fun]` can list every file
+  # that ends up in the squashed commit. The plain commit keeps `message`.
   defp commit_staged(repo_path, repo_root, paths, message, add_output, opts) do
     case amend_target(repo_path, repo_root, paths, opts) do
-      {:ok, relative_path} ->
-        amend_staged(repo_path, repo_root, relative_path, message, add_output)
+      {:ok, relative_path, head_paths} ->
+        final_paths = head_paths |> Kernel.++([relative_path]) |> Enum.uniq() |> Enum.sort()
+
+        amend_staged(
+          repo_path,
+          repo_root,
+          relative_path,
+          amend_message(opts, final_paths, message),
+          add_output
+        )
 
       :error ->
         do_commit(repo_path, repo_root, message, add_output)
+    end
+  end
+
+  # The caller's message builder is invoked ONLY on the amend path; anything
+  # other than a usable 1-arity fun returning a non-empty binary keeps the
+  # original message.
+  defp amend_message(opts, paths, message) do
+    case Keyword.get(opts, :amend_message_fun) do
+      fun when is_function(fun, 1) ->
+        case fun.(paths) do
+          custom when is_binary(custom) and custom != "" -> custom
+          _ -> message
+        end
+
+      _ ->
+        message
     end
   end
 
@@ -770,12 +805,14 @@ defmodule EvoGit.Agent.Tools.Shared do
 
   defp amend_requested?(opts), do: Keyword.get(opts, :amend, false) == true
 
-  # `{:ok, repo_relative_path}` when HEAD may be amended for this one file, else
-  # `:error` (the caller falls back to a plain commit).
+  # `{:ok, repo_relative_path, head_changed_paths}` when HEAD may be amended for
+  # this file, else `:error` (the caller falls back to a plain commit).
   #
   # These are the four conditions, all load-bearing:
   #   1. HEAD has exactly ONE parent (never amend a merge commit).
-  #   2. HEAD changed EXACTLY this file (nothing unrelated folded in).
+  #   2. HEAD changed one or MORE paths, and EVERY one of them is a CONTEXT.md
+  #      path — so several CONTEXT.md edits squash into one commit while an
+  #      unrelated file is never folded in.
   #   3. HEAD's subject is this tool's own auto context commit for the dir.
   #   4. HEAD is PRIVATE to the current branch — a subagent worktree branches off
   #      its parent's HEAD, so amending a commit still contained in the parent's
@@ -799,7 +836,7 @@ defmodule EvoGit.Agent.Tools.Shared do
              "-r",
              "HEAD"
            ]),
-         {:ok, true} <- {:ok, changed == [relative_path]},
+         {:ok, true} <- {:ok, context_paths?(changed)},
          {:ok, subject} <- git_output(repo_path, repo_root, ["log", "-1", "--pretty=%s"]),
          {:ok, true} <- {:ok, String.starts_with?(subject, @context_commit_subject_prefix)},
          {:ok, refs} <-
@@ -811,11 +848,20 @@ defmodule EvoGit.Agent.Tools.Shared do
            ]),
          {:ok, head_ref} <- git_output(repo_path, repo_root, ["symbolic-ref", "HEAD"]),
          {:ok, true} <- {:ok, refs == [head_ref]} do
-      {:ok, relative_path}
+      {:ok, relative_path, changed}
     else
       _ -> :error
     end
   end
+
+  # A non-empty changed-path list whose every entry is a CONTEXT.md file.
+  defp context_paths?([_ | _] = paths), do: Enum.all?(paths, &context_path?/1)
+  defp context_paths?(_paths), do: false
+
+  defp context_path?(path) when is_binary(path),
+    do: path == "CONTEXT.md" or String.ends_with?(path, "/CONTEXT.md")
+
+  defp context_path?(_path), do: false
 
   # `git rev-list --parents` prints every sha of one commit on ONE line, so the
   # fields are whitespace-separated, not one per line.

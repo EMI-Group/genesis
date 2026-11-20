@@ -296,19 +296,34 @@ defmodule EvoGit.Agent.Tools.Context do
   # `git commit -F <tmpfile>` work (incl. the co-author trailer) lives in the
   # single shared helper `Shared.commit_files/4`.
   #
-  # `amend: true` opts into squashing: consecutive same-file CONTEXT.md edits
-  # amend the previous auto context commit instead of stacking one-file commits
-  # (`Shared` decides — HEAD must be this tool's own commit for this exact file
+  # `amend: true` opts into squashing: consecutive CONTEXT.md edits amend the
+  # previous auto context commit instead of stacking one-file commits (`Shared`
+  # decides — HEAD must be this tool's own commit touching only CONTEXT.md files
   # and private to the current branch, else it falls back to a new commit).
+  # `amend_message_fun` owns the message spelling: the subject always stays
+  # `"Update CONTEXT.md for <dir>"`, plus a file list once several CONTEXT.md
+  # files end up in the same amended commit.
   defp maybe_commit_context(result_msg, _dir_path, false, _repo_path, _repo_root), do: result_msg
 
   defp maybe_commit_context(result_msg, dir_path, true, repo_path, repo_root) do
     relative_path = Path.join(dir_path, "CONTEXT.md")
-    message = "Update CONTEXT.md for #{dir_path}"
+    message = context_commit_message(dir_path)
 
-    case Shared.commit_files(repo_path, repo_root, [relative_path], message, amend: true) do
+    options = [amend: true, amend_message_fun: &amend_context_message(message, &1)]
+
+    case Shared.commit_files(repo_path, repo_root, [relative_path], message, options) do
       {:ok, output} -> result_msg <> "\n\nCommitted:\n" <> output
       {:error, reason} -> reason
     end
+  end
+
+  defp context_commit_message(dir_path), do: "Update CONTEXT.md for #{dir_path}"
+
+  # A single-file squash keeps the bare subject; several files in one amended
+  # commit are listed under it, in the (already sorted/deduped) given order.
+  defp amend_context_message(message, [_single]), do: message
+
+  defp amend_context_message(message, paths) do
+    message <> "\n\nFiles in this commit:\n" <> Enum.map_join(paths, "\n", &"- #{&1}")
   end
 end
