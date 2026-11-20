@@ -128,11 +128,9 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   attr(:prompt, :string, default: "")
   attr(:mode, :string, default: "genesis_new")
-  attr(:mode_info, :string, default: "")
   attr(:node_path, :string, default: "")
   attr(:starting_commit, :string, default: "")
   attr(:resume_from, :string, default: "")
-  attr(:show_advanced, :boolean, default: false)
   attr(:disabled, :boolean, default: false)
   attr(:launch_disabled, :boolean, default: false)
   attr(:archive, :boolean, default: false)
@@ -1107,100 +1105,6 @@ defmodule EvoDashWeb.TaskFormComponents do
         </span>
       </div>
     </label>
-    """
-  end
-
-  # ---------------------------------------------------------------------------
-  # advanced_options/1 — (legacy) Extracted Advanced Options panel
-  # (evolve-family modes: evolve + custom agent)
-  #
-  # Kept for backwards compatibility. The content now lives in task_options_tab/1.
-  # Rendered OUTSIDE the task_form's <.form> element in projects_live.ex,
-  # so each input MUST carry form="task-form" to associate with the form.
-  # ---------------------------------------------------------------------------
-
-  attr(:show_advanced, :boolean, default: false)
-  attr(:node_path, :string, default: "")
-  attr(:starting_commit, :string, default: "")
-  attr(:resume_from, :string, default: "")
-  attr(:mode, :string, default: "evolve_simple")
-  attr(:disabled, :boolean, default: false)
-
-  def advanced_options(assigns) do
-    ~H"""
-    <%= if evolve_family_mode?(@mode) do %>
-      <div class={[
-        "rounded-xl bg-base-100 border border-base-200 shadow-sm overflow-hidden transition-opacity",
-        @disabled && "opacity-40 pointer-events-none select-none"
-      ]}>
-        <div class="p-3.5 flex items-center gap-2 border-b border-base-200">
-          <.icon name="hero-adjustments-horizontal" class="size-4 text-base-content/60" />
-          <span class="text-sm font-semibold flex-1">{gettext("Advanced Options")}</span>
-        </div>
-        <div class="p-4 space-y-4">
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div class="form-control">
-              <label class="label pb-1">
-                <span class="label-text font-medium text-sm">{gettext("Starting Node")}
-                <%!-- zh_CN: evolution → "演进" --%>
-                <.tip text={
-                  gettext(
-                    "The subdirectory within the project to start evolution from. Use './' for root."
-                  )
-                } /></span>
-              </label>
-              <input
-                type="text"
-                name="node_path"
-                form="task-form"
-                value={@node_path}
-                class="input input-bordered input-sm w-full font-mono"
-                placeholder={gettext("e.g., ./src/components")}
-              />
-            </div>
-            <div class="form-control">
-              <label class="label pb-1">
-                <span class="label-text font-medium text-sm"><%!-- zh_CN: Commit → "提交" --%>{gettext(
-                  "Starting Commit"
-                )}
-                <%!-- zh_CN: commit → "提交", branch → "分支" --%>
-                <.tip text={
-                  gettext(
-                    "A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD."
-                  )
-                } /></span>
-              </label>
-              <input
-                type="text"
-                name="starting_commit"
-                form="task-form"
-                value={@starting_commit}
-                class="input input-bordered input-sm w-full font-mono"
-                placeholder={gettext("e.g., abc1234 or HEAD")}
-              />
-            </div>
-          </div>
-          <div class="form-control">
-            <label class="label pb-1">
-              <span class="label-text font-medium text-sm">{gettext("Resume from")}
-              <.tip text={
-                gettext(
-                  "The ID of a previous task to continue from. Injects the previous task's context (commits, objective, and result) into this task's objective."
-                )
-              } /></span>
-            </label>
-            <input
-              type="text"
-              name="resume_from"
-              form="task-form"
-              value={@resume_from}
-              class="input input-bordered input-sm w-full font-mono"
-              placeholder="a1b2c3d4"
-            />
-          </div>
-        </div>
-      </div>
-    <% end %>
     """
   end
 end
