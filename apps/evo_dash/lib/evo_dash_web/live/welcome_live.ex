@@ -17,6 +17,7 @@ defmodule EvoDashWeb.WelcomeLive do
 
   alias EvoDashWeb.LLMSetup.{ChatGPT, ChatGPTSignIn, Reasoning}
   alias EvoDashWeb.SettingsComponents.ProviderWizard
+  alias EvoDashWeb.SettingsLive.ChatGPTSignInState
   alias EvoDashWeb.SettingsLive.ConfigIO
   alias EvoDashWeb.WelcomeLive.Presentation
   alias EvoDashWeb.WelcomeLive.Setup
@@ -478,6 +479,18 @@ defmodule EvoDashWeb.WelcomeLive do
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   @impl true
+  def terminate(_reason, socket) do
+    # A page that goes away with a WAITING sign-in must close it now: the poll
+    # task dies with its owner, but the loopback listener lives in the flow
+    # module until its own timeout. `ChatGPTSignInState.cancel/1` is the SAME
+    # entry point `/settings` uses (no second cancel implementation) and is
+    # total and quiet — a missing/garbage assign, a non-waiting phase (idle, ok,
+    # error) or a flow that is already gone cancels nothing and never raises.
+    _state = ChatGPTSignInState.cancel(assigned_sign_in(socket))
+    :ok
+  end
+
+  @impl true
   def render(assigns) do
     assigns = ViewModel.prepare_view(assigns)
 
@@ -668,6 +681,18 @@ defmodule EvoDashWeb.WelcomeLive do
   # Dropping the flow id is the WHOLE invalidation: the poll's result is matched
   # against the current flow id, and the flow itself expires on its own window.
   defp reset_sign_in(socket), do: assign(socket, :chatgpt_sign_in, %{})
+
+  # TOTAL: the assigned sign-in state, else the idle state (which cancels
+  # nothing). `terminate/2` runs after the socket is gone, so a shape this page
+  # never assigns must answer a value instead of raising.
+  defp assigned_sign_in(%{assigns: assigns}) when is_map(assigns) do
+    case assigns[:chatgpt_sign_in] do
+      %{} = state -> state
+      _state -> ChatGPTSignInState.new()
+    end
+  end
+
+  defp assigned_sign_in(_socket), do: ChatGPTSignInState.new()
 
   defp current_sign_in_flow?(socket, flow_id) do
     is_binary(flow_id) and Map.get(socket.assigns.chatgpt_sign_in, :flow_id) == flow_id

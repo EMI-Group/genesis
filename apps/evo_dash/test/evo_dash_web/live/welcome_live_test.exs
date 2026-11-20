@@ -7,6 +7,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
   import Phoenix.LiveViewTest
   alias EvoGit.Config.LLMCatalog, as: Catalog
   alias EvoDashWeb.LLMSetup.Reasoning
+  alias EvoDashWeb.SettingsLive.ChatGPTSignInState
   alias EvoDashWeb.WelcomeLive.Presentation
 
   # Canonical resolution can cold-load the model catalog before reaching the
@@ -562,6 +563,56 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       refute has_element?(view, "#welcome-chatgpt-waiting")
       refute has_element?(view, "#welcome-chatgpt-sign-in-error")
+    end
+
+    test "unmounting the page cancels a flow that is still waiting", %{conn: conn} do
+      {:ok, view, _html} = start(conn)
+      pick(view, "openai_codex")
+      view |> element("#welcome-chatgpt-sign-in") |> render_click()
+
+      assert_receive {:signin_stub, {:begin, "default"}}, @stub_call_timeout
+      assert has_element?(view, "#welcome-chatgpt-waiting")
+      state = assigns(view).chatgpt_sign_in
+
+      # Navigating away must close the loopback listener NOW, not leave it to the
+      # flow's own ten-minute timeout: the state the page holds is exactly the
+      # one the shared cancel entry point (the same one `/settings` uses) closes.
+      assert %{phase: :waiting, flow_id: "welcome-flow"} = state
+      assert ChatGPTSignInState.waiting?(state)
+      assert ChatGPTSignInState.flow_id(state) == "welcome-flow"
+
+      GenServer.stop(view.pid)
+
+      # `GenServer.stop/1` is synchronous: `terminate/2` has already run, so the
+      # cancel is in this mailbox and the waiting flow is gone.
+      assert_receive {:signin_stub, {:cancel, "welcome-flow"}}, @stub_call_timeout
+
+      # The other phases this page assigns are never treated as waiting, so a
+      # terminate after them closes nothing.
+      refute ChatGPTSignInState.waiting?(%{phase: :ok})
+      refute ChatGPTSignInState.waiting?(%{phase: :idle})
+      refute ChatGPTSignInState.waiting?(%{})
+    end
+
+    test "unmounting the page with no waiting sign-in cancels nothing", %{conn: conn} do
+      EvoGit.TestSupport.ChatGPTFixture.seed!("work")
+      {:ok, view, _html} = start(conn)
+
+      # (a) idle: no flow was ever started.
+      GenServer.stop(view.pid)
+      refute_receive {:signin_stub, {:cancel, _flow_id}}, 0
+
+      # (b) the flow already reached its terminal `:ok` phase.
+      {:ok, view, _html} = start(conn)
+      pick(view, "openai_codex")
+      view |> element("#welcome-chatgpt-sign-in") |> render_click()
+      assert_receive {:signin_stub, {:begin, "default"}}, @stub_call_timeout
+
+      Process.put(:signin_stub_statuses, %{"welcome-flow" => {:ok, %{account: "work"}}})
+      await(fn -> assigns(view).chatgpt_sign_in == %{phase: :ok} end)
+
+      GenServer.stop(view.pid)
+      refute_receive {:signin_stub, {:cancel, _flow_id}}, 0
     end
 
     test "a refused or denied sign-in shows friendly text, never a raw reason", %{conn: conn} do
