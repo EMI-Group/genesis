@@ -29,7 +29,7 @@ defmodule EvoGit.TaskRegistry.StoreGuard do
   hide bugs in the registry's own logic. Each call site therefore names its
   operation and passes its degraded value explicitly.
 
-  ## The two helpers
+  ## The three helpers
 
     * `read(op, degraded, fun)` — `fun.()`'s value, or `degraded` on exit /
       raise / throw.
@@ -37,6 +37,18 @@ defmodule EvoGit.TaskRegistry.StoreGuard do
       exit / raise / throw. Write call sites handle that EXACTLY like
       `{:error, :disk_full}` (log + continue with the in-memory behavior): the
       registry never exits from a store call.
+    * `fetch(op, fun)` — `{:ok, fun.()}` or the atom `:unavailable` on exit /
+      raise / throw.
+
+  ## `fetch/2` is MANDATORY when a degraded `nil`/`[]` would read as a FACT
+
+  `read/3`'s degraded value is the read's own empty shape, which is exactly
+  right for a caller that only wants "some value to render". It is WRONG for a
+  caller that must tell a genuine domain answer ("no such row", "no rows") from
+  a store outage: `read(op, nil, …)` answers `nil` in both cases, so an outage
+  would be indistinguishable from an absent task. Every such read goes through
+  `fetch/2`, which keeps the fault OUT of the value space
+  (`EvoGit.TaskRegistry.StoreRead` is the ONE three-state surface built on it).
   """
 
   require Logger
@@ -68,6 +80,19 @@ defmodule EvoGit.TaskRegistry.StoreGuard do
   @spec write(String.t(), (-> term())) :: term() | {:error, :store_unavailable}
   def write(op, fun) when is_binary(op) and is_function(fun, 0) do
     invoke(op, @degraded_write_error, fun)
+  end
+
+  @doc """
+  Runs a store READ whose answer must stay distinguishable from an outage:
+  `{:ok, value}` on success, the atom `:unavailable` on exit / raise / throw.
+  Never raises, never exits.
+
+  Use this — never `read/3` — whenever a `nil` or `[]` degraded value could be
+  mistaken for a domain fact (a missing row, an empty result), see the moduledoc.
+  """
+  @spec fetch(String.t(), (-> term())) :: {:ok, term()} | :unavailable
+  def fetch(op, fun) when is_binary(op) and is_function(fun, 0) do
+    invoke(op, :unavailable, fn -> {:ok, fun.()} end)
   end
 
   # This per-call boundary contains store faults, not the registry's own logic.

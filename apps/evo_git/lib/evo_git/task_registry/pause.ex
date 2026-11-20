@@ -79,6 +79,7 @@ defmodule EvoGit.TaskRegistry.Pause do
   alias EvoGit.AgentState.Record
   alias EvoGit.TaskRegistry.AgentStateRead
   alias EvoGit.TaskRegistry.StoreGuard
+  alias EvoGit.TaskRegistry.StoreRead
 
   # The `{:ok, transition}` shapes `pause/2` answers so the caller knows whether a
   # broadcast is due: only a REAL transition (`:pausing`) is broadcast.
@@ -98,8 +99,8 @@ defmodule EvoGit.TaskRegistry.Pause do
 
   Refusals, in this order (each leaves the row UNTOUCHED):
 
-    * unknown task → `{:error, :not_found}` (only a genuinely absent row; a row
-      whose status cannot be read is never `:not_found`);
+    * unknown task → `{:error, :not_found}` (only a genuinely ABSENT row — a
+      store OUTAGE answers `{:error, :store_unavailable}`, never `:not_found`);
     * `:pausing` / `:paused` → `{:ok, :already_pausing} | {:ok, :already_paused}`
       — IDEMPOTENT: no write, no scheduler call, and the caller must not
       broadcast;
@@ -120,15 +121,17 @@ defmodule EvoGit.TaskRegistry.Pause do
   answered. Costs one extra write in the failure case; the alternative — a
   `:pausing` row with no agents to drain — is unrecoverable without a restart.
 
-  The status is read through `EvoGit.Store.select_task_update_info/2` (narrow:
-  status + opts, never `result`). An unreadable/NULL status reads as `nil` there
-  and falls into the `:not_running` refusal, never `:not_found`.
+  The status is read through `EvoGit.TaskRegistry.StoreRead.update_info/2` (the
+  three-state wrapper over the narrow `select_task_update_info/2` read: status +
+  opts, never `result`). An unreadable/NULL status reads as `nil` there and
+  falls into the `:not_running` refusal, never `:not_found`.
   """
   @spec pause(GenServer.server(), String.t()) :: pause_result()
   def pause(store, task_id) do
     case read_update_info(store, task_id) do
-      nil -> {:error, :not_found}
-      %{status: status, opts: opts} -> classify(store, task_id, status, opts)
+      {:ok, %{status: status, opts: opts}} -> classify(store, task_id, status, opts)
+      :absent -> {:error, :not_found}
+      :unavailable -> {:error, :store_unavailable}
     end
   end
 
@@ -187,7 +190,8 @@ defmodule EvoGit.TaskRegistry.Pause do
   persisted opts (never a fresh id — `start_task/2` is deliberately not used).
 
   Accepts `:paused` ONLY: any other status answers `{:error, :not_paused}` and an
-  absent row `{:error, :not_found}`.
+  ABSENT row `{:error, :not_found}` (a store outage answers `{:error,
+  :store_unavailable}` — an unreadable row is never reported as absent).
 
   On a paused row it re-runs the SAME admission `start_task/2` runs
   (`RuntimeOpts.admit_task_path/1`, `admit_model_selection/2` against the CURRENT
@@ -243,15 +247,21 @@ defmodule EvoGit.TaskRegistry.Pause do
         ) :: resume_result()
   def resume(store, task_id, server, spawn_fun \\ nil) do
     case read_row(store, task_id) do
-      nil ->
-        {:error, :not_found}
-
-      %{} = task ->
+      {:ok, task} ->
         with :ok <- ensure_paused(task),
              {:ok, spawn_opts} <- admit(task),
              {:ok, root} <- ensure_root_run(task_id) do
           requeue(store, task, put_resume_facts(spawn_opts, task_id, root), server, spawn_fun)
         end
+
+      :absent ->
+        {:error, :not_found}
+
+      :unavailable ->
+        # The store could not answer: the row may well be a perfectly resumable
+        # paused task, so this is NEVER `:not_found` — retry once the store is
+        # back.
+        {:error, :store_unavailable}
     end
   end
 
@@ -282,22 +292,6 @@ defmodule EvoGit.TaskRegistry.Pause do
       _none -> {:error, :not_resumable}
     end
   end
-
-  # The task's durable ROOT run — the record whose `fields[:parent_id]` is
-  # absent or `nil` (a missing key counts as root) — or `nil`. The roster is
-  # ordered `depth ASC, agent_id ASC`, so `Enum.find/2` yields the LOWEST
-  # `agent_id` when several root rows exist. Total: an unanswerable read
-  # degrades to `[]` and therefore to `nil`.
-  defp read_root_run(task_id, op) do
-    task_id
-    |> AgentStateRead.roster(op: op)
-    |> Enum.find(&root_run?/1)
-  end
-
-  defp root_run?(%Record{fields: fields}) when is_map(fields),
-    do: is_nil(Map.get(fields, :parent_id))
-
-  defp root_run?(_record), do: false
 
   # The resumed ROOT run's five resume facts, resolved HERE — in the caller of
   # `EvoGit.AgentScheduler.Dispatch`, never inside the scheduler. The dispatch
@@ -409,13 +403,55 @@ defmodule EvoGit.TaskRegistry.Pause do
   """
   @spec dirty_pausable?(map()) :: boolean()
   def dirty_pausable?(%{id: task_id} = task) do
-    opts = Map.get(task, :opts)
-
-    persistent_state_on?(opts) and not interactive?(opts) and
-      not is_nil(read_root_run(task_id, "dirty_pause_roster"))
+    dirty_pausable?(task, not is_nil(read_root_run(task_id, "dirty_pause_roster")))
   end
 
   def dirty_pausable?(_task), do: false
+
+  @doc """
+  The ONE pure RESUMABILITY rule: `durable_root?` (whether the task's durable
+  ROOT agent run exists) AND `:persistent_state` on AND not an interactive
+  session.
+
+  This is the in-memory half of `dirty_pausable?/1`, split out for
+  `EvoGit.TaskRegistry.Restart.classify/2`, which resolves `durable_root?` for
+  MANY tasks in one batched durable read and then classifies each row here —
+  so the rule itself is never re-derived. The two option predicates are the
+  SAME ones `pause/2` refuses with (`interactive?/1`, `persistent_state_on?/1`).
+  """
+  @spec dirty_pausable?(map(), boolean()) :: boolean()
+  def dirty_pausable?(%{id: _id} = task, true) do
+    opts = Map.get(task, :opts)
+
+    persistent_state_on?(opts) and not interactive?(opts)
+  end
+
+  def dirty_pausable?(_task, _durable_root?), do: false
+
+  @doc """
+  `true` when a durable agent-state record is a ROOT run — the record whose
+  `fields[:parent_id]` is absent or `nil`.
+
+  The durable tree is keyed `(task_id, agent_id)` and only the ROOT record can
+  restore a paused task (a resume starts from the root), so this ONE predicate
+  is shared by resume admission (`read_root_run/2`) and the batched restart
+  classification.
+  """
+  @spec root_run?(EvoGit.AgentState.Record.t()) :: boolean()
+  def root_run?(%Record{fields: fields}) when is_map(fields),
+    do: is_nil(Map.get(fields, :parent_id))
+
+  def root_run?(_record), do: false
+
+  # The task's durable ROOT run — or `nil`. The roster is ordered
+  # `depth ASC, agent_id ASC`, so `Enum.find/2` yields the LOWEST `agent_id`
+  # when several root rows exist. Total: an unanswerable read degrades to `[]`
+  # and therefore to `nil`.
+  defp read_root_run(task_id, op) do
+    task_id
+    |> AgentStateRead.roster(op: op)
+    |> Enum.find(&root_run?/1)
+  end
 
   @doc """
   The `:dirty` pause kind a restarted task lands in, or `nil` when it is not
@@ -425,11 +461,11 @@ defmodule EvoGit.TaskRegistry.Pause do
     * `pause_kind_for_restart(task)` — the task row is already decoded;
     * `pause_kind_for_restart(store, task_id)` — the caller has only a NARROW row
       (the boot reconciliation and the lease sweep both read
-      `%{id, status, lease_expires_at}` without `opts`), so this reads the row
-      once through `EvoGit.Store.get_task_lite/2` — the narrowest read that
-      exposes `pause_kind`/`opts` — and classifies that. It is a single-row read
-      of a task that has NO wrapper (boot / a leaked lease), never a hot path, and
-      it never decodes more than that one row.
+      `%{id, status, lease_expires_at}` without `opts`), so this classifies that
+      ONE id through `EvoGit.TaskRegistry.Restart.classify/2`: ONE narrow
+      `select_tasks_restart_info/2` row read plus ONE bounded durable roster
+      read. It is a single-row path for a task that has NO wrapper (boot / a
+      leaked lease), never a hot path, and it decodes no more than that row.
   """
   @spec pause_kind_for_restart(map()) :: :dirty | nil
   def pause_kind_for_restart(%{id: _id} = task) do
@@ -440,9 +476,9 @@ defmodule EvoGit.TaskRegistry.Pause do
 
   @spec pause_kind_for_restart(GenServer.server(), String.t()) :: :dirty | nil
   def pause_kind_for_restart(store, task_id) when is_binary(task_id) do
-    case read_row(store, task_id) do
-      %{id: _id} = task -> pause_kind_for_restart(task)
-      _absent -> nil
+    case EvoGit.TaskRegistry.Restart.classify(store, [task_id]) do
+      %{^task_id => :dirty} -> :dirty
+      _not_resumable -> nil
     end
   end
 
@@ -473,20 +509,22 @@ defmodule EvoGit.TaskRegistry.Pause do
 
   ## Reads / writes
 
-  # Narrow read: status + opts (never `result`/`logs`/`usage`).
+  # Narrow three-state read: status + opts (never `result`/`logs`/`usage`), with
+  # an outage kept distinct from an absent row.
   defp read_update_info(store, task_id) do
-    StoreGuard.read("pause select_task_update_info", nil, fn ->
-      EvoGit.Store.select_task_update_info(store, task_id)
-    end)
+    StoreRead.update_info(store, task_id)
   end
 
   # The resume read needs `pause_kind`, which `select_task_update_info/2` does not
-  # project, so it uses the lite single-row read (the narrowest one that exposes
-  # the pause facts + persisted opts).
+  # project, so it uses the batched restart projection for ONE id — the narrowest
+  # read that exposes the pause facts + the persisted opts (status, type, opts,
+  # pause_kind, project_path) without decoding a single heavy JSON column.
   defp read_row(store, task_id) do
-    StoreGuard.read("pause get_task_lite", nil, fn ->
-      EvoGit.Store.get_task_lite(store, task_id)
-    end)
+    case StoreRead.restart_info(store, [task_id]) do
+      {:ok, [row | _rest]} -> {:ok, row}
+      {:ok, []} -> :absent
+      :unavailable -> :unavailable
+    end
   end
 
   defp write_columns(store, task_id, columns) do

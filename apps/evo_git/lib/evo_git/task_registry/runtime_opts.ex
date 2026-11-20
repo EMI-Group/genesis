@@ -270,7 +270,14 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
   unused for genesis/evolve; resume-from tasks prepend context to the objective
   separately). `:persistent_state` is ALWAYS present as a boolean (`true` when
   the task did not opt out); every other optional key is omitted when unset.
+
+  The PAIR is load-bearing: EVERY caller discards element 0, but ~20 tests
+  pattern-match the tuple, so the arity and shape must not change. Element 0 is
+  a reserved placeholder no caller may consume; dropping it (returning the
+  keyword list alone) would be a test-visible break, not a cleanup.
   """
+  @spec build_common_runtime_opts(keyword(), String.t(), atom() | String.t()) ::
+          {nil, keyword()}
   def build_common_runtime_opts(opts, task_id, task_type) do
     # Defense in depth: `admit_task_path/1` is the NON-raising registry gate that
     # refuses a VCT point before a task is enqueued; a direct caller of this
