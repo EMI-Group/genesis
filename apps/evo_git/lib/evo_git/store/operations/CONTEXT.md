@@ -5,14 +5,14 @@ Pure Ecto operation modules implement task/project persistence and bind the stor
 Codec owns wire decoding; operation query errors propagate to the facade's failure-isolated read boundary.
 
 ## API Surface
-`Summaries.select_tasks_summary/3`, `select_tasks_summary_by_path/4`, and `select_tasks_changed_since/2` return lists of exactly 16-key maps: `id, status, review_status, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at, error`.
+`Summaries.select_tasks_summary/3`, `select_tasks_summary_by_path/4`, and `select_tasks_changed_since/2` return lists of exactly 18-key maps: `id, status, review_status, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at, error, session_mode, pause_kind`.
 Summary reads omit `result`, `logs`, and `usage`, but select and decode the entire `opts` and `error` columns without projection/redaction or byte limits.
 Summary filters accept status atoms (`[]` means all), optional strict raw-text `updated_at > since`, and exact project-path equality; they impose no ordering or limit and skip undecodable rows with a warning.
 `Pages.select_tasks_page/2` returns `%{rows: [summary], total: integer}` ordered by `started_at DESC`, defaults limit to 25, caps positive limits at 50, clamps invalid offsets to zero, and redirects an offset at/past the end to the last page.
 Pages accepts nested `:filters` plus top-level `status/project_path/review_status/search` overrides, and applies renderable-opts SQL predicates to both count and page.
 `Tasks.safe_select_paginated_tasks/2` returns `{[TaskInfo], total}`, reads filters ONLY from nested `:filters`, defaults invalid/nonpositive limits to 50 but does NOT cap positive limits, and does NOT redirect out-of-range offsets.
 Legacy pagination counts undecodable rows even when its per-row decoder skips them.
-`Tasks.get_task/2` and `Pages.get_task_lite/2` both return full `%TaskInfo{}` or nil with `ref: nil`, including full `opts`, `logs`, `result`, `usage`, and `error`; lite selects 18 decode-relevant columns and omits only store-internal `updated_at`.
+`Tasks.get_task/2` and `Pages.get_task_lite/2` both return full `%TaskInfo{}` or nil with `ref: nil`, including full `opts`, `logs`, `result`, `usage`, and `error`; lite selects 20 decode-relevant columns and omits only store-internal `updated_at`.
 `Tasks.get_task_status/2` distinguishes missing nil from existing unreadable `{:unknown, raw}`; `select_task_update_info/2` returns `%{status, opts, finished_at, lease_expires_at}` or nil using two SELECTs.
 
 `VctMounts.list/1` returns every mount as a STRING-KEYED entry (`"point"`, `"path"`, `"name"`, `"kind"`, `"last_opened_at"`, `"members"`, `"description"`) newest first (`last_opened_at` DESC with `nil` LAST, then `point` ASC), where `path` is NULLABLE (a workspace mount owns no OS path), `description` is `nil | String.t()`, and `members` is DECODED from JSON TEXT (`NULL` or undecodable → `[]` with one warning per row).
