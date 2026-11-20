@@ -115,12 +115,20 @@ defmodule EvoGit.LLM.ChatGPTResponses do
     do: %{responses: ResponsesAPI.init_stream_state(), terminal: false}
 
   @impl true
+  def decode_stream_event(%{data: "[DONE]"}, _model), do: [missing_completion_error()]
+
   def decode_stream_event(event, model) do
     ResponsesAPI.decode_stream_event(event, openai_model(model))
     |> reject_incomplete(event)
   end
 
   @impl true
+  def decode_stream_event(%{data: "[DONE]"}, _model, %{terminal: true} = state),
+    do: {[], state}
+
+  def decode_stream_event(%{data: "[DONE]"}, _model, state),
+    do: {[missing_completion_error()], %{state | terminal: true}}
+
   def decode_stream_event(event, model, state) do
     {chunks, responses} =
       ResponsesAPI.decode_stream_event(event, openai_model(model), state.responses)
@@ -133,12 +141,15 @@ defmodule EvoGit.LLM.ChatGPTResponses do
   @impl true
   def flush_stream_state(_model, %{terminal: true} = state), do: {[], state}
 
-  def flush_stream_state(_model, state) do
-    chunk =
-      StreamChunk.meta(%{finish_reason: :error, error: "ChatGPT stream ended before completion"})
+  def flush_stream_state(_model, state), do: {[missing_completion_error()], state}
 
-    {[chunk], state}
-  end
+  defp missing_completion_error,
+    do:
+      StreamChunk.meta(%{
+        terminal?: true,
+        finish_reason: :error,
+        error: "ChatGPT stream ended before completion"
+      })
 
   defp reject_incomplete(chunks, event) do
     case event do

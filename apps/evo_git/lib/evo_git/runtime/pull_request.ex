@@ -91,13 +91,15 @@ defmodule EvoGit.Runtime.PullRequest do
   """
   @spec generate_title(String.t(), String.t()) :: String.t() | nil
   def generate_title(objective, agent_result) do
-    model = EvoGit.Config.resolve([:llm, :model])
+    config = EvoGit.Config.resolve()
 
-    if is_nil(model) or model == "" do
-      Logger.debug("No LLM model configured, skipping PR title generation")
-      nil
-    else
-      generate_title_with_llm(model, objective, agent_result)
+    case EvoGit.Config.Schema.resolve_model_spec(config, nil) do
+      {:ok, %{model_spec: model, generation_params: params}} ->
+        generate_title_with_llm(model, params, objective, agent_result)
+
+      {:error, reason} ->
+        Logger.debug("No usable default LLM model for PR title generation: #{inspect(reason)}")
+        nil
     end
   end
 
@@ -130,7 +132,7 @@ defmodule EvoGit.Runtime.PullRequest do
     end
   end
 
-  defp generate_title_with_llm(model, objective, agent_result) do
+  defp generate_title_with_llm(model, options, objective, agent_result) do
     prompt = """
     Generate a short, meaningful PR title (max 8 words) from this objective and result.
     Output ONLY the title text, nothing else.
@@ -148,12 +150,6 @@ defmodule EvoGit.Runtime.PullRequest do
     # this rescue is the last-resort guard for unexpected exceptions.
     try do
       context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
-
-      options =
-        EvoGit.Config.Schema.LLM.with_model_http_options(
-          [provider_options: title_provider_options(model)],
-          model
-        )
 
       with {:ok, stream_response} <- ReqLLM.stream_text(model, context, options),
            {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
@@ -180,19 +176,6 @@ defmodule EvoGit.Runtime.PullRequest do
       e ->
         Logger.warning("LLM title generation raised: #{Exception.message(e)}")
         nil
-    end
-  end
-
-  defp title_provider_options(model) do
-    alias EvoGit.Config.Schema
-    alias EvoGit.Config.Schema.LLM
-
-    with :openai_codex <- LLM.provider_from_model(model),
-         {:ok, %{generation_params: params}} <-
-           Schema.resolve_model_spec(EvoGit.Config.resolve(), nil) do
-      Keyword.get(params, :provider_options, [])
-    else
-      _ -> LLM.provider_options_for_model(model)
     end
   end
 

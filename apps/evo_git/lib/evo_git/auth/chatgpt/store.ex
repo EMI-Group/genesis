@@ -9,26 +9,27 @@ defmodule EvoGit.Auth.ChatGPT.Store do
 
   @default_account "default"
   @refresh_margin 60
+  @lock_timeout 20_000
 
   def default_account, do: @default_account
   def directory, do: Path.join(EvoGit.Platform.config_dir("genesis"), "chatgpt")
 
-  def host_id do
-    with_lock("host", fn ->
-      path = Path.join(directory(), "host-id")
+  def host_id, do: with_lock(&read_or_create_host_id/0)
 
-      case File.read(path) do
-        {:ok, "urn:uuid:" <> _ = id} ->
-          {:ok, id}
+  defp read_or_create_host_id do
+    path = Path.join(directory(), "host-id")
 
-        {:error, :enoent} ->
-          id = "urn:uuid:" <> Ecto.UUID.generate()
-          with :ok <- atomic_write(path, id), do: {:ok, id}
+    case File.read(path) do
+      {:ok, "urn:uuid:" <> _ = id} ->
+        {:ok, id}
 
-        _ ->
-          {:error, :invalid_host_id}
-      end
-    end)
+      {:error, :enoent} ->
+        id = "urn:uuid:" <> Ecto.UUID.generate()
+        with :ok <- atomic_write(path, id), do: {:ok, id}
+
+      _ ->
+        {:error, :invalid_host_id}
+    end
   end
 
   def registration(account \\ @default_account) do
@@ -62,13 +63,9 @@ defmodule EvoGit.Auth.ChatGPT.Store do
 
   @doc "Lists connected registrations and cached model metadata for this execution node."
   def accounts do
-    directory()
-    |> File.ls()
-    |> case do
-      {:ok, files} ->
-        for "account-" <> name <- files,
-            String.ends_with?(name, ".json"),
-            account = Path.rootname(name, ".json"),
+    case account_names() do
+      {:ok, names} ->
+        for account <- names,
             {:ok, status} <- [status(account)],
             into: %{} do
           {account, status}
@@ -85,7 +82,7 @@ defmodule EvoGit.Auth.ChatGPT.Store do
       if record["expires_at"] > System.system_time(:second) + @refresh_margin do
         {:ok, record["access_token"]}
       else
-        with_lock("account-" <> account, fn ->
+        with_lock(fn ->
           with {:ok, current} <- read(account),
                :ok <- available(current, model),
                {:ok, refreshed} <- current_session(account, current) do
@@ -98,10 +95,11 @@ defmodule EvoGit.Auth.ChatGPT.Store do
 
   def install(account, record) do
     with :ok <- valid_account(account),
-         true <- ChatGPT.transferable?(record),
-         {:ok, _} <- host_id() do
-      with_lock("account-" <> account, fn ->
+         true <- ChatGPT.transferable?(record) do
+      with_lock(fn ->
         with :ok <- compatible_registration(account, record),
+             :ok <- unique_registration(account, record["client_id"]),
+             {:ok, _} <- read_or_create_host_id(),
              {:ok, record} <- verify_session(record),
              {:ok, models} <- ChatGPT.models(record["access_token"]),
              :ok <- save(account, Map.put(record, "models", models)) do
@@ -128,7 +126,7 @@ defmodule EvoGit.Auth.ChatGPT.Store do
 
   def models(account \\ @default_account) do
     with :ok <- valid_account(account) do
-      with_lock("account-" <> account, fn ->
+      with_lock(fn ->
         with {:ok, record} <- read(account),
              :ok <- available(record, nil),
              {:ok, current} <- current_session(account, record),
@@ -142,7 +140,7 @@ defmodule EvoGit.Auth.ChatGPT.Store do
 
   def logout(account \\ @default_account) do
     with :ok <- valid_account(account) do
-      with_lock("account-" <> account, fn ->
+      with_lock(fn ->
         case read(account) do
           {:ok, record} ->
             result = if ChatGPT.transferable?(record), do: ChatGPT.revoke(record), else: :ok
@@ -175,6 +173,30 @@ defmodule EvoGit.Auth.ChatGPT.Store do
       {:ok, _} -> {:error, :chatgpt_account_alias_in_use}
       {:error, reason} when reason in [:no_credentials, :invalid_credentials] -> :ok
       {:error, _} = error -> error
+    end
+  end
+
+  defp unique_registration(account, client_id) do
+    with {:ok, names} <- account_names() do
+      alias_in_use? =
+        Enum.any?(names, fn name ->
+          name != account and match?({:ok, %{"client_id" => ^client_id}}, registration(name))
+        end)
+
+      if alias_in_use?, do: {:error, :chatgpt_registration_already_installed}, else: :ok
+    end
+  end
+
+  defp account_names do
+    with {:ok, files} <- File.ls(directory()) do
+      names =
+        for "account-" <> name <- files,
+            String.ends_with?(name, ".json"),
+            account = Path.rootname(name, ".json"),
+            valid_account?(account),
+            do: account
+
+      {:ok, names}
     end
   end
 
@@ -252,19 +274,25 @@ defmodule EvoGit.Auth.ChatGPT.Store do
     if valid_account?(account), do: :ok, else: {:error, :invalid_account_alias}
   end
 
-  # The lock also covers standalone release commands using the same directory.
-  # The runtime obtains it only for credential changes or token refresh.
-  defp with_lock(name, fun) do
+  # A write transaction coordinates all changes across independent VMs. SQLite
+  # releases the lock when its connection closes, including on process or VM exit.
+  # The lock database holds no credentials.
+  defp with_lock(fun) do
     dir = directory()
-    lock = Path.join(dir, name <> ".lock")
+    lock = Path.join(dir, "registrations.sqlite3")
 
     with :ok <- prepare_directory(dir),
-         :ok <- acquire(lock, System.monotonic_time(:millisecond) + 20_000) do
+         {:ok, conn} <- Xqlite.open(lock, journal_mode: :delete, busy_timeout: @lock_timeout) do
       try do
-        fun.()
+        case Xqlite.begin(conn, :immediate) do
+          :ok -> fun.()
+          {:error, reason} -> lock_error(reason)
+        end
       after
-        File.rmdir(lock)
+        Xqlite.close(conn)
       end
+    else
+      {:error, reason} -> lock_error(reason)
     end
   end
 
@@ -272,23 +300,10 @@ defmodule EvoGit.Auth.ChatGPT.Store do
     with :ok <- File.mkdir_p(dir), do: File.chmod(dir, 0o700)
   end
 
-  defp acquire(path, deadline) do
-    case File.mkdir(path) do
-      :ok ->
-        :ok
+  defp lock_error({reason, _}) when reason in [:database_busy, :database_locked],
+    do: {:error, :chatgpt_account_busy}
 
-      {:error, :eexist} ->
-        if System.monotonic_time(:millisecond) < deadline do
-          Process.sleep(50)
-          acquire(path, deadline)
-        else
-          {:error, :chatgpt_account_busy}
-        end
-
-      {:error, _} ->
-        {:error, :chatgpt_store_unwritable}
-    end
-  end
+  defp lock_error(_reason), do: {:error, :chatgpt_store_unwritable}
 
   defp atomic_write(path, content) do
     temp = path <> "." <> Ecto.UUID.generate() <> ".tmp"

@@ -3,6 +3,13 @@ defmodule EvoDash.ChatGPTStreamTest do
 
   import Plug.Conn
 
+  defmodule TitleRequestAdapter do
+    @behaviour ReqLLM.FinchRequestAdapter
+
+    @impl true
+    def call(request), do: Application.fetch_env!(:evo_dash, __MODULE__).(request)
+  end
+
   setup do
     dir = EvoDash.Test.ConfigDir.isolate!("genesis-chatgpt-stream")
     previous = Application.get_env(:evo_git, :config_dir_fun)
@@ -15,7 +22,8 @@ defmodule EvoDash.ChatGPTStreamTest do
   test "ReqLLM receives the selected account's token and consumes a complete SSE response" do
     events = [
       %{"type" => "response.output_text.delta", "delta" => "Hello"},
-      %{"type" => "response.completed", "response" => %{"status" => "completed"}}
+      %{"type" => "response.completed", "response" => %{"status" => "completed"}},
+      "[DONE]"
     ]
 
     assert {:ok, response} = stream(events)
@@ -51,6 +59,44 @@ defmodule EvoDash.ChatGPTStreamTest do
     assert_received {:sent, "Bearer access-work", %{"model" => "gpt-5.6-terra"}}
   end
 
+  test "PR title generation uses the selected account and model from the provider profile" do
+    assert :ok =
+             EvoGit.Config.save_user_config(%{
+               llm: %{
+                 providers: [
+                   %{
+                     "id" => "team-chatgpt",
+                     "provider" => "openai_codex",
+                     "siwc_account" => "work",
+                     "models" => [%{"model" => "gpt-5.6-terra"}]
+                   }
+                 ],
+                 default_provider_profile: "team-chatgpt"
+               }
+             })
+
+    transform =
+      test_endpoint([
+        %{"type" => "response.output_text.delta", "delta" => "Fix title generation"},
+        %{"type" => "response.completed", "response" => %{"status" => "completed"}}
+      ])
+
+    previous = Application.get_env(:req_llm, :finch_request_adapter)
+
+    on_exit(fn ->
+      Application.put_env(:req_llm, :finch_request_adapter, previous)
+      Application.delete_env(:evo_dash, TitleRequestAdapter)
+    end)
+
+    Application.put_env(:evo_dash, TitleRequestAdapter, transform)
+    Application.put_env(:req_llm, :finch_request_adapter, TitleRequestAdapter)
+
+    assert EvoGit.Runtime.PullRequest.generate_title("Add title generation", "Done") ==
+             "Fix title generation"
+
+    assert_received {:sent, "Bearer access-work", %{"model" => "gpt-5.6-terra"}}
+  end
+
   test "ReqLLM rejects an incomplete response" do
     events = [
       %{"type" => "response.output_text.delta", "delta" => "Partial"},
@@ -58,6 +104,14 @@ defmodule EvoDash.ChatGPTStreamTest do
     ]
 
     assert {:error, _} = stream(events)
+  end
+
+  test "ReqLLM rejects partial output even when the stream has a generic end marker" do
+    partial = %{"type" => "response.output_text.delta", "delta" => "Partial"}
+
+    for events <- [[partial], [partial, "[DONE]"]] do
+      assert {:error, _} = stream(events)
+    end
   end
 
   test "a namespaced tool call and its result survive separate stateless requests" do
@@ -154,7 +208,12 @@ defmodule EvoDash.ChatGPTStreamTest do
     [authorization] = get_req_header(conn, "authorization")
     send(owner, {:sent, authorization, Jason.decode!(body)})
 
-    sse = Enum.map_join(events, fn event -> "data: " <> Jason.encode!(event) <> "\n\n" end)
+    sse =
+      Enum.map_join(events, fn
+        "[DONE]" -> "data: [DONE]\n\n"
+        event -> "data: " <> Jason.encode!(event) <> "\n\n"
+      end)
+
     conn |> put_resp_content_type("text/event-stream") |> send_resp(200, sse)
   end
 end

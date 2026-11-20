@@ -127,6 +127,45 @@ defmodule EvoGit.Auth.ChatGPTTest do
     assert %{"refresh_token" => "rotated-refresh"} = Jason.decode!(File.read!(path))
   end
 
+  test "import rejects a registration already bound to another alias" do
+    EvoGit.TestSupport.ConfigDir.isolate!("evogit-siwc-alias")
+    path = EvoGit.TestSupport.ChatGPTFixture.seed!("work")
+
+    assert {:error, :chatgpt_registration_already_installed} =
+             ChatGPT.Store.import_file("another", path)
+
+    assert {:error, :no_credentials} = ChatGPT.Store.status("another")
+  end
+
+  test "a killed refresh process releases the registration lock" do
+    EvoGit.TestSupport.ConfigDir.isolate!("evogit-siwc-interrupted-refresh")
+    EvoGit.TestSupport.ChatGPTFixture.seed!("work", %{"expires_at" => 0})
+    current = Req.default_options()
+    on_exit(fn -> Req.default_options(current) end)
+    owner = self()
+
+    Req.default_options(
+      Keyword.put(current, :plug, fn conn ->
+        send(owner, {:refresh_started, self()})
+
+        receive do
+          :finish_refresh ->
+            Req.Test.json(conn, %{"access_token" => "new-access", "expires_in" => 3600})
+        end
+      end)
+    )
+
+    token = fn -> ChatGPT.Store.token("work", "gpt-5.6-terra") end
+    interrupted = Task.async(token)
+    assert_receive {:refresh_started, _}, 2_000
+    Task.shutdown(interrupted, :brutal_kill)
+
+    next = Task.async(token)
+    assert_receive {:refresh_started, refresh}, 2_000
+    send(refresh, :finish_refresh)
+    assert {:ok, "new-access"} = Task.await(next)
+  end
+
   defp encoded_integer(n), do: Base.url_encode64(:binary.encode_unsigned(n), padding: false)
   defp segment(map), do: Base.url_encode64(Jason.encode!(map), padding: false)
 end

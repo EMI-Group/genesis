@@ -58,13 +58,13 @@ defmodule EvoGit.Config.Schema.ProviderProfiles.Normalize do
 
         profile =
           profile
-          |> Map.put("provider", route)
           |> Map.put("models", models)
           |> Map.put_new("concurrency", 3)
           |> Map.put("auth_mode", auth_mode(profile, provider))
           |> Map.put("reasoning_efforts", efforts(Map.get(profile, "reasoning_efforts")))
           |> normalize_default_effort()
-          |> put_default_model(models)
+          |> put_default_model(models, provider)
+          |> Map.put("provider", route)
 
         [profile]
     end
@@ -108,10 +108,10 @@ defmodule EvoGit.Config.Schema.ProviderProfiles.Normalize do
     end)
   end
 
-  defp put_default_model(profile, models) do
+  defp put_default_model(profile, models, provider) do
     case Map.get(profile, "default_model") do
       model when is_binary(model) and model != "" ->
-        Map.put(profile, "default_model", unqualify(model, profile["provider"]))
+        Map.put(profile, "default_model", unqualify(model, provider))
 
       _ ->
         Map.put(profile, "default_model", first_model(models))
