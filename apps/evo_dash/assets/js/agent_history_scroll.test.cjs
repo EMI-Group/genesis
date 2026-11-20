@@ -3,18 +3,18 @@
 // Exercises the PURE pinning decision of the AgentHistoryAutoScroll hook — the
 // "should the transcript follow new content?" question — without a browser
 // bundle, matching the state_persistence.test.cjs convention (Node's built-in
-// test runner + vm over the hook source sliced out of app.js). The DOM half of
-// the hook (rAF coalescing, ResizeObserver, listeners) is deliberately not
-// faked here: it has no decision of its own.
+// test runner + vm over the hook source sliced out of hooks/agent_history_scroll.js).
+// The DOM half of the hook (rAF coalescing, ResizeObserver, listeners) is
+// deliberately not faked here: it has no decision of its own.
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const {readFileSync} = require('node:fs');
 const vm = require('node:vm');
-const app = readFileSync(`${__dirname}/app.js`, 'utf8');
-const start = app.indexOf('// --- AgentHistoryAutoScroll: pure pinning decision');
-const end = app.indexOf('// AgentHistoryAutoScroll hook:');
-assert.ok(start !== -1 && end > start, 'pure pinning decision block not found in app.js');
-const source = app.slice(start, end);
+const moduleSource = readFileSync(`${__dirname}/hooks/agent_history_scroll.js`, 'utf8');
+const start = moduleSource.indexOf('// --- AgentHistoryAutoScroll: pure pinning decision');
+const end = moduleSource.indexOf('// AgentHistoryAutoScroll hook:');
+assert.ok(start !== -1 && end > start, 'pure pinning decision block not found in hooks/agent_history_scroll.js');
+const source = moduleSource.slice(start, end);
 const context = vm.createContext({});
 const {shouldFollowLatest, STICK_TO_BOTTOM_THRESHOLD_PX} =
   vm.runInContext(`${source}\n({shouldFollowLatest, STICK_TO_BOTTOM_THRESHOLD_PX});`, context);
