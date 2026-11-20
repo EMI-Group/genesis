@@ -17,6 +17,7 @@ Isolation rule: a tool test whose fixture is a SUBPROCESS cwd (anything passed a
 |------|-------------------|
 | `shared_test.exs` | `EvoGit.Agent.Tools.Shared` (pure arg/path helpers) |
 | `commit_files_test.exs` | `Tools.Shared.commit_files/4` (the shared stage+commit helper) |
+| `context_amend_test.exs` | `Tools.Shared.commit_files/5` `amend: true` / `amend_message_fun` and the `write_context`/`edit_context` squash contract (same-dir, cross-directory and multi-file squashes, every refusal, `amend_message_fun` invocation/override rules) |
 | `file_read_test.exs` | `Tools` `"read_file"` (incl. its OUTPUT shape) |
 | `file_edit_test.exs` | `Tools` `"edit_file"` (model-facing `edit`; owns the edit OUTPUT shape) |
 | `glob_test.exs` | `Tools` `"glob"` |
@@ -167,6 +168,14 @@ Such lifetime-accounting regressions belong with parent-owned ToolRuntime/Backgr
 HEAD resource-admission policy lives in `lib/evo_git/tool_runtime/policy.ex`, separately from tool serialization, and explicitly bypasses `job_output`, `job_list` and `job_kill`; these tool bodies call BackgroundJobs directly rather than acquiring permits.
 A saturation regression must invoke actual managed dispatch while capacity is held, because direct `JobOutput.execute/3`, `JobList.execute/3` or `JobKill.execute/3` calls cannot establish that admission bypass remains reachable.
 Keep saturated job-control progress, the policy inventory, detached permit transfer and unique-permit ownership in parent runtime/BackgroundJobs and scheduler integration suites rather than duplicating them in this per-tool subtree.
+
+## CONTEXT.md Amend/Squash Coverage
+`context_amend_test.exs` (`async: true`, per-test copy of ONE module git template) owns the `Shared.commit_files/5` squash contract opted into by `write_context`/`edit_context`.
+Eligibility is proven at the tool level: consecutive edits at DIFFERENT directories squash into ONE commit (two and three directories, `commit_count(repo) == 2`, `HEAD~1` still the template's `base`), the amended commit's diff lists every `<dir>/CONTEXT.md`, the subject stays `"Update CONTEXT.md for <raw dir_path>"` of the LAST write, and `git log -1 --pretty=%B` is asserted as the FULL body (`Files in this commit:` plus sorted repo-relative `- <path>` lines).
+Refusals each pin a plain commit with the earlier commit untouched: merge-commit HEAD, a HEAD contained in a second ref (base-commit protection), a foreign subject, a HEAD whose diff also names a non-`CONTEXT.md` file, `commit: false`, and `amend: true` with more than one path in a single call.
+The `amend_message_fun` describe pins the builder boundary directly: one invocation with the sorted HEAD ∪ new path set (a `send/2` probe), its non-empty binary return REPLACING the commit body, no invocation at all on the plain path (`refute_received`), and an empty/non-binary return keeping the caller's message.
+`create_files`/`make_dir` stay one commit per call, so the squash remains a CONTEXT-tool opt-in.
+The module's config dir has no `config.toml`, so `[:git, :co_authored_by_enabled]` is `false` and the full-body assertions carry no co-author trailer.
 ## Notes for Agents
 
 - `reflect_tools_test.exs` spawns a live `Process.sleep(:infinity)` "wrapper" process on purpose — it is NOT a wait to reduce.

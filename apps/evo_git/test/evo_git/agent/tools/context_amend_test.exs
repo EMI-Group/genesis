@@ -5,12 +5,23 @@ defmodule EvoGit.Agent.Tools.ContextAmendTest do
   `write_context` / `edit_context` only.
 
   What must hold:
-    * consecutive same-file CONTEXT.md edits AMEND the previous auto context
-      commit, so one agent batch stays ONE commit;
+    * consecutive CONTEXT.md edits AMEND the previous auto context commit, so one
+      agent batch stays ONE commit — and that includes edits at DIFFERENT
+      directories: HEAD is amendable whenever EVERY path it changed is a
+      CONTEXT.md path, so several `x/CONTEXT.md` / `y/CONTEXT.md` / … edits
+      squash into one commit;
+    * the amended message keeps the auto subject
+      (`"Update CONTEXT.md for <raw dir_path>"`) and, once MORE than one file is
+      in the commit, appends `Files in this commit:` plus one repo-relative
+      path per line (sorted);
+    * `amend_message_fun` is invoked ONCE on the amend path with HEAD's changed
+      paths ∪ the new path (deduped, sorted), and only a non-empty binary return
+      replaces the caller's message — it is never invoked on the plain path;
     * the amend is refused (plain commit instead) when HEAD is not this tool's
-      own one-file context commit for that exact path, when HEAD is a merge
-      commit, or when HEAD is not PRIVATE to the current branch (the
-      base-commit protection the subagent/octopus-merge flow depends on);
+      own context commit (foreign subject, or any non-CONTEXT.md path in its
+      diff), when HEAD is a merge commit, or when HEAD is not PRIVATE to the
+      current branch (the base-commit protection the subagent/octopus-merge flow
+      depends on);
     * `create_files` / `make_dir` keep one commit per call — no cross-call
       squashing.
 
@@ -18,8 +29,10 @@ defmodule EvoGit.Agent.Tools.ContextAmendTest do
   directory (`EvoGit.TestSupport.ConfigDir`), so `EvoGit.Config.config_path/0`
   never touches the real `~/.config/genesis/config.toml`; the `:persistent_term`
   config cache is keyed by FILE PATH, so a module-local directory cannot collide
-  with another module's. Repositories are per-test copies of ONE `setup_all`
-  template (as in `commit_files_test.exs`).
+  with another module's. The directory holds no `config.toml`, so
+  `[:git, :co_authored_by_enabled]` keeps its `false` default and no co-author
+  trailer lands in the commit bodies asserted below. Repositories are per-test
+  copies of ONE `setup_all` template (as in `commit_files_test.exs`).
   """
 
   use ExUnit.Case, async: true
@@ -148,28 +161,82 @@ defmodule EvoGit.Agent.Tools.ContextAmendTest do
   end
 
   # ---------------------------------------------------------------------------
-  # Refusals — each creates a NEW commit and rewrites nothing
+  # Cross-directory squashing — several CONTEXT.md paths in ONE commit
   # ---------------------------------------------------------------------------
 
-  test "two DIFFERENT directories produce two commits", %{repo: repo} do
+  test "two DIFFERENT directories squash into ONE commit that lists both files", %{repo: repo} do
     write_context!(repo, "./x", "# X\n\nfirst\n")
     write_context!(repo, "./y", "# Y\n\nfirst\n")
 
-    # One commit ("base" has no commit of its own for these files) per call.
-    assert commit_count(repo) == 3
-    assert git!(repo, ["show", "--pretty=%s", "--name-only", "HEAD"]) =~ "y/CONTEXT.md"
-    assert git!(repo, ["show", "--pretty=%s", "--name-only", "HEAD~1"]) =~ "x/CONTEXT.md"
+    # ONE context commit beyond the template's base commit: the second write
+    # amended the first instead of stacking another commit.
+    assert commit_count(repo) == 2
+    assert git!(repo, ["log", "-1", "--pretty=%s", "HEAD~1"]) == "base"
+
+    assert changed_paths(repo) == ["x/CONTEXT.md", "y/CONTEXT.md"]
+
+    # The subject keeps the RAW dir_path argument of the write that ran last…
+    assert last_subject(repo) == @context_prefix <> "./y"
+
+    # …while the appended file list uses REPO-RELATIVE normalized paths.
+    assert commit_body(repo) ==
+             """
+             Update CONTEXT.md for ./y
+
+             Files in this commit:
+             - x/CONTEXT.md
+             - y/CONTEXT.md\
+             """
+
+    # Both files really are in the one commit, on top of the untouched base.
+    tracked = git!(repo, ["ls-tree", "-r", "--name-only", "HEAD"])
+    assert tracked =~ "README.md"
+    assert tracked =~ "x/CONTEXT.md"
+    assert tracked =~ "y/CONTEXT.md"
   end
+
+  test "three different directories squash into ONE commit listing all three files", %{
+    repo: repo
+  } do
+    write_context!(repo, "./x", "# X\n\nfirst\n")
+    write_context!(repo, "./a", "# A\n\nfirst\n")
+    write_context!(repo, "./z", "# Z\n\nfirst\n")
+
+    assert commit_count(repo) == 2
+    assert git!(repo, ["log", "-1", "--pretty=%s", "HEAD~1"]) == "base"
+
+    assert changed_paths(repo) == ["a/CONTEXT.md", "x/CONTEXT.md", "z/CONTEXT.md"]
+
+    # The subject names the THIRD (last) write's raw dir_path; the body lists
+    # every path in the commit, sorted.
+    assert last_subject(repo) == @context_prefix <> "./z"
+
+    assert commit_body(repo) ==
+             """
+             Update CONTEXT.md for ./z
+
+             Files in this commit:
+             - a/CONTEXT.md
+             - x/CONTEXT.md
+             - z/CONTEXT.md\
+             """
+
+    tracked = git!(repo, ["ls-tree", "-r", "--name-only", "HEAD"])
+    assert tracked =~ "a/CONTEXT.md"
+    assert tracked =~ "x/CONTEXT.md"
+    assert tracked =~ "z/CONTEXT.md"
+  end
+
+  # ---------------------------------------------------------------------------
+  # Refusals — each creates a NEW commit and rewrites nothing
+  # ---------------------------------------------------------------------------
 
   test "a HEAD that is not private to the branch is never amended (base-commit protection)",
        %{repo: repo} do
-    # Mimic a subagent worktree: the base commit IS this tool's own one-file
-    # context commit and is reachable from a SECOND ref (`main`), so amending it
-    # would rewrite the parent's history and diverge the child branch.
-    File.mkdir_p!(Path.join(repo, "x"))
-    File.write!(Path.join(repo, "x/CONTEXT.md"), "# X\n\nbase\n")
-    git!(repo, ["add", "x/CONTEXT.md"])
-    git!(repo, ["commit", "-q", "-m", @context_prefix <> "./x"])
+    # Mimic a subagent worktree: the base commit IS this tool's own context
+    # commit and is reachable from a SECOND ref (`main`), so amending it would
+    # rewrite the parent's history and diverge the child branch.
+    context_commit!(repo, "x")
 
     base_sha = git!(repo, ["rev-parse", "HEAD"])
     assert git!(repo, ["rev-parse", "--abbrev-ref", "HEAD"]) == "main"
@@ -198,10 +265,7 @@ defmodule EvoGit.Agent.Tools.ContextAmendTest do
   test "a HEAD touching only x/CONTEXT.md but with another subject is never amended", %{
     repo: repo
   } do
-    File.mkdir_p!(Path.join(repo, "x"))
-    File.write!(Path.join(repo, "x/CONTEXT.md"), "# X\n\nbase\n")
-    git!(repo, ["add", "x/CONTEXT.md"])
-    git!(repo, ["commit", "-q", "-m", "Fix something"])
+    context_commit!(repo, "x", "Fix something")
     base_sha = git!(repo, ["rev-parse", "HEAD"])
 
     assert_context_edit(repo, "./x", "base", "edited")
@@ -211,12 +275,32 @@ defmodule EvoGit.Agent.Tools.ContextAmendTest do
     assert last_subject(repo) == @context_prefix <> "./x"
   end
 
-  test "a merge-commit HEAD is never amended", %{repo: repo} do
+  test "a HEAD that also touches a non-CONTEXT.md file is never amended", %{repo: repo} do
     File.mkdir_p!(Path.join(repo, "x"))
     File.write!(Path.join(repo, "x/CONTEXT.md"), "# X\n\nbase\n")
-    git!(repo, ["add", "x/CONTEXT.md"])
-    # Deliberately the exact auto subject — only the two-parent shape may refuse.
+    File.write!(Path.join(repo, "x/notes.txt"), "notes\n")
+    git!(repo, ["add", "x/CONTEXT.md", "x/notes.txt"])
+    # Deliberately the exact auto subject — only the mixed diff may refuse.
     git!(repo, ["commit", "-q", "-m", @context_prefix <> "./x"])
+
+    prior_sha = git!(repo, ["rev-parse", "HEAD"])
+    before = commit_count(repo)
+
+    assert_context_edit(repo, "./x", "base", "edited")
+
+    assert commit_count(repo) == before + 1
+    # The earlier commit is untouched and still carries the auto subject…
+    assert git!(repo, ["rev-parse", "HEAD~1"]) == prior_sha
+    assert git!(repo, ["log", "-1", "--pretty=%s", prior_sha]) == @context_prefix <> "./x"
+
+    # …and the new commit is a PLAIN single-file one: no file list body.
+    assert last_subject(repo) == @context_prefix <> "./x"
+    assert commit_body(repo) == @context_prefix <> "./x"
+  end
+
+  test "a merge-commit HEAD is never amended", %{repo: repo} do
+    # Deliberately the exact auto subject — only the two-parent shape may refuse.
+    context_commit!(repo, "x")
 
     git!(repo, ["checkout", "-q", "-b", "side"])
     File.write!(Path.join(repo, "side.txt"), "side\n")
@@ -265,6 +349,98 @@ defmodule EvoGit.Agent.Tools.ContextAmendTest do
     assert commit_count(repo) == before
     assert File.read!(Path.join(repo, "x/CONTEXT.md")) == "# X\n\nthree\n"
     assert git!(repo, ["status", "--porcelain"]) =~ "M x/CONTEXT.md"
+  end
+
+  # ---------------------------------------------------------------------------
+  # amend_message_fun — the caller-owned message spelling
+  # ---------------------------------------------------------------------------
+
+  describe "amend_message_fun (Shared.commit_files/5)" do
+    test "receives the sorted HEAD-plus-new path set once and replaces the message", %{
+      repo: repo
+    } do
+      context_commit!(repo, "x")
+      before = commit_count(repo)
+
+      File.mkdir_p!(Path.join(repo, "y"))
+      File.write!(Path.join(repo, "y/CONTEXT.md"), "# Y\n\nfirst\n")
+
+      test_pid = self()
+
+      fun = fn paths ->
+        send(test_pid, {:amend_paths, paths})
+        "custom amend message"
+      end
+
+      assert {:ok, _out} =
+               Shared.commit_files(repo, repo, ["y/CONTEXT.md"], @context_prefix <> "./y",
+                 amend: true,
+                 amend_message_fun: fun
+               )
+
+      # Invoked exactly ONCE, with HEAD's changed paths ∪ the new path.
+      assert_received {:amend_paths, ["x/CONTEXT.md", "y/CONTEXT.md"]}
+      refute_received {:amend_paths, _}
+
+      # The amend squashed (no new commit) and the custom binary IS the message.
+      assert commit_count(repo) == before
+      assert commit_body(repo) == "custom amend message"
+
+      # `--only` staged just the new file; the earlier one stayed in the commit.
+      assert changed_paths(repo) == ["x/CONTEXT.md", "y/CONTEXT.md"]
+    end
+
+    test "is never invoked on the plain-commit path", %{repo: repo} do
+      test_pid = self()
+
+      fun = fn paths ->
+        send(test_pid, {:amend_paths, paths})
+        "custom amend message"
+      end
+
+      # HEAD is the template's "base" commit, which touches README.md — not an
+      # amendable context commit, so this call takes the plain path.
+      File.mkdir_p!(Path.join(repo, "x"))
+      File.write!(Path.join(repo, "x/CONTEXT.md"), "one\n")
+      before = commit_count(repo)
+
+      assert {:ok, _out} =
+               Shared.commit_files(repo, repo, ["x/CONTEXT.md"], @context_prefix <> "./x",
+                 amend: true,
+                 amend_message_fun: fun
+               )
+
+      refute_received {:amend_paths, _}
+      assert commit_count(repo) == before + 1
+      assert commit_body(repo) == @context_prefix <> "./x"
+    end
+
+    test "a non-binary or empty return keeps the caller's message", %{repo: repo} do
+      context_commit!(repo, "x")
+
+      File.mkdir_p!(Path.join(repo, "y"))
+      File.write!(Path.join(repo, "y/CONTEXT.md"), "# Y\n\nfirst\n")
+
+      assert {:ok, _out} =
+               Shared.commit_files(repo, repo, ["y/CONTEXT.md"], @context_prefix <> "./y",
+                 amend: true,
+                 amend_message_fun: fn _paths -> "" end
+               )
+
+      assert commit_body(repo) == @context_prefix <> "./y"
+
+      File.mkdir_p!(Path.join(repo, "z"))
+      File.write!(Path.join(repo, "z/CONTEXT.md"), "# Z\n\nfirst\n")
+
+      assert {:ok, _out} =
+               Shared.commit_files(repo, repo, ["z/CONTEXT.md"], @context_prefix <> "./z",
+                 amend: true,
+                 amend_message_fun: fn _paths -> :not_a_message end
+               )
+
+      assert commit_body(repo) == @context_prefix <> "./z"
+      assert changed_paths(repo) == ["x/CONTEXT.md", "y/CONTEXT.md", "z/CONTEXT.md"]
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -317,6 +493,16 @@ defmodule EvoGit.Agent.Tools.ContextAmendTest do
     assert result =~ "has been updated successfully"
     if commit, do: assert(result =~ "Committed:")
     result
+  end
+
+  # A hand-built equivalent of the tool's own auto context commit: `<dir>/CONTEXT.md`
+  # committed with the auto subject (or an explicit one), so HEAD is exactly the
+  # shape `amendable_context_head/3` judges.
+  defp context_commit!(repo, dir, message \\ nil) do
+    File.mkdir_p!(Path.join(repo, dir))
+    File.write!(Path.join([repo, dir, "CONTEXT.md"]), "# #{dir}\n\nbase\n")
+    git!(repo, ["add", "#{dir}/CONTEXT.md"])
+    git!(repo, ["commit", "-q", "-m", message || @context_prefix <> "./#{dir}"])
   end
 
   # One module-unique git TEMPLATE (one initial commit, repo-local identity).
@@ -377,6 +563,17 @@ defmodule EvoGit.Agent.Tools.ContextAmendTest do
   end
 
   defp last_subject(repo), do: git!(repo, ["log", "-1", "--pretty=%s"])
+
+  # Raw subject + body of HEAD (the co-author trailer is absent — see @moduledoc).
+  defp commit_body(repo), do: git!(repo, ["log", "-1", "--pretty=%B"])
+
+  # Repo-relative paths changed by HEAD, sorted.
+  defp changed_paths(repo) do
+    repo
+    |> git!(["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"])
+    |> String.split("\n", trim: true)
+    |> Enum.sort()
+  end
 
   defp commit_count(repo) do
     repo |> git!(["rev-list", "--count", "HEAD"]) |> String.to_integer()
