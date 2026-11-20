@@ -119,6 +119,51 @@ defmodule EvoGit.VCT do
         }
 
   @typedoc """
+  A mount value object — the shape most reads return.
+
+  See `EvoGit.VCT.Mount` for the fields (`point`, `path`, `name`, `kind`,
+  `last_opened_at`, `members`, `description`); `workspace?/1` and `git?/1`
+  classify it.
+  """
+  @type t :: Mount.t()
+
+  @typedoc """
+  A canonical VCT point — the formatted `vct:///…` URL.
+
+  The ONE spelling shared by a mount's `point`, a workspace point and a member
+  ref's `point`. A point is a NAMESPACE ADDRESS, never an OS path.
+  """
+  @type point :: EvoGit.VCT.Path.point()
+
+  @typedoc """
+  Every failure reason this module's error tuples carry.
+
+  The validation/state reasons (`:invalid_point`, `:invalid_path`,
+  `:relative_path`, `:invalid_name`, `:invalid_members`, `:invalid_content`,
+  `:not_found`, `:not_a_workspace`, `:reserved_point`, `:nested`,
+  `:cap_reached`), the persistence reason `:store_unavailable` and the
+  TRANSPORT reason `:vct_unavailable` — the last one meaning only "no VCT
+  server answered", never "no such row".
+  """
+  @type error_reason ::
+          :not_found
+          | :vct_unavailable
+          | :invalid_point
+          | :not_a_workspace
+          | :nested
+          | :cap_reached
+          | :store_unavailable
+          | :reserved_point
+          | :relative_path
+          | :invalid_path
+          | :invalid_name
+          | :invalid_members
+          | :invalid_content
+          | {:invalid_name, term()}
+          | {:member_is_workspace, point()}
+          | {:invalid_member, member_ref()}
+
+  @typedoc """
   A workspace resolved against the CURRENT mount table.
 
     * `:workspace` — the workspace mount itself;
@@ -129,19 +174,11 @@ defmodule EvoGit.VCT do
       expanded: workspaces do not nest).
   """
   @type workspace_resolution :: %{
-          workspace: Mount.t(),
-          members: [Mount.t()],
-          missing: [Mount.member()],
-          nested: [Mount.member()]
+          workspace: t(),
+          members: [t()],
+          missing: [member_ref()],
+          nested: [member_ref()]
         }
-
-  @typedoc """
-  A canonical VCT point — the formatted `vct:///…` URL.
-
-  The ONE spelling shared by a mount's `point`, a workspace point and a member
-  ref's `point`. A point is a NAMESPACE ADDRESS, never an OS path.
-  """
-  @type point :: EvoGit.VCT.Path.point()
 
   @typedoc """
   A workspace member ref exactly as STORED: a STRING-KEYED map carrying
@@ -171,7 +208,7 @@ defmodule EvoGit.VCT do
     * `:nested` — the STORED refs naming another workspace (never expanded).
   """
   @type workspace_entry :: %{
-          workspace: Mount.t(),
+          workspace: t(),
           members: [member_entry()],
           missing: [member_ref()],
           nested: [member_ref()]
@@ -256,7 +293,7 @@ defmodule EvoGit.VCT do
   `:invalid_path`, `{:invalid_name, term}`, a store error, or
   `:vct_unavailable`).
   """
-  @spec mount(String.t(), keyword()) :: {:ok, Mount.t()} | {:error, term()}
+  @spec mount(String.t(), keyword()) :: {:ok, t()} | {:error, error_reason()}
   def mount(path, opts \\ []) when is_list(opts),
     do: call({:mount, path, opts}, {:error, :vct_unavailable})
 
@@ -291,7 +328,7 @@ defmodule EvoGit.VCT do
   persist leaves the table untouched.
   """
   @spec ensure_mount(String.t() | VctPath.t(), String.t(), keyword()) ::
-          {:ok, Mount.t()} | {:error, term()}
+          {:ok, t()} | {:error, error_reason()}
   def ensure_mount(point, path, opts \\ []) when is_list(opts),
     do: call({:ensure_mount, point, path, opts}, {:error, :vct_unavailable})
 
@@ -325,7 +362,7 @@ defmodule EvoGit.VCT do
   Returns `{:ok, mount}`, or `{:error, reason}` (the validation errors above, a
   store error, or `:vct_unavailable`).
   """
-  @spec create_workspace(term(), term(), keyword()) :: {:ok, Mount.t()} | {:error, term()}
+  @spec create_workspace(term(), term(), keyword()) :: {:ok, t()} | {:error, error_reason()}
   def create_workspace(name, members, opts \\ []) when is_list(opts),
     do: call({:create_workspace, name, members, opts}, {:error, :vct_unavailable})
 
@@ -340,7 +377,7 @@ defmodule EvoGit.VCT do
 
     * `:limit` — positive integer cap on the returned list
   """
-  @spec workspaces(keyword()) :: [Mount.t()]
+  @spec workspaces(keyword()) :: [t()]
   def workspaces(opts \\ []) when is_list(opts), do: call({:workspaces, opts}, [])
 
   @doc """
@@ -396,7 +433,7 @@ defmodule EvoGit.VCT do
   names a missing mount still covers it: membership is metadata, not a
   filesystem probe.
   """
-  @spec workspaces_for(term()) :: [Mount.t()]
+  @spec workspaces_for(term()) :: [t()]
   def workspaces_for(project), do: call({:workspaces_for, project}, [])
 
   @doc """
@@ -426,7 +463,7 @@ defmodule EvoGit.VCT do
     * `:include_workspaces` — `true` merges the WORKSPACE mounts into the
       result, sorted by the same recency rule (default `false`: projects only)
   """
-  @spec projects(keyword()) :: [Mount.t()]
+  @spec projects(keyword()) :: [t()]
   def projects(opts \\ []) when is_list(opts), do: call({:projects, opts}, [])
 
   @doc """
@@ -446,7 +483,7 @@ defmodule EvoGit.VCT do
       merges them with the project matches, sorted by the same recency rule
       (default `false`: projects only)
   """
-  @spec search(term(), keyword()) :: [Mount.t()]
+  @spec search(term(), keyword()) :: [t()]
   def search(query, opts \\ []) when is_list(opts), do: call({:search, query, opts}, [])
 
   @doc """
@@ -463,7 +500,7 @@ defmodule EvoGit.VCT do
   workspace whose point segment or display name equals it is removed (the
   newest wins when several match), and `{:error, :not_found}` when none does.
   """
-  @spec forget(String.t() | VctPath.t()) :: :ok | {:error, term()}
+  @spec forget(String.t() | VctPath.t()) :: :ok | {:error, error_reason()}
   def forget(key), do: call({:forget, key}, {:error, :vct_unavailable})
 
   @doc """
@@ -478,7 +515,7 @@ defmodule EvoGit.VCT do
   `:not_found`: absence of a row and absence of a server are different facts.
   """
   @spec resolve(String.t() | VctPath.t()) ::
-          {:ok, Mount.t()} | {:error, :not_found | :invalid_point | :vct_unavailable}
+          {:ok, t()} | {:error, :not_found | :invalid_point | :vct_unavailable}
   def resolve(point_or_path), do: call({:resolve, point_or_path}, {:error, :vct_unavailable})
 
   @doc """
@@ -489,7 +526,7 @@ defmodule EvoGit.VCT do
   underneath it. A WORKSPACE mount has NO OS path, so it is never returned here
   (and never shadows a real file mount), whatever the requested path.
   """
-  @spec mount_for_path(String.t()) :: Mount.t() | nil
+  @spec mount_for_path(String.t()) :: t() | nil
   def mount_for_path(os_path), do: call({:mount_for_path, os_path}, nil)
 
   @doc """
@@ -608,7 +645,7 @@ defmodule EvoGit.VCT do
 
   Broadcasts `{:vct_updated, node()}` on `"vct"` after a successful write.
   """
-  @spec put_global_context(term()) :: :ok | {:error, term()}
+  @spec put_global_context(term()) :: :ok | {:error, error_reason()}
   def put_global_context(content),
     do: call({:put_global_context, content}, {:error, :vct_unavailable})
 
