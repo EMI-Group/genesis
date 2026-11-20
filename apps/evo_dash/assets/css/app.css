@@ -3023,3 +3023,10 @@ dialog.modal .modal-box :not(pre) > code {
     opacity: 1;
   }
 }
+
+/* ListEnter hook (hooks/list_enter.js): the only class it toggles. The
+   keyframes and timings come from the shared motion foundation (motion.css),
+   and its global reduced-motion backstop already disables this animation. */
+.motion-list-enter {
+  animation: motion-slide-in var(--motion-base) var(--motion-ease-out) both;
+}

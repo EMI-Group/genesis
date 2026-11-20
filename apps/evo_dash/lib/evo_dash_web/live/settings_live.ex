@@ -304,70 +304,95 @@ defmodule EvoDashWeb.SettingsLive do
                 />
               </.form>
             <% else %>
-              <%= if @active_category == :remote_connections do %>
-                {RemotePanel.remote_connections_panel(assigns)}
-              <% else %>
-                <%!-- Custom Agents UI — same design as category_section but for
+              <%!-- The active category pane is RE-KEYED per category so a swap
+               inserts a fresh element and replays the shared
+               `wizard-step-enter` entrance keyframe (no JS, no new CSS). The
+               wrapper takes the pane's place in the flex row, keeping the
+               documented height chain (flex-1 + min-h-0 on a non-scroll item). --%>
+              <div
+                id={"settings-pane-" <> to_string(@active_category)}
+                class="wizard-step-enter flex-1 flex flex-col min-w-0 min-h-0"
+              >
+                <%= if @active_category == :remote_connections do %>
+                  {RemotePanel.remote_connections_panel(assigns)}
+                <% else %>
+                  <%!-- Custom Agents UI — same design as category_section but for
                  the special :agents pseudo-category. Both editors contain
                  their own <form> elements (save_custom_agent,
                  save_model_selection_script), so they are NOT wrapped in a
                  save_category form (nested <form> elements are invalid
                  HTML). --%>
-                <%= if @active_category == :agents do %>
-                  <div
-                    class="flex-1 flex flex-col min-w-0 overflow-y-auto"
-                    id="category-agents"
-                  >
-                    <EvoDashWeb.SettingsComponents.SectionHeader.section_header
-                      icon="hero-user-group"
-                      title={gettext("Agents")}
-                      description={
-                        gettext(
-                          "Create custom agents and configure the per-agent model selection script."
-                        )
-                      }
-                    />
-
-                    <div class="px-8 py-8 space-y-5">
-                      <%!-- Note about the separate TOML file --%>
-                      <div class="rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-3">
-                        <.icon
-                          name="hero-information-circle"
-                          class="size-5 text-info shrink-0 mt-0.5"
-                        />
-                        <p class="text-sm text-base-content/80">
-                          {gettext(
-                            "Custom agents are stored in `agents.toml`, next to the main configuration file."
-                          )}
-                        </p>
-                      </div>
-
-                      <EvoDashWeb.SettingsComponents.CustomAgentsEditor.custom_agents_editor
-                        agents={@custom_agents}
-                        editing_agent_id={@editing_agent_id}
-                        model_profiles={PageState.custom_agent_model_choices(@file_config)}
-                        custom_tool_names={
-                          EvoDashWeb.SettingsComponents.CustomToolsPanel.custom_tool_names(
-                            @custom_tools_status
+                  <%= if @active_category == :agents do %>
+                    <div
+                      class="flex-1 flex flex-col min-w-0 overflow-y-auto"
+                      id="category-agents"
+                    >
+                      <EvoDashWeb.SettingsComponents.SectionHeader.section_header
+                        icon="hero-user-group"
+                        title={gettext("Agents")}
+                        description={
+                          gettext(
+                            "Create custom agents and configure the per-agent model selection script."
                           )
                         }
                       />
 
-                      <EvoDashWeb.SettingsComponents.CustomToolsPanel.custom_tools_panel
-                        status={@custom_tools_status}
-                        loading={@custom_tools_loading}
-                      />
+                      <div class="px-8 py-8 space-y-5">
+                        <%!-- Note about the separate TOML file --%>
+                        <div class="rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-3">
+                          <.icon
+                            name="hero-information-circle"
+                            class="size-5 text-info shrink-0 mt-0.5"
+                          />
+                          <p class="text-sm text-base-content/80">
+                            {gettext(
+                              "Custom agents are stored in `agents.toml`, next to the main configuration file."
+                            )}
+                          </p>
+                        </div>
 
-                      <EvoDashWeb.SettingsComponents.ModelSelectionEditor.model_selection_editor
-                        script={@model_selection_script}
-                        script_status={@script_status}
-                        script_save_error={@script_save_error}
-                        test_results={@script_test_results}
-                      />
+                        <%!-- The custom-agent store is loaded ASYNCHRONOUSLY, so a
+                       loading placeholder stands in for the editor: rendering
+                       the editor's "no custom agents" empty state before the
+                       result lands would claim the node has none. --%>
+                        <%= if @custom_agents_loading do %>
+                          <div
+                            id="custom-agents-loading"
+                            class="rounded-lg border border-base-200 bg-base-100 p-4"
+                            aria-busy="true"
+                          >
+                            <div class="skeleton h-5 w-40 mb-3"></div>
+                            <div class="skeleton h-10 w-full mb-2"></div>
+                            <div class="skeleton h-10 w-full"></div>
+                          </div>
+                        <% else %>
+                          <EvoDashWeb.SettingsComponents.CustomAgentsEditor.custom_agents_editor
+                            agents={@custom_agents}
+                            editing_agent_id={@editing_agent_id}
+                            model_profiles={PageState.custom_agent_model_choices(@file_config)}
+                            custom_tool_names={
+                              EvoDashWeb.SettingsComponents.CustomToolsPanel.custom_tool_names(
+                                @custom_tools_status
+                              )
+                            }
+                          />
+                        <% end %>
+
+                        <EvoDashWeb.SettingsComponents.CustomToolsPanel.custom_tools_panel
+                          status={@custom_tools_status}
+                          loading={@custom_tools_loading}
+                        />
+
+                        <EvoDashWeb.SettingsComponents.ModelSelectionEditor.model_selection_editor
+                          script={@model_selection_script}
+                          script_status={@script_status}
+                          script_save_error={@script_save_error}
+                          test_results={@script_test_results}
+                        />
+                      </div>
                     </div>
-                  </div>
-                <% else %>
-                  <%!-- category_section renders its own <form phx-submit="save_category">
+                  <% else %>
+                    <%!-- category_section renders its own <form phx-submit="save_category">
                internally. The LLM category's provider-account panel and its
                inline wizards contain their own nested forms
                (save_provider_profile, provider_profile_form_change,
@@ -376,35 +401,36 @@ defmodule EvoDashWeb.SettingsLive do
                HTML — browsers ignore the inner <form> tag, causing the
                account editor's Save button to submit save_category instead
                of save_provider_profile). --%>
-                  <EvoDashWeb.WorkbenchPreferences.panel :if={
-                    @live_action == :window and @active_category == :appearance
-                  } />
-                  <EvoDashWeb.SettingsComponents.category_section
-                    :if={@live_action != :window or @active_category != :appearance}
-                    category={@active_category}
-                    schemas={Map.get(@schemas_by_category, @active_category, [])}
-                    file_config={@file_config}
-                    errors={Map.get(@per_category_errors, @active_category, [])}
-                    sandbox_backend={PageState.sandbox_backend(assigns)}
-                    sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
-                    provider_wizard={@provider_wizard}
-                    provider_schedule={@provider_schedule}
-                    llm_test_status={@llm_test_status}
-                    provider_profiles={Schema.provider_profiles(@file_config)}
-                    model_selections={ConfigIO.model_selections(@file_config)}
-                    editing_profile_id={@editing_profile_id}
-                    profile_form_draft={@profile_form_draft}
-                    provider_profile_errors={@profile_form_errors}
-                    profile_advanced_open={@profile_advanced_open}
-                    appearance_accent_draft={@appearance_accent_draft}
-                    test_profile_id={@test_profile_id}
-                    credentials={@credentials}
-                    auth_statuses={@auth_statuses}
-                    chatgpt_sign_in={@chatgpt_sign_in}
-                    chatgpt_sign_in_manual={@chatgpt_sign_in_manual}
-                  />
+                    <EvoDashWeb.WorkbenchPreferences.panel :if={
+                      @live_action == :window and @active_category == :appearance
+                    } />
+                    <EvoDashWeb.SettingsComponents.category_section
+                      :if={@live_action != :window or @active_category != :appearance}
+                      category={@active_category}
+                      schemas={Map.get(@schemas_by_category, @active_category, [])}
+                      file_config={@file_config}
+                      errors={Map.get(@per_category_errors, @active_category, [])}
+                      sandbox_backend={PageState.sandbox_backend(assigns)}
+                      sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
+                      provider_wizard={@provider_wizard}
+                      provider_schedule={@provider_schedule}
+                      llm_test_status={@llm_test_status}
+                      provider_profiles={Schema.provider_profiles(@file_config)}
+                      model_selections={ConfigIO.model_selections(@file_config)}
+                      editing_profile_id={@editing_profile_id}
+                      profile_form_draft={@profile_form_draft}
+                      provider_profile_errors={@profile_form_errors}
+                      profile_advanced_open={@profile_advanced_open}
+                      appearance_accent_draft={@appearance_accent_draft}
+                      test_profile_id={@test_profile_id}
+                      credentials={@credentials}
+                      auth_statuses={@auth_statuses}
+                      chatgpt_sign_in={@chatgpt_sign_in}
+                      chatgpt_sign_in_manual={@chatgpt_sign_in_manual}
+                    />
+                  <% end %>
                 <% end %>
-              <% end %>
+              </div>
             <% end %>
           </div>
         </div>
@@ -422,12 +448,33 @@ defmodule EvoDashWeb.SettingsLive do
     socket =
       socket
       |> assign(PageState.initial_assigns(socket.assigns[:current_node]))
+      # Page-owned keys this module reads with `@key`: seeded here so a missing
+      # assign can never be silently papered over by an `assigns[:key] || …`
+      # read. Values are the ones `PageState.initial_assigns/1` already
+      # provides; `assign_new/3` only keeps them present.
+      |> assign_new(:platform_os, fn -> :unknown end)
+      |> assign_new(:known_schemas_by_category, fn -> %{} end)
+      |> assign_new(:auth_status_seq, fn -> 0 end)
+      |> assign_new(:chatgpt_sign_in, fn -> ChatGPTSignInState.new() end)
+      |> assign_new(:editing_profile_id, fn -> nil end)
       |> assign(
         chatgpt_sign_in: ChatGPTSignInState.new(),
         chatgpt_sign_in_manual: ChatGPTSignInState.manual?(socket.assigns)
       )
-      |> load_custom_agents_data()
-      |> load_custom_tools_data()
+
+    # BOTH custom-agent surfaces load ASYNCHRONOUSLY, and only on the CONNECTED
+    # mount: the dead render must never spawn a cross-node RPC and the page has
+    # to paint before either answer arrives. The loading flags stay true until
+    # the stale-guarded results land (see `AsyncResults.custom_agents_loaded/3`
+    # and `AsyncResults.custom_tools_loaded/3`).
+    socket =
+      if connected?(socket) do
+        socket
+        |> refresh_custom_agents()
+        |> refresh_custom_tools()
+      else
+        socket
+      end
 
     {:ok, socket}
   end
@@ -469,10 +516,8 @@ defmodule EvoDashWeb.SettingsLive do
       assign(
         socket,
         :schemas_by_category,
-        socket.assigns[:known_schemas_by_category] || socket.assigns.all_schemas_by_category
+        socket.assigns.known_schemas_by_category
       )
-
-    socket = assign(socket, :platform_os, socket.assigns.platform_os || :unknown)
 
     # The OAuth auth-status assigns must SURVIVE navigation (category switch,
     # push_patch): seed them only when missing, never overwrite a loaded map.
@@ -545,6 +590,10 @@ defmodule EvoDashWeb.SettingsLive do
   def handle_info({:DOWN, ref, :process, _pid, _reason}, socket)
       when ref == socket.assigns.config_load_wait_ref,
       do: AsyncResults.config_load_wait_down(socket)
+
+  @impl true
+  def handle_info({:custom_agents_loaded, requested_node, result}, socket),
+    do: AsyncResults.custom_agents_loaded(socket, requested_node, result)
 
   @impl true
   def handle_info({:custom_tools_loaded, requested_node, result}, socket),
@@ -772,7 +821,7 @@ defmodule EvoDashWeb.SettingsLive do
   def handle_event("add_peak_hours_row", params, socket) do
     # Peak-hours row editor is only meaningful while a profile is being edited
     # (the rows live in the editing profile's in-memory peak_hours).
-    if socket.assigns[:editing_profile_id] do
+    if socket.assigns.editing_profile_id do
       ModelProfileEvents.add_peak_hours_row(socket, params)
     else
       {:noreply, socket}
@@ -781,7 +830,7 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("remove_peak_hours_row", %{"index" => _idx} = params, socket) do
-    if socket.assigns[:editing_profile_id] do
+    if socket.assigns.editing_profile_id do
       ModelProfileEvents.remove_peak_hours_row(socket, params)
     else
       {:noreply, socket}
@@ -867,53 +916,30 @@ defmodule EvoDashWeb.SettingsLive do
   # Helpers: Node-aware custom agents + custom tools loading
   # ───────────────────────────────────────────────────────────────────────────
 
-  # Loads the custom-agents data (agent definitions, model-selection script,
-  # script compile status) for the currently-viewed node into the socket.
+  # Re-fetches the custom-agents data (agent definitions, model-selection
+  # script, script compile status) for the currently-viewed node in a
+  # SUPERVISED task — never inline in the LiveView process (a cross-node RPC on
+  # remote nodes) — then reports back `{:custom_agents_loaded, node, result}`.
+  # Non-blocking: the agents editor renders its loading placeholder with
+  # `@custom_agents_loading` true until the result lands, and the result handler
+  # stale-guards on the node. Called by the connected mount and by the
+  # custom-agent mutation flows.
   #
-  # `EvoDash.NodeContext.list_custom_agents/1` degrades to an empty result on
-  # RPC failure, so an unreachable remote node reads as "no custom agents"
-  # instead of crashing; `EvoDash.SafeCall` additionally covers an EXIT (a dead
-  # remote-registry GenServer call exits its caller, which a rescue cannot
-  # catch) — the same empty shape is used so the editor still renders. Public
-  # because CustomAgentEvents reloads through it after every mutation.
+  # `NodeData.fetch_custom_agents/1` is TOTAL: `EvoDash.NodeContext.list_custom_agents/1`
+  # already degrades a failure to an empty result, and `EvoDash.SafeCall` inside
+  # it additionally covers an EXIT (a dead remote-registry GenServer call exits
+  # its caller, which a rescue cannot catch).
   @doc false
-  def load_custom_agents_data(socket) do
+  def refresh_custom_agents(socket) do
+    parent = self()
     node = socket.assigns.current_node
 
-    {agents, script, script_status} =
-      case EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.list_custom_agents(node) end) do
-        {:ok, {:ok, %{agents: agents, model_selection_script: script, script_status: status}}} ->
-          {agents, script, status}
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      result = EvoDashWeb.SettingsLive.NodeData.fetch_custom_agents(node)
+      send(parent, {:custom_agents_loaded, node, result})
+    end)
 
-        _error_or_unexpected ->
-          {[], "", :ok}
-      end
-
-    assign(socket,
-      custom_agents: agents,
-      model_selection_script: script || "",
-      script_status: script_status,
-      editing_agent_id: nil,
-      script_save_error: nil,
-      script_test_results: []
-    )
-  end
-
-  # Loads the custom-tools status (tool modules discovered in the node's
-  # `<config_dir>/tools/`) synchronously into the socket, mirroring
-  # `load_custom_agents_data/1`'s mount-time local seed.
-  #
-  # `EvoDashWeb.SettingsLive.NodeData.fetch_custom_tools_status/1` is TOTAL: a
-  # remote RPC failure reads as `{:error, reason}` (the panel renders its
-  # degraded state) instead of crashing. Public because the custom-agent
-  # mutation flows refresh through it.
-  @doc false
-  def load_custom_tools_data(socket) do
-    assign(socket,
-      custom_tools_status:
-        EvoDashWeb.SettingsLive.NodeData.fetch_custom_tools_status(socket.assigns.current_node),
-      custom_tools_loading: false
-    )
+    assign(socket, :custom_agents_loading, true)
   end
 
   # Re-fetches the custom-tools status for the currently-viewed node in a

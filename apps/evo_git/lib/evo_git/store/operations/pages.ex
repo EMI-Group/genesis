@@ -79,9 +79,10 @@ defmodule EvoGit.Store.Operations.Pages do
   `opts` accepts the `EvoGit.Store.Operations.Tasks.safe_select_paginated_tasks/2`
   shape — `:limit`, `:offset`, and the filter set — so a caller can switch
   reads without reshaping anything. The filter keys (`:status`,
-  `:project_path`, `:review_status`, `:search`) may be passed either nested
-  under `:filters` (the legacy shape) or at the top level; a top-level key wins
-  over the nested one. Both go through the ONE shared WHERE builder
+  `:project_path`, `:review_status`, `:session_mode`, `:search`) may be passed
+  either nested under `:filters` (the legacy shape) or at the top level; a
+  top-level key wins over the nested one. Both go through the ONE shared WHERE
+  builder
   (`EvoGit.Store.Operations.Filters.where_filters/2`), so this read and the
   legacy FULL-row page can never match different rows.
 
@@ -218,7 +219,10 @@ defmodule EvoGit.Store.Operations.Pages do
         _ -> []
       end
 
-    Keyword.merge(nested, Keyword.take(opts, [:status, :project_path, :review_status, :search]))
+    Keyword.merge(
+      nested,
+      Keyword.take(opts, [:status, :project_path, :review_status, :session_mode, :search])
+    )
   end
 
   # Page-clamp refetch: an offset at/past the end of the filtered set lands on

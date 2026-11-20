@@ -8,6 +8,25 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
   attr(:current_node_id, :string, default: nil)
 
   def active_tasks(assigns) do
+    # ONE clock read per render: every elapsed label of the sidebar shares the
+    # same "now", so two rows of one render can never disagree about the time
+    # (and no row reads the clock twice: the tooltip and the sub-line agree by
+    # construction, because they are built from the same string).
+    now = DateTime.utc_now()
+
+    # The view models are built ONCE, before the template: a row's label,
+    # sub-line, route, dot class and tooltips are pure functions of its task
+    # summary, so computing them inside HEEx would repeat that work per row on
+    # every re-render of the layout.
+    running_tasks = List.wrap(Map.get(assigns, :running_tasks, []))
+    pending_tasks = List.wrap(Map.get(assigns, :pending_tasks, []))
+    node_id = Map.get(assigns, :current_node_id)
+
+    sessions = build_sessions(running_tasks, pending_tasks, now, node_id)
+    groups = build_groups(running_tasks, pending_tasks, now, node_id)
+
+    assigns = assign(assigns, sessions: sessions, groups: groups)
+
     ~H"""
     <section
       :if={@running_tasks != [] or @pending_tasks != []}
@@ -25,8 +44,7 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
            docs/agent-runtime-refactor.md §4.9 — sessions never fall
            into "Other"). `session_tasks/2` is fed by the same Active
            Tasks feed as the project rows. --%>
-        <% sessions = session_tasks(@running_tasks, @pending_tasks) %>
-        <%= if sessions != [] do %>
+        <%= if @sessions != [] do %>
           <%!-- Sessions group header --%>
           <div class="px-3 pt-2 pb-1 first:pt-0">
             <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/70 sidebar-label">
@@ -35,36 +53,11 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
               {gettext("Sessions")}
             </span>
           </div>
-          <%!-- Interactive sessions in this group --%>
-          <%= for task <- sessions do %>
-            <% awaiting = Map.get(task, :status) == :awaiting_input %>
-            <% session_sub_line =
-              if awaiting,
-                do: gettext("Waiting for you"),
-                else: format_elapsed(Map.get(task, :started_at)) %>
-            <.link
-              navigate={with_node_param(~p"/tasks", @current_node_id)}
-              data-sidebar-task-link
-              title={task_label(task) <> " — " <> session_sub_line}
-              class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-base-content/80 hover:bg-base-300/70 hover:text-base-content transition-colors group"
-            >
-              <span class={[
-                "w-2.5 h-2.5 rounded-full shrink-0",
-                task_status_dot_class(Map.get(task, :status)),
-                "animate-pulse"
-              ]}></span>
-              <div class="min-w-0 flex-1 sidebar-label">
-                <span class="block truncate group-hover:text-base-content transition-colors">
-                  {task_label(task)}
-                </span>
-                <span class="block text-xs text-base-content/60 mt-0.5">
-                  {session_sub_line}
-                </span>
-              </div>
-            </.link>
+          <%= for row <- @sessions do %>
+            <.task_row row={row} />
           <% end %>
         <% end %>
-        <%= for {project_name, tasks} <- group_tasks_by_project(@running_tasks, @pending_tasks) do %>
+        <%= for {project_name, rows} <- @groups do %>
           <%!-- Project group header --%>
           <div class="px-3 pt-2 pb-1 first:pt-0">
             <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/70 sidebar-label">
@@ -73,60 +66,115 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
             </span>
           </div>
           <%!-- Tasks in this group --%>
-          <%= for task <- tasks do %>
-            <%!-- `is_running` = LIVE (not finished) and therefore links to
-               the agent inspector; it covers the pause pair because
-               `:paused`/`:pausing` are NON-terminal, so they must NEVER
-               be titled or routed like a reviewable finished task. --%>
-            <% is_running =
-              task.status in [
-                :running,
-                :pending,
-                :finalizing,
-                :cancelling,
-                :pausing,
-                :paused
-              ] %>
-            <.link
-              navigate={
-                if is_running,
-                  do: with_node_param(~p"/agents", @current_node_id),
-                  else: with_node_param(~p"/review/#{task.id}", @current_node_id)
-              }
-              data-sidebar-task-link
-              title={task_label(task) <> " — " <> (if is_running, do: format_elapsed(task.started_at), else: gettext("completed") <> " " <> format_elapsed(task.finished_at))}
-              class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-base-content/80 hover:bg-base-300/70 hover:text-base-content transition-colors group"
-            >
-              <span
-                class={[
-                  "w-2.5 h-2.5 rounded-full shrink-0",
-                  task_status_dot_class(task.status),
-                  pulsing_status?(task.status) && "animate-pulse"
-                ]}
-                title={
-                  if is_running,
-                    do: active_status_title(task.status),
-                    else: gettext("Pending Review")
-                }
-              ></span>
-              <div class="min-w-0 flex-1 sidebar-label">
-                <span class="block truncate group-hover:text-base-content transition-colors">
-                  {task_label(task)}
-                </span>
-                <span class="block text-xs text-base-content/60 mt-0.5">
-                  <%= if is_running do %>
-                    {format_elapsed(task.started_at)}
-                  <% else %>
-                    {gettext("completed")} {format_elapsed(task.finished_at)}
-                  <% end %>
-                </span>
-              </div>
-            </.link>
+          <%= for row <- rows do %>
+            <.task_row row={row} />
           <% end %>
         <% end %>
       </div>
     </section>
     """
+  end
+
+  # ONE row renderer for both groups: session rows and project rows differ only
+  # in their view-model fields, never in their markup. `status_title` is nil for
+  # a session row, and a nil attribute is not rendered at all.
+  attr(:row, :map, required: true)
+
+  defp task_row(assigns) do
+    ~H"""
+    <.link
+      navigate={@row.href}
+      data-sidebar-task-link
+      title={@row.title}
+      class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-base-content/80 hover:bg-base-300/70 hover:text-base-content transition-colors group"
+    >
+      <span
+        class={[
+          "w-2.5 h-2.5 rounded-full shrink-0",
+          @row.dot_class,
+          @row.pulse? && "animate-pulse"
+        ]}
+        title={@row.status_title}
+      ></span>
+      <div class="min-w-0 flex-1 sidebar-label">
+        <span class="block truncate group-hover:text-base-content transition-colors">
+          {@row.label}
+        </span>
+        <span class="block text-xs text-base-content/60 mt-0.5">
+          {@row.sub_line}
+        </span>
+      </div>
+    </.link>
+    """
+  end
+
+  # Session rows, in feed order (running then pending). A session is always
+  # "live" (it is a waiting interactive agent), so its row links to the task
+  # list, its dot pulses and it carries no status tooltip.
+  defp build_sessions(running_tasks, pending_tasks, now, node_id) do
+    # Row-independent: every session links to the same node-aware task list.
+    href = with_node_param(~p"/tasks", node_id)
+
+    Enum.map(session_tasks(running_tasks, pending_tasks), fn task ->
+      status = Map.get(task, :status)
+
+      sub_line =
+        if status == :awaiting_input,
+          do: gettext("Waiting for you"),
+          else: format_elapsed(Map.get(task, :started_at), now)
+
+      label = task_label(task)
+
+      %{
+        label: label,
+        sub_line: sub_line,
+        href: href,
+        dot_class: task_status_dot_class(status),
+        pulse?: true,
+        title: label <> " — " <> sub_line,
+        status_title: nil
+      }
+    end)
+  end
+
+  # Per-project groups as `{project_name, rows}`, in sidebar order: "Other"
+  # first, then case-insensitive alphabetical by project basename, with the
+  # live rows of each group before its finished (reviewable) ones.
+  defp build_groups(running_tasks, pending_tasks, now, node_id) do
+    running_tasks
+    |> group_tasks_by_project(pending_tasks)
+    |> Enum.map(fn {project_name, tasks} ->
+      {project_name, Enum.map(tasks, &project_row(&1, now, node_id))}
+    end)
+  end
+
+  # A project group's row. `live?` = LIVE (not finished) and therefore links to
+  # the agent inspector; it covers the pause pair because `:paused`/`:pausing`
+  # are NON-terminal, so they must NEVER be titled or routed like a reviewable
+  # finished task.
+  defp project_row(task, now, node_id) do
+    live? = live_task?(task)
+    label = task_label(task)
+
+    {href, sub_line, status_title} =
+      if live? do
+        {with_node_param(~p"/agents", node_id), format_elapsed(task.started_at, now),
+         active_status_title(task.status)}
+      else
+        {with_node_param(~p"/review/#{task.id}", node_id),
+         gettext("completed") <> " " <> format_elapsed(task.finished_at, now),
+         gettext("Pending Review")}
+      end
+
+    %{
+      label: label,
+      sub_line: sub_line,
+      href: href,
+      dot_class: task_status_dot_class(task.status),
+      pulse?: pulsing_status?(task.status),
+      title: label <> " — " <> sub_line,
+      status_title: status_title
+    }
   end
 
   # Extract a display label for a task: objective > prompt > truncated task ID
@@ -158,11 +206,14 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
   defp active_status_title(:pausing), do: gettext("Pausing")
   defp active_status_title(_status), do: gettext("Running")
 
-  # Format a DateTime as a relative elapsed string like "2m ago", "1h ago"
-  defp format_elapsed(nil), do: ""
+  # Format a DateTime as a relative elapsed string like "2m ago", "1h ago".
+  # `now` is read ONCE per render by `active_tasks/1` and threaded in, so every
+  # row of a render measures against the same instant instead of calling
+  # `DateTime.utc_now()` twice per row.
+  defp format_elapsed(nil, _now), do: ""
 
-  defp format_elapsed(dt) do
-    diff = DateTime.diff(DateTime.utc_now(), dt)
+  defp format_elapsed(dt, now) do
+    diff = DateTime.diff(now, dt)
 
     cond do
       diff < 30 -> gettext("just now")

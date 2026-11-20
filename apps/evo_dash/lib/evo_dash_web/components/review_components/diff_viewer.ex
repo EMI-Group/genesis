@@ -281,6 +281,8 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     <div class="diff-main-content space-y-3" id="diff-viewer" phx-hook="DiffViewer">
       <%= for file <- @files do %>
         <% expanded? = Map.get(@expanded_files, file.path, false) %>
+        <% dirname = Path.dirname(file.path) %>
+        <% basename = Path.basename(file.path) %>
         <section
           class="diff-file-section rounded-xl border border-base-300 overflow-hidden bg-base-100 scroll-mt-3"
           id={file_section_id(file.path)}
@@ -306,12 +308,12 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
               class={"size-3.5 mt-1 shrink-0 #{file_status_color(file.status)}"}
             />
             <span class="min-w-0 flex-1 font-mono" title={file.path}>
-              <span class="block [overflow-wrap:anywhere]">{Path.basename(file.path)}</span>
+              <span class="block [overflow-wrap:anywhere]">{basename}</span>
               <span
-                :if={Path.dirname(file.path) != "."}
+                :if={dirname != "."}
                 class="block text-xs text-base-content/65 [overflow-wrap:anywhere]"
               >
-                {Path.dirname(file.path)}/
+                {dirname}/
               </span>
             </span>
             <span class="shrink-0 text-xs leading-5 font-mono text-success">+{file.additions}</span>
@@ -344,10 +346,12 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   attr(:active_repo_id, :string, default: "primary")
 
   def split_diff_layout(assigns) do
+    {total_additions, total_deletions} = sum_file_stats(assigns.files || [])
+
     assigns =
       assigns
-      |> assign(:total_additions, sum_files(assigns.files || [], :additions))
-      |> assign(:total_deletions, sum_files(assigns.files || [], :deletions))
+      |> assign(:total_additions, total_additions)
+      |> assign(:total_deletions, total_deletions)
 
     ~H"""
     <div>
@@ -510,9 +514,11 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   # Private helpers
   # ---------------------------------------------------------------------------
 
-  # Sum one integer stat (:additions / :deletions) across the file list.
-  defp sum_files(files, key) do
-    Enum.reduce(files, 0, fn file, acc -> acc + (Map.get(file, key) || 0) end)
+  # Sum the :additions / :deletions integer stats across the file list in ONE pass.
+  defp sum_file_stats(files) do
+    Enum.reduce(files, {0, 0}, fn file, {additions, deletions} ->
+      {additions + (Map.get(file, :additions) || 0), deletions + (Map.get(file, :deletions) || 0)}
+    end)
   end
 
   @doc """
@@ -552,9 +558,17 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     <div class="text-xs font-mono">
       <%= cond do %>
         <% @loading? and is_nil(@file.diff) -> %>
-          <div role="status" class="flex items-center justify-center py-8 gap-2 text-base-content/70">
-            <span class="loading loading-spinner loading-sm"></span>
-            <span>{gettext("Loading diff...")}</span>
+          <%!-- zh_CN: 骨架屏占位，高度与加载完成后的 diff 面板一致，避免载入时跳动 --%>
+          <div
+            role="status"
+            aria-live="polite"
+            class="flex min-h-32 flex-col justify-center gap-3 px-4 py-6 text-base-content/70"
+          >
+            <EvoDashWeb.Components.Skeleton.row count={4} class="w-full" />
+            <span class="flex items-center justify-center gap-2 text-xs">
+              <span class="loading loading-spinner loading-sm"></span>
+              <span>{gettext("Loading diff...")}</span>
+            </span>
           </div>
         <% is_nil(@file.diff) -> %>
           <div class="flex flex-wrap items-center justify-center gap-2 p-4 text-base-content/75">

@@ -80,6 +80,13 @@ defmodule EvoDashWeb.TaskCardComponents.Options do
   # `truncate: false` = the Full Objective MODAL body: the complete, uncapped
   # objective text — reached only by an explicit user action
   # (`view_full_options`) and scrolled by the modal's own container.
+  #
+  # NOTE: this is a plain render helper, NOT an assigns-based function
+  # component. Its single argument is the task OPTS keyword list
+  # (`tasks_live.ex` calls it as
+  # `TaskCardComponents.render_options_full(opts)`), so it is deliberately
+  # declared WITHOUT `attr`/`slot` metadata — callers pass a value, never an
+  # assigns map.
   def render_options_full(opts) do
     render_options(opts, truncate: false)
   end

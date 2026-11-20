@@ -18,7 +18,7 @@ defmodule EvoDashWeb.AgentsLive.LoadData do
   Full page load: agent summaries + the node's config status (layout banner)
   + a refreshed threshold cache. Returns `{:ok, %{agents:, config_status:,
   threshold_cache:}}` — the task caller wraps this in a node-boundary
-  try/rescue (see `AgentsLive.start_async_load/1`).
+  try/rescue (see `AgentsLive.Loader.start_page_load/1`).
   """
   @spec load(atom(), nil | tuple()) ::
           {:ok, %{agents: [map()], config_status: term(), threshold_cache: tuple()}}
@@ -35,7 +35,7 @@ defmodule EvoDashWeb.AgentsLive.LoadData do
   Lightweight refresh (poll / broadcast path): agent summaries + a refreshed
   threshold cache, no config_status (the layout banner is only loaded by the
   page-load path). Returns `{agents, threshold_cache}` — the task caller wraps
-  this in a node-boundary try/rescue (see `AgentsLive.spawn_agents_refresh/1`).
+  this in a node-boundary try/rescue (see `AgentsLive.Loader.spawn_refresh/1`).
   """
   @spec refresh(atom(), nil | tuple()) :: {[map()], tuple()}
   def refresh(node, threshold_cache) do

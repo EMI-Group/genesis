@@ -15,12 +15,13 @@ defmodule EvoDashWeb.SettingsLive.CustomAgentEvents do
   failures become the module's existing error flashes.
 
   These flows stay SYNCHRONOUS-but-exit-safe on the LiveView process for BOTH
-  local and remote nodes (a ~30s remote agents.toml save blocking this page is
-  accepted here): the module has no result-message plumbing, and inventing a
-  tagged async message would need a `handle_info` clause in SettingsLive that
-  does not exist. The follow-up refreshes already use the established paths —
-  `SettingsLive.load_custom_agents_data/1` (itself `SafeCall`-wrapped) and the
-  ASYNC supervised `SettingsLive.refresh_custom_tools/1`.
+  local and remote nodes for the WRITE itself (a ~30s remote agents.toml save
+  blocking this page is accepted here). The follow-up READS never block the
+  socket: both refreshes are the established ASYNC supervised paths —
+  `SettingsLive.refresh_custom_agents/1` (reports
+  `{:custom_agents_loaded, node, result}`) and
+  `SettingsLive.refresh_custom_tools/1` — each with an editor loading flag and a
+  node stale guard.
   """
 
   # zh_CN: Agent → "智能体", Model → "模型", Script → "脚本",
@@ -64,7 +65,7 @@ defmodule EvoDashWeb.SettingsLive.CustomAgentEvents do
               socket
               |> assign(:editing_agent_id, nil)
               |> put_flash(:info, gettext("Custom agent saved."))
-              |> SettingsLive.load_custom_agents_data()
+              |> SettingsLive.refresh_custom_agents()
               |> SettingsLive.refresh_custom_tools()
 
             {:noreply, socket}
@@ -87,7 +88,7 @@ defmodule EvoDashWeb.SettingsLive.CustomAgentEvents do
           socket
           |> assign(:editing_agent_id, nil)
           |> put_flash(:info, gettext("Custom agent deleted."))
-          |> SettingsLive.load_custom_agents_data()
+          |> SettingsLive.refresh_custom_agents()
           |> SettingsLive.refresh_custom_tools()
 
         {:noreply, socket}
@@ -123,7 +124,7 @@ defmodule EvoDashWeb.SettingsLive.CustomAgentEvents do
         socket =
           socket
           |> put_flash(:info, gettext("Model selection script saved."))
-          |> SettingsLive.load_custom_agents_data()
+          |> SettingsLive.refresh_custom_agents()
           |> SettingsLive.refresh_custom_tools()
 
         {:noreply, socket}
@@ -187,7 +188,7 @@ defmodule EvoDashWeb.SettingsLive.CustomAgentEvents do
 
   # Invalidates the model-selector compile cache on the viewed node. Exit-safe;
   # the outcome is deliberately IGNORED (it is pure cache invalidation, and the
-  # `load_custom_agents_data/1` call right after re-reads the script status) —
+  # async `refresh_custom_agents/1` right after re-reads the script status) —
   # only the cross-node exit must never reach the LiveView.
   defp reload_custom_agents(node) do
     EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.reload_custom_agents(node) end)

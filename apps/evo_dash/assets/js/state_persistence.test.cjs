@@ -4,10 +4,10 @@ const assert = require('node:assert/strict');
 const {readFileSync} = require('node:fs');
 const vm = require('node:vm');
 
-// Exercise the actual inline hook without importing the browser-only app bundle.
-const app = readFileSync(`${__dirname}/app.js`, 'utf8');
-const hookSource = app.slice(app.indexOf('const StatePersistence = {'),
-  app.indexOf('// ClipboardCopy hook:'));
+// Exercise the actual hook module without importing the browser-only app bundle.
+const moduleSource = readFileSync(`${__dirname}/hooks/state_persistence.js`, 'utf8');
+const hookSource = moduleSource.slice(moduleSource.indexOf('const StatePersistence = {'),
+  moduleSource.indexOf('export default StatePersistence;'));
 
 function mount({state, node = 'local', project = '/repo', taskDraftProject, taskDraftScope,
   legacyModel, storage = new Map()} = {}) {
@@ -35,7 +35,10 @@ function mount({state, node = 'local', project = '/repo', taskDraftProject, task
         if (selector === '[name="model_id"]') return legacyModel;
         return null;
       },
-      addEventListener(name, fn) { listeners[name] = fn; }
+      addEventListener(name, fn) { listeners[name] = fn; },
+      removeEventListener(name, fn) {
+        if (listeners[name] === fn) delete listeners[name];
+      }
     },
     handleEvent(name, fn) { events[name] = fn; },
     pushEvent(name, payload) { pushed.push({name, payload}); }

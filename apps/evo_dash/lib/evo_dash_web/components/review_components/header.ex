@@ -618,14 +618,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
                     </span>
                     <progress
                       class="progress progress-success w-24"
-                      value={
-                        input_tokens = Map.get(@usage, :input_tokens, 0)
-                        cached = Map.get(@usage, :cached_tokens, 0)
-
-                        if input_tokens > 0,
-                          do: min(round(cached / input_tokens * 100), 100),
-                          else: 0
-                      }
+                      value={EvoDashWeb.Components.UsageFormat.cache_hit_percent(@usage)}
                       max="100"
                     ></progress>
                   </dd>

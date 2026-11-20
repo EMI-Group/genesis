@@ -601,7 +601,10 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     assert_receive {:control_called, _node, "proc-1", :pause, reason}, @async_wait_budget_ms
     assert is_binary(reason)
     assert String.trim(reason) != ""
-    assert render(view) =~ "Process paused."
+
+    # The control runs OFF-PROCESS, so the flash lands with the pushed result
+    # (`{{:process_control_result, id, action}, result}`), never with the click.
+    assert wait_for_html(view, "Process paused.") =~ "Process paused."
     assert view |> element("#flash-info") |> render() =~ "Process paused."
 
     view |> element(~s(#process-row-proc-2 button[aria-label="Resume"])) |> render_click()
@@ -611,7 +614,7 @@ defmodule EvoDashWeb.ProcessesLiveTest do
 
     assert is_binary(resume_reason)
     assert String.trim(resume_reason) != ""
-    assert render(view) =~ "Process resumed."
+    assert wait_for_html(view, "Process resumed.") =~ "Process resumed."
   end
 
   # ---------------------------------------------------------------------------
@@ -637,9 +640,12 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     assert view |> element("#process-confirm-modal") |> render() =~ "A reason is required."
 
     # A real reason is passed through VERBATIM (trimmed).
-    html = view |> element("#process-confirm-form") |> render_submit(%{"reason" => "the reason"})
+    view |> element("#process-confirm-form") |> render_submit(%{"reason" => "the reason"})
 
     assert_receive {:control_called, _node, "proc-1", :kill, "the reason"}, @async_wait_budget_ms
+
+    # The modal closes only when the pushed result lands as a success.
+    html = wait_for_html(view, "Kill signal sent to the process.")
     assert html =~ "Kill signal sent to the process."
     refute html =~ "process-confirm-modal"
   end
@@ -656,11 +662,12 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     assert html =~ "process-confirm-modal"
     assert html =~ "Terminate process?"
 
-    html = view |> element("#process-confirm-form") |> render_submit(%{"reason" => "the reason"})
+    view |> element("#process-confirm-form") |> render_submit(%{"reason" => "the reason"})
 
     assert_receive {:control_called, _node, "proc-2", {:signal, "TERM"}, "the reason"},
                    @async_wait_budget_ms
 
+    html = wait_for_html(view, "Terminate signal sent to the process.")
     assert html =~ "Terminate signal sent to the process."
     refute html =~ "process-confirm-modal"
   end
@@ -687,7 +694,8 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     view |> element(~s(#process-row-proc-1 button[aria-label="Pause"])) |> render_click()
 
     assert_receive {:control_called, _node, "proc-1", :pause, _reason}, @async_wait_budget_ms
-    html = render(view)
+
+    html = wait_for_html(view, "This action is not supported on this platform.")
     assert html =~ "This action is not supported on this platform."
     # The page survives and still shows its rows.
     assert html =~ "process-row-proc-1"
@@ -697,15 +705,19 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     view |> element(~s(#process-row-proc-2 button[aria-label="Resume"])) |> render_click()
 
     assert_receive {:control_called, _node, "proc-2", :resume, _reason}, @async_wait_budget_ms
-    assert render(view) =~ "This process has already exited."
+
+    assert wait_for_html(view, "This process has already exited.") =~
+             "This process has already exited."
 
     # A generic reason is formatted, never raised.
     view |> element(~s(#process-row-proc-1 button[aria-label="Kill"])) |> render_click()
 
-    html = view |> element("#process-confirm-form") |> render_submit(%{"reason" => "boom reason"})
+    view |> element("#process-confirm-form") |> render_submit(%{"reason" => "boom reason"})
 
     assert_receive {:control_called, _node, "proc-1", :kill, "boom reason"}, @async_wait_budget_ms
-    assert html =~ "failed"
+
+    html = wait_for_html(view, "Kill failed")
+    assert html =~ "Kill failed"
     # A failed destructive action keeps the modal open with the exact text the
     # operator typed, so a retry needs no retyping.
     assert html =~ "process-confirm-modal"
@@ -722,6 +734,116 @@ defmodule EvoDashWeb.ProcessesLiveTest do
 
     # The page is still alive and usable after every failure.
     assert render(view) =~ "process-row-proc-1"
+  end
+
+  # ---------------------------------------------------------------------------
+  # 8b. Async control execution (off-process, exactly one per row at a time)
+  # ---------------------------------------------------------------------------
+
+  # A control call runs in a supervised task, so the socket keeps answering
+  # for its whole duration — and the per-row busy marker makes a second click
+  # on the SAME row a no-op until the pushed result settles the first one.
+  test "a control in flight keeps the socket responsive and drops a duplicate click", %{
+    conn: conn
+  } do
+    install_load_runner(fn _node, _opts -> {:ok, executions()} end)
+    test_pid = self()
+
+    install_control_runner(fn _node, _id, _action, _reason ->
+      send(test_pid, {:control_blocked, self()})
+
+      receive do
+        {:release_control, result} -> result
+      after
+        @async_wait_budget_ms -> {:error, :never_released}
+      end
+    end)
+
+    view = mount_page(conn)
+
+    view |> element(~s(#process-row-proc-1 button[aria-label="Pause"])) |> render_click()
+    assert_receive {:control_called, _node, "proc-1", :pause, _reason}, @async_wait_budget_ms
+    assert_receive {:control_blocked, worker}, @async_wait_budget_ms
+
+    # The LiveView is NOT blocked: another event round-trips while the control
+    # call is still parked inside its task.
+    assert view |> element("#process-toggle-proc-1") |> render_click() =~ "Full Command"
+    assert Map.has_key?(assigns(view).action_busy, "proc-1")
+
+    # A second click on the same row posts nothing.
+    view |> element(~s(#process-row-proc-1 button[aria-label="Pause"])) |> render_click()
+
+    refute_receive {:control_called, _node, "proc-1", :pause, _reason}, @no_refetch_window_ms
+    assert Map.has_key?(assigns(view).action_busy, "proc-1")
+
+    # The outcome flashes and clears the busy marker.
+    send(worker, {:release_control, :ok})
+
+    assert wait_for_html(view, "Process paused.") =~ "Process paused."
+    refute Map.has_key?(assigns(view).action_busy, "proc-1")
+
+    # With the row free again, the control is available once more.
+    view |> element(~s(#process-row-proc-1 button[aria-label="Pause"])) |> render_click()
+    assert_receive {:control_called, _node, "proc-1", :pause, _reason}, @async_wait_budget_ms
+    assert_receive {:control_blocked, second_worker}, @async_wait_budget_ms
+
+    send(second_worker, {:release_control, :ok})
+    wait_until(fn -> assigns(view).action_busy == %{} end)
+  end
+
+  # A failed control must clear the busy marker too, or the row would stay
+  # wedged for the rest of the session.
+  test "a failed control clears the busy marker and can be retried", %{conn: conn} do
+    install_load_runner(fn _node, _opts -> {:ok, executions()} end)
+
+    install_control_runner(fn _node, _id, _action, _reason -> {:error, :unsupported} end)
+
+    view = mount_page(conn)
+
+    view |> element(~s(#process-row-proc-1 button[aria-label="Pause"])) |> render_click()
+
+    assert_receive {:control_called, _node, "proc-1", :pause, _reason}, @async_wait_budget_ms
+
+    assert wait_for_html(view, "This action is not supported on this platform.") =~
+             "process-row-proc-1"
+
+    assert assigns(view).action_busy == %{}
+
+    view |> element(~s(#process-row-proc-1 button[aria-label="Pause"])) |> render_click()
+    assert_receive {:control_called, _node, "proc-1", :pause, _reason}, @async_wait_budget_ms
+  end
+
+  # ---------------------------------------------------------------------------
+  # 8c. Derived render state is kept by the mutation, not by render/1
+  # ---------------------------------------------------------------------------
+
+  # `:filtered` / `:counts` / `:filters_active` are derived once per data or
+  # filter change (`recompute/1`), so a push event updates them inside its
+  # handler. Reading the assigns through `:sys.get_state` never renders, which
+  # is what pins the "no filtering in render/1" contract.
+  test "push events update the derived filtered and counts assigns", %{conn: conn} do
+    install_load_runner(fn _node, _opts -> {:ok, executions()} end)
+    view = mount_page(conn)
+
+    # Default LIVE tab: the two live rows, with the counts taken over every
+    # OTHER dimension (so the finished tab keeps its own number).
+    assert Enum.map(assigns(view).filtered, & &1.id) == ["proc-1", "proc-2"]
+    assert assigns(view).counts == %{live: 2, finished: 2, all: 4}
+    refute assigns(view).filters_active
+
+    broadcast({:process_started, execution(%{id: "proc-new", command: "fresh"}), node()})
+
+    wait_until(fn -> Enum.any?(assigns(view).filtered, &(&1.id == "proc-new")) end)
+
+    assert assigns(view).counts == %{live: 3, finished: 2, all: 5}
+
+    # A core-side filter flag follows the URL state, not a row attribute.
+    {:ok, filtered_view, _html} = live(conn, ~p"/processes?q=npm")
+    assert_receive {:load_called, _node, _opts}, @async_wait_budget_ms
+    wait_for_load(filtered_view)
+
+    assert Enum.map(assigns(filtered_view).filtered, & &1.id) == ["proc-2"]
+    assert assigns(filtered_view).filters_active
   end
 
   # ---------------------------------------------------------------------------

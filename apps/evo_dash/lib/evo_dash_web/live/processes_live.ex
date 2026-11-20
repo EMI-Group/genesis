@@ -23,16 +23,31 @@ defmodule EvoDashWeb.ProcessesLive do
   a remote dashboard never mix their process tables. There is NO polling: the
   page loads once per node/core-filter change and then applies the broadcasts.
 
-  No LiveView process blocks on an RPC. The initial load runs in a supervised
-  task (`EvoDashWeb.ProcessesLive.Load`) inside `EvoDash.SafeCall.run/1` and
-  lands as `{:processes_loaded, seq, node, result}`; every control action runs
-  through `EvoDashWeb.ProcessesLive.Actions`, which returns values instead of
-  raising.
+  No LiveView process blocks on an RPC — neither for data nor for controls.
+  The initial load runs in a supervised task
+  (`EvoDashWeb.ProcessesLive.Load`) inside `EvoDash.SafeCall.run/1` and lands
+  as `{:processes_loaded, seq, node, result}`; every control action
+  (pause / resume / terminate / kill) is spawned through
+  `EvoDash.SafeCall.start/3` and lands as
+  `{{:process_control_result, id, action}, result}`, so a slow or dead manager
+  (or remote node) can never freeze the socket. A per-row `:action_busy` map
+  drops a duplicate click while its call is still in flight and is cleared on
+  EVERY outcome, success or failure.
 
   Filters are URL state (`?status=`, `?kind=`, `?q=`, `?agent_id=`,
-  `?task_id=`, plus `node`): status/kind/text are render-time
+  `?task_id=`, plus `node`): status/kind/text narrow the already-loaded rows
   (`EvoDashWeb.ProcessesLive.Format.filter/2`), while `agent_id`/`task_id`
   narrow the tracked set itself and therefore refetch.
+
+  ## Derived render state
+
+  `:filtered`, `:counts` and `:filters_active` are never computed in
+  `render/1`. ONE private `recompute/1` derives all three from the current
+  `:executions` and filter assigns, and every place that mutates either —
+  the load result, every `"processes"` broadcast, the enter-animation clear
+  and `handle_params/3` — calls it once, so a 3-second sample tick re-filters
+  the list once (or not at all when the sample changed no row) instead of
+  twice per render.
 
   ## Row enter animation
 
@@ -55,6 +70,7 @@ defmodule EvoDashWeb.ProcessesLive do
   use EvoDashWeb, :live_view
   use Gettext, backend: EvoDashWeb.Gettext
 
+  alias EvoDash.SafeCall
   alias EvoDashWeb.LiveHooks.NodeAware
   alias EvoDashWeb.ProcessComponents
   alias EvoDashWeb.ProcessesLive.Actions
@@ -78,7 +94,9 @@ defmodule EvoDashWeb.ProcessesLive do
     # (the ?node= param lives on the URL), so a mount-time fetch would always
     # query the LOCAL node.
     {:ok,
-     assign(socket,
+     socket
+     |> seed_layout_assigns()
+     |> assign(
        # `Layouts.app` reads `@config_status` on EVERY render (dead render
        # included), so the page must own the assign — an unset one raises
        # KeyError before the first paint. Resolved here like the other pages
@@ -95,14 +113,52 @@ defmodule EvoDashWeb.ProcessesLive do
        search_query: "",
        agent_filter: nil,
        task_filter: nil,
+       # Derived from :executions + the filter assigns by recompute/1 only.
+       filtered: [],
+       counts: %{live: 0, finished: 0, all: 0},
+       filters_active: false,
        expanded: MapSet.new(),
        # String ids of rows that arrived AFTER the initial snapshot; each one
        # renders with the enter-animation class until its own TTL expires.
        entering: MapSet.new(),
+       # Row ids (Format.id_string/1) whose control call is still in flight;
+       # a second click on such a row is dropped instead of posting a
+       # duplicate control. Cleared on every outcome.
+       action_busy: %{},
        confirm: nil,
        confirm_reason: "",
        confirm_error: nil
      )}
+  end
+
+  # Assigns owned by the `NodeAware` / `Appearance` / `DesktopQuit` /
+  # `UpdateStatus` / `Guide` on-mount hooks. They run BEFORE this mount, so
+  # `assign_new/3` never overwrites them — the seeds only keep a render total
+  # when a page is mounted without those hooks (a bare component test), so no
+  # assign is read through a `||` fallback.
+  defp seed_layout_assigns(socket) do
+    Enum.reduce(
+      [
+        current_node: node(),
+        current_node_name: "Local",
+        current_node_id: nil,
+        remote_status: nil,
+        remote_targets: [],
+        connection_statuses: %{},
+        running_tasks: [],
+        pending_tasks: [],
+        session_list: [],
+        session_list_loading: false,
+        session_list_error: nil,
+        current_session_id: nil,
+        accent_color: "blue",
+        desktop_quit_confirm: false,
+        update_status: nil,
+        guide: nil
+      ],
+      socket,
+      fn {key, value}, acc -> assign_new(acc, key, fn -> value end) end
+    )
   end
 
   @impl true
@@ -137,11 +193,16 @@ defmodule EvoDashWeb.ProcessesLive do
           executions_loaded: false,
           entering: MapSet.new(),
           expanded: MapSet.new(),
+          action_busy: %{},
           confirm: nil
         )
       else
         socket
       end
+
+    # The filters just changed (or the table was emptied): derive the render
+    # state once, here, instead of on every render.
+    socket = recompute(socket)
 
     cond do
       # The disconnected (static HTTP) render's async result is discarded, so
@@ -217,11 +278,18 @@ defmodule EvoDashWeb.ProcessesLive do
     end
   end
 
+  # Async control outcome (`EvoDash.SafeCall.start/3`): the RPC ran off-process,
+  # so the socket stayed answerable for its whole duration.
+  def handle_info({{:process_control_result, id, action}, result}, socket) do
+    {:noreply, apply_control_result(socket, id, action, result)}
+  end
+
   # Enter-animation expiry: drop exactly the ids whose TTL elapsed, so a later
   # patch of that row can never re-run the animation.
   def handle_info({:clear_entering, ids}, socket) when is_list(ids) do
     entering = MapSet.difference(socket.assigns.entering, MapSet.new(ids))
-    {:noreply, assign(socket, :entering, entering)}
+
+    {:noreply, socket |> assign(:entering, entering) |> recompute()}
   end
 
   # ---------------------------------------------------------------------------
@@ -339,40 +407,29 @@ defmodule EvoDashWeb.ProcessesLive do
 
   @impl true
   def render(assigns) do
-    filters = filters(assigns)
-    # Tab counts are computed over every OTHER dimension so the three numbers
-    # stay stable while the operator switches tabs.
-    counts = Format.counts(Format.filter(assigns.executions, Map.delete(filters, :status)))
-
-    assigns =
-      assigns
-      |> assign(:filtered, Format.filter(assigns.executions, filters))
-      |> assign(:counts, counts)
-      |> assign(
-        :filters_active,
-        filters.kind != "all" or filters.q != "" or filters.agent_id != nil or
-          filters.task_id != nil
-      )
-
+    # NO filtering here: `:filtered`, `:counts` and `:filters_active` are
+    # derived by recompute/1 whenever the rows or a filter change (see the
+    # moduledoc), so a render — which runs on every 3-second sample tick — is
+    # a pure read of already-computed assigns.
     ~H"""
     <EvoDashWeb.Layouts.app
       flash={@flash}
       current_page={:processes}
       config_status={@config_status}
       current_node_id={@current_node_id}
-      remote_targets={assigns[:remote_targets] || []}
-      connection_statuses={assigns[:connection_statuses] || %{}}
+      remote_targets={@remote_targets}
+      connection_statuses={@connection_statuses}
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
-      session_list={assigns[:session_list] || []}
-      session_list_loading={assigns[:session_list_loading] == true}
-      session_list_error={assigns[:session_list_error]}
-      current_session_id={assigns[:current_session_id]}
+      session_list={@session_list}
+      session_list_loading={@session_list_loading}
+      session_list_error={@session_list_error}
+      current_session_id={@current_session_id}
       pending_tasks={@pending_tasks}
       desktop_quit_confirm={@desktop_quit_confirm}
       update_status={@update_status}
       guide={@guide}
-      accent_color={assigns[:accent_color] || "blue"}
+      accent_color={@accent_color}
     >
       <header class="mb-5">
         <h1 class="text-xl font-semibold text-base-content">{gettext("Processes")}</h1>
@@ -640,6 +697,7 @@ defmodule EvoDashWeb.ProcessesLive do
       # The whole table was replaced: nothing on screen is newly joined.
       entering: MapSet.new()
     )
+    |> recompute()
   end
 
   defp apply_load_result(socket, {:ok, other}) do
@@ -652,6 +710,7 @@ defmodule EvoDashWeb.ProcessesLive do
       executions_error: Format.term_text(reason),
       entering: MapSet.new()
     )
+    |> recompute()
   end
 
   defp apply_load_result(socket, other) do
@@ -662,10 +721,22 @@ defmodule EvoDashWeb.ProcessesLive do
   # Execution-list updates (pure helpers over the socket's :executions)
   # ---------------------------------------------------------------------------
 
+  # Every mutation of `:executions` funnels through here, so the derived
+  # render state is recomputed exactly once per change — and not at all when
+  # the event left the rows untouched (a sample for an id this page does not
+  # show, a repeat `started` broadcast, a foreign-node record).
   defp update_executions(socket, fun) when is_function(fun, 1) do
+    previous = executions_list(socket)
+    updated = fun.(previous)
+
+    socket = assign(socket, :executions, updated)
+    if updated == previous, do: socket, else: recompute(socket)
+  end
+
+  defp executions_list(socket) do
     case Map.get(socket.assigns, :executions) do
-      list when is_list(list) -> assign(socket, :executions, fun.(list))
-      _other -> assign(socket, :executions, fun.([]))
+      list when is_list(list) -> list
+      _other -> []
     end
   end
 
@@ -867,7 +938,7 @@ defmodule EvoDashWeb.ProcessesLive do
   defp same_id?(_execution, _id), do: false
 
   # ---------------------------------------------------------------------------
-  # Control actions
+  # Control actions (async: the RPC never runs in the LiveView process)
   # ---------------------------------------------------------------------------
 
   defp run_reversible_control(socket, params, action) do
@@ -876,16 +947,7 @@ defmodule EvoDashWeb.ProcessesLive do
         socket
 
       id ->
-        result =
-          Actions.control(
-            socket.assigns.current_node,
-            id,
-            action,
-            Actions.default_reason(action)
-          )
-
-        {kind, message} = Actions.result_message(action, result)
-        put_flash(socket, kind, message)
+        start_control(socket, id, action, action, Actions.default_reason(action))
     end
   end
 
@@ -918,37 +980,94 @@ defmodule EvoDashWeb.ProcessesLive do
             |> put_flash(:error, message)
 
           :ok ->
-            trimmed = String.trim(reason)
-
-            result =
-              Actions.control(
-                socket.assigns.current_node,
-                id,
-                control_action(action),
-                trimmed
-              )
-
-            {kind, message} = Actions.result_message(action, result)
-            socket = put_flash(socket, kind, message)
-
-            case result do
-              :ok ->
-                assign(socket, confirm: nil, confirm_reason: "", confirm_error: nil)
-
-              {:error, _reason} ->
-                # The modal stays open with the operator's text preserved and the
-                # failure shown in place, so a retry needs no retyping. The text
-                # MUST be re-assigned (not just left in the DOM): the modal is
-                # rendered from `:confirm_reason`, so without this a re-render
-                # paints an empty textarea.
-                assign(socket, confirm_error: message, confirm_reason: reason_text(reason))
-            end
+            # The operator's text stays on the socket for the whole flight, so
+            # a failed action can keep the modal open with it intact.
+            socket
+            |> assign(:confirm_reason, reason_text(reason))
+            |> assign(:confirm_error, nil)
+            |> start_control(id, action, control_action(action), String.trim(reason))
         end
 
       _other ->
         socket
     end
   end
+
+  # Spawns ONE control call under `EvoDash.SafeCall` and marks the row busy.
+  # `label_action` is the page-level action the flash text is derived from
+  # (`:terminate` / `:kill`), `core_action` the term the core's manager
+  # receives (`{:signal, "TERM"}` / `:kill`).
+  defp start_control(socket, id, label_action, core_action, reason) do
+    key = Format.id_string(id)
+
+    if Map.has_key?(socket.assigns.action_busy, key) do
+      # A click on a row whose previous control is still in flight: drop it so
+      # one operator gesture cannot post two controls.
+      socket
+    else
+      node = socket.assigns.current_node
+
+      case SafeCall.start(self(), {:process_control_result, id, label_action}, fn ->
+             Actions.control(node, id, core_action, reason)
+           end) do
+        {:ok, _pid} ->
+          assign(socket, :action_busy, Map.put(socket.assigns.action_busy, key, label_action))
+
+        {:error, reason} ->
+          # No result message will ever arrive, so the row must not be marked
+          # busy — surface the failure instead of wedging the control.
+          {kind, message} = Actions.result_message(label_action, {:error, reason})
+          put_flash(socket, kind, message)
+      end
+    end
+  end
+
+  # Settles one async control outcome: the row's busy marker is cleared on
+  # EVERY arm (success, failure and SafeCall exit alike), so a control can
+  # never stay wedged, and the outcome is always flashed.
+  defp apply_control_result(socket, id, label_action, raw_result) do
+    result = normalize_control_result(raw_result)
+    {kind, message} = Actions.result_message(label_action, result)
+
+    socket =
+      socket
+      |> assign(:action_busy, Map.delete(socket.assigns.action_busy, Format.id_string(id)))
+      |> put_flash(kind, message)
+
+    settle_confirm(socket, id, label_action, result, message)
+  end
+
+  # Only the modal that STARTED this call is settled: one opened (or closed)
+  # meanwhile belongs to another gesture and is left untouched.
+  defp settle_confirm(socket, id, action, result, message)
+       when action in [:terminate, :kill] do
+    case socket.assigns.confirm do
+      %{id: ^id, action: ^action} ->
+        case result do
+          :ok ->
+            assign(socket, confirm: nil, confirm_reason: "", confirm_error: nil)
+
+          {:error, _reason} ->
+            # Keep the modal open with the operator's text preserved (already
+            # assigned at submit time) and the failure shown in place.
+            assign(socket, :confirm_error, message)
+        end
+
+      _other ->
+        socket
+    end
+  end
+
+  defp settle_confirm(socket, _id, _action, _result, _message), do: socket
+
+  # `Actions.control/4` already answers `:ok | {:error, reason}`; the wrapper
+  # below only unwraps SafeCall's own envelope (and stays total for anything
+  # else, so a surprise value is a flashable error instead of a crash).
+  defp normalize_control_result({:ok, :ok}), do: :ok
+  defp normalize_control_result({:ok, {:error, reason}}), do: {:error, reason}
+  defp normalize_control_result({:ok, other}), do: {:error, {:unexpected_result, other}}
+  defp normalize_control_result({:error, reason}), do: {:error, reason}
+  defp normalize_control_result(other), do: {:error, {:unexpected_result, other}}
 
   defp reason_text(reason) when is_binary(reason), do: reason
   defp reason_text(_reason), do: ""
@@ -960,6 +1079,23 @@ defmodule EvoDashWeb.ProcessesLive do
   # ---------------------------------------------------------------------------
   # Filters + URL state
   # ---------------------------------------------------------------------------
+
+  # The ONE derivation of the page's render state: the visible rows, the three
+  # tab counts (over every OTHER dimension, so the numbers stay stable while
+  # the operator switches tabs) and the "is anything narrowed" flag.
+  defp recompute(socket) do
+    filters = filters(socket.assigns)
+    executions = executions_list(socket)
+
+    socket
+    |> assign(:filtered, Format.filter(executions, filters))
+    |> assign(:counts, Format.counts(Format.filter(executions, Map.delete(filters, :status))))
+    |> assign(
+      :filters_active,
+      filters.kind != "all" or filters.q != "" or filters.agent_id != nil or
+        filters.task_id != nil
+    )
+  end
 
   defp filters(assigns) do
     %{

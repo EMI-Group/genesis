@@ -770,7 +770,9 @@ defmodule EvoDash.NodeContext do
   (`result`, `usage`, `logs`, `archive_metadata`) are never transferred, unlike
   `list_tasks_paginated/2` which returns full `%EvoGit.TaskInfo{}` rows.
   `opts` accepts `:limit` (default 25, capped at 50), `:offset` and the filter
-  keys `:status`, `:project_path`, `:review_status`, `:search`.
+  keys `:status`, `:project_path`, `:review_status`, `:session_mode`,
+  `:search` — every one of them a SQL predicate, so `total` is the FILTERED
+  row count.
   """
   @spec list_tasks_page(node(), keyword()) :: %{rows: [map()], total: non_neg_integer()}
   def list_tasks_page(node, opts \\ []) do

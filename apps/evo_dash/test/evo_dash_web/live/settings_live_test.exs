@@ -3015,8 +3015,11 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
       # Seeded by Navigation.seed/3 against the filtered map — no async result
       # needed. The real task's resolution lands on :agents too.
       assert assigns(view).active_category == :agents
-      assert html =~ "Add Agent"
       assert html =~ ~s(phx-value-category="agents")
+      # The custom-agent ROSTER arrives ASYNC (mount only seeds the loading
+      # placeholder), so the editor assertion happens after the load result.
+      html = render(view)
+      assert html =~ "Add Agent"
     end
 
     test "displayable ?category=sandbox renders its section on the first paint", %{

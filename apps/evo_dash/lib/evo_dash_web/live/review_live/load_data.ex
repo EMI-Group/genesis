@@ -25,6 +25,12 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
 
   use Gettext, backend: EvoDashWeb.Gettext
 
+  # The render-body derivations (aggregate stats, the PRIMARY lookup and the
+  # aggregate completion status) are computed ONCE here, at load time, and
+  # cached as assigns — the page's render reads them instead of re-walking
+  # `@review_repos` on every tab switch / keystroke / broadcast.
+  alias EvoDashWeb.ReviewLive.Aggregates
+
   @doc """
   Loads all review-page data for `task_id` on `node`.
 
@@ -122,7 +128,7 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
 
     # The primary entry is always first and always present (LEGACY tasks have
     # exactly one entry) — the flat assigns below are projected from it.
-    primary = Enum.find(review_repos, &(&1.repo_id == "primary"))
+    primary = Aggregates.primary(review_repos)
 
     title = Enum.find([pr_title, objective, primary.branch_name, task_id], &present_text?/1)
 
@@ -194,6 +200,11 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
       merge_status: primary.merge_status,
       review_repos: review_repos,
       active_repo_id: "primary",
+      # Derived ONCE here (never in the render — see ReviewLive.put_derived/1
+      # for the in-page mutation counterpart).
+      stats: Aggregates.stats(review_repos),
+      primary_repo: primary,
+      completion_status: Aggregates.completion_status(review_repos, review_status),
       # The single opt-in signal for the archive: a task started WITHOUT
       # `archive: true` has no per-agent archive at all, so the Review page's
       # Archive tab is disabled and `ArchiveLoad` never issues a fetch.

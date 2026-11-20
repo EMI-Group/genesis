@@ -94,7 +94,11 @@ defmodule EvoDashWeb.SettingsComponents.ModelSelectionEditor do
       </form>
 
       <%!-- Collapsible contract help --%>
-      <details class="mt-4">
+      <details
+        id="model-script-contract"
+        class="mt-4 motion-disclosure"
+        phx-hook="DisclosureMotion"
+      >
         <summary class="cursor-pointer text-xs font-semibold text-base-content/70 hover:text-base-content">
           {gettext("Script contract")} <%!-- zh_CN: 脚本契约（帮助说明的折叠标题） --%>
         </summary>

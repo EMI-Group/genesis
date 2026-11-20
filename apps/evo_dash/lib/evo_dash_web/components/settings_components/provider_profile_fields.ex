@@ -354,7 +354,11 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
     assigns = assign(assigns, :windows, if(windows == [], do: [{%{}, 0}], else: windows))
 
     ~H"""
-    <details id="provider-peak-schedule" class="rounded-lg border border-base-300 p-3">
+    <details
+      id="provider-peak-schedule"
+      class="rounded-lg border border-base-300 p-3 motion-disclosure"
+      phx-hook="DisclosureMotion"
+    >
       <summary class="cursor-pointer rounded-md text-sm font-medium focus-visible:outline-2 focus-visible:outline-primary-standalone">
         {gettext("Peak / off-peak scheduling (optional)")}
       </summary>

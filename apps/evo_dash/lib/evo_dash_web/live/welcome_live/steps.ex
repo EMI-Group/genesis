@@ -128,6 +128,7 @@ defmodule EvoDashWeb.WelcomeLive.Steps do
         autocomplete="off"
         class="input input-sm w-full"
         placeholder={@key_placeholder}
+        phx-debounce="300"
       />
       <p :if={key_in_draft?(@draft)} class="text-xs text-base-content/60">
         {gettext("A key is set for this session — type to replace it")}

@@ -12,6 +12,12 @@ defmodule EvoDashWeb.ProcessesLive.Actions do
   crashed LiveView. Control answers are values — `:ok` or `{:error, reason}` —
   and this module maps them to a `{flash_kind, message}` pair.
 
+  The PAGE never calls `control/4` inline: it spawns it through
+  `EvoDash.SafeCall.start/3`, so the RPC runs in a supervised task and the
+  LiveView stays answerable for its whole duration (a remote node can take up
+  to the `:erpc` timeout). Do NOT call `control/4` directly from an event
+  handler — that reintroduces the stall this boundary exists to remove.
+
   App-env seam, resolved at CALL time: `:processes_control_runner` — a 4-arity
   `(node, id, action, reason)` function, default
   `&EvoDash.NodeContext.process_control/4`.

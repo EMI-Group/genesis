@@ -63,7 +63,7 @@ defmodule EvoDashWeb.CoreComponents do
       phx-click={JS.push("lv:clear-flash", value: %{key: @kind}) |> hide("##{@id}")}
       phx-hook="AutoClearFlash"
       role="alert"
-      class="w-full pointer-events-auto"
+      class="w-full pointer-events-auto animate-toast-enter"
       {@rest}
     >
       <div class={[
@@ -581,7 +581,7 @@ defmodule EvoDashWeb.CoreComponents do
       to: selector,
       time: 300,
       transition:
-        {"transition-all ease-out duration-300",
+        {"transition-[opacity,transform] ease-out duration-300",
          "opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95",
          "opacity-100 translate-y-0 sm:scale-100"}
     )
@@ -592,7 +592,8 @@ defmodule EvoDashWeb.CoreComponents do
       to: selector,
       time: 200,
       transition:
-        {"transition-all ease-in duration-200", "opacity-100 translate-y-0 sm:scale-100",
+        {"transition-[opacity,transform] ease-in duration-200",
+         "opacity-100 translate-y-0 sm:scale-100",
          "opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"}
     )
   end

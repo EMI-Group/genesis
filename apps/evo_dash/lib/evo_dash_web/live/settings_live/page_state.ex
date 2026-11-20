@@ -158,12 +158,25 @@ defmodule EvoDashWeb.SettingsLive.PageState do
       # apply_node_data_results, save paths, reset_key).
       appearance_accent_draft: nil,
       test_profile_id: test_profile_id,
+      # Custom-agents editor state (agent definitions + model-selection script
+      # from the node's agents.toml). NEVER read inline: the dead render seeds
+      # these empty/degraded defaults with `custom_agents_loading: true` and the
+      # CONNECTED mount kicks `SettingsLive.refresh_custom_agents/1`, whose
+      # node-stale-guarded result replaces them.
+      custom_agents: [],
+      model_selection_script: "",
+      script_status: :ok,
+      custom_agents_loading: true,
+      editing_agent_id: nil,
+      script_save_error: nil,
+      script_test_results: [],
       # Custom-tools panel state (tool modules discovered in the node's
-      # `<config_dir>/tools/`). Seeded from a LOCAL fetch below (mount runs
-      # with the local default node) and refreshed asynchronously on demand
-      # (refresh_custom_tools/1). `loading` drives the panel's spinner.
+      # `<config_dir>/tools/`). `custom_tools_loading: true` is the panel's
+      # LOADING treatment (its Refresh button spins/disabled, no error banner);
+      # the connected mount kicks `SettingsLive.refresh_custom_tools/1` and the
+      # node-stale-guarded result replaces the status.
       custom_tools_status: %{ok: [], errors: []},
-      custom_tools_loading: false,
+      custom_tools_loading: true,
       remote_config: false,
       remote_config_error: nil,
       bootstrap_progress: %{},
@@ -212,7 +225,7 @@ defmodule EvoDashWeb.SettingsLive.PageState do
       provider_wizard: nil,
       provider_schedule: ProviderPanelEvents.empty_schedule(),
       auth_statuses: %{},
-      auth_status_seq: (socket.assigns[:auth_status_seq] || 0) + 1
+      auth_status_seq: socket.assigns.auth_status_seq + 1
     )
   end
 

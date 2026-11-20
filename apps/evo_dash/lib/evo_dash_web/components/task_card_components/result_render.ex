@@ -330,6 +330,13 @@ defmodule EvoDashWeb.TaskCardComponents.ResultRender do
   # `truncate: false` = the Full Result MODAL body: THE complete, uncapped text
   # (no byte cap, no limit note) — reached only by an explicit user action
   # (`view_full_result`) and scrolled by the modal's own container.
+  #
+  # NOTE: this is a plain render helper, NOT an assigns-based function
+  # component. Its single argument is the task RESULT VALUE (historical
+  # `assigns`-named parameter): `tasks_live.ex` calls it as
+  # `TaskCardComponents.render_result_full(result)`, so it is deliberately
+  # declared WITHOUT `attr`/`slot` metadata — callers pass a value, never an
+  # assigns map.
   def render_result_full(assigns) do
     render_result(assigns, truncate: false)
   end

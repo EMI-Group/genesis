@@ -300,7 +300,7 @@ defmodule EvoDashWeb.TaskFormComponents do
               <%= if staged_attachments != [] do %>
                 <div
                   id="staged-attachments"
-                  class="flex flex-wrap items-center gap-1.5 px-4 pt-1 pb-0 shrink-0"
+                  class="motion-panel motion-panel-slide motion-panel-open flex flex-wrap items-center gap-1.5 px-4 pt-1 pb-0 shrink-0"
                 >
                   <%= for {att, index} <- Enum.with_index(staged_attachments) do %>
                     <div
