@@ -295,7 +295,7 @@ The page read runs off-process on the core side too (the registry offloads `list
 - **`list_task_archives/3`** — ONE read per archive page (`limit: 100`, `offset: page * 100`, `include_results: false`): a `LIMIT/OFFSET` `SELECT` over the per-agent archive rows ordered by `depth, agent_id`, projecting every field EXCEPT the heavy `"result"`, plus the total count.
 - **`get_agent_archive/3`** — ONE read per "Show result" click: a single-row `SELECT` of that agent's archive entry including its `"result"`.
 
-Minimum cost per navigation: 2 core RPCs (page summary + distinct paths) and 2 SQL statements for the page read plus the `DISTINCT project_path` scan, all OUTSIDE the LiveView process.
+Minimum cost per navigation: 2 core RPCs (page summary + distinct paths) and 1 SQL statement for the page read plus the `DISTINCT project_path` scan, all OUTSIDE the LiveView process.
 A mutating event adds ONE single-row call inline plus the same page-read cost in its async reload.
 Expanding a card adds ONE lite read; disclosing its archive adds ONE page read (plus ONE more per "Load more"), and each "Show result" adds ONE agent read.
 
