@@ -1364,16 +1364,36 @@ defmodule EvoGit.BackgroundJobsTest do
       assert BackgroundJobs.list() == []
       assert :ok = BackgroundJobs.reap_under(tmp_dir)
 
-      # `job/2` keeps its semantic tuple, and `kill/3` falls back to its documented
-      # `{:error, :not_found}` for an unreachable registry (module doc: "the
-      # ownership/finished probes in `job/2` and `kill/3` keep the small semantic
-      # tuples"; `kill/3`'s spec names "unknown id, or an unreachable registry").
-      assert {:error, :not_found} = BackgroundJobs.job("bash-0000000000000000")
-      assert {:error, :not_found} = BackgroundJobs.kill("bash-0000000000000000")
+      # A registry that is not running knows NOTHING about the id, so `job/2` and
+      # `kill/3` report the transport failure honestly instead of pretending the
+      # job does not exist (which told an agent "no such job" while its jobs were
+      # still running and unkillable through this path).
+      assert {:error, :registry_unavailable} = BackgroundJobs.job("bash-0000000000000000")
+      assert {:error, :registry_unavailable} = BackgroundJobs.kill("bash-0000000000000000")
+      assert {:error, :registry_unavailable} = BackgroundJobs.kill("bash-0000000000000000", "why")
+
+      # The prose read keeps its defined prose contract.
+      assert {:error, message} = BackgroundJobs.read("bash-0000000000000000")
+      assert message =~ "not running"
 
       # The two per-turn reads answer their documented empty shapes and never raise.
       assert BackgroundJobs.snapshot() == []
       assert {:ok, []} = BackgroundJobs.claim_finished_notices()
+    end
+  end
+
+  describe "exit-observer probe (port_open?/1)" do
+    test "a live port is open; a closed port and a non-port value are not" do
+      port = open_observer_port()
+      assert BackgroundJobs.port_open?(port)
+
+      # A CLOSED port answers `nil` from `Port.info/1` (it does not raise) — the
+      # path that must answer `false` WITHOUT a rescue, so an unexpected raise
+      # can never be reinterpreted as "observer dead".
+      EvoGit.Sandbox.Helpers.close_port(port)
+      refute BackgroundJobs.port_open?(port)
+      refute BackgroundJobs.port_open?(:not_a_port)
+      refute BackgroundJobs.port_open?(nil)
     end
   end
 
