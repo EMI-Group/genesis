@@ -228,6 +228,29 @@ defmodule EvoDashWeb.SystemLiveTest.Helpers do
     |> Enum.map(fn [_, label, value] -> {label, value} end)
   end
 
+  # Opening marker of every scheduler chart card (`charts.ex` `chart_card/1`).
+  @chart_card_open ~s(<div class="flex flex-col)
+  # Returns the rendered HTML of ONE scheduler chart card — the card whose <h3>
+  # title is `title` — so chart assertions are scoped to the card instead of the
+  # whole page. The whole-page HTML also carries the shared app-layout sidebar
+  # (recent VCT projects + the run-wide active-task list), which belong to OTHER
+  # concurrently running async suites; a whole-page `refute html =~ "<pool id>"`
+  # would be an assertion about those ambient globals, not about this chart.
+  # Every card starts with @chart_card_open and each slice ends at the next card's
+  # marker, so a slice can never match a later card's title. Fails loudly if the
+  # card markup or the title text changes.
+  def chart_card_html(html, title) do
+    card =
+      html
+      |> String.split(@chart_card_open)
+      |> Enum.drop(1)
+      |> Enum.find_value(fn chunk ->
+        if String.contains?(chunk, ">#{title}</h3>"), do: @chart_card_open <> chunk
+      end)
+
+    card || flunk("no scheduler chart card titled #{inspect(title)} rendered")
+  end
+
   # Injects a system-checks result directly into the LiveView mailbox and
   # renders. The self-check rows only render once `system_checks_status` leaves
   # `:checking`; the injected result is processed after the real async one, so
@@ -970,7 +993,7 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/system")
 
-      assert await_view_assign(view, :chart_samples, samples, 6_000) == :ok
+      assert await_view_assign(view, :chart_samples, samples) == :ok
     end
 
     test "the seed RPC caps the chart buffer at 60 samples", %{conn: conn} do
@@ -980,7 +1003,7 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/system")
 
-      assert await_view_assign(view, :chart_samples, Enum.take(samples, -60), 6_000) == :ok
+      assert await_view_assign(view, :chart_samples, Enum.take(samples, -60)) == :ok
     end
 
     test "node switch clears the chart buffer and re-seeds for the new node", %{conn: conn} do
@@ -1022,14 +1045,14 @@ defmodule EvoDashWeb.SystemLiveTest do
       {:ok, view, _html} = live(conn, ~p"/system")
 
       # The local node's seed fills the buffer.
-      assert await_view_assign(view, :chart_samples, [local_sample], 6_000) == :ok
+      assert await_view_assign(view, :chart_samples, [local_sample]) == :ok
 
       # Switch to the remote node: buffer cleared + a fresh seed for the new
       # node (a stale local seed result, if any, is dropped by the node
       # stale-guard).
       render_patch(view, "/system?node=" <> id)
 
-      assert await_view_assign(view, :chart_samples, [remote_sample], 6_000) == :ok
+      assert await_view_assign(view, :chart_samples, [remote_sample]) == :ok
     end
 
     # ── Per-model LLM Slots chart (llm_slots rework) ──────────────────────────
@@ -1088,8 +1111,8 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       # Seed fill (async, budgeted like the other seed tests) resolves the
       # selection deterministically to the first sorted id ("alpha").
-      assert await_view_assign(view, :selected_llm_model, "alpha", 6_000) == :ok
-      assert await_view_assign(view, :chart_samples, [sample], 6_000) == :ok
+      assert await_view_assign(view, :selected_llm_model, "alpha") == :ok
+      assert await_view_assign(view, :chart_samples, [sample]) == :ok
 
       # Two ids → the in-card dropdown selector renders both models, with the
       # resolved selection ("alpha") preselected.
@@ -1108,19 +1131,23 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/system")
 
-      assert await_view_assign(view, :chart_samples, [legacy], 6_000) == :ok
+      assert await_view_assign(view, :chart_samples, [legacy]) == :ok
 
       # No model ids are known → no selection and no selector markup (neither
       # the dropdown nor the single-model muted label).
       assert assigns(view)[:selected_llm_model] == nil
 
       html = render(view)
-      refute html =~ "select_llm_model"
-      refute html =~ ~s(<select name="model")
-      refute html =~ "alpha"
+      card = chart_card_html(html, "LLM Slots")
+      # No pool ids are known → no selector AND no single-pool muted label either
+      # (neither the dropdown nor the muted label). Scoped to the card: the sidebar
+      # is shared layout owned by other concurrently running suites.
+      refute card =~ "select_llm_model"
+      refute card =~ ~s(<select name="model")
+      refute card =~ "alpha"
       # The LLM card still renders (its series are all zeros).
-      assert html =~ "<svg"
-      refute html =~ "Collecting data…"
+      assert card =~ "<svg"
+      refute card =~ "Collecting data…"
 
       # A subsequent two-model sample arriving via live push still works (no
       # wedged state): alpha is now selected and the chart plots per-model data.
@@ -1144,8 +1171,8 @@ defmodule EvoDashWeb.SystemLiveTest do
       {:ok, view, _html} = mount_remote_system(conn)
 
       # Remote seed fills the buffer; default selection = first sorted id.
-      assert await_view_assign(view, :selected_llm_model, "alpha", 6_000) == :ok
-      assert await_view_assign(view, :chart_samples, [remote_sample], 6_000) == :ok
+      assert await_view_assign(view, :selected_llm_model, "alpha") == :ok
+      assert await_view_assign(view, :chart_samples, [remote_sample]) == :ok
 
       # Pick beta in the dropdown.
       render_change(view, "select_llm_model", %{"model" => "beta"})
@@ -2006,7 +2033,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       # The retry fires once (30ms later), fails again, and gives up: the
       # second failure schedules no further call (the failure handler is gated
       # on chart_seed_retried), so no third call can ever be made.
-      assert await_ets_count(table, :calls, 2, 6_000) == :ok
+      assert await_ets_count(table, :calls, 2) == :ok
       assert :ets.lookup_element(table, :calls, 2) == 2
       assert assigns(view)[:chart_samples] == []
     end
@@ -2035,10 +2062,10 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       # the seed task queues behind the mount's async system-check loads in
       # the test env, so the failure result (and thus the retry scheduling)
       # can arrive late.
-      assert await_view_assign(view, :chart_seed_retried, true, 6_000) == :ok
+      assert await_view_assign(view, :chart_seed_retried, true) == :ok
 
       # The retry succeeds and fills the buffer (30ms later).
-      assert await_view_assign(view, :chart_samples, [sample], 6_000) == :ok
+      assert await_view_assign(view, :chart_samples, [sample]) == :ok
     end
   end
 
