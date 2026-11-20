@@ -324,7 +324,7 @@ Detailed result envelopes and helper seams belong in `projects_live/CONTEXT.md`.
 
 ### Per-render Elixir work over large collections
 
-- agents_live `build_repo_trees/1` + `sort_tree/1` and `commit_graph_groups/1` on every apply/refresh, `CommitGraph.build/2` in `rebuild_commit_graph/3`, and `inspect(entry.data.args, limit: :infinity)` / `inspect(entry.data, limit: :infinity)` per history entry (agents_live.html.heex); home_live `Messages.to_entries/1` over the WHOLE agent history on every `:message_count` change (home_live.ex) plus Markdown rendering per entry.
+- agents_live `EvoDashWeb.AgentsLive.TreeView.build_repo_trees/1` (with its private `sort_tree/1`) and `EvoDashWeb.AgentsLive.CommitGraphState`'s private `commit_graph_groups/1` on every apply/refresh, `CommitGraph.build/2` in `rebuild_commit_graph/3`, and `inspect(entry.data.args, limit: :infinity)` / `inspect(entry.data, limit: :infinity)` per history entry (agents_live.html.heex); home_live `Messages.to_entries/1` over the WHOLE agent history on every `:message_count` change (home_live.ex) plus Markdown rendering per entry.
 
 ## Constraints
 - Each LiveView uses either an inline `render/1` or a companion `.html.heex` template — not both. (Three render inline; `AgentsLive` uses a separate template.)
