@@ -227,7 +227,7 @@ The right column renders `#agent-detail-<id>` from `Inspector.selected_inspector
 Header: the `task_local_id`/`id` title, the status badge (`Helpers.agent_status_bg/1` + icon/label/uppercased label), the Send Message button (only for a `:running`/`:waiting`/`:pending`/`:blocked` agent) and Close.
 Identity and spec grid: Agent Module, Model (`agent.model_label || gettext("N/A")` — the `EvoDashWeb.ModelLabel` derivation), Context Path, Objective (first 150 chars + the full-objective modal), Worktree, Task ID/Depth/Retries, Base/Current Commit chips and Parent/Children links.
 The collapsible "Token and Cost" section (`toggle_usage`): Input/Output/Total Tokens, Cached Tokens + Cache Hit Rate, the Context tile (`ContextMeter.build/1` meter) and Input/Output/Total Cost plus the cost-estimate notice.
-The "Chat History / Session Memory" panel (`#agent-history-<id>`) follows it, rendering temporary current-call excerpts through `StreamPanel` and unsuppressed checkpoint history fed by `OptimisticMessages.merge/2`.
+The "Chat History / Session Memory" panel (`#agent-history-<id>`, inside the `#agent-history-scroll-<id>` scroller) follows it, rendering temporary current-call excerpts through `StreamPanel` and unsuppressed checkpoint history fed by `Inspector.merged_history(agent, @optimistic_messages)`.
 Empty states: `gettext("Select an agent to view details")` with no selection, `gettext("Agent not found")` for a stale id.
 The page subscribes to the `"agents"` PubSub topic for its tree/detail updates — see the Agent Event Contract below.
 
