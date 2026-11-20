@@ -36,10 +36,8 @@ defmodule EvoDashWeb.ProjectsLive.AttachFile do
 
   ## One result applier
 
-  `handle_loaded/6` is the SINGLE applier for every read outcome; the
-  synchronous entry points `handle_attach_result/2` and
-  `handle_binary_attach_result/3` delegate to it, so the payload logic exists
-  once:
+  `handle_loaded/6` is the SINGLE applier for every read outcome, so the
+  payload logic exists once:
 
     * text success assigns `:task_prompt` (`base <> block`), clears the
       `file_pick_bases` snapshot for that picker, and pushes the
@@ -114,66 +112,6 @@ defmodule EvoDashWeb.ProjectsLive.AttachFile do
   def attach_picker_id, do: @attach_picker_id
 
   @doc """
-  Runs the synchronous attachment pipeline for `path`: resolves the base
-  prompt from the `file_pick_bases` snapshot, reads the file with
-  `EvoDash.AttachedFile.read/1`, and applies the outcome through
-  `handle_loaded/6` (which assigns `:task_prompt`, clears the base snapshot
-  and pushes the `picker_result:<picker_id>` payload).
-
-  Kept for callers that still read inline; the async `start_text_read/3` +
-  `handle_loaded/6` pair is the non-blocking equivalent.
-  """
-  @spec handle_attach_result(Phoenix.LiveView.Socket.t(), String.t()) ::
-          Phoenix.LiveView.Socket.t()
-  def handle_attach_result(socket, path) do
-    base =
-      Map.get(
-        file_pick_bases(socket),
-        @attach_picker_id,
-        socket.assigns[:task_prompt] || ""
-      )
-
-    handle_loaded(socket, @attach_picker_id, path, :text, base, EvoDash.AttachedFile.read(path))
-  end
-
-  @doc """
-  Synchronously stages an image/audio attachment picked via the native file
-  dialog into the `:staged_attachments` socket assign (a list of maps with
-  STRING keys `%{"type", "name", "media_type", "data"}` — `"data"` holds the
-  RAW binary).
-
-  Called by `EvoDashWeb.ProjectsLive`'s
-  `handle_info({:directory_picker_result, <image|audio picker id>, {:ok, path}}, ...)`
-  clauses and the `"file_pick_manual"` image/audio branches with the STRING
-  kind `"image"` / `"audio"` (the event-boundary vocabulary — the same string
-  `EvoDash.AttachedFile.read_kind/2` accepts); callers wrap the returned
-  socket: `{:noreply, AttachFile.handle_binary_attach_result(socket, path, "image")}`.
-
-  Enforces the per-task count cap first (see `count_cap_reached?/1` and
-  `push_count_cap_error/2` — the file is never read when the cap is reached),
-  then reads the bytes and applies the outcome through `handle_loaded/6`.
-
-  The raw bytes live ONLY inside the staged map's `"data"` key — they are
-  never rendered, logged, serialized, or sent to the client.
-  """
-  @spec handle_binary_attach_result(Phoenix.LiveView.Socket.t(), String.t(), String.t()) ::
-          Phoenix.LiveView.Socket.t()
-  def handle_binary_attach_result(socket, path, kind) when kind in ["image", "audio"] do
-    if count_cap_reached?(staged_count(socket)) do
-      push_count_cap_error(socket, kind)
-    else
-      handle_loaded(
-        socket,
-        picker_id_for(kind),
-        path,
-        kind_to_atom(kind),
-        "",
-        EvoDash.AttachedFile.read_kind(path, kind)
-      )
-    end
-  end
-
-  @doc """
   Starts the async TEXT attachment read for `path` in a supervised
   `EvoDash.TaskSupervisor` child and sends `parent` ONE
   `{{:attachment_loaded, picker_id, path, :text}, result}` message once the
@@ -218,8 +156,9 @@ defmodule EvoDashWeb.ProjectsLive.AttachFile do
   def start_binary_read(_parent, _picker_id, _path, kind), do: {:error, {:unsupported_kind, kind}}
 
   @doc """
-  Applies ONE attachment read outcome — the SINGLE result applier shared by the
-  async message handler and the synchronous entry points above.
+  Applies ONE attachment read outcome — the SINGLE result applier behind the
+  `{{:attachment_loaded, picker_id, path, kind}, result}` message the async
+  reads above send their caller.
 
   `picker_id` is the picker-result channel the payload is pushed on (`nil` /
   `""` falls back to the kind's own channel), `kind_atom` is `:text` /
@@ -418,8 +357,6 @@ defmodule EvoDashWeb.ProjectsLive.AttachFile do
       _other -> []
     end
   end
-
-  defp staged_count(socket), do: length(staged_list(socket))
 
   # The staged entry for a well-formed `read_kind/2` payload; any other shape
   # is an error value, never a crash.

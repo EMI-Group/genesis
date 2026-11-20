@@ -41,7 +41,7 @@ defmodule EvoDashWeb.ProjectsLive do
   #
   # Image/audio picker ids follow the same literal-duplication contract — they
   # pair with the @attach_picker_id_image / @attach_picker_id_audio literals in
-  # the AttachFile support module (its handle_binary_attach_result/3 pushes on
+  # the AttachFile support module (its start_binary_read/4 pushes the result on
   # the kind's picker channel), which is edited in parallel.
   @attach_picker_id "objective_file"
   @attach_picker_id_image "objective_file_image"
@@ -548,6 +548,13 @@ defmodule EvoDashWeb.ProjectsLive do
           # file's text can be appended even if the user keeps typing while
           # the dialog is open.
           file_pick_bases: %{},
+          # Attach-file reads in flight: `picker_id => base prompt` for every
+          # pick whose file read is still running off-process (see
+          # start_text_attach/3 + start_binary_attach/4). Doubles as the guard
+          # the `{{:attachment_loaded, ...}}` handler keys on: a result whose
+          # picker id is no longer pending was superseded by a newer pick (or
+          # cleared by a node switch) and is dropped, never applied.
+          attach_pending: %{},
           # Server-side-only in-memory staging of RAW attachment binaries
           # (image/audio). Never persisted (StatePersistence keeps a fixed key
           # list) and never restored across remounts/refresh/resume (a
@@ -644,6 +651,9 @@ defmodule EvoDashWeb.ProjectsLive do
       if node_context_changed? do
         socket
         |> assign(:file_pick_bases, %{})
+        # An in-flight attach read belongs to the previous node, so its result
+        # must not be applied here once it lands.
+        |> assign(:attach_pending, %{})
         # Staged raw attachment binaries are per-node client state too — drop
         # them alongside the other state on node switches (raw "data" bytes
         # must never leak across node contexts).
@@ -1800,8 +1810,9 @@ defmodule EvoDashWeb.ProjectsLive do
 
     # The pick flow itself is kind-agnostic — the kind is implied by the
     # picker id when the directory_picker_result arrives (the text clause
-    # routes to handle_attach_result, image/audio to the binary flow) — so
-    # the key is read only to tolerate its presence.
+    # starts a text read, image/audio a binary read; see the
+    # directory_picker_result handlers below) — so the key is read only to
+    # tolerate its presence.
     _kind = Map.get(params, "kind", "text")
 
     if socket.assigns.current_node == node() do
@@ -1836,10 +1847,11 @@ defmodule EvoDashWeb.ProjectsLive do
     # Manual path fallback for the attach-file "+" button: the FilePicker JS
     # hook reveals an inline path input when the native picker is unavailable
     # (headless server, remote node, picker disabled) and submits the typed
-    # path here. Runs the SAME attachment pipeline as the native picker result
-    # (AttachFile.handle_attach_result/2); the submitted textarea value is
-    # snapshotted into file_pick_bases, exactly like "file_pick" does for the
-    # native flow, so base-prompt semantics are identical.
+    # path here. Runs the SAME off-process attachment pipeline as the native
+    # picker result (start_text_attach/3 + start_binary_attach/4); the submitted
+    # textarea value is snapshotted into file_pick_bases, exactly like
+    # "file_pick" does for the native flow, so base-prompt semantics are
+    # identical.
     picker_id = Map.get(params, "picker_id", @attach_picker_id)
     path = Map.get(params, "path")
     prompt = Map.get(params, "prompt")
@@ -1865,25 +1877,29 @@ defmodule EvoDashWeb.ProjectsLive do
         bases = Map.put(socket.assigns.file_pick_bases, picker_id, prompt)
 
         socket =
-          socket
-          |> assign(:file_pick_bases, bases)
+          assign(socket, :file_pick_bases, bases)
 
+        # The file is NEVER read here: a 15 MiB image or a large PDF would
+        # freeze the tab. The pick is recorded in :attach_pending and the read
+        # runs in a supervised task; its outcome arrives as an
+        # `{{:attachment_loaded, picker_id, path, kind}, result}` message (see
+        # the handler below), which flashes the same errors this branch used to.
         socket =
           case kind do
             # Image/audio files route to the binary staging flow: raw bytes are
-            # staged in-memory (base64 encoding happens only at submit); the
-            # helper puts a friendly error flash + pushes %{error: true} on the
-            # kind's picker channel when the read fails.
+            # staged in-memory (base64 encoding happens only at submit) behind
+            # the per-task count cap. The picker-id channel is the KIND's own
+            # (the binary buttons' ids), exactly as before.
             "image" ->
-              AttachFile.handle_binary_attach_result(socket, path, kind)
+              start_binary_attach(socket, @attach_picker_id_image, path, kind)
 
             "audio" ->
-              AttachFile.handle_binary_attach_result(socket, path, kind)
+              start_binary_attach(socket, @attach_picker_id_audio, path, kind)
 
             # Text (and any unknown kind, defaulting to text): the original
-            # byte-identical text pipeline.
+            # text pipeline, now off-process.
             _ ->
-              AttachFile.handle_attach_result(socket, path)
+              start_text_attach(socket, picker_id, path)
           end
 
         {:noreply, socket}
@@ -2007,6 +2023,70 @@ defmodule EvoDashWeb.ProjectsLive do
     end
   end
 
+  # Attach-file flow, async half: start the TEXT read for `path` off-process.
+  #
+  # The prompt snapshot taken when the pick started becomes the base the file's
+  # content is appended to, and it is ALSO the pending marker the
+  # `{{:attachment_loaded, ...}}` handler keys on (see the :attach_pending
+  # seed). A refused start (non-binary path, dead supervisor) is surfaced
+  # through AttachFile.handle_loaded/6 exactly like a failed read, so the user
+  # always gets the friendly error flash plus `%{error: true}`.
+  defp start_text_attach(socket, picker_id, path) do
+    base =
+      case Map.fetch(socket.assigns.file_pick_bases, picker_id) do
+        {:ok, base} when is_binary(base) -> base
+        _other -> socket.assigns[:task_prompt] || ""
+      end
+
+    socket = put_attach_pending(socket, picker_id, base)
+
+    case AttachFile.start_text_read(self(), picker_id, path) do
+      :ok ->
+        socket
+
+      {:error, reason} ->
+        socket
+        |> drop_attach_pending(picker_id)
+        |> AttachFile.handle_loaded(picker_id, path, :text, base, {:error, reason})
+    end
+  end
+
+  # Attach-file flow, async half: start the IMAGE/AUDIO byte read for `path`
+  # off-process. The per-task count cap (4 attachments) is refused BEFORE
+  # spawning, so a capped task never reads the file; the base prompt is unused
+  # for binary kinds (raw bytes are staged, base64 happens at submit).
+  defp start_binary_attach(socket, picker_id, path, kind) do
+    if AttachFile.count_cap_reached?(length(socket.assigns.staged_attachments)) do
+      AttachFile.push_count_cap_error(socket, kind)
+    else
+      socket = put_attach_pending(socket, picker_id, "")
+
+      case AttachFile.start_binary_read(self(), picker_id, path, kind) do
+        :ok ->
+          socket
+
+        {:error, reason} ->
+          socket
+          |> drop_attach_pending(picker_id)
+          |> AttachFile.handle_loaded(picker_id, path, kind_atom(kind), "", {:error, reason})
+      end
+    end
+  end
+
+  defp put_attach_pending(socket, picker_id, base) do
+    assign(socket, :attach_pending, Map.put(socket.assigns.attach_pending, picker_id, base))
+  end
+
+  defp drop_attach_pending(socket, picker_id) do
+    assign(socket, :attach_pending, Map.delete(socket.assigns.attach_pending, picker_id))
+  end
+
+  # The read's kind ATOM — the vocabulary AttachFile.handle_loaded/6 applies
+  # ("image" / "audio" are the only binary kinds; anything else is text).
+  defp kind_atom("image"), do: :image
+  defp kind_atom("audio"), do: :audio
+  defp kind_atom(_kind), do: :text
+
   # Validation failure in the manual attach flow: error flash (native flow
   # parity) + `%{error: true, reason: ...}` push — the FilePicker hook shows
   # the reason inline next to the path input and keeps it open.
@@ -2079,30 +2159,58 @@ defmodule EvoDashWeb.ProjectsLive do
   # Results from the async directory picker (EvoDash.DirectoryPicker sends
   # these to the LiveView pid passed to pick/2).
   #
-  # Attach-file flow: read the picked file with EvoDash.AttachedFile and append
-  # its content to the objective. The textarea is phx-update="ignore" (the
+  # Attach-file flow: the picked file is read OFF-PROCESS (a large PDF/image
+  # would freeze the tab) and its content is appended to the objective. The
+  # pick is recorded in :attach_pending (`picker_id => base prompt`) and the
+  # read's outcome arrives as `{{:attachment_loaded, picker_id, path, kind},
+  # result}` — see the handler below. The textarea is phx-update="ignore" (the
   # DOM is authoritative), so the new value must reach the client via
   # push_event — the FilePicker JS hook writes it into the textarea. Shared
   # pipeline with the manual path fallback (file_pick_manual) lives in
   # EvoDashWeb.ProjectsLive.AttachFile.
   @impl true
   def handle_info({:directory_picker_result, @attach_picker_id, {:ok, path}}, socket) do
-    {:noreply, AttachFile.handle_attach_result(socket, path)}
+    {:noreply, start_text_attach(socket, @attach_picker_id, path)}
   end
 
-  # Image/audio picker results route to the binary attach flow. These picker
+  # Image/audio picker results route to the binary staging flow. These picker
   # ids are the literal counterparts of the @attach_picker_id_image /
-  # @attach_picker_id_audio attrs in the AttachFile support module (its
-  # handle_binary_attach_result/3 pushes the result on the same id's channel),
-  # kept as literals in both modules under parallel compilation.
+  # @attach_picker_id_audio attrs in the AttachFile support module (which push
+  # the result on the same id's channel), kept as literals in both modules
+  # under parallel compilation.
   @impl true
   def handle_info({:directory_picker_result, @attach_picker_id_image, {:ok, path}}, socket) do
-    {:noreply, AttachFile.handle_binary_attach_result(socket, path, "image")}
+    {:noreply, start_binary_attach(socket, @attach_picker_id_image, path, "image")}
   end
 
   @impl true
   def handle_info({:directory_picker_result, @attach_picker_id_audio, {:ok, path}}, socket) do
-    {:noreply, AttachFile.handle_binary_attach_result(socket, path, "audio")}
+    {:noreply, start_binary_attach(socket, @attach_picker_id_audio, path, "audio")}
+  end
+
+  # The ONE result message of an off-process attachment read: a plain send/2
+  # from the supervised task (EvoDashWeb.ProjectsLive.AttachFile), hence the
+  # doubly nested tag. The pending map is the guard — a result whose picker id
+  # is no longer pending was superseded by a newer pick for the same picker (or
+  # discarded by a node switch), so it is dropped instead of being applied on
+  # top of a newer prompt. The base prompt applied is the snapshot stored when
+  # that pick started.
+  @impl true
+  def handle_info({{:attachment_loaded, picker_id, path, kind}, result}, socket) do
+    pending = socket.assigns.attach_pending
+
+    if Map.has_key?(pending, picker_id) do
+      base = Map.get(pending, picker_id)
+
+      socket =
+        socket
+        |> assign(:attach_pending, Map.delete(pending, picker_id))
+        |> AttachFile.handle_loaded(picker_id, path, kind, base, result)
+
+      {:noreply, socket}
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
