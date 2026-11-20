@@ -128,6 +128,73 @@ defmodule EvoDash.Test.ConfigDirTest do
     assert raw_spawn_dir == Fixture.without_override(fn -> ConfigDir.config_dir() end)
     assert raw_spawn_dir != config_dir
   end
+
+  describe "cleanup ordering (supervised writers)" do
+    # Long enough that a writer is provably still in flight when the drain
+    # starts, short enough to keep the suite fast.
+    @writer_delay_ms 60
+
+    test "the drain waits for a supervised writer that still holds the test pid" do
+      test_pid = self()
+      config_dir = ConfigDir.config_dir()
+      writer_file = Path.join(config_dir, "remote_connections.toml")
+
+      # The production shape of the cleanup race: an async load task resolves
+      # `<override>/genesis` while the test is alive (its `:"$callers"` chain is
+      # view -> test pid) and only writes later, when the test process is
+      # already gone. `File.mkdir_p/1` recreates the whole tree, so a removal
+      # that runs before this child exits can fail with `{:error, :eexist, _}`
+      # — or silently leave a re-created directory behind.
+      {:ok, writer} =
+        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+          dir = EvoGit.Config.config_dir()
+          Process.sleep(@writer_delay_ms)
+          File.mkdir_p!(dir)
+          File.write!(Path.join(dir, "remote_connections.toml"), "")
+          send(test_pid, {:late_write, self()})
+        end)
+
+      assert Process.alive?(writer)
+      started = System.monotonic_time(:millisecond)
+
+      assert :ok = ConfigDir.await_supervised_writers(test_pid)
+
+      # The drain is a WAIT, not a pass-through: the child ran to completion
+      # (its sleep elapsed) before the drain returned. The lower bound can only
+      # be exceeded on a busy host, never shortened.
+      assert System.monotonic_time(:millisecond) - started >= @writer_delay_ms - 10
+      assert_received {:late_write, ^writer}
+      refute Process.alive?(writer)
+      assert File.exists?(writer_file)
+
+      # The invariant `on_exit` relies on: with every writer drained, removing
+      # the tree succeeds and STAYS removed (nothing can recreate it any more).
+      assert {:ok, _removed} = File.rm_rf(config_dir)
+      refute File.exists?(config_dir)
+    end
+
+    test "the drain ignores a writer whose caller chain is not the test's" do
+      test_pid = self()
+
+      # A raw `spawn/1` carries no `:"$callers"`, so this child's chain is
+      # `[helper_pid]` — a writer from another ownership class, which the drain
+      # must NOT wait for (an unbounded drain would serialise an isolated test
+      # behind unrelated long-lived tasks on the shared supervisor).
+      spawn(fn ->
+        {:ok, pid} =
+          Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn -> Process.sleep(3_000) end)
+
+        send(test_pid, {:foreign_writer, pid})
+      end)
+
+      assert_receive {:foreign_writer, foreign_writer}, 5_000
+      on_exit(fn -> Task.Supervisor.terminate_child(EvoDash.TaskSupervisor, foreign_writer) end)
+      assert Process.alive?(foreign_writer)
+
+      assert :ok = ConfigDir.await_supervised_writers(test_pid)
+      assert Process.alive?(foreign_writer)
+    end
+  end
 end
 
 defmodule EvoDash.Test.ConfigDirMountedTest do
