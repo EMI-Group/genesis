@@ -1,4 +1,4 @@
-defmodule EvoGit.Agent.Resume.ToolBatch do
+defmodule EvoGit.Agent.Resume.ImpactText do
   @moduledoc """
   What ONE interrupted tool call's synthetic result says.
 
@@ -16,7 +16,7 @@ defmodule EvoGit.Agent.Resume.ToolBatch do
 
   A subagent spawn is the ONE class whose real answer may still become available
   after the crash: `EvoGit.Agent.Resume.Reattach` re-attaches the interrupted
-  batch through `EvoGit.AgentScheduler.reattach_sub_agents/3` and supplies the
+  batch through `EvoGit.AgentScheduler.reattach_sub_agents/2,3` and supplies the
   real, formatted result for every child that survived. This module's
   `:subagent` text is what a call gets when NO real result can be used — the
   slot was lost, the scheduler refused the batch, or the re-attach degraded — so

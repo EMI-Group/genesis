@@ -5,7 +5,7 @@ defmodule EvoGit.Agent.Resume.Reattach do
   A parent agent blocks inside `EvoGit.AgentScheduler.spawn_sub_agents/2` while
   its children run, so the batch it was waiting on OUTLIVES the crashed exchange
   worker: the scheduler keeps the batch on the parent's `%SchedMeta{}` row and
-  `EvoGit.AgentScheduler.reattach_sub_agents/3` hands it to the retried parent
+  `EvoGit.AgentScheduler.reattach_sub_agents/2,3` hands it to the retried parent
   exactly once.
 
   This module is the ONE caller of that API on the resume path. It issues ONE
@@ -18,7 +18,7 @@ defmodule EvoGit.Agent.Resume.Reattach do
       `EvoGit.Agent.SubagentProcessing.format_subagent_result/1` text of each
       subagent call, keyed by that call's MODEL CALL INDEX (its position in the
       assistant message's `tool_calls`). A call with NO entry gets
-      `EvoGit.Agent.Resume.ToolBatch`'s honest fallback text, because its real
+      `EvoGit.Agent.Resume.ImpactText`'s honest fallback text, because its real
       answer cannot be used: the slot answered `{:error, :subagent_result_lost}`,
       the scheduler refused the batch, the reply was malformed, the formatting
       raised, or its same-repo work could not be merged;
@@ -74,7 +74,7 @@ defmodule EvoGit.Agent.Resume.Reattach do
       when that report is a conflict/error (`build_merge_message/4`), exactly
       like the spawn path.
 
-  The deliberate, bounded blocking wait inside `reattach_sub_agents/3` is the
+  The deliberate, bounded blocking wait inside `reattach_sub_agents/2,3` is the
   ONLY non-total step and it is guarded here.
   """
 
