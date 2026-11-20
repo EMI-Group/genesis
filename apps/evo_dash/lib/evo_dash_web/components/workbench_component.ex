@@ -181,24 +181,25 @@ defmodule EvoDashWeb.WorkbenchComponent do
     {:noreply, socket}
   end
 
-  def handle_event("history_search", %{"query" => query}, %{assigns: %{mode: :history}} = socket) do
-    {:noreply, socket |> assign(:history_query, to_string(query)) |> reload_history()}
-  end
+  # The search box and both selects live in ONE form, so a change (or an Enter
+  # submit in the search box) answers with a partial param map — a missing key
+  # keeps the assign it already had, and an unchanged filter state is a no-op
+  # rather than a duplicate read.
+  def handle_event("history_filters", params, %{assigns: %{mode: :history}} = socket)
+      when is_map(params) do
+    query = params |> Map.get("query", socket.assigns.history_query) |> to_string()
+    project = params |> Map.get("project", socket.assigns.history_project) |> to_string()
+    status = params |> Map.get("status", socket.assigns.history_status) |> to_string()
 
-  def handle_event(
-        "history_project_filter",
-        %{"project" => project},
-        %{assigns: %{mode: :history}} = socket
-      ) do
-    {:noreply, socket |> assign(:history_project, to_string(project)) |> reload_history()}
-  end
-
-  def handle_event(
-        "history_status_filter",
-        %{"status" => status},
-        %{assigns: %{mode: :history}} = socket
-      ) do
-    {:noreply, socket |> assign(:history_status, to_string(status)) |> reload_history()}
+    if query == socket.assigns.history_query and project == socket.assigns.history_project and
+         status == socket.assigns.history_status do
+      {:noreply, socket}
+    else
+      {:noreply,
+       socket
+       |> assign(history_query: query, history_project: project, history_status: status)
+       |> reload_history()}
+    end
   end
 
   def handle_event(
@@ -409,7 +410,17 @@ defmodule EvoDashWeb.WorkbenchComponent do
       <p :if={@project && !@target} class="workbench-hint">
         {gettext("Connect to see this project's history.")}
       </p>
-      <div :if={@project && @target} class="workbench-history-controls">
+      <%!-- The three filters are ONE request: the form serializes
+      `query`/`project`/`status` on both change and submit, so the search
+      input never performs a native form submit on Enter. --%>
+      <form
+        :if={@project && @target}
+        id="workbench-history-filters"
+        class="workbench-history-controls"
+        phx-change="history_filters"
+        phx-submit="history_filters"
+        phx-target={@myself}
+      >
         <label id="workbench-history-query" class="workbench-query workbench-history-query">
           <.icon name="hero-magnifying-glass" class="size-4 shrink-0" />
           <input
@@ -420,9 +431,7 @@ defmodule EvoDashWeb.WorkbenchComponent do
             placeholder={gettext("Search history")}
             aria-label={gettext("Search history")}
             autocomplete="off"
-            phx-change="history_search"
             phx-debounce="300"
-            phx-target={@myself}
           />
         </label>
         <div class="workbench-history-filters">
@@ -430,8 +439,6 @@ defmodule EvoDashWeb.WorkbenchComponent do
             id="workbench-history-project-filter"
             name="project"
             aria-label={gettext("Filter by project")}
-            phx-change="history_project_filter"
-            phx-target={@myself}
           >
             <%!-- zh_CN: 所有项目 — 项目筛选里表示不过滤项目 --%>
             <option value="">{gettext("All projects")}</option>
@@ -447,8 +454,6 @@ defmodule EvoDashWeb.WorkbenchComponent do
             id="workbench-history-status-filter"
             name="status"
             aria-label={gettext("Filter by status")}
-            phx-change="history_status_filter"
-            phx-target={@myself}
           >
             <%!-- zh_CN: 任意状态 — 状态筛选里表示不过滤状态 --%>
             <option value="">{gettext("Any status")}</option>
@@ -483,7 +488,7 @@ defmodule EvoDashWeb.WorkbenchComponent do
             {gettext("Conversations")}
           </button>
         </div>
-      </div>
+      </form>
       <p :if={@first_load?} class="workbench-hint" role="status">{gettext("Loading…")}</p>
       <p :if={@project && @target && @error} class="workbench-hint">
         {gettext("Could not load history")}
