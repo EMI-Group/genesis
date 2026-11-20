@@ -21,6 +21,11 @@ defmodule EvoDashWeb.WelcomeLiveTest do
   @anthropic_key "sk-ant-welcome-test-123"
   @custom_base_url "https://api.example.test/v1"
   @custom_key "sk-openai-compatible-test-123"
+  # The authorization URL the sign-in stub mints (see the stub module below).
+  @sign_in_url "https://auth.example.test/authorize"
+  # Budget for the stub's call notifications, which are already in flight when
+  # the event handler returns.
+  @stub_call_timeout 5_000
 
   setup do
     EvoDash.Test.ConfigDir.isolate!("evogit_welcome_test_config")
@@ -175,6 +180,33 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       Process.sleep(2)
       await_status(view, expected, deadline)
+    end
+  end
+
+  # A deadline-bounded wait for an ASYNC result to reach the LiveView. The
+  # condition is re-evaluated against fresh state, and the wait fails loudly
+  # instead of asserting on a state that simply has not arrived yet.
+  defp await(fun, deadline \\ nil) when is_function(fun, 0) do
+    deadline = deadline || System.monotonic_time(:millisecond) + @async_wait_budget_ms
+
+    if fun.() do
+      :ok
+    else
+      assert System.monotonic_time(:millisecond) < deadline,
+             "the expected page state did not arrive"
+
+      Process.sleep(2)
+      await(fun, deadline)
+    end
+  end
+
+  # Drains the poll notifications the stub already sent, so a following
+  # `assert_receive` proves a status call made AFTER the test changed its mind.
+  defp flush_signin_status do
+    receive do
+      {:signin_stub, {:status, _flow_id}} -> flush_signin_status()
+    after
+      0 -> :ok
     end
   end
 
@@ -428,6 +460,165 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert html =~ "Step 1 of 6"
       assert has_element?(view, "#wizard-step-provider")
       assert has_element?(view, ~s(button[phx-click="wizard_back"][disabled]))
+    end
+  end
+
+  # ── in-browser ChatGPT sign-in ─────────────────────────────────────────────
+  describe "ChatGPT in-browser sign-in" do
+    setup do
+      # `EvoDashWeb.LLMSetup.ChatGPTSignIn.login_module/0` resolves the flow
+      # module per process (this pid, then `$callers`, then app env) and
+      # `Phoenix.LiveViewTest` puts the test pid in the mounted view's
+      # `$callers`, so a module-local stub needs no BEAM-global mutation.
+      Process.put(:chatgpt_login_module, __MODULE__.SignInStub)
+      # A short poll keeps the test cheap. The stub answers `:pending` until a
+      # test flips its result, so the WAITING state is deterministic instead of
+      # racing the poll.
+      Process.put(:chatgpt_signin_poll_interval_ms, 5)
+      :ok
+    end
+
+    test "signs in from the browser and selects the connected account", %{conn: conn} do
+      EvoGit.TestSupport.ChatGPTFixture.seed!("work")
+
+      {:ok, view, _html} = start(conn)
+      pick(view, "openai_codex")
+
+      assert has_element?(view, "#wizard-step-auth")
+      assert has_element?(view, "#welcome-chatgpt-sign-in")
+      # Local view: the real in-browser flow, never the CLI instruction.
+      refute has_element?(view, "#welcome-chatgpt-manual-hint")
+      refute assigns(view).chatgpt_sign_in_manual
+      # Nothing is connected yet, so the step gate holds.
+      assert has_element?(view, ~s(button[phx-click="wizard_next"][disabled]))
+
+      view |> element("#welcome-chatgpt-sign-in") |> render_click()
+
+      # The draft has no pick yet, so the store default is signed in.
+      assert_receive {:signin_stub, {:begin, "default"}}, @stub_call_timeout
+      assert has_element?(view, "#welcome-chatgpt-waiting")
+      refute has_element?(view, "#welcome-chatgpt-sign-in")
+
+      link =
+        view
+        |> doc()
+        |> Floki.find("#welcome-chatgpt-sign-in-url")
+        |> List.first()
+
+      assert Floki.attribute(link, "href") == [@sign_in_url]
+      assert Floki.attribute(link, "target") == ["_blank"]
+      assert Floki.attribute(link, "rel") |> List.first() =~ "noopener"
+
+      # The browser grants the registration: the poll reports exactly one result.
+      Process.put(:signin_stub_statuses, %{"welcome-flow" => {:ok, %{account: "work"}}})
+      assert_receive {:signin_stub, {:status, "welcome-flow"}}, @stub_call_timeout
+
+      await(fn ->
+        has_element?(view, ~s(#welcome-chatgpt-account option[value="work"][selected]))
+      end)
+
+      assert assigns(view).draft["siwc_account"] == "work"
+      assert assigns(view).chatgpt_sign_in == %{phase: :ok}
+      refute has_element?(view, "#welcome-chatgpt-waiting")
+      refute has_element?(view, "#welcome-chatgpt-sign-in-error")
+      assert has_element?(view, ~s(#welcome-chatgpt-account option[value="work"][selected]))
+      refute has_element?(view, ~s(button[phx-click="wizard_next"][disabled]))
+
+      next(view)
+      assert has_element?(view, "#wizard-step-model")
+    end
+
+    test "cancelling returns to the sign-in button and stops the flow", %{conn: conn} do
+      {:ok, view, _html} = start(conn)
+      pick(view, "openai_codex")
+      view |> element("#welcome-chatgpt-sign-in") |> render_click()
+
+      assert_receive {:signin_stub, {:begin, "default"}}, @stub_call_timeout
+      assert has_element?(view, "#welcome-chatgpt-waiting")
+
+      view |> element("#welcome-chatgpt-sign-in-cancel") |> render_click()
+
+      assert_receive {:signin_stub, {:cancel, "welcome-flow"}}, @stub_call_timeout
+      assert assigns(view).chatgpt_sign_in == %{phase: :idle}
+      refute has_element?(view, "#welcome-chatgpt-waiting")
+      refute has_element?(view, "#welcome-chatgpt-sign-in-error")
+      assert has_element?(view, "#welcome-chatgpt-sign-in")
+
+      # The flow's own terminal result is now stale and must not resurrect the
+      # waiting or error state.
+      flush_signin_status()
+      Process.put(:signin_stub_statuses, %{"welcome-flow" => {:error, :cancelled}})
+      assert_receive {:signin_stub, {:status, "welcome-flow"}}, @stub_call_timeout
+      refute has_element?(view, "#welcome-chatgpt-waiting")
+      refute has_element?(view, "#welcome-chatgpt-sign-in-error")
+    end
+
+    test "a refused or denied sign-in shows friendly text, never a raw reason", %{conn: conn} do
+      Process.put(:signin_stub_begin, {:error, :loopback_listener_unavailable})
+
+      {:ok, view, _html} = start(conn)
+      pick(view, "openai_codex")
+      view |> element("#welcome-chatgpt-sign-in") |> render_click()
+
+      html = render(view)
+      assert has_element?(view, "#welcome-chatgpt-sign-in-error")
+      assert html =~ "Genesis could not start a local sign-in"
+      refute html =~ "loopback_listener_unavailable"
+      refute has_element?(view, "#welcome-chatgpt-waiting")
+
+      # A flow that starts and is then denied in the browser reports its own
+      # friendly sentence in the same line.
+      Process.put(:signin_stub_begin, {:ok, %{id: "welcome-flow-2", url: @sign_in_url}})
+
+      view |> element("#welcome-chatgpt-sign-in") |> render_click()
+      assert has_element?(view, "#welcome-chatgpt-waiting")
+
+      Process.put(:signin_stub_statuses, %{"welcome-flow-2" => {:error, :authorization_denied}})
+      await(fn -> render(view) =~ "Sign-in was cancelled in the browser." end)
+
+      html = render(view)
+      assert has_element?(view, "#welcome-chatgpt-sign-in-error")
+      refute html =~ "authorization_denied"
+      refute has_element?(view, "#welcome-chatgpt-waiting")
+    end
+
+    test "ignores a result for a flow it is not waiting for", %{conn: conn} do
+      EvoGit.TestSupport.ChatGPTFixture.seed!("work")
+
+      {:ok, view, _html} = start(conn)
+      pick(view, "openai_codex")
+
+      send(view.pid, {:chatgpt_signin_result, "other-flow", {:ok, %{account: "work"}}})
+
+      # Messages are handled in mailbox order, so the page rendered here is the
+      # state AFTER the stale result was dropped.
+      assert assigns(view).chatgpt_sign_in == %{}
+      assert assigns(view).draft["siwc_account"] == nil
+      refute has_element?(view, ~s(#welcome-chatgpt-account option[value="work"][selected]))
+      refute has_element?(view, "#welcome-chatgpt-sign-in-error")
+      assert has_element?(view, ~s(button[phx-click="wizard_next"][disabled]))
+    end
+
+    test "switching provider drops a waiting sign-in", %{conn: conn} do
+      {:ok, view, _html} = start(conn)
+      pick(view, "openai_codex")
+      view |> element("#welcome-chatgpt-sign-in") |> render_click()
+      assert has_element?(view, "#welcome-chatgpt-waiting")
+
+      pick(view, "anthropic")
+
+      assert assigns(view).chatgpt_sign_in == %{}
+      refute has_element?(view, "#welcome-chatgpt")
+    end
+
+    test "a provider without a ChatGPT sign-in never renders the control", %{conn: conn} do
+      {:ok, view, _html} = start(conn)
+      pick(view, "anthropic")
+
+      assert has_element?(view, "#wizard-step-auth")
+      refute has_element?(view, "#welcome-chatgpt")
+      refute has_element?(view, "#welcome-chatgpt-sign-in")
+      refute has_element?(view, "#welcome-chatgpt-manual-hint")
     end
   end
 
@@ -1025,7 +1216,9 @@ defmodule EvoDashWeb.WelcomeLiveTest do
             "wizard_reasoning",
             "apply_schedule_preset",
             "test_connection",
-            "skip_test"
+            "skip_test",
+            "chatgpt_sign_in",
+            "chatgpt_sign_in_cancel"
           ] do
         assert {:noreply, guarded} =
                  EvoDashWeb.WelcomeLive.handle_event(event, %{"provider" => "deepseek"}, socket)
@@ -1068,5 +1261,78 @@ defmodule EvoDashWeb.WelcomeLiveTest.TaskBroadcast do
     )
 
     assert render(view) =~ "Welcome to Genesis"
+  end
+end
+
+defmodule EvoDashWeb.WelcomeLiveTest.SignInStub do
+  @moduledoc false
+  # The Sign in with ChatGPT (SIWC) flow stand-in for the `/welcome` sign-in
+  # tests.
+  #
+  # `EvoDashWeb.LLMSetup.ChatGPTSignIn.login_module/0` resolves the flow module
+  # per process (this pid, then `$callers`, then the app env), and
+  # `Phoenix.LiveViewTest` puts the test pid in the mounted view's `$callers`, so
+  # a test selects this module with `Process.put(:chatgpt_login_module, ...)` in
+  # its OWN process. This module reads its behaviour, and reports its calls,
+  # through that same dictionary — it touches no BEAM-global state, which keeps
+  # the suite `async: true`.
+  #
+  # `status/1` is called from the `ChatGPTSignIn` poll task, which inherits the
+  # caller chain, so it resolves the same owner and answers the SAME result every
+  # time (one terminal result, then the poll exits).
+
+  @default_begin {:ok, %{id: "welcome-flow", url: "https://auth.example.test/authorize"}}
+  # `:pending` until a test flips the result it wants the poll to see, which
+  # makes the WAITING state deterministic (no race against the poll).
+  @default_statuses %{}
+
+  @doc "Starts a flow: the configured `{:ok, %{id:, url:}}` result, else its error."
+  def begin(account, _opts \\ []) do
+    notify({:begin, account})
+    config(:signin_stub_begin, @default_begin)
+  end
+
+  @doc "The configured terminal result for `flow_id`, else `:pending` (waiting)."
+  def status(flow_id) do
+    notify({:status, flow_id})
+    :signin_stub_statuses |> config(@default_statuses) |> Map.get(flow_id, :pending)
+  end
+
+  @doc "Cancels a flow, reporting the call to the owning test."
+  def cancel(flow_id) do
+    notify({:cancel, flow_id})
+    :ok
+  end
+
+  defp notify(message) do
+    case owner() do
+      nil -> :ok
+      pid -> send(pid, {:signin_stub, message})
+    end
+
+    :ok
+  end
+
+  # The process that selected this module — the test — found exactly the way
+  # `ChatGPTSignIn.login_module/0` finds the selection.
+  defp owner do
+    :"$callers"
+    |> Process.get([])
+    |> List.wrap()
+    |> Enum.find(fn pid -> dictionary(pid, :chatgpt_login_module) == __MODULE__ end)
+  end
+
+  defp dictionary(pid, key) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dictionary} -> Keyword.get(dictionary, key)
+      _unavailable -> nil
+    end
+  end
+
+  defp config(key, default) do
+    case owner() do
+      nil -> default
+      pid -> dictionary(pid, key) || default
+    end
   end
 end

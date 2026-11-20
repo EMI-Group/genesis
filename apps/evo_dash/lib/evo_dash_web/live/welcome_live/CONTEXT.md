@@ -1,5 +1,10 @@
 # Welcome Onboarding Helpers
 
+## ChatGPT in-browser sign-in
+`WelcomeLive` carries `:chatgpt_sign_in` (`%{flow_id, url, phase: :idle | :waiting | :ok | :error, reason}`) and `:chatgpt_sign_in_manual`, passed through `Steps.step_auth_body/1` into the shared `ChatGPTAuth` control (id `welcome-chatgpt`), so a first-run user never needs the terminal.
+The `chatgpt_sign_in` event calls `LLMSetup.ChatGPTSignIn.begin/1` for the draft's account (current `siwc_account` else the store default) and starts `start_poll/2`; `chatgpt_sign_in_cancel` calls `cancel/1` and resets to `:idle`; a repeat click starts a new flow.
+`{:chatgpt_signin_result, flow_id, result}` is dropped unless its flow id is the current one; `{:ok, %{account: account}}` refreshes `ChatGPT.accounts(node())`, writes the draft's `siwc_account`, sets `phase: :ok` and invalidates the pending connection test, so the `:auth` gate (`accounts` must contain the selected account) now passes.
+`chatgpt_sign_in_manual` is derived from the viewed node (`current_node_id != nil`); the sign-in state is reset on a node switch, any provider re-pick, `wizard_back`/`wizard_next` step entry and `add_another_provider`, so a stale waiting state never lingers.
 ## Intent
 `Setup` owns catalog-backed onboarding drafts and canonical provider-profile construction for the local-only `WelcomeLive` page.
 `Wizard` (`wizard.ex`, `EvoDashWeb.WelcomeLive.Wizard`) is the pure string-keyed DRAFT model and transition set for the wizard-shaped onboarding flow; it delegates steps, reasoning, schedule presets and identity to `EvoDashWeb.LLMSetup`.

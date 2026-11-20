@@ -33,9 +33,11 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
   import Phoenix.LiveView, only: [put_flash: 3]
 
   alias EvoDashWeb.LLMSetup.ChatGPT
+  alias EvoDashWeb.LLMSetup.ChatGPTSignIn
   alias EvoDashWeb.LLMSetup.Schedule
   alias EvoDashWeb.LLMSetup.Wizard
   alias EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm
+  alias EvoDashWeb.SettingsLive.LlmTestEvents
   alias EvoDashWeb.SettingsLive.ModelProfileEvents
   alias EvoDashWeb.SettingsLive.ModelProfileHelpers
   alias EvoDashWeb.SettingsLive.ProviderProfiles
@@ -81,7 +83,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
     "remove_provider_peak_hours_row" => :remove_provider_peak_hours_row,
     "apply_provider_schedule" => :apply_provider_schedule,
     "undo_provider_schedule" => :undo_provider_schedule,
-    "dismiss_schedule_applied" => :dismiss_schedule_applied
+    "dismiss_schedule_applied" => :dismiss_schedule_applied,
+    "chatgpt_sign_in" => :chatgpt_sign_in,
+    "chatgpt_sign_in_cancel" => :chatgpt_sign_in_cancel
   }
 
   @doc """
@@ -176,7 +180,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
             do: load_chatgpt_accounts(wizard, socket),
             else: wizard
 
-        {:noreply, assign(socket, provider_wizard: wizard)}
+        {:noreply, assign(socket, provider_wizard: ensure_sign_in_keys(wizard, socket))}
 
       _wizard ->
         {:noreply, socket}
@@ -272,6 +276,129 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
   end
 
   # ═══════════════════════════════════════════════════════════════════════════
+  # in-browser ChatGPT sign-in (wizard auth step)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  @doc """
+  Starts ONE in-browser Sign in with ChatGPT for the wizard's account.
+
+  The account is the draft's current selection, or the registration the store
+  treats as default when nothing is chosen yet — the same account the picker
+  resolves to. `EvoDashWeb.LLMSetup.ChatGPTSignIn` owns the flow id, the
+  authorization URL and the bounded poll; a repeat click simply starts a NEW
+  flow (the flow module supersedes the previous one per account), so a stale
+  poll result can never win.
+
+  `begin/1` is bounded and degrades to `{:error, reason}`, so this handler
+  never blocks the page and never raises.
+  """
+  def chatgpt_sign_in(socket, _params) do
+    case socket.assigns[:provider_wizard] do
+      %{draft: draft} = wizard when is_map(draft) ->
+        account = ChatGPT.account_name(draft["siwc_account"])
+
+        case ChatGPTSignIn.begin(account) do
+          {:ok, %{id: id, url: url}} ->
+            # Total: an unavailable supervisor delivers the error result
+            # immediately instead of leaving the panel waiting.
+            ChatGPTSignIn.start_poll(id, self())
+
+            {:noreply,
+             put_sign_in(socket, wizard, %{flow_id: id, url: url, phase: :waiting, reason: nil})}
+
+          {:error, reason} ->
+            {:noreply, put_sign_in(socket, wizard, %{phase: :error, reason: reason})}
+        end
+
+      _wizard ->
+        {:noreply, socket}
+    end
+  end
+
+  @doc """
+  Abandons the waiting in-browser sign-in.
+
+  The flow module closes its loopback listener; a failure to cancel is
+  deliberately quiet (the panel just returns to the idle button — there is
+  nothing the user could do about a flow that already ended).
+  """
+  def chatgpt_sign_in_cancel(socket, _params) do
+    case socket.assigns[:provider_wizard] do
+      %{} = wizard ->
+        case sign_in_state(wizard) do
+          %{flow_id: id} when is_binary(id) -> _ = ChatGPTSignIn.cancel(id)
+          _state -> :ok
+        end
+
+        {:noreply, put_sign_in(socket, wizard, %{phase: :idle})}
+
+      _wizard ->
+        {:noreply, socket}
+    end
+  end
+
+  @doc """
+  Applies the ONE `{:chatgpt_signin_result, flow_id, result}` a poll delivers.
+
+  A result for a flow this wizard no longer waits on — a newer click superseded
+  it, or the wizard was closed and reopened — is DROPPED: it describes an
+  outcome the panel is not showing. A successful sign-in reloads the node's
+  registrations, continues with the account that just connected and invalidates
+  any pending connection test (its credentials just changed).
+  """
+  def chatgpt_signin_result(socket, flow_id, result) do
+    case socket.assigns[:provider_wizard] do
+      %{draft: draft} = wizard when is_map(draft) ->
+        if is_binary(flow_id) and current_flow_id(wizard) == flow_id,
+          do: {:noreply, apply_signin_result(socket, wizard, result)},
+          else: {:noreply, socket}
+
+      _wizard ->
+        {:noreply, socket}
+    end
+  end
+
+  defp apply_signin_result(socket, wizard, {:ok, info}) do
+    case info do
+      %{account: account} when is_binary(account) and account != "" ->
+        wizard =
+          wizard
+          |> Map.put(:draft, Map.put(wizard.draft, "siwc_account", account))
+          |> Map.put(:errors, %{})
+          |> Map.put(:chatgpt_sign_in, %{phase: :ok})
+          |> load_chatgpt_accounts(socket)
+
+        socket
+        |> LlmTestEvents.invalidate_llm_test()
+        |> assign(:provider_wizard, ensure_sign_in_keys(wizard, socket))
+
+      _info ->
+        sign_in_error(socket, wizard, :sign_in_unavailable)
+    end
+  end
+
+  defp apply_signin_result(socket, wizard, {:error, reason}),
+    do: sign_in_error(socket, wizard, reason)
+
+  defp apply_signin_result(socket, wizard, _unexpected),
+    do: sign_in_error(socket, wizard, :sign_in_unavailable)
+
+  defp sign_in_error(socket, wizard, reason),
+    do: put_sign_in(socket, wizard, %{phase: :error, reason: reason})
+
+  defp put_sign_in(socket, wizard, sign_in) when is_map(wizard) and is_map(sign_in),
+    do: assign(socket, :provider_wizard, Map.put(wizard, :chatgpt_sign_in, sign_in))
+
+  defp sign_in_state(wizard), do: Map.get(wizard, :chatgpt_sign_in) || %{}
+
+  defp current_flow_id(wizard) do
+    case sign_in_state(wizard) do
+      %{flow_id: id} -> id
+      _state -> nil
+    end
+  end
+
+  # ═══════════════════════════════════════════════════════════════════════════
   # add model (inline, under one saved account)
   # ═══════════════════════════════════════════════════════════════════════════
 
@@ -294,9 +421,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
         }
 
         wizard =
-          if ChatGPT.provider?(profile["provider"]),
-            do: load_chatgpt_accounts(wizard, socket),
-            else: wizard
+          wizard
+          |> ensure_sign_in_keys(socket)
+          |> maybe_load_chatgpt_accounts(profile, socket)
 
         {:noreply,
          socket
@@ -591,13 +718,34 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
   # ═══════════════════════════════════════════════════════════════════════════
 
   defp new_account_wizard(socket) do
-    %{
-      mode: :account,
-      step: :provider,
-      draft: ProviderProfiles.new_draft(socket.assigns[:file_config] || %{}),
-      errors: %{},
-      schedule: @empty_wizard_schedule
-    }
+    ensure_sign_in_keys(
+      %{
+        mode: :account,
+        step: :provider,
+        draft: ProviderProfiles.new_draft(socket.assigns[:file_config] || %{}),
+        errors: %{},
+        schedule: @empty_wizard_schedule
+      },
+      socket
+    )
+  end
+
+  # Both sign-in keys exist on EVERY wizard map, so the frozen form never sees
+  # `nil` (`WizardForm.normalize_wizard/1` tolerates absence, but the page owns
+  # the truth). `chatgpt_sign_in_manual` is the page's local/remote verdict and
+  # is recomputed wherever a wizard is (re)built: the in-browser flow binds a
+  # loopback listener on the BEAM running THIS page, so it can only serve a
+  # sign-in when that BEAM is the execution node. A viewed remote target
+  # (`?node=<id>`, connected or still pending) gets the CLI hint instead.
+  defp ensure_sign_in_keys(wizard, socket) when is_map(wizard) do
+    wizard
+    |> Map.put_new(:chatgpt_sign_in, %{})
+    |> Map.put(:chatgpt_sign_in_manual, manual_sign_in?(socket))
+  end
+
+  defp manual_sign_in?(socket) do
+    current = socket.assigns[:current_node] || node()
+    current != node() or socket.assigns[:current_node_id] != nil
   end
 
   defp close_editor(socket) do
@@ -631,7 +779,8 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
       %{draft: draft, step: step} = wizard when is_map(draft) ->
         steps = WizardForm.rendered_steps(draft)
         next = fun.(steps, step) || step
-        assign(socket, provider_wizard: Map.put(wizard, :step, next))
+        wizard = wizard |> Map.put(:step, next) |> ensure_sign_in_keys(socket)
+        assign(socket, provider_wizard: wizard)
 
       _wizard ->
         socket
@@ -640,6 +789,12 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
 
   defp load_chatgpt_accounts(wizard, socket) do
     Map.put(wizard, :chatgpt_accounts, ChatGPT.accounts(socket.assigns[:current_node] || node()))
+  end
+
+  defp maybe_load_chatgpt_accounts(wizard, profile, socket) do
+    if ChatGPT.provider?(profile["provider"]),
+      do: load_chatgpt_accounts(wizard, socket),
+      else: wizard
   end
 
   defp reset_chatgpt_selection(draft, previous) do
@@ -710,7 +865,13 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
       end)
 
     wizard = socket.assigns[:provider_wizard] || %{}
-    socket = assign(socket, :provider_wizard, Map.put(wizard, :errors, translated))
+
+    socket =
+      assign(
+        socket,
+        :provider_wizard,
+        wizard |> Map.put(:errors, translated) |> ensure_sign_in_keys(socket)
+      )
 
     message =
       translated |> Map.values() |> List.first() ||

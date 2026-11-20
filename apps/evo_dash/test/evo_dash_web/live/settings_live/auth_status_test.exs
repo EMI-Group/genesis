@@ -1006,10 +1006,15 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
       assert has_element?(view, "#wizard-step-auth")
       assert has_element?(view, "#settings-chatgpt-refresh")
+      # A LOCAL page offers the in-browser sign-in (this BEAM is the execution
+      # node) — never the terminal command the remote path shows.
+      assert has_element?(view, "#settings-chatgpt-sign-in")
+      refute has_element?(view, "#settings-chatgpt-manual-hint")
+      refute html =~ "genesis chatgpt login"
+      # Nothing is connected yet, so the step cannot be left.
       assert has_element?(view, ~s(button[phx-click="provider_wizard_next"][disabled]))
       refute html =~ ~s(phx-value-mode="api_key")
       refute html =~ ~s(phx-value-mode="oauth")
-      assert html =~ "genesis chatgpt login"
     end
 
     test "an OAuth-capable provider keeps the API-key choice", %{conn: conn} do

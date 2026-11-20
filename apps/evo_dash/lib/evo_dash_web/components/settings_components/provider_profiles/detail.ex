@@ -142,7 +142,11 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Detail do
             name="siwc_account"
             label={gettext("ChatGPT account name")}
             value={ChatGPT.account_name(value(@fields, "siwc_account"))}
-            help={gettext("Use the name passed to genesis chatgpt login --account.")}
+            help={
+              gettext(
+                "Use the account name you signed in with — or the one passed to genesis chatgpt login --account on the execution node."
+              )
+            }
           />
           <.profile_field
             :if={oauth?(@fields) and not @chatgpt?}

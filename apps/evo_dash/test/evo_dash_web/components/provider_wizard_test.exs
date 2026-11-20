@@ -15,6 +15,7 @@ defmodule EvoDashWeb.ProviderWizardTest do
   import Phoenix.LiveViewTest
 
   alias EvoDashWeb.SettingsComponents.ProviderWizard
+  alias EvoDashWeb.SettingsComponents.ProviderWizard.ChatGPTAuth
 
   @steps [:provider, :auth, :model, :reasoning_schedule, :test, :done]
 
@@ -910,6 +911,241 @@ defmodule EvoDashWeb.ProviderWizardTest do
 
       assert nodes(tree, "ul[role=\"list\"]") == []
       assert text(tree) =~ "No catalog model matches this search"
+    end
+  end
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # ChatGPTAuth.chatgpt_auth/1 — in-browser sign-in vs. the CLI fallback
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  describe "chatgpt_auth/1 — local sign-in" do
+    test "renders the sign-in button, no CLI hint, and keeps the refresh action" do
+      tree =
+        render_tree(&ChatGPTAuth.chatgpt_auth/1,
+          id: "wizard",
+          change_event: "change",
+          refresh_event: "refresh"
+        )
+
+      assert [button] = nodes(tree, "#wizard-sign-in")
+      assert attr(button, "type") == "button"
+      assert attr(button, "phx-click") == "chatgpt_sign_in"
+      assert text(button) == "Sign in with ChatGPT"
+
+      refute text(tree) =~ "genesis chatgpt login"
+      assert nodes(tree, "#wizard-manual-hint") == []
+
+      assert [refresh] = nodes(tree, "#wizard-refresh")
+      assert attr(refresh, "phx-value-refresh_chatgpt") == "true"
+    end
+
+    test "honours the caller's event names" do
+      tree =
+        render_tree(&ChatGPTAuth.chatgpt_auth/1,
+          id: "wizard",
+          change_event: "change",
+          refresh_event: "refresh",
+          sign_in_event: "go",
+          cancel_event: "stop"
+        )
+
+      assert attr(one(tree, "#wizard-sign-in"), "phx-click") == "go"
+
+      waiting =
+        render_tree(&ChatGPTAuth.chatgpt_auth/1,
+          id: "wizard",
+          change_event: "change",
+          refresh_event: "refresh",
+          sign_in_event: "go",
+          cancel_event: "stop",
+          sign_in: %{phase: :waiting, url: "https://example.test/a"}
+        )
+
+      assert attr(one(waiting, "#wizard-sign-in-cancel"), "phx-click") == "stop"
+    end
+
+    test "the account picker and the connected line still render" do
+      tree =
+        render_tree(&ChatGPTAuth.chatgpt_auth/1,
+          id: "wizard",
+          account: "work",
+          accounts: %{"work" => %{account_id: "work@example.test"}},
+          change_event: "change",
+          refresh_event: "refresh"
+        )
+
+      assert attr(one(tree, "#wizard-form"), "phx-change") == "change"
+      assert option_values(tree, "#wizard-account") == ["", "work"]
+
+      assert option_labels(tree, "#wizard-account") == [
+               "Choose a connected account",
+               "work · work@example.test"
+             ]
+
+      status = one(tree, "p[role=\"status\"]")
+      assert text(status) == "ChatGPT connected"
+    end
+
+    test "an account map without options renders no form" do
+      tree =
+        render_tree(&ChatGPTAuth.chatgpt_auth/1,
+          id: "wizard",
+          accounts: %{},
+          change_event: "change",
+          refresh_event: "refresh"
+        )
+
+      assert nodes(tree, "#wizard-form") == []
+      assert nodes(tree, "p[role=\"status\"]") == []
+    end
+  end
+
+  describe "chatgpt_auth/1 — waiting for authorization" do
+    test "renders a real link, the waiting line and a cancel button" do
+      tree =
+        render_tree(&ChatGPTAuth.chatgpt_auth/1,
+          id: "wizard",
+          change_event: "change",
+          refresh_event: "refresh",
+          sign_in: %{flow_id: "f1", url: "https://example.test/authorize?a=1", phase: :waiting}
+        )
+
+      link = one(tree, "#wizard-sign-in-url")
+      assert attr(link, "href") == "https://example.test/authorize?a=1"
+      assert attr(link, "target") == "_blank"
+      assert attr(link, "rel") == "noopener noreferrer"
+      assert text(link) == "Open the ChatGPT sign-in page"
+
+      assert text(one(tree, "#wizard-waiting p[role=\"status\"]")) == "Waiting for authorization…"
+      assert text(one(tree, "#wizard-sign-in-cancel")) == "Cancel"
+
+      # The primary action is replaced by the waiting block, not duplicated.
+      assert nodes(tree, "#wizard-sign-in") == []
+      assert nodes(tree, "#wizard-sign-in-error") == []
+      assert nodes(tree, "#wizard-refresh") != []
+    end
+
+    test "a nil url renders no link at all instead of a broken one" do
+      for sign_in <- [
+            %{phase: :waiting},
+            %{phase: :waiting, url: nil},
+            %{phase: :waiting, url: "   "}
+          ] do
+        tree =
+          render_tree(&ChatGPTAuth.chatgpt_auth/1,
+            id: "wizard",
+            change_event: "change",
+            refresh_event: "refresh",
+            sign_in: sign_in
+          )
+
+        assert nodes(tree, "#wizard-waiting") != []
+        assert nodes(tree, "#wizard-sign-in-url") == []
+        assert nodes(tree, "a[href]") == []
+        assert text(one(tree, "#wizard-sign-in-cancel")) == "Cancel"
+      end
+    end
+  end
+
+  describe "chatgpt_auth/1 — failures" do
+    test "renders the friendly message with role=\"alert\" and never a raw atom" do
+      tree =
+        render_tree(&ChatGPTAuth.chatgpt_auth/1,
+          id: "wizard",
+          change_event: "change",
+          refresh_event: "refresh",
+          sign_in: %{phase: :error, reason: :plan_not_authorized}
+        )
+
+      error = one(tree, "#wizard-sign-in-error")
+      assert attr(error, "role") == "alert"
+      assert text(error) == "Genesis was not granted permission to use this ChatGPT plan."
+      refute text(tree) =~ "plan_not_authorized"
+
+      # The user can immediately start again.
+      assert nodes(tree, "#wizard-sign-in") != []
+      assert nodes(tree, "#wizard-waiting") == []
+    end
+
+    test "an unknown reason falls back to generic text" do
+      tree =
+        render_tree(&ChatGPTAuth.chatgpt_auth/1,
+          id: "wizard",
+          change_event: "change",
+          refresh_event: "refresh",
+          sign_in: %{phase: :error, reason: :something_nobody_documented}
+        )
+
+      error_text = text(one(tree, "#wizard-sign-in-error"))
+      assert error_text == "Sign-in could not be completed. Start again."
+      refute error_text =~ "something_nobody_documented"
+      refute error_text =~ "%"
+    end
+
+    test "an informational outcome uses the muted tone" do
+      tree =
+        render_tree(&ChatGPTAuth.chatgpt_auth/1,
+          id: "wizard",
+          change_event: "change",
+          refresh_event: "refresh",
+          sign_in: %{phase: :error, reason: :cancelled}
+        )
+
+      error = one(tree, "#wizard-sign-in-error")
+      assert text(error) == "Sign-in cancelled."
+      assert attr(error, "class") =~ "text-base-content/70"
+      refute attr(error, "class") =~ "text-error"
+    end
+
+    test "an :error outcome uses the error tone" do
+      tree =
+        render_tree(&ChatGPTAuth.chatgpt_auth/1,
+          id: "wizard",
+          change_event: "change",
+          refresh_event: "refresh",
+          sign_in: %{phase: :error, reason: :authorization_denied}
+        )
+
+      assert attr(one(tree, "#wizard-sign-in-error"), "class") =~ "text-error"
+    end
+
+    test "an unset / unknown phase is idle — no waiting block, no error block" do
+      for sign_in <- [%{}, %{phase: :nonsense}, %{phase: "ok?"}, nil] do
+        tree =
+          render_tree(&ChatGPTAuth.chatgpt_auth/1,
+            id: "wizard",
+            change_event: "change",
+            refresh_event: "refresh",
+            sign_in: sign_in
+          )
+
+        assert nodes(tree, "#wizard-waiting") == []
+        assert nodes(tree, "#wizard-sign-in-error") == []
+        assert nodes(tree, "#wizard-sign-in") != []
+      end
+    end
+  end
+
+  describe "chatgpt_auth/1 — remote / unsupported (manual) mode" do
+    test "renders the CLI hint and the reason instead of a sign-in button" do
+      tree =
+        render_tree(&ChatGPTAuth.chatgpt_auth/1,
+          id: "wizard",
+          change_event: "change",
+          refresh_event: "refresh",
+          manual: true,
+          sign_in: %{phase: :waiting, url: "https://example.test/a"}
+        )
+
+      hint = one(tree, "#wizard-manual-hint")
+      assert text(hint) =~ "run this command on the execution node."
+      assert text(hint) =~ "genesis chatgpt login"
+      assert text(hint) =~ "same machine as the execution node"
+
+      assert nodes(tree, "#wizard-sign-in") == []
+      assert nodes(tree, "#wizard-waiting") == []
+      assert nodes(tree, "#wizard-sign-in-error") == []
+      assert nodes(tree, "#wizard-refresh") != []
     end
   end
 end
