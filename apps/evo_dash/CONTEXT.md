@@ -9,8 +9,8 @@ Users open a Project (a Git repository path) through the command-palette selecto
 ## Routing Table
 
 - `./assets/` → Frontend source assets (JavaScript, CSS, vendor libraries) — `assets/CONTEXT.md`
-- `./assets/js/hooks/` → Standalone JS hooks (`adaptive_input.js`, `capsule_panel.js`, `commit_graph.js`, `diff_viewer.js`, `legend_tooltip.js`, `node_switch_fade.js`, `sidebar_collapse.js`); all others inline in `./assets/js/app.js`
-- `./assets/js/*.test.cjs` → Node-run unit tests for the PURE logic of inline hooks (`agent_history_scroll.test.cjs`, `state_persistence.test.cjs`), run with `node --test apps/evo_dash/assets/js/*.test.cjs` — never part of `mix test`
+- `./assets/js/hooks/` → Standalone JS hooks (`adaptive_input.js`, `capsule_panel.js`, `commit_graph.js`, `diff_viewer.js`, `legend_tooltip.js`, `node_switch_fade.js`, `sidebar_collapse.js`, `workbench.js` + its pure `workbench_panel.js` state machine, `workbench_project_preview.js`); all others inline in `./assets/js/app.js`
+- `./assets/js/*.test.cjs` → Node-run unit tests for the PURE logic of inline hooks (`agent_history_scroll.test.cjs`, `state_persistence.test.cjs`) and of standalone hooks (`hooks/*.test.cjs`, e.g. `hooks/workbench_panel.test.cjs`, `hooks/inspector_messages.test.cjs`), run with `node --test apps/evo_dash/assets/js/*.test.cjs apps/evo_dash/assets/js/hooks/*.test.cjs apps/evo_dash/assets/css/*.test.cjs` — never part of `mix test`
 - `./lib/` → Source: `./lib/evo_dash/` domain logic + `./lib/evo_dash_web/` web interface
 - `./lib/evo_dash/` → Domain modules (`EvoDash.Application`, `ChatHistory`, `NodeContext`, `DirectoryPicker` + `Wx` seam, `UpdateStatus`, `DesktopLifetime`, `ConnectionDiagnostics`, `AttachedFile`, `MarkdownRender`, `SettingsUtils`, `SafeCall`) — `lib/evo_dash/CONTEXT.md`
 - `./lib/evo_dash_web/` → Web interface: endpoint, router, `live_view/0` macro (6 on-mount hooks), Gettext, Helpers, Telemetry — `lib/evo_dash_web/CONTEXT.md`
