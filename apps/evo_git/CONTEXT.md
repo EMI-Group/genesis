@@ -188,16 +188,15 @@ A **repo-less** Assistant with no repository or worktree uses tiered Elixir eval
 
 ## LLM Concurrency & Slot Gating
 
-LLM pools are keyed by immutable `provider_profile_id`, so every model/effort selection in an account shares concurrency and exhaustion backoff while distinct accounts stay isolated; historical fields such as `model_concurrency` and `llm_backoff_until` keep their names but hold account ids on the canonical path.
-`AgentScheduler.with_llm_slot/2` blocks in a purgeable `:infinity` call, capacity-zero requests enqueue, and `default_llm_max_concurrency` is a floor/fallback rather than a global cap (explicit zero pauses preserved); runtime updates preserve live holders/waiters/backoff, global pause gates pending grants, and resume/capacity changes sweep eligible waiters.
-Rate-limit and insufficient-balance failures report growing account-shared backoff through `report_llm_error/3`; agents park in the slot queue rather than sleeping.
-`ReqLLMPool` sizes HTTP capacity from account concurrency once per account (never multiplied by nested model/effort choices) and reconciliation is grow-only; slot/retry/reload contracts belong to `agent_scheduler/` and `agent/`.
+LLM pools are keyed by immutable `provider_profile_id`, so every model/effort selection in an account shares concurrency and exhaustion backoff while distinct accounts stay isolated (historical field names `model_concurrency`/`llm_backoff_until` hold account ids on the canonical path).
+`AgentScheduler.with_llm_slot/2` blocks in a purgeable `:infinity` call, capacity-zero requests enqueue, `default_llm_max_concurrency` is a floor/fallback rather than a global cap (an explicit zero pause is preserved), runtime updates preserve live holders/waiters/backoff, and rate-limit/insufficient-balance failures report growing account-shared backoff via `report_llm_error/3` (agents park in the queue, never sleep).
+`ReqLLMPool` sizes HTTP capacity once per account (never multiplied by nested model/effort choices) and reconciliation is grow-only; slot/retry/reload contracts: `agent_scheduler/` + `agent/`.
 
 ## Peak/Off-Peak Hour Concurrency Scheduling
 
 Accounts own `peak_concurrency`, `peak_hours`, `off_peak_days`, `off_peak_holidays` and `timezone`, with `peak_concurrency = 0` a hard pause shared by all their models/efforts and exempt from the default-concurrency floor.
-`EvoGit.PeakHours` is the single source of truth for half-open/overnight/day-scoped windows, the off-peak-day rule, wall clocks, validation and transition math: a date is off-peak when its weekday is in `off_peak_days` OR (`off_peak_holidays` names a calendar AND `PeakHours.Holidays.non_working_day?/1`), so a statutory CN holiday, a weekend and a 调休 make-up Saturday resolve through the same predicate; `in_peak?/4` and `next_transition/4` take `off_peak_holidays` last (`/2`/`/3` delegate with `nil`), `effective_concurrency/2` reads the key off the profile map (`/3` resolves the clock first), and `next_transition`'s horizon is 21 days.
-`PeakHours.Holidays` is a static 2025-2027 table (extend yearly), NOT a dependency, to avoid `mix.lock`/`mixFodDeps.hash` churn; `PeakHourEngine` prefers canonical profiles, falls back to legacy only when no canonical account exists, and applies one floored concurrency entry per account; `Config.ProviderPresets` ships the built-in presets (DeepSeek off-peak discount, Z.AI GLM coding plan) as pure data.
+`EvoGit.PeakHours` is the single source of truth for half-open/overnight/day-scoped windows, the off-peak-day rule, wall clocks, validation and transition math: a date is off-peak when its weekday is in `off_peak_days` OR (`off_peak_holidays` names a calendar AND `PeakHours.Holidays.non_working_day?/1`), so a statutory CN holiday, a weekend and a 调休 make-up Saturday resolve through the same predicate.
+`PeakHours.Holidays` is a static 2025-2027 table (extend yearly), NOT a dependency, to avoid `mix.lock`/`mixFodDeps.hash` churn; `PeakHourEngine` prefers canonical profiles, falls back to legacy only when no canonical account exists, and applies one floored concurrency entry per account — API detail (`in_peak?`, `next_transition`, `effective_concurrency`, `ProviderPresets`): `config/` + `agent_scheduler/`.
 
 ## Agent Loop Control Flow + Graceful Task Cancellation
 
