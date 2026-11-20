@@ -25,6 +25,7 @@ defmodule EvoDashWeb.SettingsLive do
   alias EvoDashWeb.SettingsLive.AsyncResults
   alias EvoDashWeb.SettingsLive.AuthStatus
   alias EvoDashWeb.SettingsLive.CategoryEvents
+  alias EvoDashWeb.SettingsLive.ChatGPTSignInState
   alias EvoDashWeb.SettingsLive.ConfigIO
   alias EvoDashWeb.SettingsLive.ConfigSave
   alias EvoDashWeb.SettingsLive.CustomAgentEvents
@@ -399,6 +400,8 @@ defmodule EvoDashWeb.SettingsLive do
                     test_profile_id={@test_profile_id}
                     credentials={@credentials}
                     auth_statuses={@auth_statuses}
+                    chatgpt_sign_in={@chatgpt_sign_in}
+                    chatgpt_sign_in_manual={@chatgpt_sign_in_manual}
                   />
                 <% end %>
               <% end %>
@@ -419,6 +422,10 @@ defmodule EvoDashWeb.SettingsLive do
     socket =
       socket
       |> assign(PageState.initial_assigns(socket.assigns[:current_node]))
+      |> assign(
+        chatgpt_sign_in: ChatGPTSignInState.new(),
+        chatgpt_sign_in_manual: ChatGPTSignInState.manual?(socket.assigns)
+      )
       |> load_custom_agents_data()
       |> load_custom_tools_data()
 
@@ -430,9 +437,10 @@ defmodule EvoDashWeb.SettingsLive do
     # Detach save ownership BEFORE replacing the selected target, including
     # aliases that resolve to the same BEAM. NodeAware refreshes remote_status.
     requested_target = if params["node"] in [nil, "local"], do: nil, else: params["node"]
+    node_changed? = requested_target != socket.assigns[:current_node_id]
 
     socket =
-      if requested_target != socket.assigns[:current_node_id],
+      if node_changed?,
         do: PageState.reset_config_scope(socket),
         else: socket
 
@@ -449,6 +457,7 @@ defmodule EvoDashWeb.SettingsLive do
           to_form(%{"node" => requested_target || "local"}, as: :settings_server)
       )
       |> PageState.reconcile_config_scope()
+      |> sync_sign_in_scope(node_changed?)
 
     # The sidebar/content map is ALWAYS the last-known PLATFORM-FILTERED map —
     # never the unfiltered snapshot. The platform OS of a (possibly remote) node
@@ -942,5 +951,40 @@ defmodule EvoDashWeb.SettingsLive do
     profiles = Schema.provider_profiles(socket.assigns.file_config || %{})
     :ok = AuthStatus.start(socket, profiles)
     socket
+  end
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Helpers: page-level in-browser ChatGPT sign-in state
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # A node switch changes which BEAM the sign-in would serve: the live flow (a
+  # loopback listener on the OLD node's BEAM) is abandoned and the state reset,
+  # so a late poll result can never land on the new node's surfaces. The
+  # last-known surface identity is kept, so that surface renders its fresh idle
+  # button. The local/remote verdict is recomputed on EVERY handle_params, since
+  # it depends on the node context `assign_node/2` just resolved.
+  defp sync_sign_in_scope(socket, node_changed?) do
+    socket =
+      if node_changed?,
+        do: assign(socket, :chatgpt_sign_in, ChatGPTSignInState.cancel(page_sign_in(socket))),
+        else: socket
+
+    assign(socket, :chatgpt_sign_in_manual, ChatGPTSignInState.manual?(socket.assigns))
+  end
+
+  # TOTAL: a missing/garbage assign reads as the idle page state.
+  defp page_sign_in(socket) do
+    case socket.assigns[:chatgpt_sign_in] do
+      %{} = state -> state
+      _state -> ChatGPTSignInState.new()
+    end
+  end
+
+  @impl true
+  def terminate(_reason, socket) do
+    # The poll task already dies with its owner, but the loopback listener lives
+    # in the flow module — close it instead of waiting for its timeout.
+    _state = ChatGPTSignInState.cancel(page_sign_in(socket))
+    :ok
   end
 end

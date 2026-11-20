@@ -22,6 +22,14 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
       `EvoDashWeb.SettingsLive.ModelProfileEvents`, which stays the CRUD and
       detached-draft boundary.
 
+  The in-browser Sign in with ChatGPT state is PAGE-level
+  (`EvoDashWeb.SettingsLive.ChatGPTSignInState` owns it in the
+  `:chatgpt_sign_in` / `:chatgpt_sign_in_manual` assigns): the wizard, an
+  expanded account's detail form and an account's auth-status row are three
+  surfaces over ONE flow, and this module only routes their events, projects the
+  wizard's own surface view into `:provider_wizard` and cancels the flow when the
+  surface that owns it is dismissed.
+
   Nothing here reads the clock, the catalog cache or disk: identity, parsing
   and persistence all go through `EvoDashWeb.SettingsLive.ProviderProfiles`
   and the parent's `persist_file_config/3`.
@@ -33,10 +41,10 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
   import Phoenix.LiveView, only: [put_flash: 3]
 
   alias EvoDashWeb.LLMSetup.ChatGPT
-  alias EvoDashWeb.LLMSetup.ChatGPTSignIn
   alias EvoDashWeb.LLMSetup.Schedule
   alias EvoDashWeb.LLMSetup.Wizard
   alias EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm
+  alias EvoDashWeb.SettingsLive.ChatGPTSignInState
   alias EvoDashWeb.SettingsLive.LlmTestEvents
   alias EvoDashWeb.SettingsLive.ModelProfileEvents
   alias EvoDashWeb.SettingsLive.ModelProfileHelpers
@@ -208,8 +216,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
   end
 
   @doc "Closes the add-account wizard without writing anything."
-  def provider_wizard_cancel(socket, _params),
-    do: {:noreply, assign(socket, :provider_wizard, nil)}
+  def provider_wizard_cancel(socket, _params) do
+    {:noreply, socket |> close_surface(:wizard) |> assign(:provider_wizard, nil)}
+  end
 
   @doc """
   Saves the wizard as a canonical provider account.
@@ -276,125 +285,166 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
   end
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # in-browser ChatGPT sign-in (wizard auth step)
+  # in-browser ChatGPT sign-in (PAGE-level state, three surfaces)
   # ═══════════════════════════════════════════════════════════════════════════
 
   @doc """
-  Starts ONE in-browser Sign in with ChatGPT for the wizard's account.
+  Starts ONE in-browser Sign in with ChatGPT for the surface the payload names.
 
-  The account is the draft's current selection, or the registration the store
-  treats as default when nothing is chosen yet — the same account the picker
-  resolves to. `EvoDashWeb.LLMSetup.ChatGPTSignIn` owns the flow id, the
-  authorization URL and the bounded poll; a repeat click simply starts a NEW
-  flow (the flow module supersedes the previous one per account), so a stale
-  poll result can never win.
-
-  `begin/1` is bounded and degrades to `{:error, reason}`, so this handler
-  never blocks the page and never raises.
+  The surface is `ChatGPTSignInState.surface_from_params/1` (`"wizard"` when the
+  payload carries none, which is what the wizard's DOM sends) and the account is
+  that surface's OWN selection — the wizard draft's current pick, or the
+  `siwc_account` of the expanded/status account — each falling back to the
+  registration the store treats as default. `ChatGPTSignIn` owns the flow id,
+  the authorization URL and the bounded poll; `begin/1` is bounded and degrades
+  to `{:error, reason}`, so this handler never blocks the page and never raises.
   """
-  def chatgpt_sign_in(socket, _params) do
-    case socket.assigns[:provider_wizard] do
-      %{draft: draft} = wizard when is_map(draft) ->
-        account = ChatGPT.account_name(draft["siwc_account"])
+  def chatgpt_sign_in(socket, params) do
+    surface = ChatGPTSignInState.surface_from_params(params)
+    account = surface_account(socket, surface)
+    state = ChatGPTSignInState.begin(page_sign_in(socket), account, surface, self())
 
-        case ChatGPTSignIn.begin(account) do
-          {:ok, %{id: id, url: url}} ->
-            # Total: an unavailable supervisor delivers the error result
-            # immediately instead of leaving the panel waiting.
-            ChatGPTSignIn.start_poll(id, self())
-
-            {:noreply,
-             put_sign_in(socket, wizard, %{flow_id: id, url: url, phase: :waiting, reason: nil})}
-
-          {:error, reason} ->
-            {:noreply, put_sign_in(socket, wizard, %{phase: :error, reason: reason})}
-        end
-
-      _wizard ->
-        {:noreply, socket}
-    end
+    {:noreply, socket |> assign(:chatgpt_sign_in, state) |> sync_sign_in_state()}
   end
 
   @doc """
-  Abandons the waiting in-browser sign-in.
+  Abandons the waiting in-browser sign-in of the surface the payload names.
 
-  The flow module closes its loopback listener; a failure to cancel is
-  deliberately quiet (the panel just returns to the idle button — there is
-  nothing the user could do about a flow that already ended).
+  The flow is cancelled only when it belongs to THAT surface (a flow owned by
+  another surface is not the one being dismissed); a failure to cancel is
+  deliberately quiet — the surface just returns to the idle button, and there is
+  nothing the user could do about a flow that already ended.
   """
-  def chatgpt_sign_in_cancel(socket, _params) do
-    case socket.assigns[:provider_wizard] do
-      %{} = wizard ->
-        case sign_in_state(wizard) do
-          %{flow_id: id} when is_binary(id) -> _ = ChatGPTSignIn.cancel(id)
-          _state -> :ok
-        end
+  def chatgpt_sign_in_cancel(socket, params) do
+    surface = ChatGPTSignInState.surface_from_params(params)
+    state = ChatGPTSignInState.cancel_owned_by(page_sign_in(socket), surface)
 
-        {:noreply, put_sign_in(socket, wizard, %{phase: :idle})}
-
-      _wizard ->
-        {:noreply, socket}
-    end
+    {:noreply, socket |> assign(:chatgpt_sign_in, state) |> sync_sign_in_state()}
   end
 
   @doc """
   Applies the ONE `{:chatgpt_signin_result, flow_id, result}` a poll delivers.
 
-  A result for a flow this wizard no longer waits on — a newer click superseded
-  it, or the wizard was closed and reopened — is DROPPED: it describes an
-  outcome the panel is not showing. A successful sign-in reloads the node's
-  registrations, continues with the account that just connected and invalidates
-  any pending connection test (its credentials just changed).
+  `ChatGPTSignInState.apply_result/3` is the ONLY stale guard: a result for a
+  flow the page no longer waits on — a newer click superseded it, it was
+  cancelled, or its surface was closed — changes NOTHING (no phase, no side
+  effect). A successful sign-in writes the connected registration into the
+  OWNING surface's selection (the wizard draft, or the expanded account's
+  detached form draft), reloads the node's registrations, invalidates any
+  pending connection test, refreshes the credential-status rows (their
+  credentials just changed) and clears the pending save token. Failures become
+  the `:error` phase; the friendly wording belongs to the presentation
+  component.
   """
   def chatgpt_signin_result(socket, flow_id, result) do
-    case socket.assigns[:provider_wizard] do
-      %{draft: draft} = wizard when is_map(draft) ->
-        if is_binary(flow_id) and current_flow_id(wizard) == flow_id,
-          do: {:noreply, apply_signin_result(socket, wizard, result)},
-          else: {:noreply, socket}
+    case ChatGPTSignInState.apply_result(page_sign_in(socket), flow_id, result) do
+      {:ok, state, account} ->
+        {:noreply,
+         socket
+         |> assign(:chatgpt_sign_in, state)
+         |> apply_signed_in_account(ChatGPTSignInState.surface(state), account)
+         |> reload_chatgpt_accounts()
+         |> LlmTestEvents.invalidate_llm_test()
+         |> EvoDashWeb.SettingsLive.start_auth_status_load()
+         |> assign(:profile_save_token, nil)
+         |> sync_sign_in_state()}
 
-      _wizard ->
+      {:error, state, _reason} ->
+        {:noreply, socket |> assign(:chatgpt_sign_in, state) |> sync_sign_in_state()}
+
+      {:stale, _state} ->
         {:noreply, socket}
     end
   end
 
-  defp apply_signin_result(socket, wizard, {:ok, info}) do
-    case info do
-      %{account: account} when is_binary(account) and account != "" ->
-        wizard =
-          wizard
-          |> Map.put(:draft, Map.put(wizard.draft, "siwc_account", account))
-          |> Map.put(:errors, %{})
-          |> Map.put(:chatgpt_sign_in, %{phase: :ok})
-          |> load_chatgpt_accounts(socket)
+  # The page-level `:chatgpt_sign_in` state is the SOURCE OF TRUTH; the wizard map
+  # carries its own surface PROJECTION (`surface_state/2`) plus the page's
+  # local/remote verdict, so the frozen wizard form keeps reading
+  # `wizard.chatgpt_sign_in` / `wizard.chatgpt_sign_in_manual`.
+  defp sync_sign_in_state(socket) do
+    socket = assign(socket, :chatgpt_sign_in_manual, ChatGPTSignInState.manual?(socket.assigns))
 
-        socket
-        |> LlmTestEvents.invalidate_llm_test()
-        |> assign(:provider_wizard, ensure_sign_in_keys(wizard, socket))
-
-      _info ->
-        sign_in_error(socket, wizard, :sign_in_unavailable)
+    case socket.assigns[:provider_wizard] do
+      %{} = wizard -> assign(socket, :provider_wizard, ensure_sign_in_keys(wizard, socket))
+      _wizard -> socket
     end
   end
 
-  defp apply_signin_result(socket, wizard, {:error, reason}),
-    do: sign_in_error(socket, wizard, reason)
+  # The page state's value — TOTAL: a missing/garbage assign reads as idle.
+  defp page_sign_in(socket) do
+    case socket.assigns[:chatgpt_sign_in] do
+      %{} = state -> state
+      _state -> ChatGPTSignInState.new()
+    end
+  end
 
-  defp apply_signin_result(socket, wizard, _unexpected),
-    do: sign_in_error(socket, wizard, :sign_in_unavailable)
+  # Dismissing a surface abandons ONLY the flow that surface owns, so a late poll
+  # result can never resurface in a later, unrelated surface.
+  defp close_surface(socket, nil), do: socket
 
-  defp sign_in_error(socket, wizard, reason),
-    do: put_sign_in(socket, wizard, %{phase: :error, reason: reason})
+  defp close_surface(socket, surface) do
+    assign(
+      socket,
+      :chatgpt_sign_in,
+      ChatGPTSignInState.cancel_owned_by(page_sign_in(socket), surface)
+    )
+  end
 
-  defp put_sign_in(socket, wizard, sign_in) when is_map(wizard) and is_map(sign_in),
-    do: assign(socket, :provider_wizard, Map.put(wizard, :chatgpt_sign_in, sign_in))
+  defp detail_surface(nil), do: nil
+  defp detail_surface(id), do: {:detail, id}
 
-  defp sign_in_state(wizard), do: Map.get(wizard, :chatgpt_sign_in) || %{}
+  # The account a surface signs in: its own selection, else the registration the
+  # store treats as default (`ChatGPT.account_name(nil)`).
+  defp surface_account(socket, {_kind, id}) do
+    case find_profile(socket, id) do
+      nil -> ChatGPT.account_name(nil)
+      profile -> ChatGPT.account_name(ProviderProfiles.field(profile, "siwc_account"))
+    end
+  end
 
-  defp current_flow_id(wizard) do
-    case sign_in_state(wizard) do
-      %{flow_id: id} -> id
-      _state -> nil
+  defp surface_account(socket, _surface) do
+    case socket.assigns[:provider_wizard] do
+      %{draft: draft} when is_map(draft) -> ChatGPT.account_name(draft["siwc_account"])
+      _wizard -> ChatGPT.account_name(nil)
+    end
+  end
+
+  defp apply_signed_in_account(socket, :wizard, account) do
+    case socket.assigns[:provider_wizard] do
+      %{draft: draft} = wizard when is_map(draft) ->
+        wizard =
+          wizard
+          |> Map.put(:draft, Map.put(draft, "siwc_account", account))
+          |> Map.put(:errors, %{})
+
+        assign(socket, :provider_wizard, wizard)
+
+      _wizard ->
+        socket
+    end
+  end
+
+  # The connected registration belongs to the account whose detail/status surface
+  # owns the flow — the EXPANDED profile's detached draft, never the wizard's.
+  defp apply_signed_in_account(socket, {_kind, id}, account) do
+    draft = socket.assigns[:profile_form_draft]
+
+    if socket.assigns[:editing_profile_id] == id and is_map(draft) do
+      assign(socket, :profile_form_draft, Map.put(draft, "siwc_account", account))
+    else
+      socket
+    end
+  end
+
+  defp apply_signed_in_account(socket, _surface, _account), do: socket
+
+  defp reload_chatgpt_accounts(socket) do
+    case socket.assigns[:provider_wizard] do
+      %{draft: draft} = wizard when is_map(draft) ->
+        assign(socket, :provider_wizard, load_chatgpt_accounts(wizard, socket))
+
+      _wizard ->
+        socket
     end
   end
 
@@ -452,8 +502,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
   def provider_model_change(socket, _params), do: {:noreply, socket}
 
   @doc "Closes the add-model step without writing anything."
-  def provider_model_cancel(socket, _params),
-    do: {:noreply, assign(socket, :provider_wizard, nil)}
+  def provider_model_cancel(socket, _params) do
+    {:noreply, socket |> close_surface(:wizard) |> assign(:provider_wizard, nil)}
+  end
 
   @doc """
   Appends the chosen model to the saved account's `models[]` and persists the
@@ -513,7 +564,12 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
 
     cond do
       is_nil(expanded) ->
-        {:noreply, assign(updated, provider_schedule: empty_schedule())}
+        # Clicking the OPEN account closes it (the toggle path), so its detail
+        # surface — and any flow it was waiting on — goes with it.
+        {:noreply,
+         updated
+         |> close_surface(detail_surface(previous))
+         |> assign(provider_schedule: empty_schedule())}
 
       expanded == previous ->
         {:noreply, updated}
@@ -521,6 +577,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
       true ->
         {:noreply,
          updated
+         |> close_surface(:wizard)
          |> assign(provider_wizard: nil)
          |> assign(provider_schedule: empty_schedule())}
     end
@@ -528,8 +585,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
 
   @doc "Closes the expanded account and its schedule strip."
   def cancel_edit_provider_profile(socket, params) do
+    surface = detail_surface(socket.assigns[:editing_profile_id])
     {:noreply, socket} = ModelProfileEvents.cancel_edit_model_profile(socket, params)
-    {:noreply, assign(socket, provider_schedule: empty_schedule())}
+    {:noreply, socket |> close_surface(surface) |> assign(provider_schedule: empty_schedule())}
   end
 
   @doc """
@@ -564,6 +622,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
     if socket.assigns[:editing_profile_id] == id do
       {:noreply,
        updated
+       |> close_surface(detail_surface(id))
        |> assign(provider_wizard: nil)
        |> assign(provider_schedule: empty_schedule())}
     else
@@ -732,24 +791,25 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
 
   # Both sign-in keys exist on EVERY wizard map, so the frozen form never sees
   # `nil` (`WizardForm.normalize_wizard/1` tolerates absence, but the page owns
-  # the truth). `chatgpt_sign_in_manual` is the page's local/remote verdict and
-  # is recomputed wherever a wizard is (re)built: the in-browser flow binds a
-  # loopback listener on the BEAM running THIS page, so it can only serve a
-  # sign-in when that BEAM is the execution node. A viewed remote target
+  # the truth). `chatgpt_sign_in` is the WIZARD-SURFACE PROJECTION of the
+  # page-level state (`ChatGPTSignInState.surface_state/2`, `%{}` when another
+  # surface owns it) and `chatgpt_sign_in_manual` is the page's local/remote
+  # verdict (`ChatGPTSignInState.manual?/1`) — the in-browser flow binds a
+  # loopback listener on the BEAM running THIS page, so a viewed remote target
   # (`?node=<id>`, connected or still pending) gets the CLI hint instead.
   defp ensure_sign_in_keys(wizard, socket) when is_map(wizard) do
     wizard
-    |> Map.put_new(:chatgpt_sign_in, %{})
-    |> Map.put(:chatgpt_sign_in_manual, manual_sign_in?(socket))
-  end
-
-  defp manual_sign_in?(socket) do
-    current = socket.assigns[:current_node] || node()
-    current != node() or socket.assigns[:current_node_id] != nil
+    |> Map.put(
+      :chatgpt_sign_in,
+      ChatGPTSignInState.surface_state(page_sign_in(socket), :wizard)
+    )
+    |> Map.put(:chatgpt_sign_in_manual, ChatGPTSignInState.manual?(socket.assigns))
   end
 
   defp close_editor(socket) do
-    assign(socket,
+    socket
+    |> close_surface(detail_surface(socket.assigns[:editing_profile_id]))
+    |> assign(
       editing_profile_id: nil,
       profile_form_draft: nil,
       profile_generated_id: nil,
@@ -760,9 +820,12 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
   end
 
   # The saved account is expanded optimistically with its fresh detached draft;
-  # the authoritative file_config arrives with the confirmed write.
+  # the authoritative file_config arrives with the confirmed write. Expanding it
+  # dismisses the wizard, so the wizard surface's waiting flow goes with it.
   defp expand_saved(socket, profile) do
-    assign(socket,
+    socket
+    |> close_surface(:wizard)
+    |> assign(
       editing_profile_id: profile["id"],
       profile_form_draft: ProviderProfiles.draft(profile),
       profile_generated_id: nil,
