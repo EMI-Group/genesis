@@ -565,26 +565,12 @@ defmodule EvoGit.CustomAgents do
     end)
   end
 
-  # Recursively converts atom keys to string keys and drops nil values.
-  # This is deliberately NOT `EvoGit.Util.Map.stringify_keys/1`: that shared
-  # transform PRESERVES nil values, while the agents.toml round-trip needs an
-  # absent key to stay absent, so this one keeps its nil-dropping policy.
-  # EvoGit.RemoteConnections calls THIS function when serializing its
-  # connection maps to TOML rather than keeping a local copy.
+  # The ONE policy this wrapper adds to the shared transform is the
+  # nil-dropping: the agents.toml round-trip needs an absent key to stay
+  # absent, so every nil-valued map entry is dropped at each map level.
+  # The transform itself lives in `EvoGit.Util.Map.stringify_keys/2`
+  # (`drop_nil: true`); `EvoGit.RemoteConnections` reaches it through this
+  # public function when serializing its connection maps to TOML.
   @doc false
-  def stringify_keys(map) when is_map(map) do
-    Map.new(map, fn
-      {key, value} when is_atom(key) -> {Atom.to_string(key), stringify_keys(value)}
-      {key, value} -> {key, stringify_keys(value)}
-    end)
-    |> Enum.reject(fn {_k, v} -> v == nil end)
-    |> Map.new()
-  end
-
-  def stringify_keys(list) when is_list(list) do
-    Enum.map(list, &stringify_keys/1)
-  end
-
-  def stringify_keys(nil), do: nil
-  def stringify_keys(value), do: value
+  def stringify_keys(value), do: EvoGit.Util.Map.stringify_keys(value, drop_nil: true)
 end

@@ -3,10 +3,10 @@ defmodule EvoGit.Util.Map do
   The shared map normalization used when atom-keyed data crosses a TOML or
   JSON boundary into a string-keyed representation.
 
-  This is the PLAIN transform: keys are stringified recursively and every
-  value survives untouched. A caller that additionally wants nil-dropping or
-  model-tuple handling keeps its own transform — those are caller policies,
-  not part of the shared contract.
+  The shared contract is: stringify keys recursively, and optionally drop
+  nil-valued MAP entries. Model-tuple handling stays deliberately out of
+  scope — it is a caller policy, not part of this transform, so a caller that
+  needs it keeps its own transform.
   """
 
   @doc """
@@ -20,22 +20,50 @@ defmodule EvoGit.Util.Map do
   - `nil` → `nil` (short-circuit, so an absent sub-tree stays absent);
   - any other term passes through unchanged.
 
-  NO nil-dropping and NO model-tuple clause: a value of `nil` is preserved, so
-  a caller relying on either must apply that policy itself.
+  ## Options
+
+  - `:drop_nil` (default `false`) — when `true`, every MAP level drops the
+    entries whose converted value is `nil`, so an absent sub-tree stays absent
+    in the serialized output. A `nil` element inside a list is kept, and with
+    the default every entry survives.
+
+  NO model-tuple clause: a caller relying on one must apply that policy itself.
+  """
+  @spec stringify_keys(term(), keyword()) :: term()
+  def stringify_keys(value, opts) when is_list(opts) do
+    do_stringify_keys(value, Keyword.get(opts, :drop_nil, false))
+  end
+
+  @doc """
+  `stringify_keys(value, [])` — every entry survives, `nil` values included.
   """
   @spec stringify_keys(term()) :: term()
-  def stringify_keys(map) when is_map(map) do
-    Map.new(map, fn
-      {key, value} when is_atom(key) -> {Atom.to_string(key), stringify_keys(value)}
-      {key, value} -> {key, stringify_keys(value)}
-    end)
+  def stringify_keys(value), do: stringify_keys(value, [])
+
+  defp do_stringify_keys(map, drop_nil?) when is_map(map) do
+    converted =
+      Map.new(map, fn
+        {key, value} when is_atom(key) ->
+          {Atom.to_string(key), do_stringify_keys(value, drop_nil?)}
+
+        {key, value} ->
+          {key, do_stringify_keys(value, drop_nil?)}
+      end)
+
+    if drop_nil? do
+      converted
+      |> Enum.reject(fn {_key, value} -> value == nil end)
+      |> Map.new()
+    else
+      converted
+    end
   end
 
-  def stringify_keys(list) when is_list(list) do
-    Enum.map(list, &stringify_keys/1)
+  defp do_stringify_keys(list, drop_nil?) when is_list(list) do
+    Enum.map(list, &do_stringify_keys(&1, drop_nil?))
   end
 
-  def stringify_keys(nil), do: nil
+  defp do_stringify_keys(nil, _drop_nil?), do: nil
 
-  def stringify_keys(value), do: value
+  defp do_stringify_keys(value, _drop_nil?), do: value
 end
