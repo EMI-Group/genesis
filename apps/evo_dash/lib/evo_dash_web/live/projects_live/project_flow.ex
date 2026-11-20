@@ -293,6 +293,8 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   # path submitted by the create-new-project palette form. The parent
   # directory need not exist — `File.mkdir_p/1` creates the whole chain.
   # LOCAL-only: the palette hides "Create New Project" in remote contexts.
+  # The open part is the SAME `activate_local_project/3` body every other
+  # local entry point uses (via `register_and_open_project/2`).
   def create_project(socket, %{"path" => path}) do
     case create_local_directory(path) do
       {:ok, expanded} -> register_and_open_project(socket, expanded)
@@ -325,88 +327,103 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
     end
   end
 
-  # Shared success path for create_project: mount the path in the VCT project
-  # registry, reload the project list, close the palette, reset it to :menu,
-  # flash info, and push the URL params to persist the project across
-  # navigation.
-  #
-  # The two registry calls run inside `EvoDash.SafeCall`: a `GenServer.call`
-  # to a dead/timed-out store EXITS the LiveView, so a mount failure is
-  # tolerated (the project-list reload falls back to the currently shown list).
-  # The mount's returned VCT point is unused here — the reload below is the
-  # authoritative project list.
+  # Thin wrapper over activate_local_project/3 for the create flow: `expanded`
+  # was just created by `File.mkdir_p/1`, so the directory exists and only the
+  # create flow flashes the "Project created" info (put before the shared body
+  # — the resulting assigns and flash map are identical to putting it after).
+  # The missing-directory message is a defensive fallback only; it reuses the
+  # select-project wording rather than inventing a new sentence.
   defp register_and_open_project(socket, expanded) do
-    mount_project_point(node(), expanded, Path.basename(expanded))
+    socket
+    |> put_flash(:info, gettext("Project created: %{path}", path: expanded))
+    |> activate_local_project(
+      expanded,
+      gettext("Directory does not exist: %{path}", path: expanded)
+    )
+  end
 
-    projects =
-      SafeCall.run(
-        fn -> NodeContext.projects(node()) end,
-        socket.assigns[:projects] || []
-      )
-      |> AsyncLoad.filter_absolute_projects()
+  # ───────────────────────────────────────────────────────────────────────────
+  # Local activation — the ONE local activation path
+  # ───────────────────────────────────────────────────────────────────────────
 
-    socket =
-      socket
-      |> assign(:projects, projects)
-      |> assign(:project_palette_open, false)
-      |> assign(:palette_mode, :menu)
-      |> put_flash(:info, gettext("Project created: %{path}", path: expanded))
+  @doc """
+  The ONE local project-activation path: normalize/expand `path` for the LOCAL
+  node, mount the directory in the VCT project registry, assign the optimistic
+  `active_project`, close and reset the palette, and `push_patch` to the
+  project URL so the selection survives navigation.
 
-    {:noreply, push_patch(socket, to: project_url(socket, expanded))}
+  `on_missing_message` is the ALREADY-FORMATTED (gettext-wrapped, `%{path}`
+  interpolated) sentence to flash when the directory does not exist, so each
+  entry point keeps its own wording. On that branch nothing is mounted and no
+  assign is touched.
+
+  Every local entry point (`open_project/2`, `select_project/2`, and the
+  create-new-project flow below) delegates here; remote activation is a
+  separate async path (`activate_remote_project/2` →
+  `spawn_remote_project_activation/2,3`) and never runs this body.
+  """
+  @spec activate_local_project(map(), String.t(), String.t()) :: {:noreply, map()}
+  def activate_local_project(socket, path, on_missing_message) do
+    case normalize_project_path(path) do
+      {:error, :blank} ->
+        {:noreply, put_flash(socket, :error, gettext("Invalid project name"))}
+
+      {:error, :relative} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Enter a full path, e.g. D:\\Projects\\myproject or /home/user/myproject")
+         )}
+
+      {:ok, expanded} ->
+        if File.dir?(expanded) do
+          # Exit-safe store calls (see mount_project_point/3): a `GenServer.call`
+          # to a dead/timed-out store EXITS the LiveView, so a mount failure is
+          # tolerated (the project-list reload falls back to the currently shown
+          # list). The mount's returned VCT point is unused here — the reload
+          # below is the authoritative project list.
+          mount_project_point(node(), expanded, Path.basename(expanded))
+
+          projects =
+            SafeCall.run(
+              fn -> NodeContext.projects(node()) end,
+              socket.assigns[:projects] || []
+            )
+            |> AsyncLoad.filter_absolute_projects()
+
+          socket =
+            socket
+            |> assign(:projects, projects)
+            |> assign(:project_palette_open, false)
+            |> assign(:palette_mode, :menu)
+
+          # Push URL params to persist the project across navigation —
+          # `project_url/2`, deliberately NOT
+          # `EvoDashWeb.Helpers.with_node_param/2`.
+          {:noreply, push_patch(socket, to: project_url(socket, expanded))}
+        else
+          {:noreply, put_flash(socket, :error, on_missing_message)}
+        end
+    end
   end
 
   # ───────────────────────────────────────────────────────────────────────────
   # Project opening / selection
   # ───────────────────────────────────────────────────────────────────────────
 
+  # Thin wrappers over activate_local_project/3 — each keeps its OWN
+  # missing-directory wording. A remote context takes the async
+  # activate_remote_project/2 path instead (the palette is node-aware).
   def open_project(socket, %{"path" => path}) do
     if socket.assigns[:current_node_id] != nil do
       activate_remote_project(socket, path)
     else
-      case normalize_project_path(path) do
-        {:error, :blank} ->
-          {:noreply, put_flash(socket, :error, gettext("Invalid project name"))}
-
-        {:error, :relative} ->
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             gettext("Enter a full path, e.g. D:\\Projects\\myproject or /home/user/myproject")
-           )}
-
-        {:ok, expanded} ->
-          if File.dir?(expanded) do
-            # Exit-safe store calls (see register_and_open_project/2).
-            mount_project_point(node(), expanded, Path.basename(expanded))
-
-            projects =
-              SafeCall.run(
-                fn -> NodeContext.projects(node()) end,
-                socket.assigns[:projects] || []
-              )
-              |> AsyncLoad.filter_absolute_projects()
-
-            socket =
-              socket
-              |> assign(:projects, projects)
-              |> assign(:project_palette_open, false)
-              |> assign(:palette_mode, :menu)
-
-            # Push URL params to persist project across navigation
-            {:noreply, push_patch(socket, to: project_url(socket, expanded))}
-          else
-            {:noreply,
-             socket
-             |> put_flash(
-               :error,
-               gettext(
-                 "Directory does not exist: %{path}. Create a new project instead?",
-                 path: path
-               )
-             )}
-          end
-      end
+      activate_local_project(
+        socket,
+        path,
+        gettext("Directory does not exist: %{path}. Create a new project instead?", path: path)
+      )
     end
   end
 
@@ -414,42 +431,11 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
     if socket.assigns[:current_node_id] != nil do
       activate_remote_project(socket, path)
     else
-      case normalize_project_path(path) do
-        {:error, :blank} ->
-          {:noreply, put_flash(socket, :error, gettext("Invalid project name"))}
-
-        {:error, :relative} ->
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             gettext("Enter a full path, e.g. D:\\Projects\\myproject or /home/user/myproject")
-           )}
-
-        {:ok, expanded} ->
-          if File.dir?(expanded) do
-            # Exit-safe store calls (see register_and_open_project/2).
-            mount_project_point(node(), expanded, Path.basename(expanded))
-
-            projects =
-              SafeCall.run(
-                fn -> NodeContext.projects(node()) end,
-                socket.assigns[:projects] || []
-              )
-              |> AsyncLoad.filter_absolute_projects()
-
-            socket =
-              socket
-              |> assign(:projects, projects)
-              |> assign(:project_palette_open, false)
-              |> assign(:palette_mode, :menu)
-
-            {:noreply, push_patch(socket, to: project_url(socket, expanded))}
-          else
-            {:noreply,
-             put_flash(socket, :error, gettext("Directory does not exist: %{path}", path: path))}
-          end
-      end
+      activate_local_project(
+        socket,
+        path,
+        gettext("Directory does not exist: %{path}", path: path)
+      )
     end
   end
 
@@ -688,6 +674,11 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
       projects =
         AsyncLoad.filter_absolute_projects_for_node(node, NodeContext.projects(node))
 
+      # NOTE: `EvoGit.ProjectConfig.read/1` deliberately stays where it is —
+      # the page's own `activate_project/2` (a small bounded read on an
+      # explicit user action, refreshed through its mtime gate). Activation
+      # moves no config read into this module; only the remote node's own read
+      # happens here, inside the supervised task.
       config = NodeContext.read_project_config(node, expanded)
       mode = Project.detect_mode(node, expanded)
       mode_info = mode_info_message(mode)
