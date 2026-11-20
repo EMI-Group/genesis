@@ -43,6 +43,7 @@ Commands:
   upgrade               Alias for `update`
   logs [-f]             Show recent logs (-f follows)
   url                   Print the dashboard URL
+  chatgpt <command>     Connect a ChatGPT subscription
   version               Print the release version
   remote <command>      Toggle SSH remote development on the server instance
                         (start|stop|status|logs; see `genesis remote help`)
@@ -2587,6 +2588,10 @@ main() {
     url)
       require_launcher
       cmd_url "$@"
+      ;;
+    chatgpt)
+      require_launcher
+      exec "$LAUNCHER" eval 'EvoDash.ChatGPTCLI.main(System.argv())' "$@"
       ;;
     remote)
       cmd_remote "$@"

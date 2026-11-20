@@ -18,6 +18,8 @@ defmodule EvoDashWeb.WelcomeCompleteLive do
       current_page={:welcome}
       simple_nav={false}
       current_node_id={@current_node_id}
+      remote_targets={assigns[:remote_targets] || []}
+      connection_statuses={assigns[:connection_statuses] || %{}}
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
       session_list={assigns[:session_list] || []}

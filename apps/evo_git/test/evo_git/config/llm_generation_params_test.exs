@@ -163,29 +163,19 @@ defmodule EvoGit.Config.LLMGenerationParamsTest do
 
       params = LLM.profile_generation_params(%{model: "openai_codex:gpt-5.6-terra"})
 
-      assert params[:provider_options] == [
-               auth_mode: :oauth,
-               oauth_file: Path.join(EvoGit.Config.config_dir(), "auth.json")
-             ]
+      assert params[:provider_options] == [siwc_account: "default"]
     end
 
-    test "an OAuth-ONLY profile's own oauth_file wins over the model-derived default" do
-      EvoGit.TestSupport.ConfigDir.isolate!("evogit-oauth-only-override")
-      oauth_file = tmp_oauth_file()
-
+    test "ChatGPT resolves a named registration and ignores legacy OAuth paths" do
       params =
         LLM.profile_generation_params(%{
-          id: "codex",
           model: "openai_codex:gpt-5.6-terra",
-          oauth_file: oauth_file
+          siwc_account: "work",
+          oauth_file: "/tmp/legacy.json",
+          provider_options: %{oauth_file: "/tmp/override.json"}
         })
 
-      options = params[:provider_options]
-      assert options[:auth_mode] == :oauth
-      # Regression pin: `provider_options_for_model/1` emits the DEFAULT managed
-      # file for an OAuth-only provider; the profile's own `oauth_file` must win.
-      assert options[:oauth_file] == oauth_file
-      refute options[:oauth_file] == EvoGit.Auth.default_oauth_file()
+      assert params[:provider_options] == [siwc_account: "work"]
     end
 
     test "a dual-mode provider's own oauth_file wins over the model-derived default" do
@@ -206,7 +196,7 @@ defmodule EvoGit.Config.LLMGenerationParamsTest do
     test "a profile without an oauth_file resolves the default managed file" do
       EvoGit.TestSupport.ConfigDir.isolate!("evogit-oauth-default-file")
 
-      for model <- ["openai_codex:gpt-5.6-terra", "anthropic:claude-opus-5-5"] do
+      for model <- ["anthropic:claude-opus-5-5"] do
         profile = %{model: model, auth_mode: "oauth"}
 
         assert LLM.profile_generation_params(profile)[:provider_options][:oauth_file] ==
@@ -223,8 +213,8 @@ defmodule EvoGit.Config.LLMGenerationParamsTest do
         llm: %{
           models: [
             %{
-              id: "codex",
-              model: "openai_codex:gpt-5.6-terra",
+              id: "claude",
+              model: "anthropic:claude-opus-5-5",
               auth_mode: "oauth",
               oauth_file: oauth_file
             }
@@ -241,31 +231,6 @@ defmodule EvoGit.Config.LLMGenerationParamsTest do
                [auth_mode: :oauth, oauth_file: oauth_file]
 
       refute oauth_file == EvoGit.Auth.default_oauth_file()
-    end
-
-    test "provider_options_for_model/1 keeps the DEFAULT file for a model-spec-only caller" do
-      EvoGit.TestSupport.ConfigDir.isolate!("evogit-oauth-spec-only")
-
-      options = LLM.provider_options_for_model("openai_codex:gpt-5.6-terra")
-
-      assert options[:auth_mode] == :oauth
-      assert options[:oauth_file] == EvoGit.Auth.default_oauth_file()
-    end
-
-    test "an oauth_file inside provider_options beats both the profile's and the default" do
-      EvoGit.TestSupport.ConfigDir.isolate!("evogit-oauth-inner-override")
-      profile_file = tmp_oauth_file()
-      inner_file = tmp_oauth_file()
-
-      params =
-        LLM.profile_generation_params(%{
-          model: "openai_codex:gpt-5.6-terra",
-          oauth_file: profile_file,
-          provider_options: %{oauth_file: inner_file}
-        })
-
-      assert params[:provider_options][:oauth_file] == inner_file
-      assert params[:provider_options][:auth_mode] == :oauth
     end
 
     test "a user provider_options override keeps its keys and gains the OAuth defaults" do
@@ -299,6 +264,20 @@ defmodule EvoGit.Config.LLMGenerationParamsTest do
 
       assert params[:provider_options][:oauth_file] == inner_file
       assert params[:provider_options][:auth_mode] == :oauth
+    end
+
+    test "an OpenAI API-key profile cannot select the old OAuth file through provider options" do
+      params =
+        LLM.profile_generation_params(%{
+          model: "openai:gpt-6-sol",
+          provider_options: %{
+            auth_mode: :oauth,
+            oauth_file: "/tmp/old-auth.json",
+            prompt_cache_key: "explicit"
+          }
+        })
+
+      assert params[:provider_options] == [prompt_cache_key: "explicit"]
     end
 
     test "an api_key profile gets no auth_mode / oauth_file" do
@@ -367,14 +346,12 @@ defmodule EvoGit.Config.LLMGenerationParamsTest do
   end
 
   describe "provider_options_for_model/1 — OAuth-only providers" do
-    test "an OAuth-only provider gets OAuth options and NEVER store: false" do
+    test "a subscription model-only caller binds the default registration" do
       EvoGit.TestSupport.ConfigDir.isolate!("evogit-codex-options")
 
       options = LLM.provider_options_for_model("openai_codex:gpt-5.6-terra")
 
-      assert options[:auth_mode] == :oauth
-      assert options[:oauth_file] == Path.join(EvoGit.Config.config_dir(), "auth.json")
-      refute Keyword.has_key?(options, :store)
+      assert options == [siwc_account: "default"]
     end
 
     test "a native OpenAI endpoint still gets store: false, not OAuth options" do

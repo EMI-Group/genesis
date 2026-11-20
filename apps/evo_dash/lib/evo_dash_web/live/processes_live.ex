@@ -83,6 +83,7 @@ defmodule EvoDashWeb.ProcessesLive do
        # included), so the page must own the assign — an unset one raises
        # KeyError before the first paint. Resolved here like the other pages
        # (local read of config.toml, no RPC).
+       page_title: gettext("Processes"),
        config_status: config_status(),
        executions: [],
        executions_loading: false,
@@ -135,6 +136,7 @@ defmodule EvoDashWeb.ProcessesLive do
           executions: [],
           executions_loaded: false,
           entering: MapSet.new(),
+          expanded: MapSet.new(),
           confirm: nil
         )
       else
@@ -234,6 +236,19 @@ defmodule EvoDashWeb.ProcessesLive do
     NodeAware.handle_connection_status(socket, msg)
   end
 
+  def handle_info({:remote_connect_result, target_id, {:error, reason}}, socket) do
+    if target_id == socket.assigns.current_node_id do
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         gettext("Remote connect failed: %{reason}", reason: Format.term_text(reason))
+       )}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   # ---------------------------------------------------------------------------
@@ -280,6 +295,14 @@ defmodule EvoDashWeb.ProcessesLive do
     {:noreply, Load.start(socket)}
   end
 
+  def handle_event("retry_remote_connection", _params, socket) do
+    {:noreply, NodeAware.initiate_remote_connect(socket, socket.assigns.current_node_id)}
+  end
+
+  def handle_event("switch_to_local", _params, socket) do
+    NodeAware.handle_node_selected(socket, "local")
+  end
+
   # ---------------------------------------------------------------------------
   # Filter events — every one is a push_patch, so the URL stays the state
   # ---------------------------------------------------------------------------
@@ -305,6 +328,13 @@ defmodule EvoDashWeb.ProcessesLive do
     {:noreply, push_patch(socket, to: filters_url(socket, %{task_id: nil}))}
   end
 
+  def handle_event("clear_filters", _params, socket) do
+    {:noreply,
+     push_patch(socket,
+       to: filters_url(socket, %{kind: "all", q: nil, agent_id: nil, task_id: nil})
+     )}
+  end
+
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   @impl true
@@ -318,6 +348,11 @@ defmodule EvoDashWeb.ProcessesLive do
       assigns
       |> assign(:filtered, Format.filter(assigns.executions, filters))
       |> assign(:counts, counts)
+      |> assign(
+        :filters_active,
+        filters.kind != "all" or filters.q != "" or filters.agent_id != nil or
+          filters.task_id != nil
+      )
 
     ~H"""
     <EvoDashWeb.Layouts.app
@@ -325,6 +360,8 @@ defmodule EvoDashWeb.ProcessesLive do
       current_page={:processes}
       config_status={@config_status}
       current_node_id={@current_node_id}
+      remote_targets={assigns[:remote_targets] || []}
+      connection_statuses={assigns[:connection_statuses] || %{}}
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
       session_list={assigns[:session_list] || []}
@@ -337,32 +374,33 @@ defmodule EvoDashWeb.ProcessesLive do
       guide={@guide}
       accent_color={assigns[:accent_color] || "blue"}
     >
+      <header class="mb-5">
+        <h1 class="text-xl font-semibold text-base-content">{gettext("Processes")}</h1>
+        <p
+          :if={!EvoDashWeb.RemoteGateComponents.gate_active?(assigns)}
+          class="mt-1 text-sm text-base-content/70"
+        >
+          {gettext("Monitor tool calls and background jobs on this node.")}
+        </p>
+      </header>
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
-        <div class="mb-4">
-          <h1 class="text-xl font-semibold text-base-content">{gettext("Processes")}</h1>
-          <p class="text-sm text-base-content/60 mt-0.5">
-            <%!--
-              zh_CN: 内置工具调用在 BEAM 内部执行，没有操作系统进程；外部命令与后台任务才有 PID/CPU/内存与终止操作。
-            --%>
-            {gettext(
-              "Executions Genesis tracks on this node — built-in tool calls that run in-process, external commands and background jobs — with their resource usage and operator controls."
-            )}
-          </p>
-        </div>
-
         <!-- Filter bar -->
         <div class="rounded-lg border border-base-300 bg-base-100 p-3 sm:p-4 mb-4">
           <div class="flex flex-col lg:flex-row lg:items-center gap-3">
-            <div class="flex items-center gap-1 bg-base-200/50 rounded-lg p-1 overflow-x-auto shrink-0">
+            <div
+              class="flex flex-wrap items-center gap-1 rounded-lg bg-base-200/60 p-1"
+              aria-label={gettext("Process status")}
+              role="group"
+            >
               <button
                 :for={tab <- Format.status_tabs()}
                 type="button"
                 phx-click="set_status"
                 phx-value-status={tab}
                 class={[
-                  "px-3 py-1.5 rounded-md text-sm font-medium cursor-pointer transition-colors whitespace-nowrap",
+                  "min-h-9 flex-1 px-3 py-1.5 rounded-md text-sm font-medium cursor-pointer transition-colors whitespace-nowrap",
                   @status_filter == tab && "bg-base-100 shadow-sm text-base-content",
                   @status_filter != tab &&
                     "hover:bg-base-200/80 text-base-content/70 hover:text-base-content"
@@ -374,10 +412,15 @@ defmodule EvoDashWeb.ProcessesLive do
               </button>
             </div>
 
-            <form id="process-kind-filter" phx-change="set_kind" class="form-control">
+            <.form
+              for={to_form(%{"kind" => @kind_filter})}
+              id="process-kind-filter"
+              phx-change="set_kind"
+              class="form-control"
+            >
               <select
                 name="kind"
-                class="select select-sm select-bordered rounded-md bg-base-100 sm:w-44"
+                class="select select-bordered min-h-10 w-full rounded-md bg-base-100 lg:w-44"
                 aria-label={gettext("Process kind")}
               >
                 <option value="all" selected={@kind_filter == "all"}>
@@ -390,18 +433,25 @@ defmodule EvoDashWeb.ProcessesLive do
                   {gettext("Background jobs")}
                 </option>
               </select>
-            </form>
+            </.form>
 
-            <form id="process-search" phx-change="search" phx-debounce="200" class="flex-1 min-w-0">
+            <.form
+              for={to_form(%{"q" => @search_query})}
+              id="process-search"
+              phx-change="search"
+              phx-submit="search"
+              class="flex-1 min-w-0"
+            >
               <input
                 type="search"
                 name="q"
+                phx-debounce="200"
                 value={@search_query}
-                placeholder={gettext("Search command, tool, agent or task id…")}
-                class="input input-sm input-bordered rounded-md w-full"
+                placeholder={gettext("Search processes")}
+                class="input input-bordered min-h-10 w-full rounded-md"
                 aria-label={gettext("Search processes")}
               />
-            </form>
+            </.form>
           </div>
 
           <!-- Active core-side filters -->
@@ -412,37 +462,41 @@ defmodule EvoDashWeb.ProcessesLive do
             <span class="text-xs text-base-content/70">{gettext("Filters:")}</span>
             <span
               :if={@agent_filter != nil}
-              class="badge badge-sm badge-ghost gap-1 rounded-md font-mono"
+              class="inline-flex max-w-full items-center gap-1 rounded-md bg-base-200 pl-2 text-xs font-mono"
             >
-              {gettext("Agent")} {@agent_filter}
+              <span class="min-w-0 break-all">{gettext("Agent")} {@agent_filter}</span>
               <button
                 type="button"
                 phx-click="remove_agent_filter"
-                class="cursor-pointer hover:opacity-70"
+                class="inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md hover:bg-base-300"
                 aria-label={gettext("Remove agent filter")}
               >
-                ×
+                <.icon name="hero-x-mark" class="size-4" />
               </button>
             </span>
             <span
               :if={@task_filter != nil}
-              class="badge badge-sm badge-ghost gap-1 rounded-md font-mono"
+              class="inline-flex max-w-full items-center gap-1 rounded-md bg-base-200 pl-2 text-xs font-mono"
             >
-              {gettext("Task")} {@task_filter}
+              <span class="min-w-0 break-all">{gettext("Task")} {@task_filter}</span>
               <button
                 type="button"
                 phx-click="remove_task_filter"
-                class="cursor-pointer hover:opacity-70"
+                class="inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md hover:bg-base-300"
                 aria-label={gettext("Remove task filter")}
               >
-                ×
+                <.icon name="hero-x-mark" class="size-4" />
               </button>
             </span>
           </div>
         </div>
 
         <!-- First-load placeholder -->
-        <div :if={@executions_loading and @executions == []} class="text-center py-12 sm:py-16">
+        <div
+          :if={@executions_loading and @executions == []}
+          role="status"
+          class="rounded-lg border border-base-300 px-4 py-10 text-center sm:py-14"
+        >
           <.icon
             name="hero-arrow-path"
             class="size-10 mx-auto mb-4 text-base-content/40 animate-spin"
@@ -455,7 +509,7 @@ defmodule EvoDashWeb.ProcessesLive do
           :if={@executions_error != nil and @executions == [] and not @executions_loading}
           id="processes-load-error"
           role="alert"
-          class="text-center py-12 sm:py-16"
+          class="rounded-lg border border-base-300 px-4 py-10 text-center sm:py-14"
         >
           <.icon name="hero-exclamation-triangle" class="size-10 mx-auto mb-4 text-error/70" />
           <p class="text-lg font-medium text-error">{gettext("Could not load processes.")}</p>
@@ -488,41 +542,69 @@ defmodule EvoDashWeb.ProcessesLive do
               (@executions_error == nil or @executions != [])
           }
           id="processes-empty"
-          class="text-center py-12 sm:py-16 text-base-content/70"
+          class="rounded-lg border border-base-300 px-4 py-10 text-center text-base-content/70 sm:py-14"
         >
           <.icon name="hero-cpu-chip" class="size-10 mx-auto mb-4 text-base-content/40" />
-          <p class="text-lg font-medium">{empty_message(@status_filter)}</p>
-          <p
-            :if={@agent_filter != nil or @task_filter != nil or @search_query != ""}
-            class="text-sm mt-1"
-          >
-            {gettext("Try clearing a filter or the search query.")}
+          <p class="font-semibold text-base-content">
+            {if @filters_active,
+              do: gettext("No processes match these filters."),
+              else: empty_message(@status_filter)}
           </p>
+          <button
+            :if={@filters_active}
+            id="processes-clear-filters"
+            type="button"
+            class="btn btn-outline btn-sm mt-4"
+            phx-click="clear_filters"
+          >
+            {gettext("Clear filters")}
+          </button>
+          <button
+            :if={!@filters_active and @status_filter == "live" and @counts.finished > 0}
+            id="processes-show-finished"
+            type="button"
+            class="btn btn-outline btn-sm mt-4"
+            phx-click="set_status"
+            phx-value-status="finished"
+          >
+            {gettext("Show finished processes")}
+          </button>
         </div>
 
         <!-- Process table (newest first, as the core returns them) -->
         <div
           :if={@filtered != []}
-          class="overflow-x-auto rounded-lg border border-base-300 bg-base-100"
+          id="processes-results"
+          class="rounded-lg border border-base-300 bg-base-100"
         >
-          <table class="table table-sm">
-            <thead>
-              <tr class="text-xs text-base-content/60">
-                <th>{gettext("Status")}</th>
-                <th>{gettext("Agent")}</th>
-                <th>{gettext("Task")}</th>
-                <th>{gettext("Command")}</th>
-                <th>{gettext("Runtime")}</th>
-                <th>{gettext("Backend")}</th>
-                <th>{gettext("Target")}</th>
-                <th>{gettext("Uptime")}</th>
-                <th class="text-right">{gettext("CPU")}</th>
-                <th class="text-right">{gettext("Memory")}</th>
-                <th class="text-right">{gettext("Exit")}</th>
-                <th class="text-right">{gettext("Actions")}</th>
+          <table
+            role="table"
+            aria-label={gettext("Processes")}
+            class="table table-sm block xl:table"
+          >
+            <thead role="rowgroup" class="hidden xl:table-header-group">
+              <tr role="row" class="bg-base-200/50 text-xs text-base-content/70">
+                <th scope="col" role="columnheader">{gettext("Status")}</th>
+                <th scope="col" role="columnheader">{gettext("Agent")}</th>
+                <th scope="col" role="columnheader">{gettext("Task")}</th>
+                <th scope="col" role="columnheader" class="w-full">{gettext("Command")}</th>
+                <th scope="col" role="columnheader" class="hidden 2xl:table-cell">
+                  {gettext("Runtime")}
+                </th>
+                <th scope="col" role="columnheader" class="hidden 2xl:table-cell">
+                  {gettext("Backend")}
+                </th>
+                <th scope="col" role="columnheader" class="hidden 2xl:table-cell">
+                  {gettext("Target")}
+                </th>
+                <th scope="col" role="columnheader">{gettext("Uptime")}</th>
+                <th scope="col" role="columnheader" class="text-right">{gettext("CPU")}</th>
+                <th scope="col" role="columnheader" class="text-right">{gettext("Memory")}</th>
+                <th scope="col" role="columnheader" class="text-right">{gettext("Exit")}</th>
+                <th scope="col" role="columnheader" class="text-right">{gettext("Actions")}</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody role="rowgroup" class="block xl:table-row-group">
               <ProcessComponents.execution_row
                 :for={execution <- @filtered}
                 execution={execution}
@@ -967,7 +1049,7 @@ defmodule EvoDashWeb.ProcessesLive do
   # ---------------------------------------------------------------------------
 
   defp status_tab_label("live"), do: gettext("Live")
-  defp status_tab_label("finished"), do: gettext("Finished")
+  defp status_tab_label("finished"), do: gettext("Finished processes")
   defp status_tab_label(_tab), do: gettext("All")
 
   defp status_tab_count(counts, "live"), do: Map.get(counts, :live, 0)

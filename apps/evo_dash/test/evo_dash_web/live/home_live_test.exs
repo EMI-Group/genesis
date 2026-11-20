@@ -4263,6 +4263,145 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
   end
 
+  test "reattaching without a cached view recovers approvals for the original conversation", %{
+    conn: conn
+  } do
+    session_id = 987_654
+    conversation_id = 123_789
+    workspace = %{path: "/tmp/project", node: node(), node_id: nil, name: "project"}
+    attach = parked_attach(session_id)
+
+    install_session_seam(:home_session_attach_runner, fn _, ^session_id ->
+      put_in(attach, [:summary, :assistant_context], %{
+        assistant_conversation_id: conversation_id,
+        assistant_workspace: workspace
+      })
+    end)
+
+    request = %{
+      request_id: "owned-action",
+      kind: :task_control,
+      command: "genesis_start_task",
+      tool_name: "genesis_start_task",
+      parameters: %{},
+      conversation_id: conversation_id,
+      agent_id: session_id,
+      node: node()
+    }
+
+    install_session_seam(:approval_pending_runner, fn _ ->
+      [request, %{request | request_id: "other-action", conversation_id: session_id}]
+    end)
+
+    {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
+    wait_until(fn -> assigns(view).pending_approvals == [request] end)
+    assert assigns(view).workspace == workspace
+    assert assigns(view).assistant_conversation_id == conversation_id
+
+    view |> element("#approval-review-button") |> render_click()
+    assert has_element?(view, approval_button("owned-action", "approve"))
+    refute has_element?(view, approval_button("other-action", "approve"))
+  end
+
+  test "workbench tabs retain distinct drafts without listing them as conversations", %{
+    conn: conn
+  } do
+    root =
+      Path.join(System.tmp_dir!(), "assistant-workbench-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(root)
+    {:ok, _mount} = EvoDash.NodeContext.mount_project(node(), root, nil)
+
+    on_exit(fn ->
+      EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.forget_project(node(), root) end)
+      File.rm_rf!(root)
+    end)
+
+    open_tab = fn draft ->
+      query = URI.encode_query(%{"wb_project" => root, "wb_draft" => draft})
+      {:ok, view, _} = live(recycle(conn), "/assistant?" <> query)
+      wait_until(fn -> match?(%{path: ^root}, assigns(view).workspace) end)
+      view
+    end
+
+    first = "123456789012345678901234"
+    second = "234567890123456789012345"
+    first_view = open_tab.(first)
+    render_change(first_view, "chat_input", %{"message" => "Keep this tab's draft"})
+    first_chat_id = assigns(first_view).chat_id
+    GenServer.stop(first_view.pid)
+
+    other_view = open_tab.(second)
+    assert assigns(other_view).chat_draft == ""
+    refute first_chat_id in EvoDash.ChatHistory.list_chats()
+
+    reopened = open_tab.(first)
+    assert assigns(reopened).chat_draft == "Keep this tab's draft"
+    assert assigns(reopened).chat_id == first_chat_id
+  end
+
+  test "standalone browser drafts are private to each browser tab", %{conn: conn} do
+    open_assistant = fn client_id ->
+      conn = conn |> recycle() |> put_connect_params(%{"guide_client_id" => client_id})
+      {:ok, view, _} = live(conn, "/assistant")
+      view
+    end
+
+    first = open_assistant.("browser-tab-one")
+    render_change(first, "chat_input", %{"message" => "Local unsent text"})
+    refute assigns(first).chat_id in EvoDash.ChatHistory.list_chats()
+    GenServer.stop(first.pid)
+
+    assert assigns(open_assistant.("browser-tab-two")).chat_draft == ""
+    assert assigns(open_assistant.("browser-tab-one")).chat_draft == "Local unsent text"
+  end
+
+  test "opening a one-shot conversation from history keeps its workbench tab", %{conn: conn} do
+    id = 987_654
+    key = {nil, node(), "/tmp/project", "123456789012345678901234"}
+
+    EvoDash.ChatHistory.put_state(id, %{
+      chat_node: node(),
+      chat_status: :ended,
+      session_mode: :one_shot,
+      transcript: [
+        %{id: "old-message", role: :user, text: "An existing conversation", streaming: false}
+      ],
+      workbench_draft_key: key
+    })
+
+    {:ok, view, _} = live(conn, "/assistant?session=#{id}")
+    assert assigns(view).current_session_id == id
+    assert assigns(view).session_mode == :one_shot
+    assert EvoDash.ChatHistory.get_state(id).workbench_draft_key == key
+    assert has_element?(view, "#chat-messages", "An existing conversation")
+  end
+
+  test "a stale saved node cannot send a workbench draft on the local node", %{conn: conn} do
+    test_pid = self()
+
+    install_session_seam(:home_session_start_runner, fn target, _opts ->
+      send(test_pid, {:unexpected_session_start, target})
+      {:error, :unexpected_session_start}
+    end)
+
+    query =
+      URI.encode_query(%{
+        "node" => "gone-target",
+        "wb_project" => "/tmp",
+        "wb_draft" => "123456789012345678901234"
+      })
+
+    {:ok, view, _} = live(conn, "/assistant?" <> query)
+    assert assigns(view).current_node_id == "gone-target"
+    assert assigns(view).workspace == nil
+
+    assert render_submit(view, "send_message", %{"message" => "keep my draft"}) =~
+             "Connect to the remote node"
+
+    refute_received {:unexpected_session_start, _}
+  end
+
   describe "optional project and source context" do
     test "atomic workspace send failure preserves the unsent draft and conversation", %{
       conn: conn

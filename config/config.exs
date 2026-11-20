@@ -59,8 +59,10 @@ config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id, :remote_ip, :remote_port]
 
-# Use Jason for JSON parsing in Phoenix
-config :phoenix, :json_library, Jason
+# Keep Phoenix's default secret filters and redact provider keys in LiveView logs.
+config :phoenix,
+  json_library: Jason,
+  filter_parameters: ["password", "token", "api_key"]
 
 # EvoGit configuration
 # Note: Runtime defaults (concurrency, retries, model, etc.) are managed by

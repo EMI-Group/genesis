@@ -203,6 +203,24 @@ defmodule EvoGit.Config.ProviderProfilesTest do
       assert Schema.effective_model_profiles(config) == [first, second]
     end
 
+    test "migrating OpenAI OAuth retains a qualified default model" do
+      config = %{
+        llm: %{
+          providers: [
+            %{
+              id: "subscription",
+              provider: "openai",
+              auth_mode: "oauth",
+              default_model: "openai:second-model",
+              models: ["openai:first-model", "openai:second-model"]
+            }
+          ]
+        }
+      }
+
+      assert {:ok, %{model: "openai_codex:second-model"}} = Schema.default_model_profile(config)
+    end
+
     test "legacy models migrate one-for-one before flat keys, retaining account settings" do
       config = %{
         llm: %{

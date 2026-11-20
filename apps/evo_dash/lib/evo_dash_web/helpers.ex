@@ -106,6 +106,28 @@ defmodule EvoDashWeb.Helpers do
   # Task Status Helpers
   # ---------------------------------------------------------------------------
 
+  @doc "Returns the display label for an execution status, including filter values."
+  def task_status_label(status) when status in [:pending, "pending"], do: gettext("Pending")
+  def task_status_label(status) when status in [:running, "running"], do: gettext("Running")
+
+  def task_status_label(status) when status in [:awaiting_input, "awaiting_input"],
+    do: gettext("Awaiting input")
+
+  def task_status_label(status) when status in [:pausing, "pausing"], do: gettext("Pausing")
+  def task_status_label(status) when status in [:paused, "paused"], do: gettext("Paused")
+
+  def task_status_label(status) when status in [:finalizing, "finalizing"],
+    do: gettext("Finalizing")
+
+  def task_status_label(status) when status in [:cancelling, "cancelling"],
+    do: gettext("Cancelling")
+
+  def task_status_label(status) when status in [:completed, "completed"], do: gettext("Completed")
+  def task_status_label(status) when status in [:cancelled, "cancelled"], do: gettext("Cancelled")
+  def task_status_label(status) when status in [:failed, "failed"], do: gettext("Failed")
+  def task_status_label(:ended), do: gettext("Ended")
+  def task_status_label(_), do: gettext("Unknown")
+
   @doc """
   Returns badge class string for task status (`:running`, `:finalizing`,
   `:pausing`, `:completed`, `:failed`, `:cancelled`, `:cancelling`, `:pending`,
@@ -341,6 +363,24 @@ defmodule EvoDashWeb.Helpers do
   end
 
   def format_datetime(datetime), do: Calendar.strftime(datetime, "%Y-%m-%d %H:%M")
+
+  @doc "Formats an instant in the dashboard host time zone with its UTC offset."
+  def format_local_datetime(%DateTime{} = datetime) do
+    seconds = DateTime.to_unix(datetime)
+    local = :calendar.system_time_to_local_time(seconds, :second)
+    utc = :calendar.system_time_to_universal_time(seconds, :second)
+
+    offset =
+      :calendar.datetime_to_gregorian_seconds(local) -
+        :calendar.datetime_to_gregorian_seconds(utc)
+
+    hours = div(abs(offset), 3600) |> Integer.to_string() |> String.pad_leading(2, "0")
+    minutes = div(rem(abs(offset), 3600), 60) |> Integer.to_string() |> String.pad_leading(2, "0")
+    sign = if offset < 0, do: "-", else: "+"
+    formatted = local |> NaiveDateTime.from_erl!() |> format_datetime()
+
+    "#{formatted} UTC#{sign}#{hours}:#{minutes}"
+  end
 
   def format_datetime(nil, :time), do: ""
 

@@ -369,34 +369,16 @@ defmodule EvoGit.Config.LLMCatalogTest do
              "expected :openai_codex to follow :openai, got #{inspect(Enum.at(ids, openai_idx + 1))}"
 
       provider = Enum.find(providers, &(&1.id == :openai_codex))
-      assert provider.display_name == "ChatGPT Codex (OAuth)"
+      assert provider.display_name == "ChatGPT Subscription"
       assert provider.provider_atoms == [:openai_codex]
       assert provider.credential_key == "openai_codex_api_key"
       assert provider.variants == nil
       assert provider.auth_modes == [:oauth]
-      assert provider.oauth_source == :codex_cli
+      assert provider.oauth_source == :chatgpt
     end
 
-    test "ships the Codex model list newest/highest-priority first" do
-      # Derived from the Codex models cache, ordered by `priority`, visible
-      # entries only (`gpt-reserve` and `codex-auto-review` are hidden).
-      expected = [
-        "gpt-6.1-sol",
-        "gpt-6-astra",
-        "gpt-6.1-terra",
-        "gpt-6-sol",
-        "gpt-6-luna",
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
-        "gpt-5.6-luna"
-      ]
-
-      assert Enum.map(LLMCatalog.provider_models(:openai_codex), & &1.id) == expected
-
-      for model <- LLMCatalog.provider_models(:openai_codex) do
-        assert is_binary(model.display_name)
-        assert model.display_name != ""
-      end
+    test "leaves model discovery to the authorized ChatGPT account" do
+      assert LLMCatalog.provider_models(:openai_codex) == []
     end
   end
 
@@ -433,7 +415,7 @@ defmodule EvoGit.Config.LLMCatalogTest do
     end
 
     test "oauth_source/1 names the vendor CLI login or returns nil" do
-      assert LLMCatalog.oauth_source(:openai_codex) == :codex_cli
+      assert LLMCatalog.oauth_source(:openai_codex) == :chatgpt
       assert LLMCatalog.oauth_source(:anthropic) == :claude_code
 
       for provider <- [:openai, :google, :deepseek, :openrouter, :unknown_provider] do
@@ -469,28 +451,15 @@ defmodule EvoGit.Config.LLMCatalogTest do
     # llm_db resolver for the provider's canonical atom — otherwise the CLI
     # setup wizard and dashboard pickers would offer models that fail at
     # request time. `LLMDB.model/2` validates; `ReqLLM.model/1` does not.
-    # EXEMPT: :openai_codex — its model ids live in the Codex backend, not in
-    # LLMDB (gpt-6.1-terra is codex-only and deliberately absent from the
-    # snapshot). Every other provider stays covered by this check.
     test "every catalog model id resolves via LLMDB.model/2" do
       for provider <- LLMCatalog.providers(),
           provider.models != [],
-          LLMCatalog.oauth_only?(provider.id) == false,
           model <- provider.models do
         canonical = hd(provider.provider_atoms)
 
         assert {:ok, _} = LLMDB.model(canonical, model.id),
                "catalog model #{inspect(model.id)} does not resolve for provider #{inspect(canonical)}"
       end
-    end
-
-    test "the LLMDB exemption covers :openai_codex only" do
-      exempt =
-        LLMCatalog.providers()
-        |> Enum.filter(&(&1.models != [] and LLMCatalog.oauth_only?(&1.id)))
-        |> Enum.map(& &1.id)
-
-      assert exempt == [:openai_codex]
     end
   end
 end

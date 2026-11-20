@@ -81,7 +81,7 @@ defmodule EvoDashWeb.WelcomeLive.WizardTest do
     end
 
     test "a single-mode or endpoint provider drops the auth step" do
-      for provider <- ["deepseek", "zai", "custom", "openai_codex"] do
+      for provider <- ["deepseek", "zai", "custom"] do
         assert Wizard.steps(draft(provider)) == @without_auth,
                "#{provider} should not ask an auth question"
       end
@@ -125,12 +125,13 @@ defmodule EvoDashWeb.WelcomeLive.WizardTest do
       assert capabilities.requires_base_url? == false
     end
 
-    test "ChatGPT Codex is OAuth-only" do
+    test "the ChatGPT auth step selects a registration" do
       capabilities = Wizard.capabilities(draft("openai_codex"))
 
       assert capabilities.oauth_only? == true
       assert capabilities.auth_modes == ["oauth"]
-      assert capabilities.auth_choice? == false
+      assert capabilities.auth_choice? == true
+      assert Wizard.steps(draft("openai_codex")) == @all_steps
     end
 
     test "Z.ai declares no auth modes, so it defaults to API key only" do

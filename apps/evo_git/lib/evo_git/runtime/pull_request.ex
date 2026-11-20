@@ -91,13 +91,15 @@ defmodule EvoGit.Runtime.PullRequest do
   """
   @spec generate_title(String.t(), String.t()) :: String.t() | nil
   def generate_title(objective, agent_result) do
-    model = EvoGit.Config.resolve([:llm, :model])
+    config = EvoGit.Config.resolve()
 
-    if is_nil(model) or model == "" do
-      Logger.debug("No LLM model configured, skipping PR title generation")
-      nil
-    else
-      generate_title_with_llm(model, objective, agent_result)
+    case EvoGit.Config.Schema.resolve_model_spec(config, nil) do
+      {:ok, %{model_spec: model, generation_params: params}} ->
+        generate_title_with_llm(model, params, objective, agent_result)
+
+      {:error, reason} ->
+        Logger.debug("No usable default LLM model for PR title generation: #{inspect(reason)}")
+        nil
     end
   end
 
@@ -130,7 +132,7 @@ defmodule EvoGit.Runtime.PullRequest do
     end
   end
 
-  defp generate_title_with_llm(model, objective, agent_result) do
+  defp generate_title_with_llm(model, options, objective, agent_result) do
     prompt = """
     Generate a short, meaningful PR title (max 8 words) from this objective and result.
     Output ONLY the title text, nothing else.
@@ -149,10 +151,7 @@ defmodule EvoGit.Runtime.PullRequest do
     try do
       context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
 
-      with {:ok, stream_response} <-
-             ReqLLM.stream_text(model, context,
-               provider_options: EvoGit.Config.Schema.LLM.provider_options_for_model(model)
-             ),
+      with {:ok, stream_response} <- ReqLLM.stream_text(model, context, options),
            {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
            text <- ReqLLM.Response.text(response) do
         trimmed = String.trim(text)

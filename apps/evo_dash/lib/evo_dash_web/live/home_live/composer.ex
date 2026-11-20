@@ -38,8 +38,8 @@ defmodule EvoDashWeb.HomeLive.Composer do
 
   ## Event contract (implemented by the page)
 
-  `send_message` (form submit), `chat_input` (form change), `chat_keydown`,
-  `chat_keyup`, `stop`, `interrupt_turn`, `chat_upload_validate`,
+  `send_message` (form submit from Enter or the Send button), `chat_input` (form change),
+  `stop`, `interrupt_turn`, `chat_upload_validate`,
   `chat_upload_cancel`, `chat_upload_clear_error`, `chat_attach_manual` (server-path form
   submit with `path`) and `chat_attachment_remove` (`phx-value-index`).
 
@@ -52,6 +52,8 @@ defmodule EvoDashWeb.HomeLive.Composer do
   import EvoDashWeb.LLMSelectionComponents, only: [llm_selection: 1]
 
   alias EvoDashWeb.HomeLive.Attachments
+
+  alias EvoDashWeb.HomeLive.Workspace
 
   @chat_statuses [:idle, :running, :cancelling, :awaiting_input, :ended]
 
@@ -96,6 +98,14 @@ defmodule EvoDashWeb.HomeLive.Composer do
       <p :if={@composer_model_error?} role="alert" class="assistant-compose-error">
         {gettext("Model selection is unavailable. Choose a valid model or reconnect to the node.")}
       </p>
+      <p
+        :if={assigns[:workbench_draft] && assigns[:workspace_error]}
+        id="assistant-workspace-error"
+        role="alert"
+        class="assistant-compose-error"
+      >
+        {assigns[:workspace_error]}
+      </p>
       <div class="assistant-input-card">
         <form
           id="chat-form"
@@ -107,8 +117,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
           <textarea
             id="chat-message-input"
             name="message"
-            phx-keydown="chat_keydown"
-            phx-keyup="chat_keyup"
+            phx-hook="AssistantComposer"
             disabled={@composer_textarea_disabled?}
             placeholder={gettext("Message Genesis Assistant…")}
             rows="3"
@@ -120,7 +129,9 @@ defmodule EvoDashWeb.HomeLive.Composer do
         <div id="chat-composer-controls" class="assistant-context-bar">
           <div class="assistant-context-start">
             <.attach_menu {assigns} />
-            {EvoDashWeb.HomeLive.WorkspaceComponent.selector(assigns)}
+            <%= if is_nil(assigns[:workbench_draft]) do %>
+              {EvoDashWeb.HomeLive.WorkspaceComponent.selector(assigns)}
+            <% end %>
             {EvoDashWeb.HomeLive.TaskCard.follow_control(assigns)}
           </div>
           <div class="assistant-context-end">
@@ -439,7 +450,9 @@ defmodule EvoDashWeb.HomeLive.Composer do
   # resolved model — the Send button and the interrupt-turn button — never the
   # textarea.
   defp send_blocked?(assigns) do
-    compose_disabled?(assigns) or assigns[:workspace_loading] == true or
+    compose_disabled?(assigns) or assigns[:session_attach_pending?] == true or
+      assigns[:workspace_loading] == true or
+      Workspace.missing_draft_project?(assigns) or
       assigns[:upload_in_progress] == true or not has_content?(assigns) or
       model_missing?(assigns) or model_error?(assigns)
   end

@@ -1193,41 +1193,15 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       :ok
     end
 
-    test "renders the dashboard with task form and project selector", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/projects")
+    test "the empty workbench only shows its no-project message", %{conn: conn} do
+      {:ok, view, html} = live(conn, ~p"/projects")
+      render_async(view)
 
-      # Task form is always visible, but the launch panel is hidden
-      # without an active project
-      refute html =~ "task-launch-button"
-      # Empty-state hint overlay is shown when the launch panel is hidden
-      assert html =~ "Open a project to get started"
-      # Command palette trigger shows the placeholder when no project is active
-      assert html =~ "Open a project..."
-    end
-
-    test "project settings panel is present but collapsed when no project", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/projects")
-
-      # The Configure dropdown is always present
-      assert html =~ "Configure"
-      # Project-specific content like "genesis.toml found" is NOT shown
-      # (it requires @project_config to be truthy)
-      refute html =~ "genesis.toml found"
-    end
-
-    test "renders example task help block when no project is active", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/projects")
-
-      # Explanation heading + how-it-works text
-      assert html =~ "New to Genesis? Start with an example"
-      assert html =~ "Set an end goal, launch, and Genesis builds it"
-      # Example objective is rendered (from EvoDashWeb.ExampleTask)
-      assert html =~ "Build a simulated, web-based Windows desktop environment"
-      # Prefill + copy actions are present
-      assert html =~ "Use this example"
-      assert html =~ "example-task-copy"
-      # Hidden RCDATA holder for the prefill JS is present
-      assert html =~ "example-task-objective"
+      assert has_element?(view, "#workbench-idle [data-workbench-idle-projects]", "No projects")
+      assert has_element?(view, "#workbench-new-project[data-workbench-attention=true]")
+      refute has_element?(view, "#project-omnibox")
+      refute has_element?(view, "#task-form")
+      refute html =~ "New to Genesis? Start with an example"
     end
   end
 
@@ -1241,27 +1215,68 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       :ok
     end
 
-    test "mounts ProjectsLive at / with the dashboard nav highlighted", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/")
+    test "a fresh project sidebar has no project rows or server groups", %{conn: conn} do
+      for path <- ["/", "/projects"] do
+        {:ok, view, html} = live(conn, path)
 
-      # Projects page UI (empty state), not the chat page
-      assert html =~ "Open a project to get started"
-      refute html =~ "task-launch-button"
-      refute html =~ "chat-form"
-      assert html =~ "project-omnibox"
+        assert html =~ "No projects"
+        refute html =~ "task-launch-button"
+        refute html =~ "chat-form"
+        refute html =~ "project-omnibox"
 
-      # Sidebar :dashboard nav highlight — the Projects nav link renders
-      # aria-current="page" because ProjectsLive :index sets
-      # current_page={:dashboard} (URL-independent).
-      [link] = html |> Floki.parse_document!() |> Floki.find(~s(a[aria-current="page"]))
-      assert Floki.text(link) =~ "Projects"
+        render_async(view)
+        assert has_element?(view, "#workbench-new-project[data-workbench-attention=true]")
+        refute has_element?(view, "#workbench-projects [data-workbench-project-row]")
+        refute has_element?(view, "#workbench-project-search")
+        refute has_element?(view, ".workbench-location")
+        assert has_element?(view, "#workbench-create [data-workbench-project-window=create]")
+      end
     end
 
-    test "highlights the dashboard nav on /projects too (URL-independent)", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/projects")
+    test "a project row carries its location and the create actions are in the top bar", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      assert {:ok, _} = EvoGit.VCT.mount(tmp_dir, name: "Workbench project")
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_home: "1"}}")
+      render_async(view)
 
-      [link] = html |> Floki.parse_document!() |> Floki.find(~s(a[aria-current="page"]))
-      assert Floki.text(link) =~ "Projects"
+      assert has_element?(
+               view,
+               "#workbench-projects [data-workbench-project-name='Workbench project']"
+             )
+
+      assert has_element?(view, "#workbench-projects .workbench-project-server", "Local")
+      refute has_element?(view, "#workbench-projects [data-workbench-new-task]")
+      refute has_element?(view, "#workbench-projects [data-workbench-new-conversation]")
+      assert has_element?(view, "#workbench-create [data-workbench-new-task]", "New task")
+
+      assert has_element?(
+               view,
+               "#workbench-create [data-workbench-new-conversation]",
+               "New conversation"
+             )
+
+      assert has_element?(view, "#workbench-history-search-toggle[aria-expanded=false]")
+      assert has_element?(view, "#workbench-history-query[hidden]")
+
+      assert has_element?(
+               view,
+               "#workbench-idle [data-workbench-idle-window]:not([hidden])",
+               "No window selected"
+             )
+
+      assert has_element?(view, "#workbench-history-content[data-workbench-history-empty=true]")
+      refute has_element?(view, "#task-form")
+
+      {:ok, composer, _} =
+        view
+        |> element("#workbench-create [data-workbench-new-task]")
+        |> render_click()
+        |> follow_redirect(conn)
+
+      assert has_element?(composer, "#task-form")
+      refute has_element?(composer, "#workbench-idle")
     end
   end
 
@@ -1441,7 +1456,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "foreign repos round-trip via restore_state event", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/projects")
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir}}")
 
       # Simulate session restore with foreign repos (as they'd arrive from sessionStorage JSON).
       # The project must be a real directory so activate_project runs.
@@ -1470,7 +1485,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "restore_state with empty foreign repos does not error", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/projects")
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir}}")
 
       render_hook(view, "restore_state", %{
         "project" => tmp_dir,
@@ -1526,35 +1541,50 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
   end
 
-  describe "configure dropdown" do
+  describe "task configuration" do
     setup do
       clear_projects()
     end
 
-    test "toggle_configure_dropdown opens and closes the dropdown", %{conn: conn} do
-      {:ok, view, html} = live(conn, ~p"/projects")
+    test "the composer opens settings without a project path selector", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir}}")
 
-      # The dropdown content is ALWAYS in the DOM (hidden via CSS when closed)...
-      assert html =~ "Task Options"
-      # ...but the click-catcher overlay only renders while open
-      refute html =~ ~s(phx-click="close_configure_dropdown")
+      refute has_element?(view, ".project-palette-trigger")
 
-      html = render_click(view, "toggle_configure_dropdown", %{})
-      assert html =~ ~s(phx-click="close_configure_dropdown")
-      assert html =~ ~s(class="fixed inset-0 z-40")
+      assert has_element?(
+               view,
+               "#task-form .input-card button[aria-controls=workbench-task-settings]"
+             )
 
-      html = render_click(view, "toggle_configure_dropdown", %{})
-      refute html =~ ~s(phx-click="close_configure_dropdown")
+      assert has_element?(view, "dialog#workbench-task-settings:not([open])", "Task Options")
+      assert has_element?(view, "dialog#workbench-task-settings", "Project Settings")
+
+      assert has_element?(
+               view,
+               "dialog#workbench-task-settings select[name=build_system][form=task-form]"
+             )
+
+      refute has_element?(view, "#task-form dialog")
     end
+  end
 
-    test "close_configure_dropdown closes an open dropdown", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/projects")
+  test "an unknown explicit remote target cannot activate a local path", %{
+    conn: conn,
+    tmp_dir: tmp_dir
+  } do
+    target = "no-longer-configured"
+    params = %{node: target, project: tmp_dir}
+    {:ok, view, _html} = live(conn, ~p"/projects?#{params}")
+    await_async_loads(view)
 
-      render_click(view, "toggle_configure_dropdown", %{})
-
-      html = render_click(view, "close_configure_dropdown", %{})
-      refute html =~ ~s(phx-click="close_configure_dropdown")
-    end
+    assert assigns(view)[:current_node_id] == target
+    assert assigns(view)[:active_project_path] == nil
+    refute has_element?(view, "#workbench-task-composer")
+    refute has_element?(view, "#workbench-git-toggle")
+    refute Enum.any?(EvoGit.VCT.projects(), &(&1.path == tmp_dir))
   end
 
   describe "project palette" do
@@ -1566,7 +1596,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, view, html} = live(conn, ~p"/projects")
 
       # Closed: the search input and backdrop are not rendered
-      assert html =~ "Open a project..."
+      assert html =~ "No projects"
       refute html =~ ~s(id="palette-search-input")
 
       html = render_click(view, "open_project_palette", %{})
@@ -1575,7 +1605,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       html = render_click(view, "close_project_palette", %{})
       refute html =~ ~s(id="palette-search-input")
-      assert html =~ "Open a project..."
+      assert html =~ "No projects"
     end
 
     test "palette_mode switches to open_path mode showing the path input", %{conn: conn} do
@@ -1896,6 +1926,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # authoritative reload settles.
       await_async_loads(view)
       refute Enum.any?(EvoGit.VCT.projects(), &(&1.path == project_a))
+
+      wait_until(view, fn _ ->
+        not has_element?(view, ~s(#workbench-projects [data-workbench-project="#{project_a}"]))
+      end)
     end
 
     # Covers the SEED-FREE half of `palette_keydown` clamping: the index bound
@@ -2330,7 +2364,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, view, html} = live(conn, "/projects?project=Test")
 
       # No crash; the page renders in the no-project empty state
-      assert html =~ "Open a project to get started"
+      assert html =~ "No projects"
       refute html =~ "task-launch-button"
 
       # No project becomes active
@@ -2356,45 +2390,6 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # Blank input keeps the pre-existing "Invalid project name" behavior
       assert html =~ "Invalid project name"
       refute html =~ "Enter a full path"
-    end
-  end
-
-  describe "no-project hint" do
-    setup do
-      clear_projects()
-    end
-
-    test "renders the hint pill, dim overlay, and wiring when no project is active", %{
-      conn: conn
-    } do
-      {:ok, _view, html} = live(conn, ~p"/projects")
-
-      # The hint pill (clickable, dismissible)
-      assert html =~ ~s(class="no-project-hint)
-      assert html =~ "Open or create a project"
-      assert html =~ ~s(phx-click="open_project_palette")
-      assert html =~ ~s(phx-click="dismiss_no_project_hint")
-      assert html =~ ~s(phx-stop-propagation)
-      # The topbar carries the CSS hook flag
-      assert html =~ ~s(data-no-project="true")
-      # The page-dim overlay
-      assert html =~ ~s(class="no-project-overlay" aria-hidden="true")
-    end
-
-    test "dismissing the hint hides the pill and lifts the overlay", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/projects")
-
-      html = render_click(view, "dismiss_no_project_hint", %{})
-
-      refute html =~ ~s(class="no-project-hint)
-      refute html =~ "no-project-overlay"
-
-      # The topbar's data-no-project attribute is gone when the hint is
-      # dismissed (a plain `refute html =~ "data-no-project=\"true\""` would
-      # false-positive on the source comment in remote_view.ex, which is
-      # rendered verbatim into the HTML).
-      assert Floki.find(Floki.parse_document!(html), "[data-no-project]") == []
-      assert assigns(view)[:no_project_hint_dismissed] == true
     end
   end
 
@@ -2614,7 +2609,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       refute html =~ "Recent Projects"
     end
 
-    test "connected remote view renders remote chrome with task form and configure dropdown", %{
+    test "connected remote without a selected project shows the workbench empty state", %{
       conn: conn
     } do
       id = save_target!()
@@ -2635,33 +2630,18 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # erpc to the fake BEAM node fails fast — no projects, no hang risk
       assert assigns(view)[:projects] == []
 
-      # Remote top bar: data-remote present (boolean attrs serialize as a bare
-      # attribute via the test DOM) + target-name badge; the Configure dropdown
-      # is now shown for remote nodes too (task management is available remotely).
-      assert html =~ ~s(class="dashboard-topbar)
-      assert html =~ "data-remote"
-      assert html =~ "Test Target"
-      assert html =~ ~s(phx-click="toggle_configure_dropdown")
-
-      # Connected-remote info banner (encouraging text); the error gate is gone
-      assert html =~ "remote node"
-      refute html =~ "Cannot connect"
-
-      # data-node-id on the root element
+      assert has_element?(view, "#workbench-idle")
       assert html =~ ~s(data-node-id="#{id}")
-
-      # Task form IS now shown for remote nodes (task launching works remotely)
-      assert html =~ ~s(id="prompt")
-
-      # No example-task block (local-only)
-      refute html =~ "example-task-objective"
+      refute has_element?(view, "#task-form")
+      refute html =~ "Cannot connect"
 
       # Remote palette: Open by Path yes, Create New Project hidden. The
       # per-row Forget action renders on LOCAL and REMOTE nodes alike, so with
       # an unreachable remote node (empty project list) there is simply no row.
       html = render_click(view, "open_project_palette", %{})
       assert html =~ "Open Project by Path"
-      refute html =~ "Create New Project"
+      refute has_element?(view, "button[phx-click=palette_mode][phx-value-mode=new_project]")
+      assert has_element?(view, "#workbench-new-project")
       refute html =~ ~s(phx-click="forget_project")
     end
 
@@ -2780,7 +2760,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert html =~ ~s(phx-click="retry_remote_connection")
     end
 
-    test "sidebar select_node on a disconnected target returns immediately; the connect runs off-process",
+    test "connecting a disconnected target in the project picker runs off-process",
          %{conn: conn} do
       id = save_target!()
 
@@ -2804,27 +2784,14 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      # The dropdown items live in the sidebar DOM (Layouts.app renders the
-      # NodeSelectorComponent on every full page; the `<details>` open state is
-      # client-side only). Drive the remote-target button's
-      # `JS.push("select_node", target: @myself, ...)` via its DOM element —
-      # select_node targets the component's cid, so it is unreachable through
-      # a bare `render_click(view, "select_node", ...)`. The only other
-      # `#node-selector button` is "Local", so the "Test Target" text filter
-      # is unambiguous.
-      view
-      |> element("#node-selector button", "Test Target")
-      |> render_click()
+      refute has_element?(view, "#workbench-projects [data-workbench-node='#{id}']")
 
-      # select_node never blocks the LiveView: the async connect is spawned on
-      # EvoDash.TaskSupervisor (proven by the caller-pid assertion below) while
-      # the parent navigated to the target's pending context via
-      # {:node_selected, _} → push_patch. One extra render flushes the
-      # {:node_selected, _} self-message so the push_patch lands before
-      # assert_patch polls.
-      render(view)
-      assert_patch(view, "/projects?node=" <> id)
-      wait_assigns(view, &(&1[:current_node_id] == id))
+      render_hook(with_target(view, "#workbench-project-window-component"), "prepare", %{
+        "mode" => "open"
+      })
+
+      render_change(element(view, "#project-location-form"), %{"location" => id})
+      render_click(element(view, "#workbench-project-window [phx-click=connect_location]"))
 
       # The :connect call landed on the fake from a process that is NEITHER the
       # LiveView process NOR the test process — i.e. it ran on
@@ -2956,8 +2923,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       assert assigns(view)[:current_node_id] == nil
       # Local UI is back: the task form renders again
-      assert html =~ ~s(id="prompt")
-      assert html =~ "Open a project to get started"
+      assert has_element?(view, "#workbench-idle")
+      refute html =~ ~s(id="prompt")
+      assert html =~ "No projects"
     end
 
     test "connecting-phase gate suppresses the palette trigger", %{conn: conn} do
@@ -2976,10 +2944,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert %{phase: :connecting} = assigns(view)[:remote_status]
       assert html =~ ~s(data-node-id="#{id}")
 
-      # The palette trigger is replaced by a muted placeholder so no project
-      # activation is possible while the remote target is pending
       refute html =~ ~s(phx-click="open_project_palette")
-      assert html =~ "Project control unavailable"
+      refute html =~ ~s(data-workbench-task-settings)
     end
 
     test "open_project_palette event is ignored while the gate is active", %{conn: conn} do
@@ -3108,7 +3074,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # The URL patch preserves the remote node context (`&node=` survives).
       assert socket.redirected ==
                {:live, :patch,
-                %{to: "/projects?project=#{URI.encode(tmp_dir)}&node=#{id}", kind: :push}}
+                %{to: "/projects?node=#{id}&project=#{URI.encode_www_form(tmp_dir)}", kind: :push}}
     end
 
     test "restore_state tagged with the local node restores persisted values", %{
@@ -3165,6 +3131,32 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:task_prompt] == ""
       assert assigns(view)[:task_resume_from] == ""
       assert assigns(view)[:active_project] == nil
+    end
+
+    test "restore_state stays with the project in the explicit task draft URL", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: 1}}")
+
+      render_hook(view, "restore_state", %{
+        "node" => "local",
+        "project" => Path.join(tmp_dir, "other-project"),
+        "task_prompt" => "another project's draft",
+        "task_starting_commit" => "foreign-commit"
+      })
+
+      assert assigns(view)[:active_project_path] == tmp_dir
+      assert assigns(view)[:task_prompt] == ""
+      assert assigns(view)[:task_starting_commit] == ""
+
+      render_hook(view, "restore_state", %{
+        "node" => "local",
+        "project" => tmp_dir,
+        "task_prompt" => "the selected project's draft"
+      })
+
+      assert assigns(view)[:task_prompt] == "the selected project's draft"
     end
 
     test "remote open_project accepts a POSIX absolute path (cross-OS regression)", %{
@@ -4620,10 +4612,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     test "repo mode submit without a project is still blocked", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
+      refute has_element?(view, "#task-form")
+
       html =
-        view
-        |> element("#task-form")
-        |> render_submit(%{prompt: "build me a thing", mode: "evolve_simple"})
+        render_submit(view, "task_submit", %{
+          "prompt" => "build me a thing",
+          "mode" => "evolve_simple"
+        })
 
       assert html =~ "No project selected. Please open a project first."
       refute html =~ "task started with ID:"
@@ -5371,7 +5366,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
 
       # Dead render: renders normally, zero store work.
       static = get(conn, ~p"/projects")
-      assert html_response(static, 200) =~ "Open a project to get started"
+      assert html_response(static, 200) =~ "No projects"
 
       # Connected mount: renders normally, zero store work, page stays alive.
       {:ok, view, _html} = live(conn, ~p"/projects")
@@ -5379,7 +5374,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       assert Process.alive?(view.pid)
       assert assigns(view)[:projects] == []
       assert assigns(view)[:notified_task_ids_ready?] == false
-      assert render(view) =~ "Open a project to get started"
+      assert render(view) =~ "No projects"
 
       # A debounced reload while the id set is unseeded must not scan (and so
       # can never notify), and the handler returns while the store is still
@@ -5562,6 +5557,9 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
+      write_provider_profile_config()
+      point_registry_at_test_config!()
+
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       # Open a project via the palette (open-path mode) and settle its picker.
@@ -5646,10 +5644,28 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       :ok
     end
 
+    test "an unconfigured project blocks submissions on the server and offers model settings", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      open_project!(view, tmp_dir)
+      await_async_loads(view)
+
+      assert has_element?(view, "#task-model-setup")
+      assert has_element?(view, "#task-launch-button[disabled]")
+
+      render_submit(view, "task_submit", %{"prompt" => "Draft", "mode" => "evolve_simple"})
+      assert has_element?(view, "#flash-error", "Configure a model on this server")
+    end
+
     test "a real form submit with no hand-built mode param launches (hidden mode field)", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
+      write_provider_profile_config()
+      point_registry_at_test_config!()
+
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       open_project!(view, tmp_dir)
@@ -5694,6 +5710,9 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
     end
 
     test "an untouched submit carries persistent_state: true", %{conn: conn, tmp_dir: tmp_dir} do
+      write_provider_profile_config()
+      point_registry_at_test_config!()
+
       {:ok, view, _html} = live(conn, ~p"/projects")
       open_project!(view, tmp_dir)
       await_async_loads(view)
@@ -5720,6 +5739,9 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
+      write_provider_profile_config()
+      point_registry_at_test_config!()
+
       {:ok, view, _html} = live(conn, ~p"/projects")
       open_project!(view, tmp_dir)
       await_async_loads(view)
@@ -5792,6 +5814,9 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
+      write_provider_profile_config()
+      point_registry_at_test_config!()
+
       {repo_path, head_sha} = git_repo_fixture!(tmp_dir, "repo1")
 
       # The fixture makes tmp_dir non-empty, so activation auto-detects
@@ -5908,6 +5933,9 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
            conn: conn,
            tmp_dir: tmp_dir
          } do
+      write_provider_profile_config()
+      point_registry_at_test_config!()
+
       install_fake_picker!()
 
       png_path = Path.join(tmp_dir, "pic.png")
@@ -5996,6 +6024,9 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
+      write_provider_profile_config()
+      point_registry_at_test_config!()
+
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       open_project!(view, tmp_dir)
@@ -6027,6 +6058,9 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
     end
 
     test "Auto (default) threads no :agent opt", %{conn: conn, tmp_dir: tmp_dir} do
+      write_provider_profile_config()
+      point_registry_at_test_config!()
+
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       open_project!(view, tmp_dir)
@@ -6055,6 +6089,9 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
+      write_provider_profile_config()
+      point_registry_at_test_config!()
+
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       open_project!(view, tmp_dir)
@@ -6412,6 +6449,9 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
+      write_provider_profile_config()
+      point_registry_at_test_config!()
+
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       open_project!(view, tmp_dir)
@@ -6447,6 +6487,9 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
+      write_provider_profile_config()
+      point_registry_at_test_config!()
+
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       open_project!(view, tmp_dir)

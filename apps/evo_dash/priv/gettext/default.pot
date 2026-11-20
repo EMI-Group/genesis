@@ -8531,3 +8531,188 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "assistant"
 msgstr ""
+
+msgid "No projects"
+msgstr ""
+
+msgid "No window selected"
+msgstr ""
+
+msgid "Commit unavailable"
+msgstr ""
+
+msgid "This commit’s changes could not be loaded."
+msgstr ""
+
+msgid "No changed files."
+msgstr ""
+
+msgid "No commits to review."
+msgstr ""
+
+msgid "No agent report recorded."
+msgstr ""
+
+#, elixir-autogen
+msgid "Clear filters"
+msgstr ""
+
+#, elixir-autogen
+msgid "Monitor tool calls and background jobs on this node."
+msgstr ""
+
+#, elixir-autogen, elixir-format
+msgid "Process details: %{command}"
+msgstr ""
+
+#, elixir-autogen
+msgid "Process status"
+msgstr ""
+
+#, elixir-autogen
+msgid "Show finished processes"
+msgstr ""
+
+#, elixir-autogen, elixir-format
+msgid "Signal %{signal}"
+msgstr ""
+
+msgid "Show more diff context"
+msgstr ""
+
+msgid "Task actions"
+msgstr ""
+
+#, elixir-autogen
+msgid "Dashboard"
+msgstr ""
+
+#, elixir-autogen
+msgid "Finished processes"
+msgstr ""
+
+msgid "Project Git"
+msgstr ""
+
+msgid "Git is unavailable on the selected server."
+msgstr ""
+
+msgid "Git operation failed. Refresh and try again."
+msgstr ""
+
+msgid "Conflicts"
+msgstr ""
+
+msgid "Staged"
+msgstr ""
+
+msgid "Unstaged"
+msgstr ""
+
+msgid "Untracked"
+msgstr ""
+
+msgid "Local branch"
+msgstr ""
+
+msgid "Remote branch"
+msgstr ""
+
+msgid "Refresh Git status"
+msgstr ""
+
+msgid "Close Git panel"
+msgstr ""
+
+msgid "Connect to see the project's Git status."
+msgstr ""
+
+msgid "Loading Git status…"
+msgstr ""
+
+msgid "Detached HEAD"
+msgstr ""
+
+msgid "Behind upstream"
+msgstr ""
+
+msgid "Ahead of upstream"
+msgstr ""
+
+msgid "Git views"
+msgstr ""
+
+msgid "Changes"
+msgstr ""
+
+msgid "Branches"
+msgstr ""
+
+msgid "Working tree is clean."
+msgstr ""
+
+msgid "Close diff"
+msgstr ""
+
+msgid "Diff"
+msgstr ""
+
+msgid "Diff preview truncated."
+msgstr ""
+
+msgid "Search branches"
+msgstr ""
+
+msgid "Check out tracking branch"
+msgstr ""
+
+msgid "Switch project branch"
+msgstr ""
+
+msgid "Start task from branch"
+msgstr ""
+
+msgid "No matching branches."
+msgstr ""
+
+msgid "Current"
+msgstr ""
+
+msgid "Search to narrow the branch list."
+msgstr ""
+
+msgid "This project does not have a Git repository."
+msgstr ""
+
+msgid "Show more files"
+msgstr ""
+
+msgid "Resize project sidebar"
+msgstr ""
+
+msgid "Resize right sidebar"
+msgstr ""
+
+msgid "No commits on this branch."
+msgstr ""
+
+msgid "Show more commits"
+msgstr ""
+
+msgid "No diff to display."
+msgstr ""
+
+msgid "Configure a model"
+msgstr ""
+
+msgid "Loading models…"
+msgstr ""
+
+msgid "Configure a model on this server before launching a task."
+msgstr ""
+
+msgid "Projects and workspaces"
+msgstr ""
+
+msgid "Settings server"
+msgstr ""

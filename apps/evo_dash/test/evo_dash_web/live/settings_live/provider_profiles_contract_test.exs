@@ -781,13 +781,15 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
         "provider" => "openai_codex",
         "auth_mode" => "api_key",
         "api_key" => "secret",
-        "oauth_file" => " /managed "
+        "oauth_file" => " /managed ",
+        "siwc_account" => "work"
       })
 
     assert {:ok, profile} = ProviderProfiles.parse(input, "codex")
     assert profile["auth_mode"] == "oauth"
     refute Map.has_key?(profile, "api_key")
-    assert profile["oauth_file"] == "/managed"
+    refute Map.has_key?(profile, "oauth_file")
+    assert AuthStatus.credential_profile(profile).siwc_account == "work"
     assert AuthStatus.credential_profile(profile).model.provider == :openai_codex
     refute Map.has_key?(AuthStatus.credential_profile(profile), :api_key)
     assert AuthStatus.unknown_statuses([profile])["codex"].state == :unknown

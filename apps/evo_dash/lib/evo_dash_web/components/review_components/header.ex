@@ -29,9 +29,8 @@ defmodule EvoDashWeb.ReviewComponents.Header do
 
   def page_header(assigns) do
     ~H"""
-    <div class="rounded-xl border border-base-300 bg-base-100 p-4 sm:p-5 space-y-2">
-      <%!-- Row 1: back link + one-line truncated title + status badges --%>
-      <div class="flex items-center gap-2 min-w-0">
+    <header class="rounded-xl border border-base-300 bg-base-100 p-4 sm:p-5 space-y-3">
+      <div class="flex items-start gap-2 min-w-0">
         <.link
           navigate={@back_url}
           class="btn btn-ghost btn-sm btn-square shrink-0"
@@ -40,21 +39,29 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         >
           <.icon name="hero-arrow-left" class="size-4" />
         </.link>
-        <h1 class="text-lg font-semibold truncate min-w-0 flex-1" title={@title}>
-          {short_title(@title)}
-        </h1>
-        <span class={["badge badge-sm gap-1 shrink-0 font-medium", review_status_badge(@status)]}>
-          <.icon name={review_status_icon(@status)} class="size-3.5" />
-          {review_status_label(@status)}
-        </span>
-        <%= if @task_status do %>
-          <span class={[
-            "badge badge-sm shrink-0 font-medium border-0 px-2 py-1 rounded-md",
-            task_status_badge(@task_status)
-          ]}>
-            {String.capitalize(to_string(@task_status))}
-          </span>
-        <% end %>
+        <div class="flex-1 min-w-0 pt-1">
+          <h1
+            class="line-clamp-3 text-lg font-semibold leading-snug [overflow-wrap:anywhere]"
+            title={@title}
+          >
+            {short_title(@title)}
+          </h1>
+          <div class="mt-2 flex flex-wrap gap-2">
+            <span class={["badge badge-sm gap-1 shrink-0 font-medium", review_status_badge(@status)]}>
+              <.icon name={review_status_icon(@status)} class="size-3.5" />
+              {review_status_label(@status)}
+            </span>
+            <span
+              :if={@task_status}
+              class={[
+                "badge badge-sm shrink-0 font-medium border-0 px-2 py-1 rounded-md",
+                task_status_badge(@task_status)
+              ]}
+            >
+              {task_status_label(@task_status)}
+            </span>
+          </div>
+        </div>
       </div>
 
       <%!-- Row 2: meta line (repo path, branch → merge target, task facts).
@@ -106,11 +113,14 @@ defmodule EvoDashWeb.ReviewComponents.Header do
           <span class="leading-none">{String.capitalize(to_string(@task_type))}</span>
         <% end %>
         <%= if @task_id do %>
-          <span class="font-mono leading-none" title={@task_id}>{@task_id}</span>
+          <span class="min-w-0 max-w-full truncate font-mono leading-none" title={@task_id}>{@task_id}</span>
         <% end %>
         <%= if @model_id do %>
           <%!-- zh_CN: LLM 模型配置 id --%>
-          <span class="font-mono leading-none" title={@model_id}>{@model_id}</span>
+          <span
+            class="min-w-0 max-w-[min(100%,16rem)] truncate font-mono leading-none"
+            title={@model_id}
+          >{@model_id}</span>
         <% end %>
         <%= if @agent_count do %>
           <span class="flex items-center gap-1.5 leading-none">
@@ -158,7 +168,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
           </span>
         </div>
       <% end %>
-    </div>
+    </header>
     """
   end
 
@@ -246,43 +256,47 @@ defmodule EvoDashWeb.ReviewComponents.Header do
     ~H"""
     <div class="rounded-xl border border-base-300 bg-base-100 overflow-hidden">
       <%!-- header strip --%>
-      <div class="flex items-center gap-3 px-4 py-3 border-b border-base-300 bg-base-200/40 min-w-0">
-        <div class="size-8 rounded-lg bg-primary/10 text-primary-standalone flex items-center justify-center shrink-0">
+      <div class="flex flex-wrap items-center gap-2 px-3 py-2.5 sm:px-4 border-b border-base-300 bg-base-200/40 min-w-0">
+        <div class="size-7 rounded-lg bg-primary/10 text-primary-standalone flex items-center justify-center shrink-0">
           <.icon name="hero-sparkles" class="size-4" />
         </div>
         <span class="font-semibold text-base-content/85 shrink-0">
           <%!-- zh_CN: 智能体报告 — the agent's final message --%>
           {gettext("Agent Report")}
         </span>
-        <div class="ml-auto flex items-center gap-2 shrink-0 min-w-0">
+        <div :if={@summary_preview != ""} class="ml-auto flex items-center gap-2 min-w-0">
           <%= if @model_id || @finished_at do %>
             <%!-- Meta strip: model id and relative time share font-mono +
                  leading-none so they sit on one optical line (no baseline
                  drift between mono metrics and sans text). --%>
-            <div class="hidden sm:flex items-center gap-2 text-xs text-base-content/60 min-w-0">
+            <div class="hidden lg:flex max-w-40 items-center gap-2 text-xs text-base-content/60 min-w-0">
               <%= if @model_id do %>
                 <span class="font-mono truncate leading-none" title={@model_id}>{@model_id}</span>
               <% end %>
               <%= if @finished_at do %>
-                <span class="font-mono leading-none">{relative_time(@finished_at)}</span>
+                <span class="shrink-0 font-mono leading-none">{relative_time(@finished_at)}</span>
               <% end %>
             </div>
           <% end %>
           <div class="flex items-center gap-1 shrink-0">
             <div class="join">
               <button
-                class={["join-item btn btn-xs", !@summary_raw && "btn-active btn-primary"]}
+                class={["join-item btn btn-sm", !@summary_raw && "btn-active btn-primary"]}
+                type="button"
                 phx-click="toggle_summary_view"
                 phx-value-mode="markdown"
+                aria-pressed={to_string(!@summary_raw)}
                 title={gettext("Rendered Markdown")}
               >
                 <.icon name="hero-document-text" class="size-3.5" />
                 {gettext("Markdown")}
               </button>
               <button
-                class={["join-item btn btn-xs", @summary_raw && "btn-active btn-primary"]}
+                class={["join-item btn btn-sm", @summary_raw && "btn-active btn-primary"]}
+                type="button"
                 phx-click="toggle_summary_view"
                 phx-value-mode="raw"
+                aria-pressed={to_string(@summary_raw)}
                 title={gettext("Raw Text")}
               >
                 <.icon name="hero-code-bracket" class="size-3.5" />
@@ -291,10 +305,12 @@ defmodule EvoDashWeb.ReviewComponents.Header do
             </div>
             <button
               id="summary-copy-btn"
-              class="btn btn-ghost btn-xs btn-square"
+              type="button"
+              class="btn btn-ghost btn-sm btn-square"
               phx-hook="ClipboardCopy"
               data-content={@summary_copy_text}
               title={copy_button_title(gettext("Copy agent summary"), @summary_copy_truncated?)}
+              aria-label={copy_button_title(gettext("Copy agent summary"), @summary_copy_truncated?)}
             >
               <.icon name="hero-clipboard" class="size-3.5" />
             </button>
@@ -304,14 +320,17 @@ defmodule EvoDashWeb.ReviewComponents.Header do
       <%!-- body: the CAPPED preview only (@summary_preview); the copy button
            above carries its own capped payload (@summary_copy_text, 1 MiB). --%>
       <div class="px-4 py-4 sm:px-5">
-        <%= if @summary_raw do %>
-          <%!-- The <pre> must stay single-line: whitespace-pre-wrap renders any
+        <%= cond do %>
+          <% @summary_preview == "" -> %>
+            <p class="text-sm text-base-content/70">{gettext("No agent report recorded.")}</p>
+          <% @summary_raw -> %>
+            <%!-- The <pre> must stay single-line: whitespace-pre-wrap renders any
                leading indentation from a formatter-wrapped line as visible text. --%>
-          <pre class="text-xs sm:text-sm whitespace-pre-wrap break-words font-mono bg-base-200/30 p-4 rounded-lg border border-base-200">{@summary_preview}</pre>
-        <% else %>
-          <div class="md-content text-sm leading-relaxed">
-            {raw(EvoDash.MarkdownRender.render(@summary_preview))}
-          </div>
+            <pre class="text-xs sm:text-sm whitespace-pre-wrap break-words font-mono bg-base-200/30 p-4 rounded-lg border border-base-200">{@summary_preview}</pre>
+          <% true -> %>
+            <div class="md-content text-sm leading-relaxed">
+              {raw(EvoDash.MarkdownRender.render(@summary_preview))}
+            </div>
         <% end %>
         <%= if @summary_truncated? do %>
           <p class="mt-2 text-xs text-base-content/60">
@@ -356,8 +375,8 @@ defmodule EvoDashWeb.ReviewComponents.Header do
     ~H"""
     <div class="rounded-xl border border-base-300 bg-base-100 overflow-hidden">
       <%!-- header strip --%>
-      <div class="flex items-center gap-3 px-4 py-3 border-b border-base-300 bg-base-200/40 min-w-0">
-        <div class="size-8 rounded-lg bg-base-content/5 text-base-content/60 flex items-center justify-center shrink-0">
+      <div class="flex flex-wrap items-center gap-2 px-3 py-2.5 sm:px-4 border-b border-base-300 bg-base-200/40 min-w-0">
+        <div class="size-7 rounded-lg bg-base-content/5 text-base-content/60 flex items-center justify-center shrink-0">
           <.icon name="hero-chat-bubble-bottom-center-text" class="size-4" />
         </div>
         <span class="font-semibold text-base-content/85 shrink-0">
@@ -369,18 +388,22 @@ defmodule EvoDashWeb.ReviewComponents.Header do
           <%= if @objective not in [nil, ""] do %>
             <div class="join">
               <button
-                class={["join-item btn btn-xs", !@objective_raw && "btn-active btn-primary"]}
+                class={["join-item btn btn-sm", !@objective_raw && "btn-active btn-primary"]}
+                type="button"
                 phx-click="toggle_objective_view"
                 phx-value-mode="markdown"
+                aria-pressed={to_string(!@objective_raw)}
                 title={gettext("Rendered Markdown")}
               >
                 <.icon name="hero-document-text" class="size-3.5" />
                 {gettext("Markdown")}
               </button>
               <button
-                class={["join-item btn btn-xs", @objective_raw && "btn-active btn-primary"]}
+                class={["join-item btn btn-sm", @objective_raw && "btn-active btn-primary"]}
+                type="button"
                 phx-click="toggle_objective_view"
                 phx-value-mode="raw"
+                aria-pressed={to_string(@objective_raw)}
                 title={gettext("Raw Text")}
               >
                 <.icon name="hero-code-bracket" class="size-3.5" />
@@ -390,10 +413,12 @@ defmodule EvoDashWeb.ReviewComponents.Header do
             <%!-- zh_CN: 复制目标文本 — 复制按钮携带的文本上限为 1 MiB（见 copy_payload/1） --%>
             <button
               id="objective-copy-btn"
-              class="btn btn-ghost btn-xs btn-square"
+              type="button"
+              class="btn btn-ghost btn-sm btn-square"
               phx-hook="ClipboardCopy"
               data-content={@objective_copy_text}
               title={copy_button_title(gettext("Copy objective"), @objective_copy_truncated?)}
+              aria-label={copy_button_title(gettext("Copy objective"), @objective_copy_truncated?)}
             >
               <.icon name="hero-clipboard" class="size-3.5" />
             </button>

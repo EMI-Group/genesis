@@ -19,7 +19,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
       (`phx-click="toggle_assistant_raw"` with `phx-value-id`) and a
       copy-whole-text button (global `ClipboardCopy` hook with
       `data-content`, pushing the `"copied"` event),
-    * when present, a collapsible zero-JS `<details>` "Thought process"
+    * when present, a collapsible `<details>` "Thought process"
       section listing the agent's context-history entries (the
       `EvoDashWeb.HomeLive.Messages.to_entries/1` shape; tool calls rendered
       via `EvoDashWeb.AgentsLive.ToolCallDisplay.display/1`).
@@ -163,7 +163,11 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
             <% end %>
           <% end %>
           <%= if @thought_process != [] do %>
-            <details class="group mt-3 min-w-0">
+            <details
+              id={"assistant-thought-" <> entry_id(@entry)}
+              class="group mt-3 min-w-0"
+              phx-mounted={JS.ignore_attributes("open")}
+            >
               <summary class="flex w-fit cursor-pointer select-none items-center gap-1.5 rounded-md py-2 text-xs font-medium text-base-content/60 transition-colors hover:text-base-content focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone">
                 <.icon
                   name="hero-chevron-down"

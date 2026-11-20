@@ -27,7 +27,12 @@ const DiffViewer = {
     this.handleEvent("scroll_to_file", ({target_id}) => {
       setTimeout(() => {
         const target = document.getElementById(target_id);
-        if (!target) return;
+        if (!target || !this.el.contains(target)) return;
+
+        target.querySelector(".diff-file-header")?.focus({preventScroll: true});
+        const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "instant"
+          : "smooth";
 
         // The main content area is the scroll container (not window)
         const scrollContainer = document.getElementById('main-scroll');
@@ -36,12 +41,12 @@ const DiffViewer = {
           const targetRect = target.getBoundingClientRect();
           const scrollOffset = targetRect.top - containerRect.top + scrollContainer.scrollTop;
           scrollContainer.scrollTo({
-            top: scrollOffset,
-            behavior: "smooth"
+            top: scrollOffset - 12,
+            behavior
           });
         } else {
           // Fallback
-          target.scrollIntoView({ behavior: "smooth", block: "start" });
+          target.scrollIntoView({ behavior, block: "start" });
         }
       }, 50);
     });

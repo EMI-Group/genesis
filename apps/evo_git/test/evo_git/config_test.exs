@@ -1120,20 +1120,19 @@ defmodule EvoGit.ConfigTest do
       end
     end
 
-    # Writes a config whose Codex profile points its managed OAuth file at an
+    # Writes a config whose Claude profile points its managed OAuth file at an
     # UNWRITABLE path: a regular FILE sits where the managed file's directory
     # would be, so every access fails with :enotdir — the hermetic stand-in for
     # a read-only home / Nix sandbox (which reports :erofs). The vendor login
     # itself exists in the isolated `:auth_home_fun` home. Returns the path.
     defp write_unwritable_oauth_config!(home) do
-      codex_home = Path.join(home, ".codex")
-      File.mkdir_p!(codex_home)
+      claude_home = Path.join(home, ".claude")
+      File.mkdir_p!(claude_home)
 
       File.write!(
-        Path.join(codex_home, "auth.json"),
+        Path.join(claude_home, ".credentials.json"),
         Jason.encode!(%{
-          "auth_mode" => "chatgpt",
-          "tokens" => %{"access_token" => "tok", "refresh_token" => "refresh"}
+          "claudeAiOauth" => %{"accessToken" => "tok", "refreshToken" => "refresh"}
         })
       )
 
@@ -1147,8 +1146,8 @@ defmodule EvoGit.ConfigTest do
       [llm]
 
       [[llm.models]]
-      id = "codex"
-      model = "openai_codex:gpt-5.6-terra"
+      id = "claude"
+      model = "anthropic:claude-opus-5-5"
       auth_mode = "oauth"
       oauth_file = "#{managed}"
       """)
@@ -1156,59 +1155,43 @@ defmodule EvoGit.ConfigTest do
       managed
     end
 
-    test "a resolvable OAuth credential satisfies the :api_key check" do
+    test "a Genesis ChatGPT registration satisfies readiness" do
       reqllm_key_cleanup()
+      EvoGit.TestSupport.ChatGPTFixture.seed!("default")
 
+      write_config!("""
+      [llm]
+      [[llm.models]]
+      id = "subscription"
+      model = "openai_codex:gpt-5.6-terra"
+      """)
+
+      status = Config.config_status()
+      refute :api_key in status.missing
+      refute :llm_model in status.missing
+      assert status.ok?
+    end
+
+    test "an imported legacy Codex token requires Genesis authorization" do
+      reqllm_key_cleanup()
       auth_file = Path.join(Config.config_dir(), "auth.json")
 
       File.write!(
         auth_file,
-        Jason.encode!(%{
-          "openai-codex" => %{"type" => "oauth", "access" => "tok", "refresh" => "refresh"}
-        })
+        Jason.encode!(%{"openai-codex" => %{"access" => "old", "refresh" => "old"}})
       )
 
-      # No auth_mode: the OAuth-only provider is auto-detected. The managed
-      # file is a PER-PROFILE setting.
       write_config!("""
       [llm]
-
       [[llm.models]]
-      id = "codex"
+      id = "subscription"
       model = "openai_codex:gpt-5.6-terra"
       oauth_file = "#{auth_file}"
       """)
 
       status = Config.config_status()
-
-      refute :api_key in status.missing
-      refute :llm_model in status.missing
-      assert status.ok? == true
-    end
-
-    test "an unresolvable Codex credential flags :api_key and names `codex login`" do
-      reqllm_key_cleanup()
-      auth_file = Path.join(Config.config_dir(), "absent-auth.json")
-
-      write_config!("""
-      [llm]
-
-      [[llm.models]]
-      id = "codex"
-      model = "openai_codex:gpt-5.6-terra"
-      auth_mode = "oauth"
-      oauth_file = "#{auth_file}"
-      """)
-
-      status = Config.config_status()
-
       assert :api_key in status.missing
-      warning = warning_for(status, :api_key)
-      assert warning =~ "codex login"
-      assert warning =~ auth_file
-      # ONE distinct managed path renders in the singular form.
-      assert warning =~ "Managed OAuth file: #{auth_file}"
-      refute warning == @generic_api_key_warning
+      assert warning_for(status, :api_key) =~ "genesis chatgpt login"
     end
 
     test "an unresolvable Claude credential names the Claude login / CLAUDE_CODE_OAUTH_TOKEN" do
@@ -1236,7 +1219,7 @@ defmodule EvoGit.ConfigTest do
     test "distinct per-profile managed files are all named (plural form)" do
       reqllm_key_cleanup()
 
-      codex_file = Path.join(Config.config_dir(), "absent-codex-auth.json")
+      {:ok, chatgpt_file} = EvoGit.Auth.ChatGPT.Store.path()
       claude_file = Path.join(Config.config_dir(), "absent-claude-auth.json")
 
       write_config!("""
@@ -1246,7 +1229,6 @@ defmodule EvoGit.ConfigTest do
       id = "codex"
       model = "openai_codex:gpt-5.6-terra"
       auth_mode = "oauth"
-      oauth_file = "#{codex_file}"
 
       [[llm.models]]
       id = "claude"
@@ -1260,7 +1242,7 @@ defmodule EvoGit.ConfigTest do
       assert :api_key in status.missing
       warning = warning_for(status, :api_key)
       # Each profile's OWN file is resolved — never one global path.
-      assert warning =~ "Managed OAuth files: #{codex_file}, #{claude_file}"
+      assert warning =~ "Managed OAuth files: #{chatgpt_file}, #{claude_file}"
     end
 
     test "an API key still satisfies the check for an OAuth profile" do
@@ -1296,7 +1278,7 @@ defmodule EvoGit.ConfigTest do
       assert warning =~ "oauth_file"
       assert warning =~ "writable location"
       # The vendor login EXISTS, so repeating the login step is wrong advice.
-      refute warning =~ "codex login"
+      refute warning =~ "Run `claude`"
     end
 
     test "SystemCheck.llm_test reports the remedy instead of calling the provider", %{
@@ -1306,7 +1288,7 @@ defmodule EvoGit.ConfigTest do
       write_unwritable_oauth_config!(home)
 
       # No network: the managed-file failure short-circuits the connection test.
-      assert {:error, message} = EvoGit.SystemCheck.llm_test("openai_codex:gpt-5.6-terra")
+      assert {:error, message} = EvoGit.SystemCheck.llm_test("anthropic:claude-opus-5-5")
 
       assert message =~ ":enotdir"
       assert message =~ "oauth_file"
@@ -1323,7 +1305,7 @@ defmodule EvoGit.ConfigTest do
       File.write!(
         usable_file,
         Jason.encode!(%{
-          "openai-codex" => %{"type" => "oauth", "access" => "tok", "refresh" => "refresh"}
+          "anthropic" => %{"type" => "oauth", "access" => "tok", "refresh" => "refresh"}
         })
       )
 
@@ -1333,19 +1315,19 @@ defmodule EvoGit.ConfigTest do
 
       [[llm.providers]]
       id = "usable-account"
-      provider = "openai_codex"
+      provider = "anthropic"
       base_url = "http://127.0.0.1:1/v1"
       auth_mode = "oauth"
       oauth_file = "#{usable_file}"
-      models = [{model = "gpt-5.6-terra", context_window = 96000}]
+      models = [{model = "claude-opus-5-5", context_window = 96000}]
 
       [[llm.providers]]
       id = "blocked-account"
-      provider = "openai_codex"
+      provider = "anthropic"
       base_url = "http://127.0.0.1:1/v1"
       auth_mode = "oauth"
       oauth_file = "#{blocked_file}"
-      models = [{model = "gpt-5.6-terra", context_window = 96000}]
+      models = [{model = "claude-opus-5-5", context_window = 96000}]
       """)
 
       config = Config.resolve()

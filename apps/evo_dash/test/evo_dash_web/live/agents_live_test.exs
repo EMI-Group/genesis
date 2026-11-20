@@ -184,6 +184,15 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
+  test "the linked agent opens its inspector after the async list loads", %{conn: conn} do
+    install_agents([summary_agent([])])
+    id = agent_id()
+    {:ok, view, _html} = live(conn, ~p"/agents?agent_id=#{id}")
+    flush_agents_load(view)
+    assert has_element?(view, "#agent-detail-#{id}")
+    assert has_element?(view, "button#agent-card-#{id}[aria-pressed=true]")
+  end
+
   describe "agent model label" do
     # The detail panel's "Model" cell renders `agent.model_label` (derived by
     # EvoDashWeb.ModelLabel: canonical `:model_spec` -> `:llm_model`
@@ -2790,8 +2799,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       tree = Floki.parse_document!(html)
 
-      # No phx-update mode anywhere — incremental patching rides the stable ids.
-      assert Floki.find(tree, "[phx-update]") == []
+      # The graph patches incrementally through stable ids.
+      assert Floki.find(tree, "#commit-graph[phx-update], #commit-graph [phx-update]") == []
 
       # The graph geometry lives in ONE absolute gutter overlay
       # `<svg class="cg-gutter">` at the top-left of the relative list wrapper;

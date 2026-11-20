@@ -37,7 +37,8 @@ defmodule EvoDashWeb.SettingsLive.AuthStatus do
     %{
       model: %{provider: ProviderProfiles.provider_atom(provider), id: "credential-status"},
       auth_mode: profile_field(profile, :auth_mode),
-      oauth_file: profile_field(profile, :oauth_file)
+      oauth_file: profile_field(profile, :oauth_file),
+      siwc_account: profile_field(profile, :siwc_account)
     }
   end
 
@@ -185,7 +186,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatus do
     if target_node == node() do
       profile
       |> LLMSchema.oauth_credential_status()
-      |> classify(oauth_file_path(profile))
+      |> classify(LLMSchema.oauth_file_for(profile))
     else
       verdict =
         EvoDash.NodeContext.call_remote(
@@ -198,9 +199,9 @@ defmodule EvoDashWeb.SettingsLive.AuthStatus do
       oauth_file =
         EvoDash.NodeContext.call_remote(
           target_node,
-          EvoGit.Auth,
-          :oauth_file,
-          [[oauth_file: profile_field(profile, :oauth_file)]]
+          LLMSchema,
+          :oauth_file_for,
+          [profile]
         )
 
       classify_remote(verdict, oauth_file)
@@ -226,6 +227,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatus do
   def classify({:ok, verdict}, oauth_file) when is_map(verdict), do: {:ok, verdict, oauth_file}
   def classify({:error, :no_credentials}, oauth_file), do: {:missing, oauth_file}
   def classify({:error, :invalid_credentials}, oauth_file), do: {:missing, oauth_file}
+  def classify({:error, :invalid_account_alias}, oauth_file), do: {:missing, oauth_file}
 
   def classify({:error, {:managed_file_unwritable, _reason}}, oauth_file),
     do: {:unwritable, oauth_file}
@@ -260,22 +262,17 @@ defmodule EvoDashWeb.SettingsLive.AuthStatus do
     end
   end
 
-  defp oauth_file_path(profile) do
-    EvoGit.Auth.oauth_file(oauth_file: profile_field(profile, :oauth_file))
-  end
-
   defp login_instructions_for(profile) do
     case LLMSchema.provider_from_model(credential_profile(profile).model) do
       nil -> nil
+      :openai_codex -> nil
       provider -> EvoGit.Auth.login_instructions(provider)
     end
   end
 
   # Total atom-or-string key read — the resolved config is atom-keyed, TOML
   # drafts may still be string-keyed.
-  defp profile_field(profile, key) when is_map(profile) do
+  defp profile_field(profile, key) do
     Map.get(profile, key) || Map.get(profile, Atom.to_string(key))
   end
-
-  defp profile_field(_profile, _key), do: nil
 end

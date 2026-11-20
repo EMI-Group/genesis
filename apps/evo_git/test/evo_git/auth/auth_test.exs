@@ -13,19 +13,11 @@ defmodule EvoGit.AuthTest do
   end
 
   describe "oauth_provider_id/1" do
-    test "maps the OAuth providers" do
-      assert Auth.oauth_provider_id(:openai_codex) == "openai-codex"
+    test "only the Claude subscription uses the managed ReqLLM file" do
       assert Auth.oauth_provider_id(:anthropic) == "anthropic"
-    end
-
-    test "accepts the :openai alias" do
-      assert Auth.oauth_provider_id(:openai) == "openai-codex"
-    end
-
-    test "returns nil for unsupported providers" do
+      assert Auth.oauth_provider_id(:openai_codex) == nil
+      assert Auth.oauth_provider_id(:openai) == nil
       assert Auth.oauth_provider_id(:deepseek) == nil
-      assert Auth.oauth_provider_id(:google) == nil
-      assert Auth.oauth_provider_id("anthropic") == nil
     end
   end
 
@@ -66,14 +58,17 @@ defmodule EvoGit.AuthTest do
     test "reports :no_credentials for a missing managed file", %{root: root} do
       managed = Path.join(root, "missing-auth.json")
 
-      assert Auth.credential_status(:openai_codex, oauth_file: managed) ==
+      assert Auth.credential_status(:anthropic, oauth_file: managed) ==
                {:error, :no_credentials}
     end
 
     test "reports :no_credentials when the provider has no entry", %{managed: managed} do
-      File.write!(managed, Jason.encode!(%{"anthropic" => %{"access" => "a", "refresh" => "r"}}))
+      File.write!(
+        managed,
+        Jason.encode!(%{"other-provider" => %{"access" => "a", "refresh" => "r"}})
+      )
 
-      assert Auth.credential_status(:openai_codex, oauth_file: managed) ==
+      assert Auth.credential_status(:anthropic, oauth_file: managed) ==
                {:error, :no_credentials}
     end
 
@@ -81,7 +76,7 @@ defmodule EvoGit.AuthTest do
       File.write!(
         managed,
         Jason.encode!(%{
-          "openai-codex" => %{
+          "anthropic" => %{
             "type" => "oauth",
             "access" => "access-token",
             "refresh" => "refresh-token",
@@ -91,7 +86,7 @@ defmodule EvoGit.AuthTest do
         })
       )
 
-      assert Auth.credential_status(:openai_codex, oauth_file: managed) ==
+      assert Auth.credential_status(:anthropic, oauth_file: managed) ==
                {:ok, %{expires: 1_800_000_000_000, account_id: "acct-1"}}
     end
 
@@ -99,25 +94,25 @@ defmodule EvoGit.AuthTest do
       File.write!(
         managed,
         Jason.encode!(%{
-          "openai-codex" => %{"access" => "a", "refresh" => "r", "expires" => 1_800_000_000}
+          "anthropic" => %{"access" => "a", "refresh" => "r", "expires" => 1_800_000_000}
         })
       )
 
       assert {:ok, %{expires: 1_800_000_000_000}} =
-               Auth.credential_status(:openai_codex, oauth_file: managed)
+               Auth.credential_status(:anthropic, oauth_file: managed)
     end
 
     test "rejects an entry with neither access nor refresh", %{managed: managed} do
-      File.write!(managed, Jason.encode!(%{"openai-codex" => %{"type" => "oauth"}}))
+      File.write!(managed, Jason.encode!(%{"anthropic" => %{"type" => "oauth"}}))
 
-      assert Auth.credential_status(:openai_codex, oauth_file: managed) ==
+      assert Auth.credential_status(:anthropic, oauth_file: managed) ==
                {:error, :invalid_credentials}
     end
 
     test "rejects a broken managed file", %{managed: managed} do
       File.write!(managed, "{nope")
 
-      assert Auth.credential_status(:openai_codex, oauth_file: managed) ==
+      assert Auth.credential_status(:anthropic, oauth_file: managed) ==
                {:error, :invalid_credentials}
     end
 
@@ -130,35 +125,35 @@ defmodule EvoGit.AuthTest do
     test "returns :no_credentials when nothing is available", %{root: root} do
       opts = [
         oauth_file: Path.join(root, "absent-auth.json"),
-        codex_home: Path.join(root, "absent-codex-home")
+        home: Path.join(root, "absent-home-home")
       ]
 
-      assert Auth.ensure_credentials(:openai_codex, opts) == {:error, :no_credentials}
+      assert Auth.ensure_credentials(:anthropic, opts) == {:error, :no_credentials}
     end
 
     test "is :ok for a stored entry with an access token", %{managed: managed, root: root} do
       File.write!(
         managed,
         Jason.encode!(%{
-          "openai-codex" => %{
+          "anthropic" => %{
             "access" => "a",
             "expires" => System.system_time(:millisecond) + 60_000
           }
         })
       )
 
-      assert Auth.ensure_credentials(:openai_codex,
+      assert Auth.ensure_credentials(:anthropic,
                oauth_file: managed,
-               codex_home: Path.join(root, "absent-codex-home")
+               home: Path.join(root, "absent-home-home")
              ) == :ok
     end
 
     test "is :ok for a refresh-only entry", %{managed: managed, root: root} do
-      File.write!(managed, Jason.encode!(%{"openai-codex" => %{"refresh" => "r"}}))
+      File.write!(managed, Jason.encode!(%{"anthropic" => %{"refresh" => "r"}}))
 
-      assert Auth.ensure_credentials(:openai_codex,
+      assert Auth.ensure_credentials(:anthropic,
                oauth_file: managed,
-               codex_home: Path.join(root, "absent-codex-home")
+               home: Path.join(root, "absent-home-home")
              ) == :ok
     end
 
@@ -168,12 +163,12 @@ defmodule EvoGit.AuthTest do
     } do
       File.write!(
         managed,
-        Jason.encode!(%{"openai-codex" => %{"access" => "a", "expires" => 1_000_000_000_000}})
+        Jason.encode!(%{"anthropic" => %{"access" => "a", "expires" => 1_000_000_000_000}})
       )
 
-      assert Auth.ensure_credentials(:openai_codex,
+      assert Auth.ensure_credentials(:anthropic,
                oauth_file: managed,
-               codex_home: Path.join(root, "absent-codex-home")
+               home: Path.join(root, "absent-home-home")
              ) == {:error, :expired_credentials}
     end
 
@@ -181,22 +176,22 @@ defmodule EvoGit.AuthTest do
       File.write!(managed, "{nope")
 
       assert {:error, _reason} =
-               Auth.ensure_credentials(:openai_codex,
+               Auth.ensure_credentials(:anthropic,
                  oauth_file: managed,
-                 codex_home: Path.join(root, "absent-codex-home")
+                 home: Path.join(root, "absent-home-home")
                )
     end
 
     test "returns an error for invalid options" do
-      assert Auth.ensure_credentials(:openai_codex, %{oauth_file: "/tmp/x"}) ==
+      assert Auth.ensure_credentials(:anthropic, %{oauth_file: "/tmp/x"}) ==
                {:error, :invalid_options}
     end
   end
 
   describe "login_instructions/1" do
-    test "names the Codex CLI login command" do
-      assert Auth.login_instructions(:openai_codex) =~ "codex login"
-      assert Auth.login_instructions(:openai) =~ "codex login"
+    test "names the Genesis ChatGPT authorization command" do
+      assert Auth.login_instructions(:openai_codex) =~ "genesis chatgpt login"
+      assert Auth.login_instructions(:openai) =~ "genesis chatgpt login"
     end
 
     test "names the Claude CLI" do
@@ -214,8 +209,8 @@ defmodule EvoGit.AuthTest do
     test "a found login that cannot be written is reported instead of :no_credentials", %{
       root: root
     } do
-      codex_home = Path.join(root, "codex")
-      write_codex_source!(codex_home)
+      home = Path.join(root, "vendor-home")
+      write_claude_source!(home)
 
       # A regular FILE where the managed file's directory should be: every
       # access fails with :enotdir (the hermetic stand-in for a read-only home).
@@ -224,32 +219,32 @@ defmodule EvoGit.AuthTest do
       managed = Path.join(blocker, "auth.json")
 
       # No vendor login + a sane managed path: the unchanged, plain outcome.
-      assert Auth.ensure_credentials(:openai_codex,
+      assert Auth.ensure_credentials(:anthropic,
                oauth_file: Path.join(root, "absent-auth.json"),
-               codex_home: Path.join(root, "absent-codex")
+               home: Path.join(root, "absent-home")
              ) == {:error, :no_credentials}
 
       # Vendor login present, managed path unusable: the actionable outcome.
-      assert Auth.ensure_credentials(:openai_codex, oauth_file: managed, codex_home: codex_home) ==
+      assert Auth.ensure_credentials(:anthropic, oauth_file: managed, home: home) ==
                {:error, {:managed_file_unwritable, :enotdir}}
 
-      assert Auth.credential_status(:openai_codex,
+      assert Auth.credential_status(:anthropic,
                oauth_file: managed,
                managed_file_error: :enotdir
              ) == {:error, {:managed_file_unwritable, :enotdir}}
     end
 
     test "a usable managed entry keeps its own status", %{managed: managed, root: root} do
-      File.write!(managed, Jason.encode!(%{"openai-codex" => %{"refresh" => "r"}}))
+      File.write!(managed, Jason.encode!(%{"anthropic" => %{"refresh" => "r"}}))
 
-      assert Auth.credential_status(:openai_codex,
+      assert Auth.credential_status(:anthropic,
                oauth_file: managed,
                managed_file_error: :erofs
              ) == {:ok, %{expires: nil, account_id: nil}}
 
-      assert Auth.ensure_credentials(:openai_codex,
+      assert Auth.ensure_credentials(:anthropic,
                oauth_file: managed,
-               codex_home: Path.join(root, "absent-codex")
+               home: Path.join(root, "absent-home")
              ) == :ok
     end
   end
@@ -271,15 +266,15 @@ defmodule EvoGit.AuthTest do
     end
 
     test "login_instructions/2 appends the remedy only for a managed-file failure" do
-      base = Auth.login_instructions(:openai_codex)
+      base = Auth.login_instructions(:anthropic)
 
-      assert Auth.login_instructions(:openai_codex, nil) == base
-      assert Auth.login_instructions(:openai_codex, {:error, :no_credentials}) == base
+      assert Auth.login_instructions(:anthropic, nil) == base
+      assert Auth.login_instructions(:anthropic, {:error, :no_credentials}) == base
 
       extended =
-        Auth.login_instructions(:openai_codex, {:error, {:managed_file_unwritable, :erofs}})
+        Auth.login_instructions(:anthropic, {:error, {:managed_file_unwritable, :erofs}})
 
-      assert extended =~ "codex login"
+      assert extended =~ "claude"
       assert extended =~ "oauth_file"
       assert extended =~ ":erofs"
     end
@@ -287,14 +282,13 @@ defmodule EvoGit.AuthTest do
 
   ## Helpers
 
-  defp write_codex_source!(codex_home) do
-    File.mkdir_p!(codex_home)
+  defp write_claude_source!(home) do
+    File.mkdir_p!(Path.join(home, ".claude"))
 
     File.write!(
-      Path.join(codex_home, "auth.json"),
+      Path.join([home, ".claude", ".credentials.json"]),
       Jason.encode!(%{
-        "auth_mode" => "chatgpt",
-        "tokens" => %{"access_token" => "codex-access", "refresh_token" => "refresh-1"}
+        "claudeAiOauth" => %{"accessToken" => "claude-access", "refreshToken" => "refresh-1"}
       })
     )
   end

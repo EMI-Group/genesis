@@ -69,6 +69,7 @@ defmodule EvoDashWeb.ProjectComponents do
 
   attr(:active_project, :map, default: nil)
   attr(:projects, :list, default: [])
+  attr(:show_trigger, :boolean, default: true)
   attr(:palette_open, :boolean, default: false)
   attr(:palette_search, :string, default: "")
 
@@ -92,19 +93,21 @@ defmodule EvoDashWeb.ProjectComponents do
   def project_omnibox(assigns) do
     ~H"""
     <div id="project-omnibox">
-      <!-- Trigger button (collapsed state, always visible) -->
       <button
+        :if={@show_trigger}
         type="button"
         phx-click="open_project_palette"
         class="project-palette-trigger flex items-center gap-2 w-full min-w-0 bg-base-200/50 hover:bg-base-200 rounded-lg px-4 py-2 cursor-pointer transition-colors text-left"
       >
         <%= if @active_project do %>
+          <% display_project =
+            Enum.find(@projects, &(Map.get(&1, :path) == @active_project.path)) || @active_project %>
           <.icon name="hero-folder" class="size-4 text-primary-standalone shrink-0" />
-          <span class="text-base font-bold text-base-content truncate leading-tight">
-            {display_name(@active_project)}
+          <span class="project-palette-name text-base font-bold text-base-content truncate leading-tight">
+            {display_name(display_project)}
           </span>
           <span
-            class="text-sm text-base-content/80 font-mono truncate hidden md:inline"
+            class="project-palette-path text-sm text-base-content/80 font-mono truncate hidden md:inline"
             title={@active_project.path}
           >
             {@active_project.path}
@@ -242,7 +245,7 @@ defmodule EvoDashWeb.ProjectComponents do
             <button
               type="button"
               phx-click="forget_project"
-              phx-value-point={Map.get(project, :point)}
+              phx-value-point={Map.get(project, :point) || project.path}
               phx-stop-propagation
               aria-label={gettext("Forget %{name}", name: project.name)}
               title={gettext("Forget project")}
@@ -263,6 +266,7 @@ defmodule EvoDashWeb.ProjectComponents do
         type="button"
         phx-click="palette_mode"
         phx-value-mode="open_path"
+        data-workbench-project-window="open"
         data-selected={@palette_selected_index == action_base}
         class="project-palette-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors"
       >
@@ -275,6 +279,7 @@ defmodule EvoDashWeb.ProjectComponents do
           type="button"
           phx-click="palette_mode"
           phx-value-mode="new_project"
+          data-workbench-project-window="create"
           data-selected={@palette_selected_index == action_base + 1}
           class="project-palette-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors"
         >

@@ -38,7 +38,7 @@ defmodule EvoDashWeb.WelcomeLive.Wizard do
 
   use Gettext, backend: EvoDashWeb.Gettext
 
-  alias EvoDashWeb.LLMSetup.{Identity, Reasoning, Schedule}
+  alias EvoDashWeb.LLMSetup.{ChatGPT, Identity, Reasoning, Schedule}
   alias EvoDashWeb.LLMSetup.Wizard, as: Steps
   alias EvoGit.Config.LLMCatalog, as: Catalog
 
@@ -46,7 +46,7 @@ defmodule EvoDashWeb.WelcomeLive.Wizard do
   @draft_keys ~w(
     provider variant auth_mode base_url api_key models custom_model default_model
     model_reasoning reasoning_efforts default_reasoning_effort schedule
-    schedule_snapshot preset_id
+    schedule_snapshot preset_id siwc_account
   )
 
   # No auth choice and a required endpoint: the OpenAI-compatible row, and a
@@ -126,7 +126,7 @@ defmodule EvoDashWeb.WelcomeLive.Wizard do
     modes = auth_modes(entry)
 
     %{
-      auth_choice?: length(modes) > 1,
+      auth_choice?: length(modes) > 1 or ChatGPT.provider?(entry_value(entry, :id, "id")),
       auth_modes: modes,
       oauth_only?: modes == ["oauth"],
       requires_base_url?: entry_value(entry, :requires_base_url, "requires_base_url") == true

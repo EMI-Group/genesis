@@ -324,6 +324,10 @@ defmodule EvoDashWeb.WelcomeLive.Presentation do
   def gate_message(:missing_provider), do: gettext("Choose a provider before continuing.")
   # zh_CN: 自定义端点必须填写 URL 才能继续
   def gate_message(:missing_base_url), do: gettext("Enter the endpoint URL for this provider.")
+
+  def gate_message(:chatgpt_login_required),
+    do: gettext("Connect a ChatGPT account before continuing.")
+
   def gate_message(:invalid_auth_mode), do: gettext("Choose a supported authentication mode.")
 
   def gate_message(:missing_model),

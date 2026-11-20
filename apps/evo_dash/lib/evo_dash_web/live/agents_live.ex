@@ -71,7 +71,9 @@ defmodule EvoDashWeb.AgentsLive do
     # included) shows the loading state via @agents_loading.
     socket =
       assign(socket,
+        page_title: gettext("Agents"),
         selected_agent_id: nil,
+        requested_agent_id: nil,
         inspector_stream: nil,
         inspector_stream_token: 0,
         inspector_stream_worker: nil,
@@ -196,6 +198,7 @@ defmodule EvoDashWeb.AgentsLive do
       )
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
       |> assign(:current_path, ~p"/agents")
+      |> assign(:requested_agent_id, parse_agent_id(params["agent_id"]))
 
     current_node = socket.assigns.current_node
 
@@ -212,6 +215,9 @@ defmodule EvoDashWeb.AgentsLive do
         # the page never blocks on cross-node RPCs.
         socket
         |> assign(
+          agents: [],
+          repo_trees: [],
+          id_to_display: %{},
           previous_agent_ids: MapSet.new(),
           agents_initialized: false,
           previous_statuses: %{},
@@ -220,6 +226,8 @@ defmodule EvoDashWeb.AgentsLive do
           selected_agent_id: nil,
           selected_history_entry: nil,
           selected_objective: nil,
+          send_message_agent_id: nil,
+          send_message_text: "",
           previous_node: current_node,
           # Agent ids are per-node; optimistic messages (and the queue snapshot
           # anchoring them) from the previous node must not leak into a
@@ -300,6 +308,7 @@ defmodule EvoDashWeb.AgentsLive do
               agents_error: nil,
               previous_node: node
             )
+            |> select_requested_agent()
 
           {:noreply, socket}
 
@@ -581,39 +590,10 @@ defmodule EvoDashWeb.AgentsLive do
 
   @impl true
   def handle_event("select_agent", %{"id" => id}, socket) do
-    agent_id = String.to_integer(id)
-
-    socket =
-      socket
-      |> assign(
-        selected_agent_id: agent_id,
-        show_usage: false,
-        selected_history_entry: nil,
-        history_loading_agent_id: nil,
-        full_message_pending_index: nil,
-        full_message_pending_agent_id: nil,
-        inspector_history_error: false
-      )
-      |> StreamWatch.attach(agent_id)
-
-    # Lazy-load chat history for the selected agent — asynchronously so the
-    # page never blocks on the (possibly cross-node) history RPC. First
-    # selection always fetches (no last-seen entry in the gate); later
-    # selections fetch only when the message count moved on.
-    agent = Enum.find(socket.assigns.agents, &(&1.id == agent_id))
-
-    socket =
-      if agent && not inspector_owns_checkpoint?(socket, agent_id) &&
-           HistoryGate.need_fetch?(socket.assigns.history_gate, agent_id, agent.message_count) &&
-           socket.assigns.history_loading_agent_id != agent_id do
-        socket
-        |> assign(history_loading_agent_id: agent_id)
-        |> spawn_history_fetch(agent_id, nil)
-      else
-        socket
-      end
-
-    {:noreply, socket}
+    case parse_agent_id(id) do
+      nil -> {:noreply, socket}
+      agent_id -> {:noreply, select_agent(socket, agent_id)}
+    end
   end
 
   @impl true
@@ -956,6 +936,54 @@ defmodule EvoDashWeb.AgentsLive do
   def terminate(_reason, socket) do
     StreamWatch.detach(socket)
     :ok
+  end
+
+  defp parse_agent_id(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {id, ""} when id > 0 -> id
+      _ -> nil
+    end
+  end
+
+  defp parse_agent_id(_value), do: nil
+
+  defp select_requested_agent(%{assigns: %{requested_agent_id: nil}} = socket), do: socket
+
+  defp select_requested_agent(socket) do
+    agent_id = socket.assigns.requested_agent_id
+    socket = assign(socket, :requested_agent_id, nil)
+    select_agent(socket, agent_id)
+  end
+
+  defp select_agent(socket, agent_id) do
+    socket =
+      socket
+      |> assign(
+        selected_agent_id: agent_id,
+        show_usage: false,
+        selected_history_entry: nil,
+        history_loading_agent_id: nil,
+        full_message_pending_index: nil,
+        full_message_pending_agent_id: nil,
+        inspector_history_error: false
+      )
+      |> StreamWatch.attach(agent_id)
+
+    # Lazy-load chat history for the selected agent — asynchronously so the
+    # page never blocks on the (possibly cross-node) history RPC. First
+    # selection always fetches (no last-seen entry in the gate); later
+    # selections fetch only when the message count moved on.
+    agent = Enum.find(socket.assigns.agents, &(&1.id == agent_id))
+
+    if agent && not inspector_owns_checkpoint?(socket, agent_id) &&
+         HistoryGate.need_fetch?(socket.assigns.history_gate, agent_id, agent.message_count) &&
+         socket.assigns.history_loading_agent_id != agent_id do
+      socket
+      |> assign(history_loading_agent_id: agent_id)
+      |> spawn_history_fetch(agent_id, nil)
+    else
+      socket
+    end
   end
 
   defp apply_inspector_history(socket, agent_id, target_node, result, index) do

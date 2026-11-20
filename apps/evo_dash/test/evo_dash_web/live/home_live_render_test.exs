@@ -302,8 +302,7 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     assert attr(dom, "#chat-form textarea", "name") == ["message"]
     assert attr(dom, "#chat-form textarea", "aria-label") == ["Message Genesis Assistant…"]
     assert attr(dom, "#chat-form textarea", "placeholder") == ["Message Genesis Assistant…"]
-    assert attr(dom, "#chat-form textarea", "phx-keydown") == ["chat_keydown"]
-    assert attr(dom, "#chat-form textarea", "phx-keyup") == ["chat_keyup"]
+    assert attr(dom, "#chat-form textarea", "phx-hook") == ["AssistantComposer"]
 
     assert Floki.find(
              dom,
@@ -533,12 +532,8 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     assert Floki.find(dom, "#chat-session-list") != []
     assert Floki.find(dom, "#chat-session-list h2") == []
 
-    section =
-      dom
-      |> Floki.find("div.pt-5.mt-4")
-      |> Enum.find(fn node -> Floki.find(node, "#chat-session-list") != [] end)
-
-    assert section
+    section = Floki.find(dom, "#workbench-conversations")
+    assert section != []
 
     assert section |> Floki.find("span.sidebar-label") |> Floki.text() |> String.trim() ==
              "Conversations"

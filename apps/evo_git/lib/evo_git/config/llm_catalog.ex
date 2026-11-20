@@ -13,7 +13,7 @@ defmodule EvoGit.Config.LLMCatalog do
   dashboard. A provider with `[:api_key]` (the default
   when the field is absent) authenticates with an API key only; one that also
   lists `:oauth` may instead reuse a subscription credential imported from the
-  vendor CLI named by `oauth_source` (`:codex_cli` / `:claude_code`). The
+  connection named by `oauth_source` (`:chatgpt` / `:claude_code`). The
   `:openai_codex` entry is OAuth-only — it can never be used with an API key.
   """
 
@@ -28,8 +28,7 @@ defmodule EvoGit.Config.LLMCatalog do
   A catalog provider entry.
 
   `auth_modes` lists the auth modes the provider supports (`[:api_key]` when
-  absent) and `oauth_source` names the vendor CLI login the OAuth credential is
-  imported from (`:codex_cli` or `:claude_code`; `nil` otherwise).
+  absent) and `oauth_source` identifies how the subscription is connected (`:chatgpt` or `:claude_code`; `nil` otherwise).
   """
   @type provider_entry :: %{
           id: atom(),
@@ -84,22 +83,13 @@ defmodule EvoGit.Config.LLMCatalog do
     },
     %{
       id: :openai_codex,
-      display_name: "ChatGPT Codex (OAuth)",
+      display_name: "ChatGPT Subscription",
       provider_atoms: [:openai_codex],
       credential_key: "openai_codex_api_key",
       variants: nil,
       auth_modes: [:oauth],
-      oauth_source: :codex_cli,
-      models: [
-        %{id: "gpt-6.1-sol", display_name: "GPT-6.1 Sol"},
-        %{id: "gpt-6-astra", display_name: "GPT-6 Astra"},
-        %{id: "gpt-6.1-terra", display_name: "GPT-6.1 Terra"},
-        %{id: "gpt-6-sol", display_name: "GPT-6 Sol"},
-        %{id: "gpt-6-luna", display_name: "GPT-6 Luna"},
-        %{id: "gpt-5.6-sol", display_name: "GPT-5.6 Sol"},
-        %{id: "gpt-5.6-terra", display_name: "GPT-5.6 Terra"},
-        %{id: "gpt-5.6-luna", display_name: "GPT-5.6 Luna"}
-      ]
+      oauth_source: :chatgpt,
+      models: []
     },
     %{
       id: :google,
@@ -445,8 +435,7 @@ defmodule EvoGit.Config.LLMCatalog do
   end
 
   @doc """
-  Returns which vendor CLI login the provider's OAuth credential is imported
-  from: `:codex_cli` or `:claude_code`. Returns `nil` for API-key-only and
+  Returns the provider's subscription login source: `:chatgpt` or `:claude_code`. Returns `nil` for API-key-only and
   unknown providers.
 
   Accepts a catalog entry id or a raw provider atom.
@@ -454,7 +443,7 @@ defmodule EvoGit.Config.LLMCatalog do
   ## Examples
 
       iex> EvoGit.Config.LLMCatalog.oauth_source(:openai_codex)
-      :codex_cli
+      :chatgpt
 
       iex> EvoGit.Config.LLMCatalog.oauth_source(:anthropic)
       :claude_code

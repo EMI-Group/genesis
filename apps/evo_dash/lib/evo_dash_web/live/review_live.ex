@@ -24,6 +24,14 @@ defmodule EvoDashWeb.ReviewLive do
       current_page={:review}
       config_status={@config_status}
       current_node_id={@current_node_id}
+      remote_targets={assigns[:remote_targets] || []}
+      connection_statuses={assigns[:connection_statuses] || %{}}
+      workbench_project={@workbench_project}
+      workbench_git_project={
+        if @current_node_id || !assigns[:workbench_remote_requested], do: @workbench_project
+      }
+      workbench_task={@task_id}
+      workbench_title={assigns[:objective]}
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
       session_list={assigns[:session_list] || []}
@@ -40,11 +48,14 @@ defmodule EvoDashWeb.ReviewLive do
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
         <%= if @error do %>
-          <div class="rounded-lg border border-error/30 bg-error/5 p-6 text-center">
+          <div
+            id="review-load-error"
+            class="rounded-lg border border-error/30 bg-error/5 p-6 text-center"
+          >
             <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-4" />
             <h2 class="text-xl font-bold text-error mb-2">{gettext("Review Not Available")}</h2>
             <p class="text-sm text-base-content/80 mb-4">{@error}</p>
-            <div class="flex items-center justify-center gap-3">
+            <div class="flex flex-wrap items-center justify-center gap-3">
               <button type="button" phx-click="retry_load" class="btn btn-outline px-6 gap-2">
                 <.icon name="hero-arrow-path" class="size-4" /> {gettext("Retry")}
               </button>
@@ -59,29 +70,28 @@ defmodule EvoDashWeb.ReviewLive do
         <% else %>
           <%= if @loading do %>
             <!-- Loading state -->
-            <div class="flex items-center justify-center py-20">
+            <div role="status" class="flex items-center justify-center py-20">
               <span class="loading loading-spinner loading-lg text-primary-standalone"></span>
               <span class="ml-3 text-base-content/60">{gettext("Loading review data...")}</span>
             </div>
           <% else %>
-            <%= if @live_action == :commit and @commit_data do %>
-              <!-- Commit detail view: no page tabs, no separate back-button row
-                   (the back link lives inside commit_detail_header). The
-                   :commit route keeps the legacy FLAT path-keyed diff state —
-                   the tree map is read directly, same convention. -->
+            <%= if @live_action == :commit do %>
               <div class="pb-8">
                 <EvoDashWeb.ReviewComponents.commit_detail_header
                   commit={@commit_header}
-                  back_url={with_node_param(~p"/review/#{@task_id}", @current_node_id)}
-                  task_title={@title}
+                  back_url={review_commits_path(@task_id, @current_node_id, @inspect_repo_id)}
+                  task_title={EvoDashWeb.ReviewComponents.Header.short_title(@title)}
+                  unavailable={is_nil(@commit_data)}
                 />
                 <EvoDashWeb.ReviewComponents.commit_diff_layout
+                  :if={@commit_data}
                   files={@commit_data.files}
                   expanded_files={@expanded_files}
                   selected_file={@selected_file}
                   file_context_levels={@file_context_levels}
                   expanded_dirs={@tree_expanded_dirs}
                   file_filter={@file_filter}
+                  diff_in_flight={@diff_in_flight}
                 />
               </div>
             <% else %>
@@ -188,28 +198,17 @@ defmodule EvoDashWeb.ReviewLive do
                          repo selection lives in its toolbar. The diff + tree
                          state maps are repo-keyed — read the ACTIVE repo's
                          submap via inline Map.Get. -->
-                    <%= if @review_data do %>
-                      <EvoDashWeb.ReviewComponents.split_diff_layout
-                        files={@review_data.files}
-                        expanded_files={Map.get(@expanded_files, @active_repo_id, %{})}
-                        selected_file={Map.get(@selected_file || %{}, @active_repo_id)}
-                        file_context_levels={Map.get(@file_context_levels, @active_repo_id, %{})}
-                        expanded_dirs={Map.get(@tree_expanded_dirs, @active_repo_id, %{})}
-                        file_filter={@file_filter}
-                        repos={@review_repos}
-                        active_repo_id={@active_repo_id}
-                      />
-                    <% else %>
-                      <div class="p-8 text-center">
-                        <.icon
-                          name="hero-document-magnifying-glass"
-                          class="size-10 text-base-content/50 mx-auto mb-3"
-                        />
-                        <p class="text-sm text-base-content/70">
-                          {gettext("No diff data available for this review.")}
-                        </p>
-                      </div>
-                    <% end %>
+                    <EvoDashWeb.ReviewComponents.split_diff_layout
+                      files={@review_data && @review_data.files}
+                      expanded_files={Map.get(@expanded_files, @active_repo_id, %{})}
+                      selected_file={Map.get(@selected_file || %{}, @active_repo_id)}
+                      file_context_levels={Map.get(@file_context_levels, @active_repo_id, %{})}
+                      expanded_dirs={Map.get(@tree_expanded_dirs, @active_repo_id, %{})}
+                      file_filter={@file_filter}
+                      repos={@review_repos}
+                      active_repo_id={@active_repo_id}
+                      diff_in_flight={@diff_in_flight}
+                    />
                   <% @review_tab == :commits -> %>
                     <%!-- Lists the ACTIVE repo's commits (projected by
                          project_active_repo/1). Multi-repo reviews show a repo
@@ -219,6 +218,8 @@ defmodule EvoDashWeb.ReviewLive do
                       commits={@commits}
                       repos={@review_repos}
                       active_repo_id={@active_repo_id}
+                      task_id={@task_id}
+                      node_id={@current_node_id}
                     />
                   <% @review_tab == :archive -> %>
                     <%!-- Lazy, PAGED archive: the page load is LITE (no
@@ -303,9 +304,11 @@ defmodule EvoDashWeb.ReviewLive do
         pr_url: nil,
         show_extract_modal: false,
         repo_path: nil,
+        workbench_project: nil,
         base_sha: nil,
         objective: nil,
         inspect_commit_sha: params["commit_sha"],
+        inspect_repo_id: params["repo"] || "primary",
         commit_data: nil,
         commit_header: nil,
         # Paged lazy archive load (see EvoDashWeb.ReviewLive.ArchiveLoad): the
@@ -380,10 +383,29 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_params(params, _url, socket) do
+    page_title =
+      if socket.assigns.live_action == :commit,
+        do: gettext("Commit details"),
+        else: gettext("Review Changes")
+
     socket =
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
+      |> assign(:workbench_remote_requested, params["node"] not in [nil, "", "local"])
       |> assign(:current_path, ~p"/review/#{socket.assigns.task_id}")
+      |> assign(:page_title, page_title)
+
+    socket =
+      if socket.assigns.live_action == :show and params["tab"] == "commits" do
+        assign(socket, :review_tab, :commits)
+      else
+        socket
+      end
+
+    repo_id = params["repo"] || previous_review_repo(socket.assigns) || "primary"
+
+    context =
+      {socket.assigns.current_node, socket.assigns.live_action, params["commit_sha"], repo_id}
 
     # Node-aware task load. `@current_node` is only resolved by assign_node
     # above (at mount time it is still the on_mount local default), so the
@@ -394,8 +416,7 @@ defmodule EvoDashWeb.ReviewLive do
     # load itself runs asynchronously (see start_async_load/2); the result
     # arrives later as a {:review_data_loaded, ...} message.
     socket =
-      if Map.get(socket.assigns, :tasks_loaded_for) ==
-           {socket.assigns.current_node, socket.assigns.live_action, params["commit_sha"]} do
+      if Map.get(socket.assigns, :tasks_loaded_for) == context do
         socket
       else
         socket
@@ -411,13 +432,14 @@ defmodule EvoDashWeb.ReviewLive do
           action_loading: false,
           busy_repos: MapSet.new(),
           diff_in_flight: %{},
-          review_broadcast_status: :none
+          review_broadcast_status: :none,
+          inspect_commit_sha: params["commit_sha"],
+          inspect_repo_id: repo_id,
+          tree_expanded_dirs: %{},
+          file_filter: ""
         )
         |> start_async_load(params["commit_sha"])
-        |> assign(
-          :tasks_loaded_for,
-          {socket.assigns.current_node, socket.assigns.live_action, params["commit_sha"]}
-        )
+        |> assign(:tasks_loaded_for, context)
       end
 
     {:noreply, socket}
@@ -609,30 +631,39 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_event("select_file", %{"path" => path}, socket) do
-    target_id = "file-section-#{file_path_to_id(path)}"
+    scope = diff_scope(socket)
 
-    socket =
-      if socket.assigns.live_action == :commit do
-        # :commit route keeps today's legacy flat path-keyed state.
-        assign(socket,
-          selected_file: path,
-          review_tab: :files_changed
-        )
-      else
-        # SHOW route: per-repo selection map keyed by repo_id — selecting a
-        # file in one repo must not clobber another repo's selection.
-        selected =
-          Map.put(socket.assigns.selected_file || %{}, socket.assigns.active_repo_id, path)
+    if file_present?(socket, scope, path) do
+      socket =
+        if scope == :commit do
+          assign(socket,
+            selected_file: path,
+            expanded_files: Map.put(socket.assigns.expanded_files, path, true)
+          )
+        else
+          selected = Map.put(socket.assigns.selected_file || %{}, scope, path)
 
-        socket
-        |> assign(selected_file: selected, review_tab: :files_changed)
-        |> project_active_repo()
-      end
-      |> push_event("scroll_to_file", %{target_id: target_id})
+          expanded =
+            Map.update(socket.assigns.expanded_files, scope, %{path => true}, fn files ->
+              Map.put(files, path, true)
+            end)
 
-    # The file's diff (when not loaded yet) is fetched off-process — the
-    # selection is already in place, so the result can be applied on arrival.
-    {:noreply, maybe_start_diff_load(socket, path)}
+          assign(socket,
+            selected_file: selected,
+            expanded_files: expanded,
+            review_tab: :files_changed
+          )
+        end
+
+      {:noreply,
+       socket
+       |> maybe_start_diff_load(path)
+       |> push_event("scroll_to_file", %{
+         target_id: EvoDashWeb.ReviewComponents.DiffViewer.file_section_id(path)
+       })}
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
@@ -681,11 +712,6 @@ defmodule EvoDashWeb.ReviewLive do
   @impl true
   def handle_event("load_file_diff", %{"path" => path}, socket) do
     {:noreply, maybe_start_diff_load(socket, path)}
-  end
-
-  @impl true
-  def handle_event("inspect_commit", %{"sha" => sha}, socket) do
-    {:noreply, push_patch(socket, to: ~p"/review/#{socket.assigns.task_id}/commit/#{sha}")}
   end
 
   @impl true
@@ -1196,6 +1222,7 @@ defmodule EvoDashWeb.ReviewLive do
               loading: false,
               error: reason,
               repo_path: nil,
+              workbench_project: nil,
               objective: nil,
               task_usage: nil,
               agent_count: nil,
@@ -1785,6 +1812,7 @@ defmodule EvoDashWeb.ReviewLive do
     node = socket.assigns.current_node
     task_id = socket.assigns.task_id
     live_action = socket.assigns.live_action
+    repo_id = socket.assigns.inspect_repo_id
     gen = Map.get(socket.assigns, :load_generation, 0) + 1
 
     socket = assign(socket, loading: true, error: nil, load_generation: gen)
@@ -1794,7 +1822,8 @@ defmodule EvoDashWeb.ReviewLive do
         case EvoDash.SafeCall.run(fn ->
                EvoDashWeb.ReviewLive.LoadData.load(node, task_id,
                  live_action: live_action,
-                 inspect_commit_sha: inspect_commit_sha
+                 inspect_commit_sha: inspect_commit_sha,
+                 repo_id: repo_id
                )
              end) do
           # LoadData's own outcome: an assigns map, or an already
@@ -1943,8 +1972,8 @@ defmodule EvoDashWeb.ReviewLive do
 
   # Writes a loaded diff into the CAPTURED scope's data source (commit_data on
   # the :commit route, the scoped @review_repos entry's review_data on SHOW),
-  # marks the file expanded and records the context level. The selection is
-  # NOT touched here — it belongs to the interaction that requested the load.
+  # and records the context level. Expansion and selection belong to the controls
+  # that requested the load and may have changed while Git was running.
   defp update_file_diff_in_socket(socket, :commit, path, diff_string, context_level) do
     data = socket.assigns.commit_data
 
@@ -1962,7 +1991,6 @@ defmodule EvoDashWeb.ReviewLive do
 
     assign(socket,
       commit_data: %{data | files: updated_files},
-      expanded_files: Map.put(socket.assigns.expanded_files || %{}, path, true),
       file_context_levels: Map.put(levels, path, level)
     )
   end
@@ -1988,17 +2016,13 @@ defmodule EvoDashWeb.ReviewLive do
         end
       end)
 
-    expanded = socket.assigns.expanded_files || %{}
-    expanded_sub = Map.put(Map.get(expanded, repo_id, %{}), path, true)
-    expanded = Map.put(expanded, repo_id, expanded_sub)
-
     levels = socket.assigns.file_context_levels || %{}
     levels_sub = Map.get(levels, repo_id, %{})
     level = max_context_level(Map.get(levels_sub, path), context_level)
     levels = Map.put(levels, repo_id, Map.put(levels_sub, path, level))
 
     socket
-    |> assign(review_repos: review_repos, expanded_files: expanded, file_context_levels: levels)
+    |> assign(review_repos: review_repos, file_context_levels: levels)
     |> project_active_repo()
   end
 
@@ -2295,10 +2319,20 @@ defmodule EvoDashWeb.ReviewLive do
     end
   end
 
-  defp file_path_to_id(path) do
-    path
-    |> String.replace(~r{[^a-zA-Z0-9_-]}, "-")
-    |> String.trim("-")
+  defp previous_review_repo(%{
+         live_action: :show,
+         current_node: node,
+         tasks_loaded_for: {node, :commit, _, repo_id}
+       }),
+       do: repo_id
+
+  defp previous_review_repo(_), do: nil
+
+  defp review_commits_path(task_id, node_id, repo_id) do
+    params = %{tab: "commits"}
+    params = if node_id, do: Map.put(params, :node, node_id), else: params
+    params = if repo_id != "primary", do: Map.put(params, :repo, repo_id), else: params
+    ~p"/review/#{task_id}?#{params}"
   end
 
   # Aggregate diff statistics across ALL review repos (primary + foreign) —

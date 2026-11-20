@@ -75,10 +75,13 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard.ModelStep do
         :if={@rows == []}
         class="rounded-lg border border-dashed border-base-300 px-3 py-6 text-center text-sm text-base-content/60"
       >
-        {gettext("No catalog model matches this search. Enter the model name below.")}
+        {if @allow_custom_model,
+          do: gettext("No catalog model matches this search. Enter the model name below."),
+          else: gettext("No available ChatGPT model matches this search.")}
       </p>
 
       <.custom_model_field
+        :if={@allow_custom_model}
         event={@custom_model_event}
         name={@custom_model_name}
         value={@custom_model}

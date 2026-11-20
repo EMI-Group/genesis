@@ -1,14 +1,5 @@
 defmodule EvoDashWeb.ExampleTask do
-  @moduledoc """
-  Shared "example task" teaching content used by the onboarding surfaces: the
-  onboarding completion page (`EvoDashWeb.WelcomeCompleteLive` at
-  `/welcome/complete`) and the dashboard's no-project empty state
-  (`EvoDashWeb.ProjectsLive`).
-
-  Single source of truth for the demo objective text shown to new users — the
-  two onboarding surfaces render the same example, so the text lives here
-  instead of being duplicated in each LiveView.
-  """
+  @moduledoc "Example objective shown on the onboarding completion page."
 
   @example_objective """
   Build a simulated, web-based Windows desktop environment using a single browser page.

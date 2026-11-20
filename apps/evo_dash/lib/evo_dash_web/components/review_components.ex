@@ -43,12 +43,14 @@ defmodule EvoDashWeb.ReviewComponents do
 
   def page_tabs(assigns) do
     ~H"""
-    <div class="flex items-center gap-1 overflow-x-auto scrollbar-none -mx-1 px-1">
+    <div id="review-tabs" class="flex flex-wrap items-center gap-x-1 border-b border-base-300">
       <button
         phx-click="switch_tab"
         phx-value-tab="conversation"
+        type="button"
+        aria-pressed={to_string(@active_tab == :conversation)}
         class={[
-          "flex items-center gap-2 px-3 sm:px-4 py-2.5 text-sm whitespace-nowrap border-b-2 transition-colors",
+          "flex min-h-10 items-center gap-1.5 px-2.5 sm:px-4 py-2 text-sm whitespace-nowrap border-b-2 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone",
           (@active_tab == :conversation && "border-primary-standalone text-base-content font-semibold") ||
             "border-transparent text-base-content/70 hover:text-base-content hover:border-base-content/30"
         ]}
@@ -60,8 +62,10 @@ defmodule EvoDashWeb.ReviewComponents do
       <button
         phx-click="switch_tab"
         phx-value-tab="objective"
+        type="button"
+        aria-pressed={to_string(@active_tab == :objective)}
         class={[
-          "flex items-center gap-2 px-3 sm:px-4 py-2.5 text-sm whitespace-nowrap border-b-2 transition-colors",
+          "flex min-h-10 items-center gap-1.5 px-2.5 sm:px-4 py-2 text-sm whitespace-nowrap border-b-2 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone",
           (@active_tab == :objective && "border-primary-standalone text-base-content font-semibold") ||
             "border-transparent text-base-content/70 hover:text-base-content hover:border-base-content/30"
         ]}
@@ -73,8 +77,10 @@ defmodule EvoDashWeb.ReviewComponents do
       <button
         phx-click="switch_tab"
         phx-value-tab="files_changed"
+        type="button"
+        aria-pressed={to_string(@active_tab == :files_changed)}
         class={[
-          "flex items-center gap-2 px-3 sm:px-4 py-2.5 text-sm whitespace-nowrap border-b-2 transition-colors",
+          "flex min-h-10 items-center gap-1.5 px-2.5 sm:px-4 py-2 text-sm whitespace-nowrap border-b-2 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone",
           (@active_tab == :files_changed &&
              "border-primary-standalone text-base-content font-semibold") ||
             "border-transparent text-base-content/70 hover:text-base-content hover:border-base-content/30"
@@ -89,8 +95,10 @@ defmodule EvoDashWeb.ReviewComponents do
       <button
         phx-click="switch_tab"
         phx-value-tab="commits"
+        type="button"
+        aria-pressed={to_string(@active_tab == :commits)}
         class={[
-          "flex items-center gap-2 px-3 sm:px-4 py-2.5 text-sm whitespace-nowrap border-b-2 transition-colors",
+          "flex min-h-10 items-center gap-1.5 px-2.5 sm:px-4 py-2 text-sm whitespace-nowrap border-b-2 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone",
           (@active_tab == :commits && "border-primary-standalone text-base-content font-semibold") ||
             "border-transparent text-base-content/70 hover:text-base-content hover:border-base-content/30"
         ]}
@@ -106,8 +114,10 @@ defmodule EvoDashWeb.ReviewComponents do
         <button
           phx-click="switch_tab"
           phx-value-tab="archive"
+          type="button"
+          aria-pressed={to_string(@active_tab == :archive)}
           class={[
-            "flex items-center gap-2 px-3 sm:px-4 py-2.5 text-sm whitespace-nowrap border-b-2 transition-colors",
+            "flex min-h-10 items-center gap-1.5 px-2.5 sm:px-4 py-2 text-sm whitespace-nowrap border-b-2 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone",
             (@active_tab == :archive && "border-primary-standalone text-base-content font-semibold") ||
               "border-transparent text-base-content/70 hover:text-base-content hover:border-base-content/30"
           ]}

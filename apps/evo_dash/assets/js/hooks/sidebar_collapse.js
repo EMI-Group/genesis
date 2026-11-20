@@ -6,9 +6,11 @@
 const SidebarCollapse = {
   mounted() {
     this.mobileOpen = false;
+    this.mobileViewport = window.matchMedia('(max-width: 1023.98px)');
+    this.layout = this.el.closest('#app-layout');
+    this.main = this.layout.querySelector('.workbench-main');
 
     // --- Desktop collapse state ---
-    this.applyCollapsed(this.isCollapsed());
     this.collapseToggle = document.getElementById('sidebar-collapse-toggle');
     if (this.collapseToggle) {
       this._clickHandler = () => {
@@ -35,7 +37,7 @@ const SidebarCollapse = {
     if (this.overlay) {
       this._overlayHandler = () => {
         if (!this.isMobile()) return;
-        this.closeMobile();
+        this.closeMobile(true);
       };
       this.overlay.addEventListener('click', this._overlayHandler);
     }
@@ -45,22 +47,23 @@ const SidebarCollapse = {
     // re-renders (no need to re-attach per-link listeners in updated()).
     this._sidebarNavHandler = (e) => {
       if (!this.mobileOpen || !this.isMobile()) return;
-      if (e.target.closest('a')) this.closeMobile();
+      if (e.target.closest('#sidebar-mobile-close')) this.closeMobile(true);
+      else if (e.target.closest('a')) this.closeMobile();
     };
     this.el.addEventListener('click', this._sidebarNavHandler);
 
     // --- Outside-click dismissal of open <details> dropdowns ---
     // The sidebar dropdowns (theme, language, node selector) are native
     // <details> elements, which only toggle on their own <summary>. A
-    // document-level listener closes every open <details> descendant of the
-    // sidebar when the click lands outside it — anywhere else on the page,
+    // document-level listener closes open menus in the bottom bar
+    // when the click lands outside them — anywhere else on the page,
     // other sidebar chrome (nav links, collapse toggle), or another dropdown
     // (opening one dismisses the rest). Clicks inside an open dropdown's
     // content are left alone so they register before anything closes.
     this._documentClickHandler = (e) => {
       const target = e.target;
       if (this.el.contains(target)) {
-        this.el.querySelectorAll('details[open]').forEach((d) => {
+        this.el.querySelectorAll('[data-sidebar-bottom-bar] details[open]').forEach((d) => {
           if (!d.contains(target)) d.removeAttribute('open');
         });
       } else {
@@ -68,13 +71,29 @@ const SidebarCollapse = {
       }
     };
     document.addEventListener('click', this._documentClickHandler);
+
+    this._escapeHandler = (event) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || !this.mobileOpen ||
+          document.querySelector('dialog[open]')) return;
+      event.preventDefault();
+      this.closeMobile(true);
+    };
+    this._viewportHandler = () => {
+      if (this.mobileOpen && !this.isMobile()) this.closeMobile();
+      this.updated();
+    };
+    this._historyDrawerHandler = () => this.syncNavigationAccess();
+    document.addEventListener('keydown', this._escapeHandler);
+    this.mobileViewport.addEventListener('change', this._viewportHandler);
+    this.layout.addEventListener('workbench:history-drawer', this._historyDrawerHandler);
+    this.updated();
   },
 
   updated() {
-    this.applyCollapsed(this.isCollapsed());
+    this.applyCollapsed(!this.isMobile() && this.isCollapsed());
     // Re-apply mobile open/close state — morphdom resets the sidebar's
     // translate classes after every LiveView navigation patch.
-    this.applyMobileState(this.mobileOpen);
+    this.applyMobileState();
   },
 
   destroyed() {
@@ -85,6 +104,10 @@ const SidebarCollapse = {
     if (this.overlay && this._overlayHandler)
       this.overlay.removeEventListener('click', this._overlayHandler);
     document.removeEventListener('click', this._documentClickHandler);
+    document.removeEventListener('keydown', this._escapeHandler);
+    this.mobileViewport.removeEventListener('change', this._viewportHandler);
+    this.layout.removeEventListener('workbench:history-drawer', this._historyDrawerHandler);
+    if (this.mobileOpen) document.body.classList.remove('overflow-hidden');
     this.el.removeEventListener('click', this._sidebarNavHandler);
   },
 
@@ -93,47 +116,49 @@ const SidebarCollapse = {
   },
 
   isMobile() {
-    return window.matchMedia('(max-width: 1023.98px)').matches;
+    return this.mobileViewport.matches;
   },
 
   openMobile() {
     this.mobileOpen = true;
-    this.applyMobileState(true);
+    this.applyMobileState();
     document.body.classList.add('overflow-hidden');
+    this.el.querySelector('#sidebar-mobile-close')?.focus();
   },
 
-  closeMobile() {
+  closeMobile(restoreFocus = false) {
     this.mobileOpen = false;
-    this.applyMobileState(false);
+    this.applyMobileState();
     document.body.classList.remove('overflow-hidden');
+    if (restoreFocus) this.mobileToggle?.focus();
   },
 
-  // Toggles the mobile sidebar translate + overlay visibility classes.
-  // On desktop these are harmless — lg:translate-x-0 and lg:hidden in the
-  // server-rendered markup override them at the lg breakpoint.
-  applyMobileState(open) {
-    if (open) {
-      this.el.classList.remove('-translate-x-full');
-      if (this.overlay) {
-        this.overlay.classList.remove('opacity-0', 'pointer-events-none');
-      }
-    } else {
-      this.el.classList.add('-translate-x-full');
-      if (this.overlay) {
-        this.overlay.classList.add('opacity-0', 'pointer-events-none');
-      }
-    }
+  applyMobileState() {
+    const open = this.isMobile() && this.mobileOpen;
+    this.el.classList.toggle('-translate-x-full', !open);
+    this.overlay?.classList.toggle('opacity-0', !open);
+    this.overlay?.classList.toggle('pointer-events-none', !open);
+    this.mobileToggle?.setAttribute('aria-expanded', String(open));
+    this.main.inert = open;
+    this.syncNavigationAccess();
+  },
+
+  syncNavigationAccess() {
+    const historyOpen = this.layout.hasAttribute('data-workbench-history-drawer-open');
+    this.el.inert = historyOpen || (this.isMobile() && !this.mobileOpen);
+    if (this.mobileToggle) this.mobileToggle.inert = historyOpen || this.mobileOpen;
   },
 
   // Closes every open <details> dropdown inside the sidebar (theme, language,
   // node selector) by removing the open attribute — DaisyUI's close mechanism.
   // Scoped to this.el so dropdowns elsewhere on the page are never touched.
   closeOpenDropdowns() {
-    this.el.querySelectorAll('details[open]').forEach((d) => d.removeAttribute('open'));
+    this.el.querySelectorAll('[data-sidebar-bottom-bar] details[open]').forEach((d) => d.removeAttribute('open'));
   },
 
   applyCollapsed(collapsed) {
     const sidebar = this.el;
+    sidebar.dataset.sidebarCollapsed = String(collapsed);
     // Stable selectors using data attributes — work in both collapsed and expanded states
     const bottomBar = sidebar.querySelector('[data-sidebar-bottom-bar]');
     const bottomGroups = sidebar.querySelectorAll('[data-sidebar-bottom-group]');

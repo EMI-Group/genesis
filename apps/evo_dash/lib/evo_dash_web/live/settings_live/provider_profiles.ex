@@ -14,7 +14,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
 
   @integer_fields ~w(concurrency context_window max_tokens top_k)
   @float_fields ~w(temperature top_p frequency_penalty presence_penalty)
-  @string_fields ~w(name base_url api_key api_key_env_var oauth_file default_model)
+  @string_fields ~w(name base_url api_key api_key_env_var oauth_file siwc_account default_model)
   @json_fields ~w(extra provider_options)
   @generation_fields ~w(temperature max_tokens top_p top_k frequency_penalty presence_penalty)
 
@@ -237,6 +237,12 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
         if auth_mode == "oauth",
           do: Map.drop(profile, ~w(api_key api_key_env api_key_env_var)),
           else: Map.delete(profile, "oauth_file")
+
+      profile =
+        if provider_atom == :openai_codex,
+          do:
+            profile |> Map.drop(~w(oauth_file base_url)) |> Map.put_new("siwc_account", "default"),
+          else: Map.delete(profile, "siwc_account")
 
       default = nonblank(profile["default_model"]) || (List.first(models) || %{})["model"]
       profile = put_optional(profile, "default_model", default)

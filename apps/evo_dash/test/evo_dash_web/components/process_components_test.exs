@@ -94,9 +94,9 @@ defmodule EvoDashWeb.ProcessComponentsTest do
       assert html =~ "mix test"
 
       # Agent/task cells are node-aware links with the record's ids.
-      assert html =~ ~s(href="/agents")
+      assert html =~ ~s(href="/agents?agent_id=101")
       assert html =~ "#101"
-      assert html =~ ~s(href="/tasks")
+      assert html =~ ~s(href="/tasks?task=task-1")
       assert html =~ "#task-1"
 
       assert html =~ "Foreground"
@@ -193,8 +193,8 @@ defmodule EvoDashWeb.ProcessComponentsTest do
       assert html =~ ~s(phx-click="toggle_process_row")
       refute html =~ ~s(phx-click="pause_process")
       refute html =~ ~s(phx-click="resume_process")
-      refute html =~ ~s(phx-click="open_terminate")
-      refute html =~ ~s(phx-click="open_kill")
+      refute html =~ "open_terminate"
+      refute html =~ "open_kill"
       refute html =~ ~s(aria-label="Pause")
       refute html =~ ~s(aria-label="Terminate")
       refute html =~ ~s(aria-label="Kill")
@@ -222,8 +222,8 @@ defmodule EvoDashWeb.ProcessComponentsTest do
       html = render_row(running_execution())
 
       assert html =~ ~s(phx-click="pause_process")
-      assert html =~ ~s(phx-click="open_terminate")
-      assert html =~ ~s(phx-click="open_kill")
+      assert html =~ "open_terminate"
+      assert html =~ "open_kill"
       assert html =~ ~s(phx-value-id="proc-1")
       # Resume is the paused-state counterpart of pause (the two are exclusive).
       refute html =~ ~s(phx-click="resume_process")
@@ -233,8 +233,8 @@ defmodule EvoDashWeb.ProcessComponentsTest do
       html = render_row(running_execution(status: :paused))
 
       assert html =~ ~s(phx-click="resume_process")
-      assert html =~ ~s(phx-click="open_terminate")
-      assert html =~ ~s(phx-click="open_kill")
+      assert html =~ "open_terminate"
+      assert html =~ "open_kill"
       refute html =~ ~s(phx-click="pause_process")
     end
   end

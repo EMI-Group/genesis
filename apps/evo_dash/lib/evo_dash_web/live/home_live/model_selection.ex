@@ -122,6 +122,7 @@ defmodule EvoDashWeb.HomeLive.ModelSelection do
            model_selection_error: nil,
            model_selection_scope: selection_scope(socket)
          )
+         |> ChatState.edited()
          |> ChatState.persist()}
 
       {:error, _reason} ->

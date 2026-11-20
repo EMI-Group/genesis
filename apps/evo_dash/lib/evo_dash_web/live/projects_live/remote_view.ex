@@ -1,54 +1,14 @@
 defmodule EvoDashWeb.ProjectsLive.RemoteView do
   @moduledoc """
-  Remote-node chrome for the dashboard.
-
-  `top_bar/1` is the immersive sticky app header with command palette project
-  control (extracted from `EvoDashWeb.ProjectsLive` when the dashboard gained
-  remote-node support). When `remote` is set it shows the target-name badge on
-  the right (where the Configure dropdown lives locally) and hides the
-  Configure dropdown entirely.
-
-  The `hide_palette` flag suppresses the command palette trigger, replacing it
-  with a muted non-interactive placeholder. It is passed by gate-state renders
-  (connecting/bootstrapping/disconnecting and error/disconnected remote
-  contexts) where project activation must not touch the local filesystem or
-  the local VCT project registry.
-
-  `connecting_state/1` and `error_state/1` are the full-page states shown
-  while a selected remote target is connecting/bootstrapping or has failed
-  (`:error`/`:disconnected` phase). They render NO project data and no task
-  form — task launching and project management are local dashboard features.
+  Task configuration shared by local and remote projects, and connection states
+  for remote projects.
   """
 
   use EvoDashWeb, :html
 
-  # ---------------------------------------------------------------------------
-  # top_bar/1 — Immersive sticky app header with command palette project control.
-  #
-  # LEFT: command palette trigger (click to open centered overlay with search,
-  # projects, open-by-path, and create-new-project).
-  # RIGHT: a single "Configure" dropdown showing BOTH sections at once —
-  # "Task Options" and "Project Settings" — with no tab bar. When `remote` is
-  # set the Configure dropdown is replaced by the remote target-name badge.
-  # ---------------------------------------------------------------------------
-
-  attr(:active_project, :map, default: nil)
-  attr(:active_project_path, :string, default: nil)
-  attr(:projects, :list, default: [])
-  attr(:palette_open, :boolean, default: false)
-  attr(:palette_search, :string, default: "")
-  attr(:palette_mode, :atom, default: :menu)
-  attr(:palette_selected_index, :integer, default: 0)
-  attr(:path_suggestions, :list, default: [])
-  # VCT WORKSPACE palette surface — view maps, expanded workspace points and
-  # the ordered member refs chosen in the New Workspace form. Defaults keep
-  # every existing call site (gate-state renders pass `hide_palette`) valid.
-  attr(:workspaces, :list, default: [])
-  attr(:expanded_workspaces, :list, default: [])
-  attr(:new_workspace_members, :list, default: [])
+  attr(:active_project_path, :string, required: true)
   attr(:tauri_detected, :boolean, default: false)
   attr(:platform, :string, default: "linux")
-  attr(:show_project_settings, :boolean, default: false)
   attr(:task_mode, :string, default: "genesis_new")
   attr(:task_node_path, :string, default: "")
   attr(:task_starting_commit, :string, default: "")
@@ -68,188 +28,61 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
   attr(:new_repo_id, :string, default: "")
   attr(:new_repo_path, :string, default: "")
   attr(:new_repo_description, :string, default: "")
-  attr(:disabled, :boolean, default: false)
-  attr(:show_configure_dropdown, :boolean, default: false)
   attr(:remote, :boolean, default: false)
-  attr(:current_node_name, :string, default: "Local")
-  attr(:hide_palette, :boolean, default: false)
-  attr(:no_project_hint_dismissed, :boolean, default: false)
 
-  # Async GitHub-upstream detection status: nil / %{state: :checking} while
-  # unresolved, %{state: :ok, owner:, repo:} when the active project has a
-  # GitHub upstream with gh available, %{state: :error, owner: nil, repo: nil}
-  # otherwise. Only :ok renders the GitHub button.
-  attr(:github_status, :map, default: nil)
-
-  def top_bar(assigns) do
+  def task_configuration(assigns) do
     ~H"""
-    <% show_hint =
-      !@remote and !@hide_palette and is_nil(@active_project) and
-        !@no_project_hint_dismissed %>
-    <div
-      class="dashboard-topbar shrink-0 sticky top-0 z-30 w-full flex flex-wrap items-center justify-between gap-3 px-4 py-3"
-      data-remote={@remote}
-      data-no-project={show_hint}
+    <dialog
+      id="workbench-task-settings"
+      class="workbench-window workbench-task-settings"
+      aria-labelledby="workbench-task-settings-title"
+      phx-mounted={JS.ignore_attributes("open")}
     >
-      <!-- LEFT: command palette project control. When hide_palette is set
-           (pending/failed remote gate states) a muted non-interactive
-           placeholder replaces the trigger — project activation must not be
-           possible while the selected remote node is not connected. -->
-      <div class="flex-1 min-w-0">
-        <%= if @hide_palette do %>
-          <p class="text-sm text-base-content/70 truncate">
-            {gettext("Project control unavailable")}
-          </p>
-        <% else %>
-          <EvoDashWeb.ProjectComponents.project_omnibox
-            active_project={@active_project}
-            projects={@projects}
-            palette_open={@palette_open}
-            palette_search={@palette_search}
-            palette_mode={@palette_mode}
-            palette_selected_index={@palette_selected_index}
-            workspaces={@workspaces}
-            expanded_workspaces={@expanded_workspaces}
-            new_workspace_members={@new_workspace_members}
-            path_suggestions={@path_suggestions}
-            tauri_detected={@tauri_detected}
-            platform={@platform}
-            remote={@remote}
-          />
-        <% end %>
-      </div>
-
-      <!-- MIDDLE: no-project hint pill — clickable (opens the palette),
-           dismissible. Only in local non-gate renders with no project open
-           and the hint not dismissed. Styling (accent border/ring, pulse) is
-           pure CSS on [data-no-project="true"] / .no-project-hint — the
-           topbar must NOT get backdrop-filter/filter/transform (a containing
-           block would trap the palette's fixed-position backdrop). -->
-      <%= if show_hint do %>
-        <div
-          class="no-project-hint shrink-0 cursor-pointer flex items-center gap-1.5"
-          phx-click="open_project_palette"
-          role="button"
-          title={gettext("Open or create a project")}
-        >
-          <.icon name="hero-folder-plus" class="size-4" />
-          <span class="text-sm font-medium whitespace-nowrap">
-            {gettext("Open or create a project")}
-          </span>
-          <button
-            type="button"
-            class="btn btn-ghost btn-xs btn-square shrink-0"
-            phx-click="dismiss_no_project_hint"
-            phx-stop-propagation
-            title={gettext("Dismiss")}
-          >
-            <.icon name="hero-x-mark" class="size-3.5" />
-          </button>
-        </div>
-      <% end %>
-
-      <!-- RIGHT: remote target badge (always shown when on a remote node),
-           plus Configure dropdown for BOTH local and remote. -->
-      <%= if @remote do %>
-        <div class="flex items-center gap-2 shrink-0">
-          <span class="badge badge-info gap-1.5">
-            <.icon name="hero-server-stack" class="size-4" />
-            {@current_node_name}
-          </span>
-        </div>
-      <% end %>
-      <!-- RIGHT: compact GitHub button — renders only when the async
-           upstream check resolved :ok (owner/repo known, gh available) and
-           never in gate-state renders (hide_palette). -->
-      <%= if !@hide_palette do %>
-        <%= case @github_status do %>
-          <% %{state: :ok, owner: owner, repo: repo} when is_binary(owner) and is_binary(repo) -> %>
-            <button
-              type="button"
-              class="btn btn-ghost btn-sm gap-2 rounded-lg border border-base-300 hover:bg-base-200 transition-colors min-w-0"
-              phx-click="open_github_issues"
-              title={gettext("Open GitHub Issues")}
-            >
-              <.icon name="brand-github" class="size-4 shrink-0" />
-              <%!-- Narrow viewports: icon-only presentation (owner/repo label
-                   hidden below `sm`, mirroring the Configure button), and on
-                   wider but tight rows the label truncates with an ellipsis
-                   instead of forcing the bar to overflow. --%>
-              <span class="font-mono text-xs truncate min-w-0 hidden sm:inline">{owner}/{repo}</span>
-            </button>
-          <% _ -> %>
-        <% end %>
-      <% end %>
-      <!-- RIGHT: Configure dropdown — server-managed open state -->
-      <div class="relative shrink-0">
+      <header class="workbench-window-header">
+        <h2 id="workbench-task-settings-title">{gettext("Configure")}</h2>
         <button
           type="button"
-          class="btn btn-md btn-ghost gap-2"
-          title={gettext("Configure")}
-          phx-click="toggle_configure_dropdown"
+          class="workbench-icon-button"
+          data-workbench-close-window
+          aria-label={gettext("Close")}
         >
-          <.icon name="hero-adjustments-horizontal" class="size-4" />
-          <span class="hidden sm:inline">{gettext("Configure")}</span>
+          <.icon name="hero-x-mark" class="size-5" />
         </button>
-
-        <%= if @show_configure_dropdown do %>
-          <!-- Full-screen invisible click-catcher overlay -->
-          <div class="fixed inset-0 z-40" phx-click="close_configure_dropdown"></div>
-        <% end %>
-
-        <!-- Dropdown content — always in DOM, hidden when closed.
-             Using class-based toggling (not conditional render) so content
-             stays in the DOM and phx events inside still work reliably. -->
-        <div class={[
-          "absolute right-0 z-50 w-80 sm:w-96 mt-2 rounded-xl border border-base-300 bg-base-100/95 backdrop-blur-md shadow-xl overflow-hidden",
-          !@show_configure_dropdown && "hidden"
-        ]}>
-          <div class="p-3 max-h-[60vh] overflow-y-auto overflow-x-hidden">
-            <!-- Section 1: Task Options -->
-            <div>
-              <p class="text-xs font-semibold uppercase tracking-wide text-base-content/70 mb-2">
-                {gettext("Task Options")}
-              </p>
-              <EvoDashWeb.TaskFormComponents.task_options_tab
-                mode={@task_mode}
-                node_path={@task_node_path}
-                starting_commit={@task_starting_commit}
-                resume_from={@task_resume_from}
-                archive={@task_archive}
-                persist_agent_state?={@persist_agent_state?}
-                build_systems={@build_systems}
-                selected_build_system={@task_build_system}
-                disabled={@disabled}
-              />
-            </div>
-
-            <!-- Section 2: Project Settings (only when a project is active) -->
-            <%= if @active_project != nil do %>
-              <div class="mt-4 pt-4 border-t border-base-300">
-                <p class="text-xs font-semibold uppercase tracking-wide text-base-content/70 mb-2">
-                  {gettext("Project Settings")}
-                </p>
-                <EvoDashWeb.ProjectComponents.project_settings_tab
-                  remote={@remote}
-                  active_project={@active_project_path}
-                  project_config={@project_config}
-                  worktree_script={@worktree_script}
-                  commands={@commands}
-                  foreign_repos={@foreign_repos}
-                  foreign_repo_path_suggestions={@foreign_repo_path_suggestions}
-                  show_add_foreign_repo={@show_add_foreign_repo_form}
-                  new_repo_id={@new_repo_id}
-                  new_repo_path={@new_repo_path}
-                  new_repo_description={@new_repo_description}
-                  tauri_detected={@tauri_detected}
-                  platform={@platform}
-                />
-              </div>
-            <% end %>
-          </div>
-        </div>
+      </header>
+      <div class="space-y-4 p-4">
+        <section>
+          <h3 class="text-sm font-semibold mb-2">{gettext("Task Options")}</h3>
+          <EvoDashWeb.TaskFormComponents.task_options_tab
+            mode={@task_mode}
+            node_path={@task_node_path}
+            starting_commit={@task_starting_commit}
+            resume_from={@task_resume_from}
+            archive={@task_archive}
+            persist_agent_state?={@persist_agent_state?}
+            build_systems={@build_systems}
+            selected_build_system={@task_build_system}
+          />
+        </section>
+        <section class="pt-4 border-t border-base-300">
+          <h3 class="text-sm font-semibold mb-2">{gettext("Project Settings")}</h3>
+          <EvoDashWeb.ProjectComponents.project_settings_tab
+            remote={@remote}
+            active_project={@active_project_path}
+            project_config={@project_config}
+            worktree_script={@worktree_script}
+            commands={@commands}
+            foreign_repos={@foreign_repos}
+            foreign_repo_path_suggestions={@foreign_repo_path_suggestions}
+            show_add_foreign_repo={@show_add_foreign_repo_form}
+            new_repo_id={@new_repo_id}
+            new_repo_path={@new_repo_path}
+            new_repo_description={@new_repo_description}
+            tauri_detected={@tauri_detected}
+            platform={@platform}
+          />
+        </section>
       </div>
-    </div>
+    </dialog>
     """
   end
 

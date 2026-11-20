@@ -9,8 +9,9 @@ const app = readFileSync(`${__dirname}/app.js`, 'utf8');
 const hookSource = app.slice(app.indexOf('const StatePersistence = {'),
   app.indexOf('// ClipboardCopy hook:'));
 
-function mount({state, node = 'local', legacyModel} = {}) {
-  let saved = state === undefined ? null : JSON.stringify(state);
+function mount({state, node = 'local', project = '/repo', taskDraftProject, legacyModel,
+  storage = new Map()} = {}) {
+  if (state !== undefined) storage.set('dashboard_state', JSON.stringify(state));
   const events = {};
   const listeners = {};
   const prompt = {value: ''};
@@ -18,8 +19,8 @@ function mount({state, node = 'local', legacyModel} = {}) {
   let timer;
   const context = vm.createContext({
     sessionStorage: {
-      getItem(key) { assert.equal(key, 'dashboard_state'); return saved; },
-      setItem(key, value) { assert.equal(key, 'dashboard_state'); saved = value; }
+      getItem(key) { return storage.get(key) ?? null; },
+      setItem(key, value) { storage.set(key, value); }
     },
     clearTimeout() { timer = null; },
     setTimeout(fn) { timer = fn; }
@@ -27,7 +28,7 @@ function mount({state, node = 'local', legacyModel} = {}) {
   const hook = vm.runInContext(`${hookSource}\nStatePersistence;`, context);
   Object.assign(hook, {
     el: {
-      dataset: {nodeId: node, project: '/repo', taskMode: 'evolve_simple'},
+      dataset: {nodeId: node, project, taskDraftProject, taskMode: 'evolve_simple'},
       querySelector(selector) {
         if (selector === '[name="prompt"]') return prompt;
         if (selector === '[name="model_id"]') return legacyModel;
@@ -41,7 +42,9 @@ function mount({state, node = 'local', legacyModel} = {}) {
   hook.mounted();
   return {
     events, prompt, pushed,
-    read() { return saved === null ? null : JSON.parse(saved); },
+    read(key = 'dashboard_state') { return JSON.parse(storage.get(key) ?? null); },
+    navigate(dataset) { Object.assign(hook.el.dataset, dataset); hook.updated(); },
+    destroy() { hook.destroyed(); },
     change(name, type = 'input') {
       listeners[type]({target: {getAttribute() { return name; }}});
     },
@@ -130,4 +133,37 @@ test('present legacy selector still persists explicit empty Auto and selected id
   page.change('model_id', 'change');
   page.flush();
   assert.equal(page.read().selected_model_id, 'legacy-profile');
+});
+
+test('project drafts restore only for the matching node and project', () => {
+  const storage = new Map();
+  const projectA = {node: 'remote-a', taskDraftProject: '/a', storage};
+  const initial = {node: 'remote-a', project: '/a', task_prompt: 'project A draft'};
+  const page = mount({...projectA, state: initial});
+  assert.equal(page.prompt.value, 'project A draft');
+  page.prompt.value = 'edited draft';
+  page.change('prompt');
+  page.destroy();
+
+  assert.equal(mount({...projectA, taskDraftProject: '/b'}).prompt.value, '');
+  assert.equal(mount({...projectA, node: 'remote-b'}).prompt.value, '');
+  assert.equal(mount(projectA).prompt.value, 'edited draft');
+});
+
+test('switching and clearing a task draft preserve the other project', () => {
+  const storage = new Map();
+  const page = mount({storage, taskDraftProject: '/a'});
+  page.prompt.value = 'project A draft';
+  page.change('prompt');
+  page.navigate({taskDraftProject: '/b'});
+  assert.equal(page.prompt.value, '');
+
+  page.events.persist_model_selection({node: 'local', project: '/a', model_spec: spec});
+  assert.equal(page.read('dashboard_state:["local","/b"]'), null);
+  page.prompt.value = 'submitted text';
+  page.change('prompt');
+  page.events.clear_prompt();
+
+  assert.equal(mount({storage, taskDraftProject: '/a'}).prompt.value, 'project A draft');
+  assert.equal(mount({storage, taskDraftProject: '/b'}).prompt.value, '');
 });

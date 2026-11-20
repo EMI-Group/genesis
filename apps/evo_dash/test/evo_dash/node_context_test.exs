@@ -828,6 +828,10 @@ defmodule EvoDash.NodeContextTest do
       # `{:error, reason}` and a non-list payload both degrade to `[]`.
       Process.put(:node_context_process_rpc, fn _n, _m, _f, _a -> {:error, :nodedown} end)
       assert EvoDash.NodeContext.list_processes(@remote_node) == []
+      assert EvoDash.NodeContext.list_processes_result(@remote_node, []) == {:error, :nodedown}
+
+      Process.put(:node_context_process_rpc, fn _n, _m, _f, _a -> {:ok, []} end)
+      assert EvoDash.NodeContext.list_processes_result(@remote_node, []) == {:ok, []}
 
       Process.put(:node_context_process_rpc, fn _n, _m, _f, _a -> {:ok, %{not: :a_list}} end)
       assert EvoDash.NodeContext.list_processes(@remote_node) == []

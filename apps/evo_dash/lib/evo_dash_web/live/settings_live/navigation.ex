@@ -122,16 +122,21 @@ defmodule EvoDashWeb.SettingsLive.Navigation do
   Returns `"/settings"` for a nil category. `params` is the map delivered to
   `handle_params/3` (string or atom `:node` keys both work).
   """
-  def path(category, params) when is_atom(category) and not is_nil(category) do
+  def path(category, params, settings_path \\ @settings_path)
+
+  def path(category, params, settings_path) when is_atom(category) and not is_nil(category) do
     query = "category=" <> URI.encode_www_form(Atom.to_string(category))
 
     case node_param(params) do
-      nil -> @settings_path <> "?" <> query
-      node -> @settings_path <> "?" <> query <> "&node=" <> URI.encode_www_form(node)
+      nil -> settings_path <> "?" <> query
+      node -> settings_path <> "?" <> query <> "&node=" <> URI.encode_www_form(node)
     end
   end
 
-  def path(_category, _params), do: @settings_path
+  def path(_category, _params, settings_path), do: settings_path
+
+  @doc "Categories that configure the browser or the server hosting the current dashboard."
+  def client_category?(category), do: category in [:appearance, :remote_connections]
 
   # ───────────────────────────────────────────────────────────────────────────
   # Internals

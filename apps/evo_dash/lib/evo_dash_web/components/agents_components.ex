@@ -71,12 +71,14 @@ defmodule EvoDashWeb.AgentsComponents do
                  the children trunk (left-2.5 = 10px) running down the content row.
                  xl+ (flex-row): boxes live in their own column right of the path info,
                  so the trunk never reaches them — keep the indent at pl-0. -->
-            <div class="flex flex-wrap gap-2 flex-1 mt-1 xl:mt-0 pl-7 xl:pl-0">
+            <div class="mt-1 flex min-w-0 flex-1 flex-wrap gap-2 ps-7 xl:mt-0 xl:ps-0">
               <%= for agent <- node.agents do %>
-                <div
+                <button
                   id={"agent-card-#{agent.id}"}
+                  type="button"
+                  aria-pressed={to_string(@selected_id == agent.id)}
                   class={[
-                    "flex flex-col gap-1 p-2 rounded-xl border shadow-sm transition-[background-color,border-color,color,box-shadow,filter,transform] duration-300 motion-reduce:transition-none motion-reduce:transform-none cursor-pointer hover:shadow-lg hover:shadow-primary/20 hover:brightness-95 min-w-[120px] sm:min-w-[140px]",
+                    "flex min-w-0 max-w-full flex-col gap-1 p-2 text-start focus-visible:outline-2 focus-visible:outline-primary-standalone rounded-xl border shadow-sm transition-[background-color,border-color,color,box-shadow,filter,transform] duration-300 motion-reduce:transition-none motion-reduce:transform-none cursor-pointer hover:shadow-lg hover:shadow-primary/20 hover:brightness-95 w-36 sm:w-40",
                     agent_status_bg(agent.status),
                     agent_status_border(agent.status),
                     @selected_id == agent.id &&
@@ -89,14 +91,14 @@ defmodule EvoDashWeb.AgentsComponents do
                   phx-click="select_agent"
                   phx-value-id={agent.id}
                 >
-                  <div class="flex items-center gap-2 justify-between">
-                    <div class="flex items-center gap-1.5">
+                  <span class="flex items-center gap-2 justify-between">
+                    <span class="flex items-center gap-1.5">
                       <.icon
                         name={agent_status_icon(agent.status)}
                         class={"size-4 #{agent_status_color(agent.status)}"}
                       />
                       <span class="font-bold text-sm">#{agent.task_local_id || agent.id}</span>
-                    </div>
+                    </span>
                     <span class={[
                       "text-[10px] px-1.5 py-0.5 rounded uppercase font-bold transition-colors duration-500",
                       agent_status_color(agent.status),
@@ -104,25 +106,25 @@ defmodule EvoDashWeb.AgentsComponents do
                     ]}>
                       {agent_status_label(agent.status)}
                     </span>
-                  </div>
+                  </span>
 
-                  <div class="flex items-center justify-between gap-2">
-                    <div class="text-xs text-base-content/80 truncate">
+                  <span class="flex items-center justify-between gap-2">
+                    <span class="min-w-0 text-xs text-base-content/80 truncate">
                       {format_module_name(agent.agent_module)}
-                    </div>
-                    <div class="flex items-center gap-1">
+                    </span>
+                    <span class="flex items-center gap-1">
                       <span
-                        class="text-xs text-base-content/70 font-mono"
+                        class="min-w-0 truncate text-xs text-base-content/70 font-mono"
                         title={"Task ##{agent.task_number || agent.task_id}"}
                       >T{agent.task_number || agent.task_id}</span>
                       <%= if agent.retries > 0 do %>
                         <span class="badge badge-warning badge-sm">Retry {agent.retries}</span>
                       <% end %>
-                    </div>
-                  </div>
+                    </span>
+                  </span>
 
                   <%= if agent.has_children do %>
-                    <div class="text-xs text-base-content/70">
+                    <span class="text-xs text-base-content/70">
                       {dngettext(
                         "default",
                         "%{count} child",
@@ -130,9 +132,9 @@ defmodule EvoDashWeb.AgentsComponents do
                         length(agent.children),
                         count: length(agent.children)
                       )}
-                    </div>
+                    </span>
                   <% end %>
-                </div>
+                </button>
               <% end %>
             </div>
           <% end %>

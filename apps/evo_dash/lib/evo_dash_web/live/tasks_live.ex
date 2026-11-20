@@ -53,6 +53,15 @@ defmodule EvoDashWeb.TasksLive do
       current_page={:tasks}
       config_status={@config_status}
       current_node_id={@current_node_id}
+      remote_targets={assigns[:remote_targets] || []}
+      connection_statuses={assigns[:connection_statuses] || %{}}
+      workbench_project={assigns[:workbench_project]}
+      workbench_git_project={
+        if @current_node_id || !assigns[:workbench_remote_requested],
+          do: assigns[:workbench_project]
+      }
+      workbench_task={assigns[:focused_task_id]}
+      workbench_title={assigns[:workbench_title]}
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
       session_list={assigns[:session_list] || []}
@@ -68,15 +77,21 @@ defmodule EvoDashWeb.TasksLive do
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
-        <!-- Filter Bar -->
-        <div class="rounded-lg border border-base-300 bg-base-100 p-3 sm:p-4 mb-4">
+        <h1 :if={!assigns[:focused_task_id]} class="text-lg font-semibold mb-3">
+          {gettext("Task History")}
+        </h1>
+        <div
+          :if={!assigns[:focused_task_id]}
+          class="rounded-lg border border-base-300 bg-base-100 p-3 sm:p-4 mb-4"
+        >
           <form id="task-filters" phx-submit="noop">
-            <div class="flex flex-col sm:flex-row gap-3">
+            <div class="task-history-filters">
               <!-- Status Filter -->
               <div class="form-control">
                 <select
                   name="status_filter"
-                  class="select select-bordered select-md rounded-md bg-base-100 sm:w-48"
+                  aria-label={gettext("Status")}
+                  class="select select-bordered select-sm w-full min-w-0"
                   phx-change="filter_tasks"
                 >
                   <option value="all" selected={@status_filter == "all"}>
@@ -122,7 +137,8 @@ defmodule EvoDashWeb.TasksLive do
               <div class="form-control">
                 <select
                   name="session_mode_filter"
-                  class="select select-bordered select-md rounded-md bg-base-100 sm:w-48"
+                  aria-label={gettext("All task kinds")}
+                  class="select select-bordered select-sm w-full min-w-0"
                   phx-change="filter_session_mode"
                 >
                   <option value="all" selected={@session_mode_filter == "all"}>
@@ -143,7 +159,8 @@ defmodule EvoDashWeb.TasksLive do
               <div class="form-control">
                 <select
                   name="project_filter"
-                  class="select select-bordered select-md rounded-md bg-base-100 sm:w-48"
+                  aria-label={gettext("All Projects")}
+                  class="select select-bordered select-sm w-full min-w-0"
                   phx-change="filter_tasks"
                 >
                   <option value="all" selected={@project_filter == "all"}>
@@ -161,7 +178,8 @@ defmodule EvoDashWeb.TasksLive do
               <div class="form-control">
                 <select
                   name="review_filter"
-                  class="select select-bordered select-md rounded-md bg-base-100 sm:w-48"
+                  aria-label={gettext("All Reviews")}
+                  class="select select-bordered select-sm w-full min-w-0"
                   phx-change="filter_review"
                 >
                   <option value="all" selected={@review_status_filter == "all"}>
@@ -181,9 +199,9 @@ defmodule EvoDashWeb.TasksLive do
                   </option>
                 </select>
               </div>
-
-              <!-- Search -->
-              <div class="form-control flex-1">
+            </div>
+            <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+              <div class="min-w-0 grow basis-56">
                 <div class="relative">
                   <.icon
                     name="hero-magnifying-glass"
@@ -193,8 +211,9 @@ defmodule EvoDashWeb.TasksLive do
                   <input
                     type="text"
                     name="search_query"
+                    aria-label={gettext("Search by task ID, prompt, objective, or response...")}
                     value={@search_query}
-                    class="input input-bordered input-md rounded-md bg-base-100 pl-10 w-full shadow-sm"
+                    class="input input-bordered input-sm pl-9 w-full"
                     placeholder={gettext("Search by task ID, prompt, objective, or response...")}
                     phx-change="search_tasks"
                     phx-debounce="200"
@@ -203,7 +222,7 @@ defmodule EvoDashWeb.TasksLive do
               </div>
 
               <!-- Actions -->
-              <div class="flex items-center gap-2 shrink-0">
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <%!-- 勾选后显示 Home 聊天页(自省智能体, :reflect 仓库外聊天任务)产生的聊天任务 --%>
                 <label class="label cursor-pointer gap-2">
                   <input
@@ -218,7 +237,7 @@ defmodule EvoDashWeb.TasksLive do
                 </label>
                 <button
                   type="button"
-                  class="btn btn-ghost btn-md"
+                  class="btn btn-ghost btn-sm"
                   phx-click="reset_filters"
                   title={gettext("Reset all filters")}
                 >
@@ -230,11 +249,11 @@ defmodule EvoDashWeb.TasksLive do
 
           <!-- Active filters indicator -->
           <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" or @session_mode_filter != "all" do %>
-            <div class="flex items-center gap-2 mt-3 pt-3 border-t border-base-300">
+            <div class="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-base-300">
               <span class="text-xs text-base-content/70">{gettext("Active filters:")}</span>
               <%= if @status_filter != "all" do %>
                 <span class="badge badge-primary gap-1 rounded-md">
-                  {@status_filter}
+                  {task_status_label(@status_filter)}
                   <button
                     phx-click="clear_filter"
                     phx-value-filter="status"
@@ -302,7 +321,7 @@ defmodule EvoDashWeb.TasksLive do
            count flashes "0 tasks found" during every filter/navigation; also
            hidden when a failed load left no rows at all, where the count would
            contradict the error block below) -->
-        <%= if not @tasks_loading and not (@tasks_error != nil and @filtered_tasks == []) do %>
+        <%= if !assigns[:focused_task_id] and not @tasks_loading and not (@tasks_error != nil and @filtered_tasks == []) do %>
           <div class="flex items-center justify-between mb-4">
             <p class="text-sm text-base-content/60">
               {dngettext(
@@ -363,8 +382,19 @@ defmodule EvoDashWeb.TasksLive do
               <% else %>
                 <div class="text-center py-12 sm:py-16 text-base-content/70">
                   <.icon name="hero-inbox" class="size-10 mx-auto mb-4 text-base-content/40" />
-                  <p class="text-lg font-medium">{gettext("No tasks found")}</p>
-                  <p class="text-sm mt-1">
+                  <h2 class="text-lg font-medium">
+                    {if assigns[:focused_task_id],
+                      do: gettext("Task not found"),
+                      else: gettext("No tasks found")}
+                  </h2>
+                  <.link
+                    :if={assigns[:focused_task_id]}
+                    navigate={with_node_param(~p"/tasks", @current_node_id)}
+                    class="btn btn-ghost btn-sm mt-3"
+                  >
+                    {gettext("Task History")}
+                  </.link>
+                  <p :if={!assigns[:focused_task_id]} class="text-sm mt-1">
                     <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" or @session_mode_filter != "all" or (@total_count > 0 and not @show_reflect_tasks) do %>
                       {gettext("Try adjusting your filters or search query.")}
                     <% else %>
@@ -381,6 +411,7 @@ defmodule EvoDashWeb.TasksLive do
                 ]}>
                   <EvoDashWeb.TaskCardComponents.task_card
                     task={task}
+                    focused={assigns[:focused_task_id] == task.id}
                     show_details={MapSet.member?(@expanded_task_ids, task.id)}
                     detail={Map.get(@task_details, task.id)}
                     current_node_id={@current_node_id}
@@ -394,7 +425,7 @@ defmodule EvoDashWeb.TasksLive do
         </div>
 
         <!-- Pagination Controls -->
-        <%= if @total_count > 0 do %>
+        <%= if @total_pages > 1 and is_nil(assigns[:focused_task_id]) do %>
           <% offset = (@current_page - 1) * @page_size %>
           <% range_start = offset + 1 %>
           <% range_end = min(offset + @page_size, @total_count) %>
@@ -447,12 +478,12 @@ defmodule EvoDashWeb.TasksLive do
         <% end %>
 
         <!-- Clear History (moved to bottom for safety) -->
-        <div class="mt-6 flex justify-center sm:justify-end">
+        <div :if={!assigns[:focused_task_id]} class="mt-6 flex justify-center sm:justify-end">
           <button
             type="button"
             class="btn btn-ghost btn-sm text-error gap-1"
             phx-click="clear_task_history"
-            phx-confirm={gettext("Clear all finished task history? This cannot be undone.")}
+            data-confirm={gettext("Clear all finished task history? This cannot be undone.")}
           >
             <.icon name="hero-trash" class="size-3.5" /> {gettext("Clear History")}
           </button>
@@ -661,6 +692,8 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    socket = assign(socket, :page_title, gettext("Task History"))
+
     if connected?(socket) do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
     end
@@ -762,6 +795,19 @@ defmodule EvoDashWeb.TasksLive do
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
       |> assign(:current_path, ~p"/tasks")
+      |> assign(workbench_reconnect_params: Map.take(params, ["task"]))
+      |> assign(
+        focused_task_id: focused_task_id(params["task"]),
+        workbench_remote_requested: params["node"] not in [nil, "local"],
+        workbench_project: nil,
+        workbench_title: nil
+      )
+
+    socket =
+      case socket.assigns.focused_task_id do
+        nil -> socket
+        id -> assign(socket, expanded_task_ids: MapSet.put(socket.assigns.expanded_task_ids, id))
+      end
 
     socket =
       if connected?(socket) do
@@ -801,6 +847,21 @@ defmodule EvoDashWeb.TasksLive do
 
     {:noreply, socket}
   end
+
+  defp focused_task_id(id) when is_binary(id) and byte_size(id) in 1..128, do: id
+  defp focused_task_id(_), do: nil
+
+  defp assign_focused_task(%{assigns: %{focused_task_id: id}} = socket, [%{id: id} = task])
+       when is_binary(id) do
+    opts = task[:opts] || []
+
+    assign(socket,
+      workbench_project: task[:project_path],
+      workbench_title: opts[:objective] || opts[:prompt]
+    )
+  end
+
+  defp assign_focused_task(socket, _), do: socket
 
   @impl true
   def handle_info({:node_selected, node_id}, socket) do
@@ -886,10 +947,15 @@ defmodule EvoDashWeb.TasksLive do
         {:ok, m} ->
           # :reflect tasks are excluded client-side after load (see
           # PageLoad.visible_tasks/2) — the SQL WHERE builder cannot express it.
-          visible = PageLoad.visible_tasks(m.tasks, socket.assigns.show_reflect_tasks)
+          visible =
+            PageLoad.visible_tasks(
+              m.tasks,
+              socket.assigns.show_reflect_tasks or not is_nil(socket.assigns[:focused_task_id])
+            )
 
           socket =
             socket
+            |> assign_focused_task(visible)
             |> assign(:tasks, visible)
             |> assign(:current_page, m.current_page)
             |> assign(:total_count, m.total_count)

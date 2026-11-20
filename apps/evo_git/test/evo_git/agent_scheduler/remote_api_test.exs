@@ -137,6 +137,32 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
     # `:ets.whereis/1` guard in the production code (read_table/1 and
     # lookup_agent_state/1) is simple enough to trust by inspection.
 
+    test "projects only the Assistant root session's conversation context" do
+      workspace = %{path: "/tmp/project", node: node(), node_id: nil, name: "project"}
+
+      spec = %{
+        agent_spec()
+        | agent_module: EvoGit.Agents.SelfReflective,
+          opts: [
+            assistant_conversation_id: 89,
+            assistant_workspace: workspace,
+            unrelated_option: "private"
+          ]
+      }
+
+      meta = %SchedMeta{id: 1, depth: 0, spec: spec, status: :running, parent_id: nil}
+      put_sched_meta(1, meta)
+      put_sched_meta(2, %{meta | id: 2, depth: 1, parent_id: 1})
+      put_agent_state(1, agent_state())
+
+      summaries = Map.new(RemoteAPI.list_agents(), &{&1.id, &1[:assistant_context]})
+
+      assert summaries == %{
+               1 => %{assistant_conversation_id: 89, assistant_workspace: workspace},
+               2 => nil
+             }
+    end
+
     test "returns summaries with all expected keys and native values" do
       meta = %SchedMeta{
         id: 1,

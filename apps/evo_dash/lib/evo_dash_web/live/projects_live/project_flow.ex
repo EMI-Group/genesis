@@ -294,47 +294,34 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   # directory need not exist — `File.mkdir_p/1` creates the whole chain.
   # LOCAL-only: the palette hides "Create New Project" in remote contexts.
   def create_project(socket, %{"path" => path}) do
-    case normalize_project_path(path) do
-      {:error, :blank} ->
-        {:noreply, put_flash(socket, :error, gettext("Invalid project name"))}
+    case create_local_directory(path) do
+      {:ok, expanded} -> register_and_open_project(socket, expanded)
+      {:error, message} -> {:noreply, put_flash(socket, :error, message)}
+    end
+  end
 
+  @doc false
+  def create_local_directory(path) do
+    with {:ok, expanded} <- normalize_project_path(path),
+         {:ok, _name} <- Project.validate_project_name(Path.basename(expanded)) do
+      case File.mkdir_p(expanded) do
+        :ok ->
+          {:ok, expanded}
+
+        {:error, reason} ->
+          {:error,
+           gettext("Could not create directory: %{path} (%{reason})",
+             path: expanded,
+             reason: inspect(reason)
+           )}
+      end
+    else
       {:error, :relative} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("Enter a full path, e.g. D:\\Projects\\myproject or /home/user/myproject")
-         )}
+        {:error,
+         gettext("Enter a full path, e.g. D:\\Projects\\myproject or /home/user/myproject")}
 
-      {:ok, expanded} ->
-        # Root-ish input is rejected here too: Path.basename("/") is "/" (and
-        # a Windows root contains "\\"), so validate_project_name/1 fails.
-        case Project.validate_project_name(Path.basename(expanded)) do
-          {:error, :invalid_name} ->
-            {:noreply, put_flash(socket, :error, gettext("Invalid project name"))}
-
-          {:ok, _sanitized} ->
-            if File.dir?(expanded) do
-              # Project already exists — register/open it.
-              register_and_open_project(socket, expanded)
-            else
-              case File.mkdir_p(expanded) do
-                :ok ->
-                  register_and_open_project(socket, expanded)
-
-                {:error, reason} ->
-                  {:noreply,
-                   put_flash(
-                     socket,
-                     :error,
-                     gettext("Could not create directory: %{path} (%{reason})",
-                       path: expanded,
-                       reason: inspect(reason)
-                     )
-                   )}
-              end
-            end
-        end
+      {:error, _} ->
+        {:error, gettext("Invalid project name")}
     end
   end
 
@@ -696,7 +683,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   # try/rescue.
   defp remote_project_load(node, expanded) do
     if NodeContext.dir?(node, expanded) do
-      mount_point = mount_project_point(node, expanded, Path.basename(expanded))
+      mount_point = mount_project_point(node, expanded, nil)
 
       projects =
         AsyncLoad.filter_absolute_projects_for_node(node, NodeContext.projects(node))

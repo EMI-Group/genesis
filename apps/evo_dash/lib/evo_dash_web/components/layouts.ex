@@ -28,7 +28,7 @@ defmodule EvoDashWeb.Layouts do
 
   attr(:simple_nav, :boolean,
     default: false,
-    doc: "when true, shows simplified nav (brand only)"
+    doc: "when true, renders the page without the workbench navigation"
   )
 
   attr(:current_node, :any, default: nil)
@@ -36,6 +36,16 @@ defmodule EvoDashWeb.Layouts do
   attr(:current_node_name, :string, default: "Local")
   attr(:remote_targets, :list, default: [])
   attr(:connection_statuses, :map, default: %{})
+
+  attr(:workbench_window, :boolean, default: false)
+  attr(:workbench_project, :string, default: nil)
+  attr(:workbench_title, :string, default: nil)
+  attr(:workbench_task, :string, default: nil)
+  attr(:workbench_draft, :string, default: nil)
+  attr(:workbench_draft_project, :string, default: nil)
+  attr(:workbench_git_project, :string, default: nil)
+  attr(:workbench_git_branch, :string, default: nil)
+  attr(:workbench_starting_commit, :string, default: nil)
 
   attr(:running_tasks, :list, default: [])
   attr(:pending_tasks, :list, default: [])
@@ -95,18 +105,63 @@ defmodule EvoDashWeb.Layouts do
 
   slot(:inner_block, required: true)
 
+  def app(%{workbench_window: true} = assigns) do
+    ~H"""
+    <div
+      id="workbench-window-content"
+      phx-hook="WorkbenchWindow"
+      data-accent-color={@accent_color}
+      data-workbench-accent-default={@accent_color}
+    >
+      <main id="main-content" class="workbench-window-page flex flex-col">
+        {render_slot(@inner_block)}
+      </main>
+      <.flash_group flash={@flash} />
+    </div>
+    """
+  end
+
   def app(assigns) do
+    target =
+      EvoDashWeb.WorkbenchComponent.target(assigns.current_node_id, assigns.connection_statuses)
+
+    assigns =
+      assign(assigns,
+        workbench_target: target,
+        workbench_git_available?: is_binary(assigns.workbench_git_project) and not is_nil(target)
+      )
+
     ~H"""
     <div
       class="flex h-dvh overflow-hidden bg-base-200 transition-colors duration-300"
       id="app-layout"
       data-accent-color={@accent_color}
+      data-workbench-accent-default={@accent_color}
+      phx-hook={unless @simple_nav, do: "Workbench"}
+      data-workbench-node={@current_node_id || ""}
+      data-workbench-node-name={if @current_node_id, do: @current_node_name, else: gettext("Local")}
+      data-workbench-project={@workbench_project || ""}
+      data-workbench-title={@workbench_title}
+      data-workbench-page={@current_page}
+      data-workbench-task={@workbench_task}
+      data-workbench-session={@current_session_id}
+      data-workbench-draft={@workbench_draft}
+      data-workbench-draft-project={@workbench_draft_project}
+      data-workbench-git-branch={@workbench_git_branch}
+      data-workbench-starting-commit={@workbench_starting_commit}
+      data-workbench-new-task={gettext("New task")}
+      data-workbench-new-chat={gettext("New conversation")}
+      data-workbench-close={gettext("Close tab")}
+      data-workbench-chats={gettext("Conversations")}
     >
       <%!-- Mobile hamburger button (visible on < lg screens) --%>
-      <div class="lg:hidden fixed top-0 left-0 z-50 p-2">
+      <div :if={!@simple_nav} class="lg:hidden fixed top-0 left-0 z-50 p-1.5">
         <button
           id="sidebar-mobile-toggle"
-          class="p-2 rounded-lg bg-base-200 border border-base-300 text-base-content/70 hover:text-base-content transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
+          type="button"
+          aria-controls="sidebar"
+          aria-expanded="false"
+          class="grid size-11 place-items-center rounded-lg bg-base-200 border border-base-300 text-base-content/70 hover:text-base-content transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
           aria-label={gettext("Toggle navigation")}
         >
           <.icon name="hero-bars-3" class="size-5" />
@@ -115,8 +170,10 @@ defmodule EvoDashWeb.Layouts do
 
       <%!-- Mobile overlay (hidden by default, JS-controlled) --%>
       <div
+        :if={!@simple_nav}
         id="sidebar-overlay"
-        class="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300 lg:hidden"
+        class="fixed inset-0 z-40 bg-black/35 opacity-0 pointer-events-none transition-opacity duration-200 motion-reduce:transition-none lg:hidden"
+        aria-hidden="true"
       >
       </div>
 
@@ -133,13 +190,14 @@ defmodule EvoDashWeb.Layouts do
         node selector lives in the sidebar's bottom bar, leftmost, with its
         dropdown opening upward. --%>
       <aside
+        :if={!@simple_nav}
         id="sidebar"
         data-sidebar-collapsed="false"
         phx-hook="SidebarCollapse"
-        class="fixed lg:relative z-50 h-dvh flex flex-col bg-base-200 border-r border-base-300 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-visible!"
+        class="fixed lg:relative z-50 h-dvh flex flex-col bg-base-200 border-r border-base-300 shadow-sm lg:shadow-none transition-[translate,width] duration-200 ease-out motion-reduce:transition-none w-60 -translate-x-full lg:translate-x-0 overflow-visible!"
       >
         <%!-- Branding --%>
-        <div class="flex items-center h-14 px-4 shrink-0">
+        <div class="flex items-center justify-between gap-2 h-14 px-4 shrink-0">
           <.link
             navigate={with_node_param(~p"/", @current_node_id)}
             class="flex items-center gap-2 rounded-md hover:opacity-80 transition-opacity min-w-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
@@ -161,244 +219,501 @@ defmodule EvoDashWeb.Layouts do
               {gettext("EvoX Genesis")}
             </span>
           </.link>
+          <button
+            id="sidebar-mobile-close"
+            type="button"
+            class="workbench-icon-button shrink-0"
+            aria-label={gettext("Close")}
+          >
+            <.icon name="hero-x-mark" class="size-5" />
+          </button>
         </div>
 
         <%!-- Navigation Links --%>
-        <%= if !@simple_nav do %>
-          <nav class="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
-            <.sidebar_nav_link
-              navigate={with_node_param(~p"/projects", @current_node_id)}
-              current={@current_page == :dashboard}
-              icon="hero-squares-2x2"
-            >{gettext("Projects")}</.sidebar_nav_link>
-            <.sidebar_nav_link
-              navigate={with_node_param(~p"/agents", @current_node_id)}
-              current={@current_page == :agents}
-              icon="hero-server"
-            >{gettext("Agents")}</.sidebar_nav_link>
-            <.sidebar_nav_link
-              navigate={with_node_param(~p"/tasks", @current_node_id)}
-              current={@current_page == :tasks}
-              icon="hero-clipboard-document-list"
-            >{gettext("Tasks")}</.sidebar_nav_link>
-            <%!-- zh_CN: "进程" — 指 Genesis 跟踪的操作系统进程（智能体工具调用与后台任务），不是 Erlang 进程 --%>
-            <.sidebar_nav_link
-              navigate={with_node_param(current_page(:processes), @current_node_id)}
-              current={@current_page == :processes}
-              icon="hero-cpu-chip"
-              data_nav="processes"
-            ><span class="sidebar-label">{gettext("Processes")}</span></.sidebar_nav_link>
-            <.sidebar_nav_link
-              navigate={with_node_param(~p"/settings", @current_node_id)}
-              current={@current_page == :settings}
-              icon="hero-cog-6-tooth"
-            >{gettext("Settings")}</.sidebar_nav_link>
-            <.sidebar_nav_link
-              navigate={with_node_param(~p"/system", @current_node_id)}
-              current={@current_page == :system}
-              icon="hero-server-stack"
-              notification={update_status_notification(@update_status)}
-            >{gettext("System")}</.sidebar_nav_link>
-            <%!-- zh_CN: "助手" — 指向 Genesis 助手（理解并操控 Genesis 的代理）聊天页面的侧边栏入口 --%>
+        <nav class="workbench-sidebar-nav flex-1 px-2 py-2 overflow-y-auto">
+          <.live_component
+            module={EvoDashWeb.WorkbenchComponent}
+            id="workbench-projects"
+            mode={:projects}
+            patch_links={@current_page == :dashboard}
+            node_id={@current_node_id}
+            targets={@remote_targets}
+            statuses={@connection_statuses}
+            project={@workbench_project}
+            active={@running_tasks ++ @pending_tasks}
+            sessions={unless @session_list_loading, do: @session_list}
+            current_task={@workbench_task}
+            current_session={@current_session_id}
+          />
+          <div class="workbench-sidebar-utilities">
             <.sidebar_nav_link
               navigate={with_node_param(~p"/assistant", @current_node_id)}
               current={@current_page == :assistant}
-              icon="hero-chat-bubble-left-right"
+              icon="hero-sparkles"
             >{gettext("Assistant")}</.sidebar_nav_link>
-
-            <%!-- Task Indicators Section --%>
-            <div :if={@running_tasks != [] or @pending_tasks != []} class="pt-5 mt-4">
-              <div class="px-3 mb-3 mt-1">
-                <span class="text-sm font-semibold uppercase tracking-wider text-base-content/60 sidebar-label">
-                  {gettext("Active Tasks")}
-                </span>
-              </div>
-              <div class="space-y-1">
-                <%!-- Interactive agent sessions live in their OWN group, above
+            <details
+              class="workbench-tools"
+              open={
+                is_nil(@workbench_task) and
+                  @current_page in [:agents, :tasks, :processes, :settings, :system]
+              }
+            >
+              <summary class="workbench-row">
+                <.icon name="hero-ellipsis-horizontal" class="size-5 shrink-0" />
+                <span class="sidebar-label">{gettext("Tools")}</span>
+              </summary>
+              <.sidebar_nav_link
+                navigate={with_node_param(~p"/agents", @current_node_id)}
+                current={@current_page == :agents}
+                icon="hero-server"
+              >{gettext("Agents")}</.sidebar_nav_link>
+              <.sidebar_nav_link
+                navigate={with_node_param(~p"/tasks", @current_node_id)}
+                current={@current_page == :tasks}
+                icon="hero-clipboard-document-list"
+              >{gettext("Tasks")}</.sidebar_nav_link>
+              <%!-- zh_CN: "进程" — 指 Genesis 跟踪的操作系统进程（智能体工具调用与后台任务），不是 Erlang 进程 --%>
+              <.sidebar_nav_link
+                navigate={with_node_param(current_page(:processes), @current_node_id)}
+                current={@current_page == :processes}
+                icon="hero-cpu-chip"
+                data_nav="processes"
+              ><span class="sidebar-label">{gettext("Processes")}</span></.sidebar_nav_link>
+              <.sidebar_nav_link
+                navigate={with_node_param(~p"/system", @current_node_id)}
+                current={@current_page == :system}
+                icon="hero-server-stack"
+                notification={update_status_notification(@update_status)}
+              >{gettext("System")}</.sidebar_nav_link>
+              <%!-- Task Indicators Section --%>
+              <div :if={@running_tasks != [] or @pending_tasks != []} class="pt-5 mt-4">
+                <div class="px-3 mb-3 mt-1">
+                  <span class="text-sm font-semibold uppercase tracking-wider text-base-content/60 sidebar-label">
+                    {gettext("Active Tasks")}
+                  </span>
+                </div>
+                <div class="space-y-1">
+                  <%!-- Interactive agent sessions live in their OWN group, above
                      the per-project one-shot task groups (design record
                      docs/agent-runtime-refactor.md §4.9 — sessions never fall
                      into "Other"). `session_tasks/2` is fed by the same Active
                      Tasks feed as the project rows. --%>
-                <% sessions = session_tasks(@running_tasks, @pending_tasks) %>
-                <%= if sessions != [] do %>
-                  <%!-- Sessions group header --%>
-                  <div class="px-3 pt-2 pb-1 first:pt-0">
-                    <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/70 sidebar-label">
-                      <%!-- zh_CN: 会话 — 指可交互的智能体会话（等待用户输入），不是一次性任务 --%>
-                      <.icon name="hero-chat-bubble-left-right" class="w-3 h-3 shrink-0" />
-                      {gettext("Sessions")}
-                    </span>
-                  </div>
-                  <%!-- Interactive sessions in this group --%>
-                  <%= for task <- sessions do %>
-                    <% awaiting = Map.get(task, :status) == :awaiting_input %>
-                    <% session_sub_line =
-                      if awaiting,
-                        do: gettext("Waiting for you"),
-                        else: format_elapsed(Map.get(task, :started_at)) %>
-                    <.link
-                      navigate={with_node_param(~p"/tasks", @current_node_id)}
-                      data-sidebar-task-link
-                      title={task_label(task) <> " — " <> session_sub_line}
-                      class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-base-content/80 hover:bg-base-300/70 hover:text-base-content transition-colors group"
-                    >
-                      <span class={[
-                        "w-2.5 h-2.5 rounded-full shrink-0",
-                        task_status_dot_class(Map.get(task, :status)),
-                        "animate-pulse"
-                      ]}></span>
-                      <div class="min-w-0 flex-1 sidebar-label">
-                        <span class="block truncate group-hover:text-base-content transition-colors">
-                          {task_label(task)}
-                        </span>
-                        <span class="block text-xs text-base-content/60 mt-0.5">
-                          {session_sub_line}
-                        </span>
-                      </div>
-                    </.link>
+                  <% sessions = session_tasks(@running_tasks, @pending_tasks) %>
+                  <%= if sessions != [] do %>
+                    <%!-- Sessions group header --%>
+                    <div class="px-3 pt-2 pb-1 first:pt-0">
+                      <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/70 sidebar-label">
+                        <%!-- zh_CN: 会话 — 指可交互的智能体会话（等待用户输入），不是一次性任务 --%>
+                        <.icon name="hero-chat-bubble-left-right" class="w-3 h-3 shrink-0" />
+                        {gettext("Sessions")}
+                      </span>
+                    </div>
+                    <%!-- Interactive sessions in this group --%>
+                    <%= for task <- sessions do %>
+                      <% awaiting = Map.get(task, :status) == :awaiting_input %>
+                      <% session_sub_line =
+                        if awaiting,
+                          do: gettext("Waiting for you"),
+                          else: format_elapsed(Map.get(task, :started_at)) %>
+                      <.link
+                        navigate={with_node_param(~p"/tasks", @current_node_id)}
+                        data-sidebar-task-link
+                        title={task_label(task) <> " — " <> session_sub_line}
+                        class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-base-content/80 hover:bg-base-300/70 hover:text-base-content transition-colors group"
+                      >
+                        <span class={[
+                          "w-2.5 h-2.5 rounded-full shrink-0",
+                          task_status_dot_class(Map.get(task, :status)),
+                          "animate-pulse"
+                        ]}></span>
+                        <div class="min-w-0 flex-1 sidebar-label">
+                          <span class="block truncate group-hover:text-base-content transition-colors">
+                            {task_label(task)}
+                          </span>
+                          <span class="block text-xs text-base-content/60 mt-0.5">
+                            {session_sub_line}
+                          </span>
+                        </div>
+                      </.link>
+                    <% end %>
                   <% end %>
-                <% end %>
-                <%= for {project_name, tasks} <- group_tasks_by_project(@running_tasks, @pending_tasks) do %>
-                  <%!-- Project group header --%>
-                  <div class="px-3 pt-2 pb-1 first:pt-0">
-                    <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/70 sidebar-label">
-                      <.icon name="hero-folder" class="w-3 h-3 shrink-0" />
-                      {project_name}
-                    </span>
-                  </div>
-                  <%!-- Tasks in this group --%>
-                  <%= for task <- tasks do %>
-                    <%!-- `is_running` = LIVE (not finished) and therefore links to
+                  <%= for {project_name, tasks} <- group_tasks_by_project(@running_tasks, @pending_tasks) do %>
+                    <%!-- Project group header --%>
+                    <div class="px-3 pt-2 pb-1 first:pt-0">
+                      <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/70 sidebar-label">
+                        <.icon name="hero-folder" class="w-3 h-3 shrink-0" />
+                        {project_name}
+                      </span>
+                    </div>
+                    <%!-- Tasks in this group --%>
+                    <%= for task <- tasks do %>
+                      <%!-- `is_running` = LIVE (not finished) and therefore links to
                          the agent inspector; it covers the pause pair because
                          `:paused`/`:pausing` are NON-terminal, so they must NEVER
                          be titled or routed like a reviewable finished task. --%>
-                    <% is_running =
-                      task.status in [:running, :pending, :finalizing, :cancelling, :pausing, :paused] %>
-                    <.link
-                      navigate={
-                        if is_running,
-                          do: with_node_param(~p"/agents", @current_node_id),
-                          else: with_node_param(~p"/review/#{task.id}", @current_node_id)
-                      }
-                      data-sidebar-task-link
-                      title={task_label(task) <> " — " <> (if is_running, do: format_elapsed(task.started_at), else: gettext("completed") <> " " <> format_elapsed(task.finished_at))}
-                      class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-base-content/80 hover:bg-base-300/70 hover:text-base-content transition-colors group"
-                    >
-                      <span
-                        class={[
-                          "w-2.5 h-2.5 rounded-full shrink-0",
-                          task_status_dot_class(task.status),
-                          pulsing_status?(task.status) && "animate-pulse"
-                        ]}
-                        title={
+                      <% is_running =
+                        task.status in [
+                          :running,
+                          :pending,
+                          :finalizing,
+                          :cancelling,
+                          :pausing,
+                          :paused
+                        ] %>
+                      <.link
+                        navigate={
                           if is_running,
-                            do: active_status_title(task.status),
-                            else: gettext("Pending Review")
+                            do: with_node_param(~p"/agents", @current_node_id),
+                            else: with_node_param(~p"/review/#{task.id}", @current_node_id)
                         }
-                      ></span>
-                      <div class="min-w-0 flex-1 sidebar-label">
-                        <span class="block truncate group-hover:text-base-content transition-colors">
-                          {task_label(task)}
-                        </span>
-                        <span class="block text-xs text-base-content/60 mt-0.5">
-                          <%= if is_running do %>
-                            {format_elapsed(task.started_at)}
-                          <% else %>
-                            {gettext("completed")} {format_elapsed(task.finished_at)}
-                          <% end %>
-                        </span>
-                      </div>
-                    </.link>
+                        data-sidebar-task-link
+                        title={task_label(task) <> " — " <> (if is_running, do: format_elapsed(task.started_at), else: gettext("completed") <> " " <> format_elapsed(task.finished_at))}
+                        class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-base-content/80 hover:bg-base-300/70 hover:text-base-content transition-colors group"
+                      >
+                        <span
+                          class={[
+                            "w-2.5 h-2.5 rounded-full shrink-0",
+                            task_status_dot_class(task.status),
+                            pulsing_status?(task.status) && "animate-pulse"
+                          ]}
+                          title={
+                            if is_running,
+                              do: active_status_title(task.status),
+                              else: gettext("Pending Review")
+                          }
+                        ></span>
+                        <div class="min-w-0 flex-1 sidebar-label">
+                          <span class="block truncate group-hover:text-base-content transition-colors">
+                            {task_label(task)}
+                          </span>
+                          <span class="block text-xs text-base-content/60 mt-0.5">
+                            <%= if is_running do %>
+                              {format_elapsed(task.started_at)}
+                            <% else %>
+                              {gettext("completed")} {format_elapsed(task.finished_at)}
+                            <% end %>
+                          </span>
+                        </div>
+                      </.link>
+                    <% end %>
                   <% end %>
-                <% end %>
+                </div>
               </div>
-            </div>
-
-            <%!-- Conversations Section — the Genesis Assistant's conversation
-                 list, rendered on EVERY page (the Assistant page no longer
-                 owns a rail of its own). Always rendered, never gated on the
-                 Active Tasks list being non-empty. The rows are loaded and
-                 stale-guarded by EvoDashWeb.LiveHooks.NodeAware, which owns the
-                 `{{:session_list_loaded, seq, node}, result}` message. --%>
-            <div class="pt-5 mt-4">
-              <div class="px-3 pt-2 pb-1">
-                <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/70 sidebar-label">
-                  <%!-- zh_CN: "对话" — 指 Genesis 助手的会话列表 --%>
-                  <.icon name="hero-chat-bubble-left-right" class="w-3 h-3 shrink-0" />
-                  {gettext("Conversations")}
-                </span>
-              </div>
+            </details>
+            <details
+              id="workbench-conversations"
+              class="workbench-tools"
+              open={@current_page == :assistant}
+            >
+              <summary class="workbench-row">
+                <.icon name="hero-chat-bubble-left-right" class="size-5 shrink-0" />
+                <span class="sidebar-label">{gettext("Conversations")}</span>
+              </summary>
               {EvoDashWeb.HomeLive.SessionList.session_list(assigns)}
-            </div>
-          </nav>
+            </details>
+          </div>
+        </nav>
 
-          <%!-- Bottom section: Node selector + Language + Theme + Collapse --%>
-          <div class="px-3 py-3 border-t border-base-300 shrink-0">
-            <div data-sidebar-bottom-bar class="flex items-center justify-between gap-1">
-              <div data-sidebar-bottom-group class="flex items-center gap-1">
-                <%!-- Node Selector (remote server switch — dropdown opens upward) --%>
-                <.live_component
-                  module={EvoDashWeb.NodeSelectorComponent}
-                  id="node-selector"
-                  current_node_id={@current_node_id}
-                  current_node_name={@current_node_name}
-                  drop_up={true}
-                />
-              </div>
-              <div data-sidebar-bottom-group class="flex items-center gap-1">
-                <.language_selector drop_up={true} />
-                <.theme_toggle_compact drop_up={true} />
-                <button
-                  id="sidebar-collapse-toggle"
-                  class="p-1.5 rounded-lg text-base-content/70 hover:text-base-content hover:bg-base-300 transition-colors hidden lg:flex focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
-                  title={gettext("Collapse sidebar")}
-                >
-                  <.icon name="hero-chevron-double-left" class="w-4 h-4" />
-                </button>
-              </div>
+        <div class="px-3 py-3 border-t border-base-300 shrink-0">
+          <div data-sidebar-bottom-bar class="flex items-center justify-between gap-1">
+            <div data-sidebar-bottom-group class="flex items-center gap-1">
+              <button
+                type="button"
+                id="workbench-settings"
+                class="workbench-row workbench-settings-button"
+                data-workbench-settings={~p"/settings/window"}
+                aria-label={gettext("Settings")}
+                title={gettext("Settings")}
+              >
+                <.icon name="hero-cog-6-tooth" class="size-5 shrink-0" />
+                <span class="sidebar-label">{gettext("Settings")}</span>
+                <span
+                  :if={@config_status && !@config_status.ok?}
+                  class="workbench-settings-indicator"
+                  title={gettext("Missing Configuration")}
+                  aria-label={gettext("Missing Configuration")}
+                ></span>
+              </button>
+            </div>
+            <div data-sidebar-bottom-group class="flex items-center gap-1">
+              <button
+                id="sidebar-collapse-toggle"
+                class="p-1.5 rounded-lg text-base-content/70 hover:text-base-content hover:bg-base-300 transition-colors hidden lg:flex focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
+                title={gettext("Collapse sidebar")}
+              >
+                <.icon name="hero-chevron-double-left" class="w-4 h-4" />
+              </button>
             </div>
           </div>
-        <% end %>
+        </div>
       </aside>
+      <div
+        :if={!@simple_nav}
+        id="workbench-left-resize"
+        class="workbench-resizer"
+        data-workbench-resize="left"
+        role="separator"
+        tabindex="0"
+        aria-orientation="vertical"
+        aria-controls="sidebar"
+        aria-label={gettext("Resize project sidebar")}
+      >
+      </div>
 
-      <%!-- Main Content Area --%>
-      <div id="main-scroll" class="flex-1 flex flex-col overflow-auto min-w-0 z-0 bg-base-100">
-        <%!-- The DesktopQuit hook wrapper listens for the Tauri shell's
+      <div class="workbench-main">
+        <div class="workbench-center">
+          <header :if={!@simple_nav} class="workbench-top">
+            <div class="workbench-tab-rail">
+              <div
+                id="workbench-tabs"
+                class="workbench-tabs"
+                phx-update="ignore"
+                role="navigation"
+                aria-label={gettext("Open tabs")}
+              >
+              </div>
+              <details
+                id="workbench-create"
+                class="workbench-create"
+                phx-mounted={JS.ignore_attributes("open")}
+              >
+                <summary
+                  id="workbench-create-toggle"
+                  class="workbench-icon-button"
+                  aria-label={gettext("Create")}
+                  title={gettext("Create")}
+                >
+                  <.icon name="hero-plus" class="size-5" />
+                </summary>
+                <div class="workbench-create-menu">
+                  <%= if @workbench_project && @workbench_target do %>
+                    <.link
+                      navigate={
+                        EvoDashWeb.WorkbenchComponent.navigation_path("/projects", @current_node_id,
+                          project: @workbench_project,
+                          wb_task: "1"
+                        )
+                      }
+                      class="workbench-row"
+                      data-workbench-new-task
+                    >
+                      <.icon name="hero-clipboard-document" class="size-4 shrink-0" />
+                      {gettext("New task")}
+                    </.link>
+                    <button type="button" class="workbench-row" data-workbench-new-conversation>
+                      <.icon name="hero-chat-bubble-left" class="size-4 shrink-0" />
+                      {gettext("New conversation")}
+                    </button>
+                  <% else %>
+                    <button type="button" class="workbench-row" data-workbench-project-window="create">
+                      <.icon name="hero-plus" class="size-4 shrink-0" />
+                      {gettext("Create New Project")}
+                    </button>
+                    <button type="button" class="workbench-row" data-workbench-project-window="open">
+                      <.icon name="hero-folder-open" class="size-4 shrink-0" />
+                      {gettext("Open Existing Project")}
+                    </button>
+                  <% end %>
+                </div>
+              </details>
+            </div>
+            <button
+              :if={@workbench_git_available?}
+              id="workbench-git-toggle"
+              type="button"
+              class="workbench-icon-button workbench-git-toggle"
+              aria-controls="workbench-git"
+              aria-expanded="false"
+              title={gettext("Project Git")}
+              aria-label={gettext("Project Git")}
+            >
+              <.icon name="hero-code-bracket" class="size-4 shrink-0" />
+              <span id="workbench-git-toggle-label" phx-update="ignore">Git</span>
+              <.icon name="hero-chevron-down" class="size-3 shrink-0" />
+            </button>
+            <button
+              :if={@workbench_project}
+              id="workbench-history-toggle"
+              type="button"
+              class="workbench-icon-button"
+              aria-controls="workbench-history"
+              aria-expanded="false"
+              title={gettext("Project history")}
+              aria-label={gettext("Project history")}
+            >
+              <.icon name="hero-clock" class="size-5" />
+            </button>
+          </header>
+          <%!-- Main Content Area --%>
+          <div class="workbench-content-stack">
+            <div id="main-scroll" class="flex-1 flex flex-col overflow-auto min-w-0 z-0 bg-base-100">
+              <%!-- The DesktopQuit hook wrapper listens for the Tauri shell's
              "quit-requested" tray event on every page: hooks only mount on
              elements inside the LiveView root DOM, and this wrapper is part of
              the shared app layout, so it is re-established on every navigation. --%>
-        <div
-          id="desktop-quit-hook"
-          phx-hook="DesktopQuit"
-          class="flex-1 flex flex-col min-w-0 min-h-0"
-        >
-          <main
-            id="main-content"
-            class="flex-1 min-h-0 px-4 sm:px-5 lg:px-6 pt-16 pb-4 lg:pt-4 w-full bg-base-100"
-            phx-hook="NodeSwitchFade"
-            data-node-id={@current_node_id || "local"}
-          >
-            {render_slot(@inner_block)}
-          </main>
-        </div>
-        <%!-- The UpdateStatus hook wrapper bridges the Tauri updater to the
+              <div
+                id="desktop-quit-hook"
+                phx-hook="DesktopQuit"
+                class="flex-1 flex flex-col min-w-0 min-h-0"
+              >
+                <main
+                  id="main-content"
+                  class="flex-1 min-h-0 px-4 sm:px-5 lg:px-6 pt-4 pb-4 w-full bg-base-100"
+                  phx-hook="NodeSwitchFade"
+                  data-node-id={@current_node_id || "local"}
+                >
+                  {render_slot(@inner_block)}
+                </main>
+              </div>
+              <%!-- The UpdateStatus hook wrapper bridges the Tauri updater to the
              server (startup + periodic checks, phx:update_* event listeners).
              Hooks only mount on elements inside the LiveView root DOM, and
              this wrapper is part of the shared app layout, so it is
              re-established on every page navigation. A no-op outside the
              Tauri desktop shell. --%>
-        <div id="update-status-hook" phx-hook="UpdateStatus" />
-        <%!-- The Guide hook wrapper bridges the core guide_user tool broadcasts
+              <div id="update-status-hook" phx-hook="UpdateStatus" />
+              <%!-- The Guide hook wrapper bridges the core guide_user tool broadcasts
              to the floating Genesis Guide panel. Hooks only mount on elements
              inside the LiveView root DOM, and this wrapper is part of the
              shared app layout, so it is re-established on every page
              navigation. --%>
-        <div id="guide-hook" phx-hook="Guide" />
+              <div id="guide-hook" phx-hook="Guide" />
+            </div>
+            <div :if={!@simple_nav && @workbench_git_available?} id="workbench-git-diff-host" />
+          </div>
+        </div>
+
+        <button
+          :if={!@simple_nav}
+          id="workbench-history-overlay"
+          type="button"
+          tabindex="-1"
+          aria-hidden="true"
+          hidden
+        ></button>
+        <div
+          :if={!@simple_nav}
+          id="workbench-right-resize"
+          class="workbench-resizer"
+          data-workbench-resize="right"
+          role="separator"
+          tabindex="0"
+          aria-orientation="vertical"
+          aria-controls="workbench-history workbench-git"
+          aria-label={gettext("Resize right sidebar")}
+          hidden
+        >
+        </div>
+        <aside
+          :if={!@simple_nav}
+          id="workbench-history"
+          class="workbench-history"
+          aria-label={gettext("Project history")}
+          hidden
+        >
+          <div class="workbench-section-heading">
+            <div>
+              <div>{gettext("Project history")}</div>
+              <div
+                id="workbench-history-project"
+                phx-update="ignore"
+                class="workbench-history-project"
+              >
+              </div>
+            </div>
+            <div class="flex items-center gap-1">
+              <button
+                :if={@workbench_project && @workbench_target}
+                id="workbench-history-search-toggle"
+                type="button"
+                class="workbench-icon-button"
+                aria-controls="workbench-history-query"
+                aria-expanded="false"
+                title={gettext("Search history")}
+                aria-label={gettext("Search history")}
+              >
+                <.icon name="hero-magnifying-glass" class="size-4" />
+              </button>
+              <button
+                type="button"
+                data-workbench-close-history
+                class="workbench-icon-button"
+                aria-label={gettext("Close history")}
+              >
+                <.icon name="hero-x-mark" class="size-4" />
+              </button>
+            </div>
+          </div>
+          <.live_component
+            module={EvoDashWeb.WorkbenchComponent}
+            id="workbench-history-content"
+            mode={:history}
+            node_id={@current_node_id}
+            target={@workbench_target}
+            project={@workbench_project}
+            active={@running_tasks ++ @pending_tasks}
+            sessions={@session_list || []}
+            sessions_loading={@session_list_loading}
+          />
+        </aside>
+        <aside
+          :if={!@simple_nav && @workbench_project}
+          id="workbench-git"
+          class="workbench-history workbench-git"
+          aria-label={gettext("Project Git")}
+          hidden
+        >
+          <.live_component
+            module={EvoDashWeb.ProjectGit}
+            id="workbench-git-content"
+            node_id={@current_node_id}
+            target={@workbench_target}
+            project={@workbench_git_project}
+            server={workbench_git_server(assigns)}
+          />
+        </aside>
       </div>
 
-      <%!-- Config Warning Banner --%>
+      <.live_component
+        :if={!@simple_nav}
+        module={EvoDashWeb.ProjectWindow}
+        id="workbench-project-window-component"
+        node_id={@current_node_id}
+        targets={@remote_targets}
+        statuses={@connection_statuses}
+      />
+
+      <dialog
+        :if={!@simple_nav}
+        id="workbench-settings-window"
+        class="workbench-window workbench-settings-window"
+        aria-labelledby="workbench-settings-window-title"
+        phx-mounted={JS.ignore_attributes("open")}
+      >
+        <h2 id="workbench-settings-window-title" class="sr-only">{gettext("Settings")}</h2>
+        <button
+          type="button"
+          class="workbench-icon-button workbench-settings-close"
+          data-workbench-close-window
+          aria-label={gettext("Close")}
+        >
+          <.icon name="hero-x-mark" class="size-5" />
+        </button>
+        <div id="workbench-settings-window-panel" phx-update="ignore">
+          <iframe
+            id="workbench-settings-frame"
+            title={gettext("Settings")}
+            referrerpolicy="same-origin"
+          ></iframe>
+        </div>
+      </dialog>
+
+      <%!-- Onboarding configuration warning. The workbench uses the settings indicator. --%>
       <%= if @config_status && not @config_status.ok? do %>
-        <div class="fixed bottom-4 right-4 z-40 w-[calc(100%-2rem)] max-w-sm animate-fade-in-up">
+        <div
+          hidden={!@simple_nav}
+          class="fixed bottom-4 right-4 z-40 w-[calc(100%-2rem)] max-w-sm animate-fade-in-up"
+        >
           <div class="bg-base-100 text-warning rounded-lg shadow-sm border border-warning/30 p-4">
             <div class="flex items-start gap-3">
               <.icon
@@ -414,6 +729,7 @@ defmodule EvoDashWeb.Layouts do
                 </ul>
                 <.link
                   navigate={with_node_param(~p"/settings", @current_node_id)}
+                  data-workbench-settings={if !@simple_nav, do: ~p"/settings/window"}
                   class="text-xs font-medium underline mt-2 inline-block hover:opacity-80"
                 >{gettext("Configure now →")}</.link>
               </div>
@@ -520,6 +836,15 @@ defmodule EvoDashWeb.Layouts do
       <.flash_group flash={@flash} />
     </div>
     """
+  end
+
+  defp workbench_git_server(%{current_node_id: nil}), do: gettext("Local")
+
+  defp workbench_git_server(assigns) do
+    case Enum.find(assigns.remote_targets, &(&1.id == assigns.current_node_id)) do
+      nil -> assigns.current_node_id
+      target -> target.name
+    end
   end
 
   # Extract a display label for a task: objective > prompt > truncated task ID
@@ -696,53 +1021,6 @@ defmodule EvoDashWeb.Layouts do
 
   # Compact theme toggle for sidebar bottom bar — a single button with a dropdown
   # containing the three theme options: system, light, dark.
-  attr(:drop_up, :boolean, default: false)
-
-  defp theme_toggle_compact(assigns) do
-    ~H"""
-    <details class={["dropdown", !@drop_up && "dropdown-end", @drop_up && "dropdown-top"]}>
-      <summary
-        class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-base-300 transition-colors"
-        title={gettext("Change theme")}
-      >
-        <.icon name="hero-swatch" class="size-4" />
-      </summary>
-      <div class={[
-        "dropdown-content",
-        (@drop_up && "mb-2") || "mt-2",
-        "z-50 w-40 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-1"
-      ]}>
-        <div class="flex flex-col gap-0.5">
-          <button
-            class="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-base-200 text-base-content/80"
-            phx-click={JS.dispatch("phx:set-theme")}
-            data-phx-theme="system"
-          >
-            <.icon name="hero-computer-desktop-micro" class="w-4 h-4" />
-            <span>{gettext("System")}</span>
-          </button>
-          <button
-            class="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-base-200 text-base-content/80"
-            phx-click={JS.dispatch("phx:set-theme")}
-            data-phx-theme="light"
-          >
-            <.icon name="hero-sun-micro" class="w-4 h-4" />
-            <span>{gettext("Light")}</span>
-          </button>
-          <button
-            class="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-base-200 text-base-content/80"
-            phx-click={JS.dispatch("phx:set-theme")}
-            data-phx-theme="dark"
-          >
-            <.icon name="hero-moon-micro" class="w-4 h-4" />
-            <span>{gettext("Dark")}</span>
-          </button>
-        </div>
-      </div>
-    </details>
-    """
-  end
-
   @doc """
   Maps current page atom to its route path.
   """

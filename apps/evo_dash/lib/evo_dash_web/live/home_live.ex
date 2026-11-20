@@ -78,6 +78,8 @@ defmodule EvoDashWeb.HomeLive do
   def render(assigns) do
     assigns =
       assigns
+      |> assign_new(:workspace, fn -> nil end)
+      |> assign(:draft_project, Workspace.draft_project(assigns))
       |> assign(:stream_error, Watch.failure(assigns))
       |> assign(:approval_host, ApprovalWorkflow.notification_host(assigns))
 
@@ -86,6 +88,12 @@ defmodule EvoDashWeb.HomeLive do
       flash={@flash}
       current_page={:assistant}
       current_node_id={@current_node_id}
+      remote_targets={assigns[:remote_targets] || []}
+      connection_statuses={assigns[:connection_statuses] || %{}}
+      workbench_project={(@workspace && @workspace.path) || @draft_project}
+      workbench_git_project={@workspace && @workspace.path}
+      workbench_draft={assigns[:workbench_draft]}
+      workbench_draft_project={@draft_project}
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
       pending_tasks={@pending_tasks}
@@ -98,8 +106,11 @@ defmodule EvoDashWeb.HomeLive do
       guide={@guide}
       accent_color={assigns[:accent_color] || "blue"}
     >
-      <div id="assistant-surface" class="assistant-surface">
-        <div class={["assistant-column", (@transcript == [] and @chat_status != :ended) && "is-empty"]}>
+      <div id="assistant-surface" class="assistant-surface h-full min-h-0 w-full">
+        <div class={[
+          "assistant-column relative mx-auto flex h-full min-h-0 w-full max-w-[58rem] flex-col",
+          (@transcript == [] and @chat_status != :ended) && "is-empty justify-center"
+        ]}>
           <!-- The header, answers and composer share one reading column. -->
           <div
             id="chat-header"
@@ -117,8 +128,9 @@ defmodule EvoDashWeb.HomeLive do
             <button
               :if={@transcript != []}
               type="button"
-              phx-click="new_chat"
-              disabled={@chat_status not in [:idle, :ended]}
+              phx-click={if !@workspace, do: "new_chat"}
+              data-workbench-new-conversation={if @workspace, do: ""}
+              disabled={is_nil(@workspace) and @chat_status not in [:idle, :ended]}
               class="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-base-content/70 hover:bg-base-200 hover:text-base-content transition-colors focus-visible:outline-2 focus-visible:outline-primary-standalone disabled:opacity-40 disabled:pointer-events-none shrink-0"
             >
               <.icon name="hero-plus" class="size-4" />
@@ -157,9 +169,9 @@ defmodule EvoDashWeb.HomeLive do
                the normal greeting. -->
             <%= cond do %>
               <% @transcript == [] and @chat_status == :ended -> %>
-                <.session_ended_state />
+                <.session_ended_state scoped?={not is_nil(@workspace)} />
               <% @transcript == [] -> %>
-                <.empty_state source_gate?={false} />
+                <.empty_state />
               <% true -> %>
                 <.message_list
                   transcript={@transcript}
@@ -185,7 +197,7 @@ defmodule EvoDashWeb.HomeLive do
             phx-hook="BrowserNotifications"
             class={[
               "flex h-10 shrink-0 items-center",
-              @transcript == [] and @pending_approvals == [] and "hidden!"
+              (@transcript == [] or @chat_status == :ended) and @pending_approvals == [] and "hidden!"
             ]}
             data-approval-request-ids={Jason.encode!(@approval_host.request_ids)}
             data-approval-scope={@approval_host.scope}
@@ -262,6 +274,8 @@ defmodule EvoDashWeb.HomeLive do
 
   @impl true
   def mount(params, _session, socket) do
+    socket = assign(socket, :page_title, gettext("Genesis Assistant"))
+
     onboarding_needed =
       !connected?(socket) and
         if Code.ensure_loaded?(EvoGit.Config.VersionState) do
@@ -273,7 +287,10 @@ defmodule EvoDashWeb.HomeLive do
     cond do
       connected?(socket) and static_changed?(socket) ->
         # Reconnect with matching CSS/JS before rendering the updated assistant.
-        {:ok, redirect(socket, to: ~p"/assistant?#{Map.take(params, ~w(node session))}")}
+        {:ok,
+         redirect(socket,
+           to: ~p"/assistant?#{Map.take(params, ~w(node session wb_project wb_draft))}"
+         )}
 
       onboarding_needed ->
         {:ok, push_navigate(socket, to: "/welcome")}
@@ -288,8 +305,8 @@ defmodule EvoDashWeb.HomeLive do
         socket =
           socket
           |> assign(base_assigns())
+          |> assign(assistant_client_id: assistant_client_id(socket))
           |> ApprovalWorkflow.init()
-          |> attach_chat()
           |> Uploads.init(&handle_upload_progress/3)
 
         {:ok, socket}
@@ -299,6 +316,7 @@ defmodule EvoDashWeb.HomeLive do
   defp base_assigns do
     %{
       workspace: nil,
+      assistant_client_id: nil,
       assistant_conversation_id: nil,
       workspace_open: false,
       workspace_path: "",
@@ -313,6 +331,7 @@ defmodule EvoDashWeb.HomeLive do
       task_picker: TaskPicker.new(),
       transcript: Transcript.new(),
       chat_draft: "",
+      draft_edited?: false,
       chat_status: :idle,
       chat_task_id: nil,
       chat_agent_id: nil,
@@ -326,6 +345,7 @@ defmodule EvoDashWeb.HomeLive do
       session_mode: nil,
       queued_echoes: [],
       session_attach_seq: 0,
+      session_attach_pending?: false,
       # Push-only delta stream state (`EvoDashWeb.HomeLive.Watch`): the
       # subscribed agent + its seeded `%Delta{}` (nil until the registration
       # snapshot lands), that snapshot's turn meta, and the monotonic attach seq.
@@ -342,7 +362,6 @@ defmodule EvoDashWeb.HomeLive do
       attach_unavailable: false,
       chat_fetch_seq: 0,
       chat_task_fetch_seq: 0,
-      shift_down: false,
       selected_model_id: nil,
       raw_entry_ids: MapSet.new(),
       # after handle_params resolves the node, never against mount's local seed.
@@ -368,7 +387,9 @@ defmodule EvoDashWeb.HomeLive do
       source_check_loading: false,
       source_check_seq: 0,
       source_busy: nil,
-      current_path: ~p"/assistant"
+      current_path: ~p"/assistant",
+      workbench_draft: nil,
+      workbench_draft_key: nil
     }
   end
 
@@ -376,10 +397,23 @@ defmodule EvoDashWeb.HomeLive do
     socket.assigns[:session_mode] == :interactive and not is_nil(socket.assigns[:session_id])
   end
 
-  defp resolve_session(socket, param) do
+  defp resolve_session(socket, param, params) do
+    case ModelSelection.pending_remote?(socket) do
+      true -> socket
+      false -> resolve_session_on_node(socket, param, params)
+    end
+  end
+
+  defp resolve_session_on_node(socket, param, params) do
     case SessionActions.parse_session(param) do
       {:ok, id} ->
-        if id == socket.assigns[:session_id], do: socket, else: reattach_session(socket, id)
+        if id == socket.assigns[:current_session_id],
+          do: socket,
+          else: reattach_session(socket, id)
+
+      :none
+      when is_map_key(params, "wb_draft") and not is_nil(socket.assigns.current_session_id) ->
+        new_workbench_draft(socket)
 
       :none ->
         leave_session(socket)
@@ -387,14 +421,40 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   defp reattach_session(socket, id) do
-    socket = socket |> Uploads.cancel_all() |> TaskPicker.reset()
+    state = cached_conversation(socket, id)
 
-    restored =
-      if connected?(socket) do
-        ChatState.restore(ChatHistory.get_state(id))
-      else
-        ChatState.restore(nil)
+    case state do
+      %{session_mode: :one_shot} ->
+        socket
+        |> reset_chat()
+        |> restore_chat(id, state)
+        |> assign(current_session_id: id, workbench_draft_key: state[:workbench_draft_key])
+        |> assign(ChatState.restore_selection(state, ModelSelection.selection_scope(socket)))
+
+      _ ->
+        attach_interactive_session(socket, id, ChatState.restore(state))
+    end
+  end
+
+  defp cached_conversation(socket, id) do
+    if connected?(socket) do
+      target = socket.assigns.current_node
+
+      case ChatHistory.get_state(id) do
+        %{chat_node: ^target} = state ->
+          state
+
+        state when is_map(state) and target == node() ->
+          if is_nil(state[:chat_node]), do: state
+
+        _ ->
+          nil
       end
+    end
+  end
+
+  defp attach_interactive_session(socket, id, restored) do
+    socket = socket |> Uploads.cancel_all() |> TaskPicker.reset()
 
     socket
     |> assign(
@@ -402,6 +462,8 @@ defmodule EvoDashWeb.HomeLive do
       current_session_id: id,
       chat_id: id,
       session_mode: :interactive,
+      workbench_draft: nil,
+      workbench_draft_key: nil,
       chat_agent_id: id,
       chat_node: socket.assigns[:current_node],
       chat_task_id: nil,
@@ -420,11 +482,12 @@ defmodule EvoDashWeb.HomeLive do
       raw_entry_ids: MapSet.new(),
       pending_attachments: Attachments.clear(),
       chat_draft: restored.chat_draft,
+      draft_edited?: false,
       transcript: restored.transcript,
       chat_status: restore_status(restored.chat_status)
     )
+    |> assign(ChatState.restore_selection(restored, ModelSelection.selection_scope(socket)))
     |> ApprovalWorkflow.init()
-    |> maybe_recover_approvals()
     |> spawn_attach(id)
     |> attach_stream()
   end
@@ -447,12 +510,13 @@ defmodule EvoDashWeb.HomeLive do
   defp restore_status(_status), do: :idle
 
   defp leave_session(socket) do
-    if is_nil(socket.assigns[:session_id]) do
+    if is_nil(socket.assigns[:current_session_id]) do
       socket
     else
       socket
       |> reset_chat()
-      |> attach_chat()
+      |> assign(workbench_draft: nil, workbench_draft_key: nil)
+      |> attach_default_chat()
       |> assign(
         session_id: nil,
         current_session_id: nil,
@@ -477,10 +541,10 @@ defmodule EvoDashWeb.HomeLive do
              SessionActions.load_attach(node, session_id)
            end) do
         {:ok, _pid} ->
-          assign(socket, session_attach_seq: seq)
+          assign(socket, session_attach_seq: seq, session_attach_pending?: true)
 
         {:error, reason} ->
-          settle_attach(socket, {:error, reason})
+          socket |> assign(session_attach_pending?: false) |> settle_attach({:error, reason})
       end
     else
       socket
@@ -505,7 +569,6 @@ defmodule EvoDashWeb.HomeLive do
     socket
     |> ChatState.persist()
     |> maybe_load_sessions()
-    |> maybe_recover_approvals()
   end
 
   defp apply_attach(socket, {:error, reason}), do: settle_attach(socket, {:error, reason})
@@ -514,6 +577,8 @@ defmodule EvoDashWeb.HomeLive do
     do: settle_attach(socket, {:error, :unexpected_attach_result})
 
   defp settle_attach(socket, _result) do
+    socket = assign(socket, workspace_loading: false)
+
     if Watch.stream_active?(socket) do
       socket
     else
@@ -524,6 +589,19 @@ defmodule EvoDashWeb.HomeLive do
       |> ChatState.persist()
     end
   end
+
+  defp restore_attached_context(socket, {:ok, %{summary: %{assistant_context: context}}})
+       when is_map(context) do
+    workspace = Map.get(context, :assistant_workspace, socket.assigns.workspace)
+
+    assign(socket,
+      assistant_conversation_id:
+        context[:assistant_conversation_id] || socket.assigns.assistant_conversation_id,
+      workspace: Workspace.restore(workspace, Workspace.scope(socket.assigns))
+    )
+  end
+
+  defp restore_attached_context(socket, _result), do: socket
 
   defp attach_status(nil, false, _status), do: :ended
 
@@ -609,7 +687,9 @@ defmodule EvoDashWeb.HomeLive do
   def handle_params(params, _url, socket) do
     prev_node = socket.assigns[:current_node]
     prev_node_id = socket.assigns[:current_node_id]
-    socket = NodeAware.assign_node(socket, params)
+
+    socket =
+      socket |> NodeAware.assign_node(params, preserve_unresolved?: true) |> attach_chat(params)
 
     node_changed =
       socket.assigns.model_selection_resolved and
@@ -644,10 +724,15 @@ defmodule EvoDashWeb.HomeLive do
 
     socket =
       socket
-      |> resolve_session(params["session"])
+      |> resolve_session(params["session"], params)
       |> restore_workspace_scope(scope)
+      |> open_workbench_draft(params)
+      |> ChatState.persist()
       |> ModelSelection.assign_model_select()
-      |> assign(current_path: ~p"/assistant")
+      |> assign(
+        current_path: ~p"/assistant",
+        workbench_reconnect_params: Map.take(params, ~w(session wb_project wb_draft))
+      )
       |> maybe_check_source()
       |> maybe_recover_approvals()
       |> TaskTracking.refresh()
@@ -655,10 +740,59 @@ defmodule EvoDashWeb.HomeLive do
     {:noreply, socket}
   end
 
+  defp open_workbench_draft(socket, %{"wb_draft" => draft, "wb_project" => project})
+       when is_binary(draft) and byte_size(draft) == 24 and is_binary(project) do
+    {node_id, target} = Workspace.scope(socket.assigns)
+    key = {node_id, target, project, draft}
+
+    cond do
+      socket.assigns[:workbench_draft_key] == key or socket.assigns[:current_session_id] ->
+        socket
+
+      !connected?(socket) or (node_id && target == node()) ->
+        socket
+
+      true ->
+        existing = ChatHistory.get_draft({:workbench, key}) || one_shot_workbench_chat(key)
+
+        socket =
+          case existing do
+            %{chat_id: id} = state ->
+              socket
+              |> reset_chat()
+              |> restore_chat(id, state)
+              |> assign(
+                ChatState.restore_selection(state, ModelSelection.selection_scope(socket))
+              )
+
+            nil ->
+              socket |> new_workbench_draft() |> assign(workspace: nil)
+          end
+
+        workspace = Workspace.restore(socket.assigns[:workspace], {node_id, target})
+
+        socket
+        |> assign(workbench_draft: draft, workbench_draft_key: key, workspace: workspace)
+        |> Workspace.select_mounted((workspace && workspace.path) || project)
+    end
+  end
+
+  defp open_workbench_draft(socket, _), do: socket
+
+  defp one_shot_workbench_chat(key) do
+    Enum.find_value(ChatHistory.list_chats(), fn id ->
+      case ChatHistory.get_state(id) do
+        %{workbench_draft_key: ^key, session_mode: :one_shot} = state ->
+          if ChatState.conversation?(state), do: Map.put(state, :chat_id, id)
+
+        _ ->
+          nil
+      end
+    end)
+  end
+
   defp restore_workspace_scope(socket, scope) do
-    socket
-    |> assign(workspace: Workspace.restore(socket.assigns[:workspace], scope))
-    |> ChatState.persist()
+    assign(socket, workspace: Workspace.restore(socket.assigns[:workspace], scope))
   end
 
   def handle_event("workspace_toggle", _, socket), do: {:noreply, Workspace.toggle(socket)}
@@ -699,31 +833,8 @@ defmodule EvoDashWeb.HomeLive do
     do: send_chat(socket, socket.assigns[:chat_draft])
 
   def handle_event("chat_input", %{"message" => text}, socket) do
-    {:noreply, socket |> assign(chat_draft: text || "") |> ChatState.persist()}
-  end
-
-  def handle_event("chat_keydown", %{"key" => key}, socket) do
-    case key do
-      "Shift" ->
-        {:noreply, assign(socket, shift_down: true)}
-
-      "Enter" ->
-        if socket.assigns[:shift_down] do
-          {:noreply, socket}
-        else
-          send_chat(socket, socket.assigns[:chat_draft])
-        end
-
-      _ ->
-        {:noreply, socket}
-    end
-  end
-
-  def handle_event("chat_keyup", %{"key" => key}, socket) do
-    case key do
-      "Shift" -> {:noreply, assign(socket, shift_down: false)}
-      _ -> {:noreply, socket}
-    end
+    {:noreply,
+     socket |> assign(chat_draft: text || "") |> ChatState.persist(clear_empty_draft: true)}
   end
 
   def handle_event("select_provider_profile", %{"provider_profile_id" => id}, socket) do
@@ -776,7 +887,11 @@ defmodule EvoDashWeb.HomeLive do
 
   def handle_event("new_chat", _params, socket) do
     if socket.assigns[:chat_status] in [:idle, :ended] do
-      had_session? = not is_nil(socket.assigns[:session_id])
+      had_session? =
+        not is_nil(socket.assigns[:current_session_id]) or
+          not is_nil(socket.assigns[:workbench_draft])
+
+      if key = ChatState.draft_key(socket.assigns), do: ChatHistory.delete_draft(key)
 
       socket =
         socket
@@ -1365,9 +1480,19 @@ defmodule EvoDashWeb.HomeLive do
   def handle_info({{:session_attached, seq, node, session_id, stream_seq}, result}, socket) do
     if seq == socket.assigns[:session_attach_seq] and
          node == socket.assigns[:current_node] and
-         stream_seq == socket.assigns[:stream_attach_seq] and
          session_id == socket.assigns[:session_id] do
-      {:noreply, apply_attach(socket, result)}
+      socket =
+        socket
+        |> assign(session_attach_pending?: false)
+        |> restore_attached_context(result)
+
+      # Stream generations own the transcript, while the owning session supplies identity.
+      socket =
+        if stream_seq == socket.assigns[:stream_attach_seq],
+          do: apply_attach(socket, result),
+          else: ChatState.persist(socket)
+
+      {:noreply, socket |> maybe_recover_approvals() |> TaskTracking.refresh()}
     else
       {:noreply, socket}
     end
@@ -1725,6 +1850,7 @@ defmodule EvoDashWeb.HomeLive do
     |> assign(
       transcript: Transcript.new(),
       chat_draft: "",
+      draft_edited?: false,
       chat_status: :idle,
       chat_task_id: nil,
       chat_agent_id: nil,
@@ -1741,6 +1867,7 @@ defmodule EvoDashWeb.HomeLive do
       queued_echoes: [],
       pending_attachments: Attachments.clear(),
       approval_context: nil,
+      session_attach_pending?: false,
       approval_dialog_open: false,
       approval_dialog_index: 0,
       workspace_open: false,
@@ -1830,6 +1957,7 @@ defmodule EvoDashWeb.HomeLive do
     context =
       Map.take(socket.assigns, [
         :chat_id,
+        :assistant_conversation_id,
         :current_node_id,
         :current_node,
         :chat_node,
@@ -1837,7 +1965,8 @@ defmodule EvoDashWeb.HomeLive do
         :chat_agent_id
       ])
 
-    if connected?(socket) and context != socket.assigns[:approval_context] do
+    if connected?(socket) and !socket.assigns.session_attach_pending? and
+         context != socket.assigns[:approval_context] do
       socket
       |> assign(approval_context: context)
       |> recover_approvals()
@@ -1853,36 +1982,95 @@ defmodule EvoDashWeb.HomeLive do
   defp start_new_chat(socket) do
     socket =
       if connected?(socket) do
-        chat_id = ChatHistory.new_chat()
-        ChatHistory.prune(10)
-        assign(socket, chat_id: chat_id, assistant_conversation_id: chat_id)
+        id = standalone_chat_id(socket.assigns.assistant_client_id)
+        assign(socket, chat_id: id, assistant_conversation_id: id)
       else
         socket
       end
 
     socket
     |> reset_chat()
+    |> assign(workbench_draft: nil, workbench_draft_key: nil)
     |> ChatState.persist()
     |> TaskTracking.refresh()
   end
 
-  defp attach_chat(socket) do
+  defp standalone_chat_id(client) when is_binary(client), do: System.unique_integer([:positive])
+
+  defp standalone_chat_id(nil) do
+    id = ChatHistory.new_chat()
+    ChatHistory.prune(10)
+    id
+  end
+
+  defp assistant_client_id(socket) do
     if connected?(socket) do
-      chat_id = ChatHistory.current_chat_id() || ChatHistory.new_chat()
-      saved_state = ChatHistory.get_state(chat_id)
+      case get_connect_params(socket)["guide_client_id"] do
+        id when is_binary(id) and byte_size(id) in 1..128 -> id
+        _ -> nil
+      end
+    end
+  end
 
-      socket =
-        socket
-        |> assign(chat_id: chat_id, model_selection_restore: saved_state || %{})
-        |> assign(ChatState.restore(saved_state))
-        |> assign(
-          assistant_conversation_id: (saved_state || %{})[:assistant_conversation_id] || chat_id
-        )
+  defp new_workbench_draft(socket) do
+    id = System.unique_integer([:positive])
 
-      reconcile_chat(socket)
+    socket
+    |> reset_chat()
+    |> assign(chat_id: id, assistant_conversation_id: id)
+  end
+
+  defp attach_chat(socket, params) do
+    if connected?(socket) and is_nil(socket.assigns.chat_id) do
+      if params["session"] || params["wb_draft"] do
+        new_workbench_draft(socket)
+      else
+        attach_default_chat(socket)
+      end
     else
       socket
     end
+  end
+
+  defp attach_default_chat(%{assigns: %{assistant_client_id: client}} = socket)
+       when is_binary(client) do
+    key = ChatState.draft_key(socket.assigns)
+
+    if connected?(socket) do
+      case key && ChatHistory.get_draft(key) do
+        %{chat_id: id} = state ->
+          socket |> restore_chat(id, state) |> assign(model_selection_restore: state)
+
+        _ ->
+          start_new_chat(socket)
+      end
+    else
+      socket
+    end
+  end
+
+  defp attach_default_chat(socket) do
+    if connected?(socket) do
+      id = ChatHistory.current_chat_id() || ChatHistory.new_chat()
+      state = ChatHistory.get_state(id) || %{}
+
+      socket
+      |> restore_chat(id, state)
+      |> assign(model_selection_restore: state)
+    else
+      socket
+    end
+  end
+
+  defp restore_chat(socket, id, state) do
+    socket
+    |> assign(ChatState.restore(state))
+    |> assign(
+      chat_id: id,
+      draft_edited?: state[:draft_edited?] == true,
+      assistant_conversation_id: state[:assistant_conversation_id] || id
+    )
+    |> reconcile_chat()
   end
 
   defp reconcile_chat(socket) do

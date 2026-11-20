@@ -128,6 +128,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   import Phoenix.Component, only: [assign: 3, assign_new: 3]
   import Phoenix.LiveView, only: [attach_hook: 4]
 
+  alias EvoDash.WorkbenchSidebarCache
   alias EvoGit.TaskRegistry
   alias EvoDashWeb.HomeLive.SessionList
 
@@ -191,6 +192,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
     # vice versa).
     {seed_node_id, seed_node} = node_context_from_params(params)
     {seed_running, seed_pending} = hub_snapshot(seed_node_id, seed_node)
+    {targets, statuses} = WorkbenchSidebarCache.get(socket, :remote_context) || {[], %{}}
 
     socket =
       socket
@@ -198,16 +200,10 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       |> assign_new(:current_node_name, fn -> "Local" end)
       |> assign_new(:current_node_id, fn -> nil end)
       |> assign_new(:remote_status, fn -> nil end)
-      # Node-INDEPENDENT connection bookkeeping: the saved SSH targets and the
-      # local connection managers' statuses. Both are registry calls that can
-      # block or exit, so they are NEVER read on the dead render — the empty
-      # seeds below are the dead-render values and the connected mount
-      # refreshes them asynchronously via `request_remote_context_load/1`
-      # (result → `{:node_aware_remote_context, ...}` → the attached
-      # `:handle_info` hook). Live `"remote_connections"` broadcasts keep the
-      # statuses fresh afterwards — there is no polling.
-      |> assign_new(:remote_targets, fn -> [] end)
-      |> assign_new(:connection_statuses, fn -> %{} end)
+      # A replacement LiveView can paint the last-known targets from its own
+      # transport. The async refresh and connection broadcasts stay authoritative.
+      |> assign_new(:remote_targets, fn -> targets end)
+      |> assign_new(:connection_statuses, fn -> statuses end)
       |> assign_new(:remote_context_seq, fn -> 0 end)
       |> assign_new(:running_tasks, fn -> seed_running end)
       |> assign_new(:pending_tasks, fn -> seed_pending end)
@@ -307,10 +303,20 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   # A no-op on the DEAD render: nothing would consume the result there and
   # `spawn_load/2` assigns only to a throwaway socket.
   defp request_session_list_load(socket) do
-    if Phoenix.LiveView.connected?(socket) do
-      SessionList.spawn_load(socket, socket.assigns[:current_node] || node())
-    else
-      socket
+    cond do
+      not Phoenix.LiveView.connected?(socket) ->
+        socket
+
+      EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) ->
+        Phoenix.Component.assign(socket,
+          session_list: [],
+          session_list_loading: false,
+          session_list_error: nil,
+          session_list_seq: (socket.assigns[:session_list_seq] || 0) + 1
+        )
+
+      true ->
+        SessionList.spawn_load(socket, socket.assigns[:current_node] || node())
     end
   end
 
@@ -653,6 +659,9 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   them. All other messages pass through with `{:cont, socket}` (the LiveView's
   own `handle_info` runs as usual — e.g. `:node_aware_reload_tasks`).
   """
+  def handle_info(:remote_targets_changed, socket),
+    do: {:halt, request_remote_context_load(socket)}
+
   def handle_info({:node_aware_active_tasks, _seq, _node_id, _node, _result} = message, socket) do
     {:halt, handle_tasks_result(socket, message)}
   end
@@ -745,9 +754,19 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
         else: Map.get(socket.assigns, :connection_statuses, %{})
       )
     )
+    |> remember_remote_context()
   end
 
   defp apply_remote_context(socket, _result), do: socket
+
+  defp remember_remote_context(
+         %{assigns: %{remote_targets: targets, connection_statuses: statuses}} = socket
+       ) do
+    WorkbenchSidebarCache.put(socket, :remote_context, {targets, statuses})
+    socket
+  end
+
+  defp remember_remote_context(socket), do: socket
 
   @doc """
   Returns `true` when the completed task is a review candidate.
@@ -776,7 +795,8 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   If the target exists but is not yet connected, the context is "pending" —
   data comes from the local node but `@current_node_id` is preserved so that
   `handle_connection_status/2` can re-resolve once the connection completes.
-  Unknown ids fall back to local.
+  Unknown ids fall back to local unless `:preserve_unresolved?` is enabled.
+  Pages that open a saved project or session use the retained id to gate local operations.
 
   The sidebar reload this triggers is ASYNC (spawn → `:node_aware_active_tasks`
   message → `handle_tasks_result/2` stale-guard — see
@@ -788,11 +808,20 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   `"remote_connections"` broadcasts keep `@connection_statuses` fresh afterwards
   (no polling).
   """
-  def assign_node(socket, params) do
+  def assign_node(socket, params, opts \\ []) do
     node_param = params["node"]
+    preserve_unresolved? = Keyword.get(opts, :preserve_unresolved?, false)
 
     socket =
       case resolve_node_context(node_param) do
+        :local
+        when preserve_unresolved? and is_binary(node_param) and node_param not in ["", "local"] ->
+          socket
+          |> assign(:current_node, node())
+          |> assign(:current_node_name, node_param)
+          |> assign(:current_node_id, node_param)
+          |> assign(:remote_status, %{phase: :error, error: :not_found})
+
         :local ->
           socket
           |> assign(:current_node, node())
@@ -972,7 +1001,9 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
     statuses =
       EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.connection_status() end, previous)
 
-    assign(socket, :connection_statuses, if(is_map(statuses), do: statuses, else: previous))
+    socket
+    |> assign(:connection_statuses, if(is_map(statuses), do: statuses, else: previous))
+    |> remember_remote_context()
   end
 
   # Re-derives the connection assigns after a failed connect attempt:
@@ -1059,6 +1090,21 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   hung/dead connection manager leaves the LAST-KNOWN statuses in place instead
   of crashing the LiveView on a `"remote_connections"` broadcast.
   """
+  def handle_connection_status(
+        socket,
+        {:remote_connection_status, target_id, %{phase: :bootstrapping} = status}
+      ) do
+    statuses = Map.put(socket.assigns[:connection_statuses] || %{}, target_id, status)
+    socket = socket |> assign(:connection_statuses, statuses) |> remember_remote_context()
+
+    socket =
+      if target_id == socket.assigns[:current_node_id],
+        do: assign(socket, :remote_status, status),
+        else: socket
+
+    {:noreply, socket}
+  end
+
   def handle_connection_status(socket, {:remote_connection_status, target_id, status}) do
     socket = refresh_connection_statuses(socket)
 
@@ -1103,7 +1149,13 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       # now resolves to {:remote, ...} (on :connected) or :local (on
       # disconnect/error), and then reloads all page-specific data.
       path = socket.assigns[:current_path] || "/"
-      to = path <> "?node=" <> current_node_id
+
+      params =
+        for {key, value} <- socket.assigns[:workbench_reconnect_params] || %{},
+            is_binary(value),
+            do: {key, value}
+
+      to = path <> "?" <> URI.encode_query([{"node", current_node_id} | params])
       {:noreply, Phoenix.LiveView.push_patch(socket, to: to)}
     else
       {:noreply, socket}

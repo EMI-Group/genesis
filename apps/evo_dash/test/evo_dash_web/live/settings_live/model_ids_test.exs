@@ -132,7 +132,7 @@ defmodule EvoDashWeb.SettingsLive.ModelIdsTest do
       assert retired_matches(render(view)) == []
     end
 
-    test "every catalog provider's model choices render only current ids", %{conn: conn} do
+    test "providers with static catalog choices render only current ids", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn)
 
       for {provider_atom, provider} <- wizard_providers() do
@@ -183,11 +183,13 @@ defmodule EvoDashWeb.SettingsLive.ModelIdsTest do
   # are `nil` and simply not checked.
   defp binaries(values), do: Enum.filter(values, &is_binary/1)
 
-  # Every provider atom the account wizard offers. Variants are separate
+  # ChatGPT choices come from the signed-in account and have separate coverage.
+  # Variants are separate
   # choices there (one card per `provider_atom`), and the first entry wins so a
   # `custom_model` entry never shadows the real catalog entry of the same atom.
   defp wizard_providers do
     EvoGit.Config.LLMCatalog.providers()
+    |> Enum.reject(&(&1[:oauth_source] == :chatgpt))
     |> Enum.flat_map(fn entry ->
       for atom <- Enum.uniq(entry.provider_atoms), do: {atom, entry}
     end)
@@ -195,8 +197,7 @@ defmodule EvoDashWeb.SettingsLive.ModelIdsTest do
   end
 
   # Drives the REAL wizard to its model step: add account → provider card →
-  # Next until the model step renders (an OAuth-only provider drops the :auth
-  # step, so the number of hops differs per provider).
+  # Next until the model step renders.
   defp open_wizard_model_step(view, provider_atom, attempts \\ 4) do
     render_click(view, "add_provider_profile", %{})
     render_change(view, "provider_wizard_change", %{"provider" => Atom.to_string(provider_atom)})

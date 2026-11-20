@@ -15,7 +15,7 @@ defmodule EvoDashWeb.WelcomeLive do
   """
   use EvoDashWeb, :live_view
 
-  alias EvoDashWeb.LLMSetup.Reasoning
+  alias EvoDashWeb.LLMSetup.{ChatGPT, Reasoning}
   alias EvoDashWeb.SettingsComponents.ProviderWizard
   alias EvoDashWeb.SettingsLive.ConfigIO
   alias EvoDashWeb.WelcomeLive.Presentation
@@ -40,6 +40,7 @@ defmodule EvoDashWeb.WelcomeLive do
        credentials: EvoGit.Config.credentials(),
        llm_providers: providers,
        flat_models: Setup.flatten_models(providers),
+       chatgpt_accounts: %{},
        current_version: Application.spec(:evo_git, :vsn) |> to_string(),
        draft: Wizard.new(),
        step: :provider,
@@ -60,7 +61,7 @@ defmodule EvoDashWeb.WelcomeLive do
     socket =
       if socket.assigns.current_node_id == previous,
         do: socket,
-        else: invalidate_test(socket)
+        else: socket |> assign(:chatgpt_accounts, %{}) |> invalidate_test()
 
     {:noreply, socket}
   end
@@ -87,7 +88,7 @@ defmodule EvoDashWeb.WelcomeLive do
   def handle_event("wizard_next", _params, socket) do
     %{draft: draft, step: step} = socket.assigns
 
-    case Wizard.validate(step, draft, Wizard.capabilities(draft)) do
+    case validate_step(step, draft, socket.assigns.chatgpt_accounts) do
       {:error, reason} ->
         {:noreply, assign(socket, error: Presentation.gate_message(reason))}
 
@@ -113,7 +114,15 @@ defmodule EvoDashWeb.WelcomeLive do
           |> Wizard.put("variant", Presentation.first_variant(entry))
           |> Wizard.put("auth_mode", auth_mode_for(entry))
 
-        socket = socket |> assign(draft: draft, error: nil) |> invalidate_test()
+        socket =
+          socket
+          |> assign(draft: draft, error: nil)
+          |> assign(
+            :chatgpt_accounts,
+            if(ChatGPT.provider?(value), do: ChatGPT.accounts(node()), else: %{})
+          )
+          |> invalidate_test()
+
         socket = assign(socket, wizard_active: true)
 
         if Wizard.valid?(:provider, draft, Wizard.capabilities(draft)) do
@@ -151,6 +160,25 @@ defmodule EvoDashWeb.WelcomeLive do
     if mode in modes do
       draft = draft |> Wizard.put("auth_mode", mode) |> Wizard.put("api_key", "")
       {:noreply, socket |> assign(draft: draft) |> invalidate_test()}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("refresh_chatgpt_setup", _params, socket) do
+    {:noreply, assign(socket, :chatgpt_accounts, ChatGPT.accounts(node()))}
+  end
+
+  def handle_event("select_chatgpt_account", %{"siwc_account" => account}, socket) do
+    %{draft: draft, chatgpt_accounts: accounts} = socket.assigns
+
+    if ChatGPT.provider?(draft["provider"]) and Map.has_key?(accounts, account) do
+      draft =
+        draft
+        |> Wizard.put("siwc_account", account)
+        |> reset_model_choices()
+
+      {:noreply, socket |> assign(draft: draft, error: nil) |> invalidate_test()}
     else
       {:noreply, socket}
     end
@@ -297,6 +325,8 @@ defmodule EvoDashWeb.WelcomeLive do
     %{draft: draft} = socket.assigns
     provider = Presentation.provider_entry(socket.assigns.llm_providers, draft["provider"])
 
+    socket = refresh_chatgpt_accounts(socket)
+
     with {:ok, current} <- Setup.read_config(),
          {:ok, _config, profile, entry, key} <-
            Setup.prepare(current, setup_assigns(socket, provider), draft_params(draft)),
@@ -383,6 +413,8 @@ defmodule EvoDashWeb.WelcomeLive do
       current_page={:welcome}
       simple_nav={false}
       current_node_id={@current_node_id}
+      remote_targets={assigns[:remote_targets] || []}
+      connection_statuses={assigns[:connection_statuses] || %{}}
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
       session_list={assigns[:session_list] || []}
@@ -463,7 +495,7 @@ defmodule EvoDashWeb.WelcomeLive do
               back_event="wizard_back"
               next_event="wizard_next"
               next_label={ViewModel.next_label(@step)}
-              next_disabled={not Wizard.valid?(@step, @draft, Wizard.capabilities(@draft))}
+              next_disabled={validate_step(@step, @draft, @chatgpt_accounts) != :ok}
               cancel_event="skip"
               cancel_label={gettext("Skip")}
               error={@error}
@@ -483,6 +515,8 @@ defmodule EvoDashWeb.WelcomeLive do
                     login_instructions={@login_instructions}
                     key_placeholder={@key_placeholder}
                     key_present={@key_present?}
+                    chatgpt={@chatgpt?}
+                    chatgpt_accounts={@chatgpt_accounts}
                   />
                 <% :model -> %>
                   <Steps.step_model_body
@@ -490,6 +524,10 @@ defmodule EvoDashWeb.WelcomeLive do
                     all_model_rows={@all_model_rows}
                     draft={@draft}
                     search_query={@search_query}
+                    chatgpt={@chatgpt?}
+                    api_key_only={@auth_modes == ["api_key"]}
+                    key_placeholder={@key_placeholder}
+                    key_present={@key_present?}
                   />
                 <% :reasoning_schedule -> %>
                   <Steps.step_reasoning_schedule_body
@@ -601,7 +639,7 @@ defmodule EvoDashWeb.WelcomeLive do
   defp save_draft(socket) do
     draft = socket.assigns.draft
     provider = Presentation.provider_entry(socket.assigns.llm_providers, draft["provider"])
-    setup = setup_assigns(socket, provider)
+    setup = setup_assigns(refresh_chatgpt_accounts(socket), provider)
 
     with {:ok, current} <- Setup.read_config(),
          {:ok, config, _profile, entry, key} <- Setup.prepare(current, setup, draft_params(draft)),
@@ -651,11 +689,38 @@ defmodule EvoDashWeb.WelcomeLive do
       api_key_input: draft["api_key"] || "",
       auth_mode: draft["auth_mode"] || "api_key",
       credentials: socket.assigns.credentials,
-      flat_models: socket.assigns.flat_models,
+      flat_models: selected_model_catalog(socket, draft),
+      siwc_account: selected_chatgpt_account(socket, draft),
       default_model: draft["default_model"],
       schedule: ensure_map(draft["schedule"])
     }
   end
+
+  defp validate_step(:auth, %{"provider" => "openai_codex"} = draft, accounts) do
+    if Map.has_key?(accounts, ChatGPT.account_name(draft["siwc_account"])),
+      do: :ok,
+      else: {:error, :chatgpt_login_required}
+  end
+
+  defp validate_step(step, draft, _accounts),
+    do: Wizard.validate(step, draft, Wizard.capabilities(draft))
+
+  defp refresh_chatgpt_accounts(%{assigns: %{draft: %{"provider" => "openai_codex"}}} = socket),
+    do: assign(socket, :chatgpt_accounts, ChatGPT.accounts(node()))
+
+  defp refresh_chatgpt_accounts(socket), do: socket
+
+  defp selected_model_catalog(socket, %{"provider" => "openai_codex"} = draft),
+    do: Setup.chatgpt_models(socket.assigns.chatgpt_accounts, draft["siwc_account"])
+
+  defp selected_model_catalog(socket, _draft), do: socket.assigns.flat_models
+
+  defp selected_chatgpt_account(socket, %{"provider" => "openai_codex"} = draft) do
+    account = ChatGPT.account_name(draft["siwc_account"])
+    if Map.has_key?(socket.assigns.chatgpt_accounts, account), do: account
+  end
+
+  defp selected_chatgpt_account(_socket, _draft), do: nil
 
   defp draft_params(draft) do
     %{

@@ -45,7 +45,7 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
             class="btn btn-success btn-sm rounded-lg gap-1.5"
             phx-click="merge_all"
             disabled={@action_in_flight?}
-            phx-confirm={
+            data-confirm={
               gettext(
                 "Merge ALL remaining repositories into their target branches? This cannot be undone."
               )
@@ -335,7 +335,7 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
             type="submit"
             class="btn btn-success btn-sm rounded-lg gap-1.5"
             disabled={@busy}
-            phx-confirm={gettext("Merge these changes into %{target}?", target: @target)}
+            data-confirm={gettext("Merge these changes into %{target}?", target: @target)}
           >
             <%= if @busy do %>
               <span class="loading loading-spinner loading-xs"></span>
@@ -352,7 +352,7 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
           phx-click="merge"
           phx-value-repo_id={@repo_id}
           disabled={@busy}
-          phx-confirm={gettext("Merge these changes into the current branch?")}
+          data-confirm={gettext("Merge these changes into the current branch?")}
         >
           <%= if @busy do %>
             <span class="loading loading-spinner loading-xs"></span>
@@ -369,7 +369,7 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
         phx-click="reject"
         phx-value-repo_id={@repo_id}
         disabled={@busy}
-        phx-confirm={gettext("Reject and delete these changes? This cannot be undone.")}
+        data-confirm={gettext("Reject and delete these changes? This cannot be undone.")}
       >
         <%= if @busy do %>
           <span class="loading loading-spinner loading-xs"></span>
@@ -423,7 +423,7 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
           <button
             class="btn btn-warning rounded-lg px-6 gap-2 shrink-0 sm:ml-auto"
             phx-click="auto_resolve"
-            phx-confirm={
+            data-confirm={
               gettext(
                 "This starts a new agent task that will merge the changes and resolve the conflicts. The current task will be marked as continued."
               )

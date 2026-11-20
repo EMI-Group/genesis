@@ -1,6 +1,7 @@
 defmodule EvoGit.Config.ProviderProfileValidation do
   @moduledoc false
 
+  alias EvoGit.Auth.ChatGPT.Store, as: ChatGPTStore
   alias EvoGit.Config.EctoValidation
   alias EvoGit.Config.Schema
   alias EvoGit.Config.Schema.Definitions
@@ -65,6 +66,7 @@ defmodule EvoGit.Config.ProviderProfileValidation do
       provider_errors(path, profile["provider"]) ++
       optional_string(path, profile, "name") ++
       Enum.flat_map(["api_key_env_var", "base_url"], &optional_string(path, profile, &1)) ++
+      chatgpt_account_errors(path, profile) ++
       concurrency_errors(path, profile) ++
       EctoValidation.provider_profile_shared_errors(path, profile) ++
       map_errors(path, profile, "extra") ++
@@ -84,6 +86,15 @@ defmodule EvoGit.Config.ProviderProfileValidation do
       )
     ]
   end
+
+  defp chatgpt_account_errors(path, %{"siwc_account" => account})
+       when not is_nil(account) do
+    if ChatGPTStore.valid_account?(account),
+      do: [],
+      else: [error(path ++ [:siwc_account], "Use a valid ChatGPT account name", account, :format)]
+  end
+
+  defp chatgpt_account_errors(_path, _profile), do: []
 
   defp provider_errors(path, value) do
     if nonblank?(Normalize.provider_name(value)) and value not in [true, false] do

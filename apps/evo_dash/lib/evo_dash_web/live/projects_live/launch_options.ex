@@ -38,10 +38,15 @@ defmodule EvoDashWeb.ProjectsLive.LaunchOptions do
 
   defp model_opts(assigns) do
     with {:ok, data} <- ModelSelectionScope.bundle(assigns) do
-      if is_nil(assigns[:pending_model_selection]) do
-        LLMSelection.task_opts(data, Map.get(assigns, :selected_model_spec))
-      else
-        {:error, :model_selection_restore_pending}
+      cond do
+        not is_nil(assigns[:pending_model_selection]) ->
+          {:error, :model_selection_restore_pending}
+
+        data.model_selections == [] ->
+          {:error, :no_task_model}
+
+        true ->
+          LLMSelection.task_opts(data, Map.get(assigns, :selected_model_spec))
       end
     end
   end

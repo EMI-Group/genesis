@@ -33,10 +33,11 @@ defmodule EvoDashWeb.PageControllerTest do
 
   test "GET / renders the Projects page and GET /assistant the chat page", %{conn: conn} do
     html = html_response(get(conn, ~p"/"), 200)
-    # Projects page: command palette + task form present, no chat send form
-    assert html =~ "project-omnibox"
-    assert html =~ "AdaptiveInput"
-    refute html =~ "chat-form"
+    assert html =~ ~s(id="workbench-idle")
+    assert html =~ "No projects"
+    refute html =~ ~s(id="project-omnibox")
+    refute html =~ ~s(id="task-form")
+    refute html =~ ~s(id="chat-form")
 
     # The Home chat page is the other entry point (HomeLive at /assistant; the
     # legacy /help route 302s there — see redirect_controller_test.exs).

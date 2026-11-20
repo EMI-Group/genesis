@@ -18,7 +18,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard.AuthStep do
     ~H"""
     <div class="space-y-4">
       <p
-        :if={@oauth_only}
+        :if={@oauth_only and not @chatgpt}
         class="rounded-lg border border-base-300 bg-base-200/50 px-3 py-2 text-sm text-base-content/80"
       >
         {gettext(
@@ -26,7 +26,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard.AuthStep do
         )}
       </p>
 
-      <ul class="grid gap-2 sm:grid-cols-2" role="list">
+      <ul :if={not @chatgpt} class="grid gap-2 sm:grid-cols-2" role="list">
         <li :if={"api_key" in @available_modes}>
           <button
             type="button"
@@ -55,9 +55,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard.AuthStep do
               {gettext("Subscription")}
             </span>
             <span class="mt-1 block text-xs text-base-content/60">
-              {gettext(
-                "Reuse a vendor CLI login (Codex / Claude) instead of an API key. Genesis never runs the OAuth flow itself."
-              )}
+              {gettext("Use your Claude subscription by signing in with the Claude CLI.")}
             </span>
           </button>
         </li>

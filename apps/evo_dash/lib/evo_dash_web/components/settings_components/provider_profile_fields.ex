@@ -478,11 +478,14 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
 
   def provider_auth_status(assigns) do
     state = auth_state(assigns.status)
+    chatgpt? = provider_atom(assigns.profile) == :openai_codex
 
     assigns =
       assigns
       |> assign(:state, state)
-      |> assign(:label, auth_label(state, value(assigns.status, "expires", nil)))
+      |> assign(:chatgpt?, chatgpt?)
+      |> assign(:chatgpt_command, chatgpt_login_command(assigns.profile))
+      |> assign(:label, auth_label(state, value(assigns.status, "expires", nil), chatgpt?))
       |> assign(:path, value(assigns.status, "oauth_file", value(assigns.profile, "oauth_file")))
       |> assign(
         :instructions,
@@ -506,18 +509,26 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
         ><.icon name="hero-arrow-path" class="size-3.5" />{gettext("Recheck")}</button>
       </div>
       <div :if={@details} class="space-y-1 text-xs leading-relaxed text-base-content/70">
-        <%= if @state == :unwritable do %>
-          <p>
-            {gettext(
-              "Genesis found the vendor login but could not write its managed credential file."
-            )}
-          </p>
-          <p>{gettext("Set oauth_file on this profile to a writable location, then recheck.")}</p>
-        <% else %>
-          <p class="whitespace-pre-wrap">{@instructions}</p>
-          <p :if={@state == :missing}>
-            {gettext("Genesis imports the vendor login automatically on the next run.")}
-          </p>
+        <%= cond do %>
+          <% @chatgpt? and @state != :ok -> %>
+            <p>{gettext("Connect the account on the selected node, then recheck.")}</p>
+            <p>
+              <code>{@chatgpt_command}</code>
+            </p>
+          <% @chatgpt? -> %>
+            <p :if={value(@status, "account_id") != ""}>{value(@status, "account_id")}</p>
+          <% @state == :unwritable -> %>
+            <p>
+              {gettext(
+                "Genesis found the vendor login but could not write its managed credential file."
+              )}
+            </p>
+            <p>{gettext("Set oauth_file on this profile to a writable location, then recheck.")}</p>
+          <% true -> %>
+            <p class="whitespace-pre-wrap">{@instructions}</p>
+            <p :if={@state == :missing}>
+              {gettext("Genesis imports the vendor login automatically on the next run.")}
+            </p>
         <% end %>
         <p :if={@path != ""} class="break-all">
           {gettext("Managed credential file: %{path}", path: @path)}
@@ -529,11 +540,11 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
 
   # Pure normalization shared by the parent editor; canonical projections are
   # string-keyed, and the whitelist also accepts existing atom-keyed auth maps.
-  @keys ~w(id name provider auth_mode oauth_file api_key_env_var base_url concurrency default_model models
+  @keys ~w(id name provider auth_mode oauth_file siwc_account api_key_env_var base_url concurrency default_model models
     context_window reasoning_efforts default_reasoning_effort generation provider_options
     peak_concurrency peak_hours timezone off_peak_days start end days override_reasoning
     profile_id_new temperature max_tokens top_p top_k frequency_penalty presence_penalty
-    state expires login_instructions)a
+    state expires account_id login_instructions)a
   @atom_keys Map.new(@keys, &{Atom.to_string(&1), &1})
 
   def value(map, key, default \\ "")
@@ -711,11 +722,11 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
   defp auth_tone(state) when state in [:missing, :unwritable], do: "text-warning"
   defp auth_tone(_), do: "text-base-content/70"
 
-  defp auth_label(:ok, expires) when is_integer(expires) do
+  defp auth_label(:ok, expires, chatgpt?) when is_integer(expires) do
     case DateTime.from_unix(expires, :millisecond) do
       {:ok, date} ->
         gettext("Login detected (expires %{date})",
-          date: EvoDashWeb.Helpers.format_datetime(date)
+          date: format_auth_expiry(date, chatgpt?)
         )
 
       {:error, _} ->
@@ -723,13 +734,26 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
     end
   end
 
-  defp auth_label(:ok, _), do: gettext("Login detected")
-  defp auth_label(:missing, _), do: gettext("No subscription login found")
+  defp auth_label(:ok, _, _), do: gettext("Login detected")
+  defp auth_label(:missing, _, _), do: gettext("No subscription login found")
 
-  defp auth_label(:unwritable, _),
+  defp auth_label(:unwritable, _, _),
     do: gettext("Login found, managed credential file not writable")
 
-  defp auth_label(_, _), do: gettext("Subscription login")
+  defp auth_label(_, _, _), do: gettext("Subscription login")
+
+  defp format_auth_expiry(date, true), do: EvoDashWeb.Helpers.format_local_datetime(date)
+  defp format_auth_expiry(date, false), do: EvoDashWeb.Helpers.format_datetime(date)
+
+  defp chatgpt_login_command(profile) do
+    alias EvoGit.Auth.ChatGPT.Store
+
+    account = value(profile, "siwc_account")
+
+    if Store.valid_account?(account),
+      do: "genesis chatgpt login --account " <> account,
+      else: "genesis chatgpt login"
+  end
 
   # Resolve only catalog-owned atoms; never intern a user-entered identifier.
   defp provider_atom(profile) do
@@ -744,9 +768,6 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
   # Never resolve EvoGit.Auth.default_oauth_file/0 on a remote page.
   defp login_guidance(profile) do
     case EvoGit.Config.LLMCatalog.oauth_source(provider_atom(profile)) do
-      :codex_cli ->
-        gettext("Run codex login on the selected node, then recheck.")
-
       :claude_code ->
         gettext(
           "Run claude to sign in on the selected node, or use claude setup-token, then recheck."

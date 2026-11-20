@@ -4287,16 +4287,11 @@ defmodule EvoDashWeb.ReviewLiveMultiRepoTest do
       refute Enum.any?(repos, &(&1.repo_id == "readonly"))
       refute Enum.any?(repos, &(&1.repo_id == "no_commits"))
 
-      # Repo selection is GATED in the redesign: the merge box renders its
-      # <select phx-change="switch_repo"> only when the branch exists, and the
-      # Files-changed toolbar only alongside diff data. This orphaned fixture
-      # (nonexistent paths) opens NEITHER gate — switching to the Files-changed
-      # tab shows the empty-state panel and no selector. The positive
-      # multi-repo selector render is pinned in the per-repo merge-check
-      # describe below (real-repo fixture, branch_exists true).
+      # The repository selector remains available when the current repository
+      # has no diff data so that other repositories remain reachable.
       html = render_click(view, "switch_tab", %{"tab" => "files_changed"})
       assert html =~ "No diff data available for this review."
-      refute html =~ ~s(phx-change="switch_repo")
+      assert repo_select_state(html) == %{values: ["primary", "original"], selected: ["primary"]}
     end
 
     test "legacy tasks without a repos key yield exactly one primary entry", %{conn: conn} do
@@ -4497,6 +4492,38 @@ defmodule EvoDashWeb.ReviewLiveMultiRepoTest do
       refute html =~ "Foreign only commit"
       assert Enum.map(assigns(view)[:commits], & &1.message) == ["Primary only commit"]
     end
+  end
+
+  test "commit links carry the repository and unavailable commits show a return path", %{
+    conn: conn
+  } do
+    task_id = seed_orphaned_review_task!()
+    commit = commit_info("c", "Foreign only commit")
+
+    view =
+      mount_with_repos(conn, task_id, [
+        review_repo("primary", "/nonexistent/repo/path", []),
+        review_repo("original", "/nonexistent/foreign/path", [], [commit])
+      ])
+
+    open_commits_tab(view)
+    render_change(view, "switch_repo", %{"repo_id" => "original"})
+
+    commit_url = ~p"/review/#{task_id}/commit/#{commit.sha}?repo=original"
+    assert has_element?(view, ~s(#review-commits a[href="#{commit_url}"]))
+
+    render_patch(view, commit_url)
+    flush_review_load(view)
+
+    assert has_element?(view, "#review-commit-error")
+    refute has_element?(view, "#review-tabs")
+
+    back_url = ~p"/review/#{task_id}?#{%{repo: "original", tab: "commits"}}"
+    assert has_element?(view, ~s(a[href="#{back_url}"]))
+    render_patch(view, back_url)
+    flush_review_load(view)
+
+    assert has_element?(view, ~s(#review-tabs [phx-value-tab="commits"][aria-pressed="true"]))
   end
 
   describe "open_repo_diff" do
@@ -4816,7 +4843,7 @@ defmodule EvoDashWeb.ReviewLiveChromeTest do
       [input] =
         html
         |> Floki.parse_document!()
-        |> Floki.find("input[name='filter'][phx-change='filter_files']")
+        |> Floki.find("#review-file-filter input[name='filter']")
 
       assert Floki.attribute(input, "value") == [""]
     end
@@ -4957,7 +4984,7 @@ defmodule EvoDashWeb.ReviewLiveChromeTest do
       refute html =~ ~s(id="merge-all-toolbar")
     end
 
-    test "renders with a phx-confirm gate, after the banner slot and before the cards", %{
+    test "renders with a data-confirm gate, after the banner slot and before the cards", %{
       conn: conn
     } do
       task_id = seed_orphaned_review_task!()
@@ -4982,8 +5009,8 @@ defmodule EvoDashWeb.ReviewLiveChromeTest do
                "btn btn-success btn-sm rounded-lg gap-1.5"
              ]
 
-      # Confirmation is attribute-based (phx-confirm), NOT a modal.
-      assert Floki.attribute(button, "phx-confirm") == [
+      # Confirmation is attribute-based (data-confirm), NOT a modal.
+      assert Floki.attribute(button, "data-confirm") == [
                "Merge ALL remaining repositories into their target branches? This cannot be undone."
              ]
 
@@ -5041,7 +5068,7 @@ defmodule EvoDashWeb.ReviewLiveChromeTest do
       [button] = Floki.find(Floki.parse_document!(html), "button[phx-click='ignore']")
       assert Floki.text(button) =~ "Mark as read"
 
-      assert Floki.attribute(button, "phx-confirm") == [
+      assert Floki.attribute(button, "data-confirm") == [
                "Mark this review as read? It will be dismissed from pending reviews."
              ]
 

@@ -25,6 +25,7 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
 
   alias EvoDashWeb.LLMSetup.{Identity, Reasoning, Schedule}
   alias EvoDashWeb.WelcomeLive.Wizard, as: Draft
+  alias EvoDashWeb.LLMSetup.ChatGPT
   alias EvoGit.Config.LLMCatalog, as: Catalog
   alias EvoGit.Config.Schema
 
@@ -84,6 +85,11 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
     end)
   end
 
+  def chatgpt_models(accounts, account) do
+    provider = Catalog.find_provider(:openai_codex)
+    flatten_models([%{provider | models: ChatGPT.model_entries(accounts, account)}])
+  end
+
   def provider_models(entries, provider_id, variant_id) do
     Enum.filter(entries, &(&1.provider_id == provider_id and &1.variant_id == variant_id))
   end
@@ -92,7 +98,8 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
     needle = String.downcase(String.trim(query || ""))
 
     Enum.filter(entries, fn entry ->
-      String.contains?(String.downcase(entry.model_display_name), needle) or
+      String.contains?(String.downcase(entry.model_id), needle) or
+        String.contains?(String.downcase(entry.model_display_name), needle) or
         String.contains?(String.downcase(entry.variant_display_name || ""), needle)
     end)
   end
@@ -245,6 +252,7 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
       provider_id: provider_id,
       variant_id: variant_id,
       requested: requested,
+      siwc_account: Map.get(assigns, :siwc_account),
       selected: selected,
       custom_model: custom,
       custom_inventory: inventory,
@@ -511,6 +519,7 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
     }
 
     profile
+    |> maybe_put("siwc_account", draft.siwc_account)
     |> maybe_put("base_url", draft.base_url)
     |> merge_schedule(draft.schedule)
   end
@@ -622,9 +631,20 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
   # ── Validation ─────────────────────────────────────────────────────────────
 
   defp validate_selection(draft) do
-    if value(draft.default_entry, :model_id) in [nil, ""],
-      do: {:error, gettext(@selection_error)},
-      else: :ok
+    cond do
+      ChatGPT.provider?(draft.provider_id) and draft.siwc_account == nil ->
+        {:error, gettext("Connect a ChatGPT account before continuing.")}
+
+      ChatGPT.provider?(draft.provider_id) and
+          (draft.custom_model != "" or length(draft.selected) != length(draft.requested)) ->
+        {:error, gettext("Choose models available to the connected ChatGPT account.")}
+
+      value(draft.default_entry, :model_id) in [nil, ""] ->
+        {:error, gettext(@selection_error)}
+
+      true ->
+        :ok
+    end
   end
 
   defp validate_auth(draft) do

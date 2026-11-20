@@ -80,7 +80,14 @@ defmodule EvoDash.NodeContext do
   """
   @spec save_target(map()) :: {:ok, map()} | {:error, term()}
   def save_target(target) do
-    EvoGit.RemoteConnections.save(target)
+    case EvoGit.RemoteConnections.save(target) do
+      {:ok, _} = result ->
+        Phoenix.PubSub.broadcast(EvoGit.PubSub, "remote_connections", :remote_targets_changed)
+        result
+
+      error ->
+        error
+    end
   end
 
   @doc """
@@ -90,7 +97,14 @@ defmodule EvoDash.NodeContext do
   """
   @spec delete_target(String.t()) :: :ok | {:error, :not_found}
   def delete_target(id) do
-    EvoGit.RemoteConnections.delete(id)
+    case EvoGit.RemoteConnections.delete(id) do
+      :ok ->
+        Phoenix.PubSub.broadcast(EvoGit.PubSub, "remote_connections", :remote_targets_changed)
+        :ok
+
+      error ->
+        error
+    end
   end
 
   # ── Connection lifecycle ─────────────────────────────────────────
@@ -900,33 +914,53 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
-  Lists the persistent Virtual Context Tree project mounts of the given node.
-
-  Delegates to `EvoGit.RemoteNode.projects/1`. Returns the node's VCT project
-  mounts, newest-opened first; the core caps the mount table at
-  `EvoGit.VCT.max_projects/0`. A failed remote call degrades to `[]` (the core
-  turns a remote error into `[]`), so the dashboard never crashes or blocks on
-  the project list.
+  Lists the node's registered projects, newest opened first. Older servers
+  expose recent projects without a VCT point. A failed remote read returns `[]`.
   """
-  @spec projects(node()) :: [EvoGit.VCT.Mount.t()]
+  @type project_entry ::
+          EvoGit.VCT.Mount.t()
+          | %{path: String.t(), name: String.t(), last_opened_at: DateTime.t() | nil}
+
+  @spec projects(node()) :: [project_entry()]
   def projects(node) do
-    EvoGit.RemoteNode.projects(node)
+    result = call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :projects, [])
+
+    result =
+      if missing_project_api?(result, :projects),
+        do: legacy_projects(node),
+        else: result
+
+    case result do
+      {:ok, projects} when is_list(projects) -> projects
+      _ -> []
+    end
   end
 
   @doc """
-  Mounts an OS project path in the given node's Virtual Context Tree.
-
-  Delegates to `EvoGit.RemoteNode.mount_project/3`. Records (or refreshes) the
-  project mount for an absolute OS path; mounting is idempotent — re-mounting an
-  already-mounted path refreshes its `last_opened_at` and keeps its `point`.
-  Returns `{:ok, %EvoGit.VCT.Mount{}}` on success, `{:error, reason}` when the
-  core rejects the request, and `{:error, {kind, reason}}` on a remote transport
-  failure.
+  Registers an OS project path in the project's execution node. Servers
+  without the VCT API use their persistent recent-project registry.
   """
   @spec mount_project(node(), String.t(), String.t() | nil) ::
-          {:ok, EvoGit.VCT.Mount.t()} | {:error, term()}
+          {:ok, project_entry()} | {:error, term()}
   def mount_project(node, path, name) do
-    EvoGit.RemoteNode.mount_project(node, path, name)
+    result = EvoGit.RemoteNode.mount_project(node, path, name)
+
+    if missing_project_api?(result, :mount_project) do
+      with {:ok, basename} <- call_remote(node, Path, :basename, [path]),
+           {:ok, :ok} <-
+             call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :add_recent_project, [
+               path,
+               name || basename
+             ]),
+           {:ok, projects} <- legacy_projects(node) do
+        case Enum.find(projects, &(&1.path == path)) do
+          nil -> {:error, :store_unavailable}
+          project -> {:ok, project}
+        end
+      end
+    else
+      result
+    end
   end
 
   @doc """
@@ -940,7 +974,50 @@ defmodule EvoDash.NodeContext do
   """
   @spec forget_project(node(), term()) :: :ok | {:error, term()}
   def forget_project(node, key) do
-    EvoGit.RemoteNode.forget_project(node, key)
+    result = EvoGit.RemoteNode.forget_project(node, key)
+
+    if missing_project_api?(result, :forget_project) and is_binary(key) do
+      with {:ok, :absolute} <- call_remote(node, Path, :type, [key]),
+           {:ok, :ok} <- call_remote(node, EvoGit.TaskRegistry, :remove_recent_project, [key]),
+           {:ok, projects} <- legacy_projects(node) do
+        if Enum.any?(projects, &(&1.path == key)), do: {:error, :store_unavailable}, else: :ok
+      else
+        {:ok, _} -> {:error, :invalid_path}
+        {:error, _} = error -> error
+      end
+    else
+      result
+    end
+  end
+
+  # Restrict the fallback to the API entry point being absent. A broken
+  # dependency inside a newer server must not redirect writes to the old store.
+  defp missing_project_api?(
+         {:error,
+          {:error, {:exception, :undef, [{EvoGit.AgentScheduler.RemoteAPI, fun, _, _} | _]}}},
+         fun
+       ),
+       do: true
+
+  defp missing_project_api?(_result, _fun), do: false
+
+  defp legacy_projects(node) do
+    case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_recent_projects, []) do
+      {:ok, entries} when is_list(entries) ->
+        projects =
+          for %{path: path, name: name, last_opened_at: opened} <- entries,
+              is_binary(path) and is_binary(name) do
+            %{path: path, name: name, last_opened_at: opened}
+          end
+
+        {:ok, projects}
+
+      {:ok, _} ->
+        {:error, :invalid_project_list}
+
+      {:error, _} = error ->
+        error
+    end
   end
 
   # ── VCT workspaces (pure grouping points) ────────────────────────
@@ -1640,16 +1717,34 @@ defmodule EvoDash.NodeContext do
   """
   @spec list_processes(node(), keyword()) :: [EvoGit.ProcessManager.Execution.t()]
   def list_processes(node, opts \\ []) do
-    if local_node?(node) do
-      case with_process_manager(fn -> EvoGit.ProcessManager.list(opts) end, []) do
-        list when is_list(list) -> list
-        _other -> []
+    case list_processes_result(node, opts) do
+      {:ok, list} -> list
+      {:error, _reason} -> []
+    end
+  end
+
+  @doc """
+  Reads the tracked executions while preserving an unavailable local manager or
+  a remote transport failure so the inspector can offer a retry.
+  """
+  @spec list_processes_result(node(), keyword()) ::
+          {:ok, [EvoGit.ProcessManager.Execution.t()]} | {:error, term()}
+  def list_processes_result(node, opts) do
+    result =
+      if local_node?(node) do
+        with_process_manager(
+          fn -> EvoGit.ProcessManager.list(opts) end,
+          {:error, :process_manager_unavailable}
+        )
+      else
+        process_rpc().(node, EvoGit.AgentScheduler.RemoteAPI, :list_processes, [opts])
+        |> unwrap_rpc()
       end
-    else
-      case process_rpc().(node, EvoGit.AgentScheduler.RemoteAPI, :list_processes, [opts]) do
-        {:ok, list} when is_list(list) -> list
-        _other -> []
-      end
+
+    case result do
+      list when is_list(list) -> {:ok, list}
+      {:error, _reason} = error -> error
+      other -> {:error, {:invalid_result, other}}
     end
   end
 
