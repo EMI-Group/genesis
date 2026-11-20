@@ -271,8 +271,7 @@ Ring buffer: last 60 samples; `get_recent_samples/0` → `{:ok, samples}` | `{:e
 
 ## Peak/Off-Peak Diagnostics
 
-Peak handling is log-only; `peak_hour_engine_test.exs` pins the fixed-point invariant.
-The ordered diagnostic sequence for a task stuck `:blocked` after a peak window (`PeakHourEngine` wakeup/decision/next-wakeup lines, then `AgentScheduler: model_concurrency updated` and the `LLM slot grant sweep (resume)` line with `capacity=N granted=0 waiting_after>0`) lives in `./agent_scheduler/CONTEXT.md`.
+Peak handling is log-only; `peak_hour_engine_test.exs` pins the fixed-point invariant, and the ordered log lines for a task stuck `:blocked` after a peak window (incl. `LLM slot grant sweep (resume)` with `capacity=N granted=0 waiting_after>0`) are listed in `./agent_scheduler/CONTEXT.md`.
 
 ## Runtime distribution control
 
