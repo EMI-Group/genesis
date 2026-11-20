@@ -49,10 +49,17 @@
 //   State blocks #commit-graph-error / #commit-graph-stale-warning are ignored
 //   (no graph → nothing to do → never throw).
 //
+// HOVER SYNC is INDEX-BACKED: `indexShaMates()` builds ONE
+// `dataset.cgSha → [.cg-row | g.cg-node mates]` Map from a single
+// `querySelectorAll("[data-cg-sha]")` pass, kept in step by the MutationObserver
+// batch (and re-built in `updated()`), so a pointer event never scans the
+// document — it looks its sha up in the Map (a sha is arbitrary model data and
+// is NEVER interpolated into a selector).
+//
 // ENTER ANIMATIONS (keyframes live in css/app.css): a MutationObserver on the
 // root (childList + subtree) animates only genuinely-new marked elements
-// (WeakSet instance guard — the elements present at mount and an `updated()`
-// re-scan never re-animate). The keyframes differ per element type:
+// (WeakSet instance guard — the elements present at mount never re-animate).
+// The keyframes differ per element type:
 //   row  → fade + slide-up (an HTML element with a CSS box)
 //   node → fade + scale-up around the element's own center (an SVG <g>: SVG has
 //          no CSS box, so the keyframe pins `transform-box: fill-box` +
@@ -85,11 +92,15 @@ const CommitGraph = {
     this.teardown();
 
     // Everything rendered by the initial page load is NOT new — remember those
-    // element instances so neither the observer nor an `updated()` re-scan can
-    // ever animate them. A WeakSet keeps this leak-free (removed nodes are
-    // collected); a re-inserted instance stays "seen" and does not re-animate.
+    // element instances so the observer can never animate them. A WeakSet
+    // keeps this leak-free (removed nodes are collected); a re-inserted
+    // instance stays "seen" and does not re-animate.
     this.seen = new WeakSet();
     this.eachMarked(this.el, (el) => this.seen.add(el));
+
+    // ONE sha → mates index for the hover sync (see `indexShaMates`), built
+    // once here and refreshed by every observer batch.
+    this.indexShaMates();
 
     // The selection the hook was mounted with. Mounting WITH a selection (the
     // view switcher revealing this panel after a select in the tree) also
@@ -101,33 +112,55 @@ const CommitGraph = {
     this.bindKeyboard();
 
     this.observer = new MutationObserver((mutations) => {
+      // Any element added or removed can change a sha's mate list — the index
+      // is rebuilt ONCE per delivered batch (all DOM mutations of one patch
+      // arrive together), never per pointer event.
+      let structureChanged = false;
+
       mutations.forEach((mutation) => {
         // Removed elements may be mid-animation (a node switch replaces the
         // whole subtree): clear their animation state so a later re-insert of
         // the same instance can never render as a stuck/invisible element.
         mutation.removedNodes.forEach((removed) => {
-          if (removed.nodeType === Node.ELEMENT_NODE) this.clearAnimations(removed);
+          if (removed.nodeType === Node.ELEMENT_NODE) {
+            structureChanged = true;
+            this.clearAnimations(removed);
+          }
         });
         // Added nodes arrive one-by-one via `addedNodes`; marked nodes inside
         // an appended subtree are covered by the descendant walk in
         // applyAnimations.
         mutation.addedNodes.forEach((added) => {
-          if (added.nodeType === Node.ELEMENT_NODE) this.applyAnimations(added);
+          if (added.nodeType === Node.ELEMENT_NODE) {
+            structureChanged = true;
+            this.applyAnimations(added);
+          }
         });
       });
+
+      if (structureChanged) this.indexShaMates();
     });
     this.observer.observe(this.el, {childList: true, subtree: true});
   },
 
   // morphdom may replace the subtree wholesale without the observed root
-  // itself changing (node switch / new commits), so re-scan on every update.
-  // Cheap + idempotent for the animations (the WeakSet makes it a no-op for
-  // already-seen elements) — and the ONE place the selection reveal runs: the
-  // hook element persists across patches, so a CHANGED data-cg-selected-id is
-  // observed here. Only an actual change scrolls (the last-seen id guard keeps
+  // itself changing (node switch / new commits). Those are still MUTATIONS —
+  // every node addition (a single row or a whole replaced subtree) is a
+  // childList record on an observed descendant, so the MutationObserver above
+  // already ran `applyAnimations` for them and the full
+  // `[data-commit-graph-anim]` re-scan that used to live here was pure
+  // duplicate work on every patch. What a patch CAN change without a node
+  // mutation is the root's own `data-cg-selected-id`, so that stays here — the
+  // hook element persists across patches and it is the ONE place the selection
+  // reveal runs. Only an actual change scrolls (the last-seen id guard keeps
   // user scrolling from ever being fought).
+  //
+  // The sha index is re-synced too: ONE `querySelectorAll` pass, i.e. strictly
+  // cheaper than the old querySelectorAll + per-element class/attribute work,
+  // and it covers any mutation batch the observer could not see (it runs after
+  // the observer's own re-index, so it is idempotent).
   updated() {
-    this.applyAnimations(this.el);
+    this.indexShaMates();
 
     const selected = this.selectedId();
     if (selected !== this.lastSelectedId) {
@@ -143,7 +176,8 @@ const CommitGraph = {
   // Drops the observer and leaves no animation state behind. Used both by
   // `destroyed()` and (defensively) at the top of `mounted()`. The delegated
   // listeners live on `this.el` itself, so they die with the element — nothing
-  // to unbind here.
+  // to unbind here. The sha index is dropped with them and lazily rebuilt on
+  // the next hover if the hook is reused.
   teardown() {
     if (this.observer) {
       this.observer.disconnect();
@@ -152,6 +186,7 @@ const CommitGraph = {
     if (this.el && this.el.querySelectorAll) {
       this.clearAnimations(this.el);
     }
+    this.shaMates = null;
   },
 
   // --- row ↔ dot hover sync --------------------------------------------------
@@ -211,18 +246,45 @@ const CommitGraph = {
     });
   },
 
-  // Toggles the hover class on every element carrying this sha — by ITERATION,
-  // not a querySelector string: a sha is arbitrary model data and must never be
-  // interpolated into a selector.
+  // Toggles the hover class on every element carrying this sha — by INDEX
+  // lookup and iteration, not a querySelector string: a sha is arbitrary model
+  // data and must never be interpolated into a selector.
   setHovered(sha, on) {
     this.eachShaMate(sha, (el) => el.classList.toggle(HOVER_CLASS, on));
   },
 
+  // Runs `fn` for each hover-sync mate of `sha` (the .cg-row div + its
+  // g.cg-node). Total: a null/absent sha, a missing root or an unknown sha is a
+  // silent no-op.
   eachShaMate(sha, fn) {
-    if (sha == null || !this.el.querySelectorAll) return;
+    if (sha == null) return;
+    const mates = (this.shaMates || this.indexShaMates()).get(sha);
+    if (!mates) return;
+    mates.forEach((el) => fn(el));
+  },
+
+  // Builds `this.shaMates` — `dataset.cgSha → [.cg-row | g.cg-node mates]` —
+  // from ONE `querySelectorAll("[data-cg-sha]")` pass, so the hover sync never
+  // scans the document per pointer event. Called from `mounted()`, from every
+  // MutationObserver batch that added/removed elements, and from `updated()`;
+  // idempotent, and a missing/detached root just yields an empty index.
+  indexShaMates() {
+    const index = new Map();
+    this.shaMates = index;
+
+    if (!this.el || !this.el.querySelectorAll) return index;
+
     this.el.querySelectorAll("[data-cg-sha]").forEach((el) => {
-      if (el.dataset.cgSha === sha && el.matches(".cg-row, g.cg-node")) fn(el);
+      if (!el.dataset || !el.matches || !el.matches(".cg-row, g.cg-node")) return;
+      const sha = el.dataset.cgSha;
+      if (sha == null) return;
+
+      const mates = index.get(sha);
+      if (mates) mates.push(el);
+      else index.set(sha, [el]);
     });
+
+    return index;
   },
 
   // --- keyboard activation ---------------------------------------------------

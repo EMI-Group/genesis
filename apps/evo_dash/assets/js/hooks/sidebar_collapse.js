@@ -3,9 +3,82 @@
 // (hamburger toggle). The updated() callback is essential — LiveView
 // morphdom patches reset server-rendered sidebar classes after every
 // navigation, so we must re-apply on every update.
+//
+// PERFORMANCE: `#sidebar` also carries the Active Tasks list (potentially
+// hundreds of rows), so the collapse sweep MUST NOT run on every patch. The
+// sweep (`applyCollapsed`) is a set of full-subtree `querySelectorAll` walks
+// plus per-element class writes; running it on each patch of the sidebar
+// subtree made every task-list update re-walk the whole sidebar.
+//
+// `updated()` therefore PROBES first (see the pure block below): a handful of
+// `querySelector` / `classList.contains` checks decide whether morphdom
+// actually reset the markup, and the sweep only runs when it did. The probe
+// state `appliedCollapsed` records what was last applied, so a stable sidebar
+// costs a few lookups per patch instead of a document walk.
+
+// --- SidebarCollapse: pure collapse-sync probe ------------------------------
+// Decides whether the collapse sweep has to re-run after a LiveView patch.
+// `state` is `{el, appliedCollapsed, collapseToggle}`; every probe is one
+// `querySelector`/`classList.contains` (no `querySelectorAll`, no per-element
+// writes), and a MISSING probe element counts as "fine" — no markup, nothing
+// the sweep could fix.
+//
+// Why one probe per class family is enough: the swept classes are all rendered
+// by the same server template, so a morphdom reset shows up on whichever
+// element of that family is probed. The label and task-link families are
+// probed with a `:not(...)` selector instead of "the first element", because
+// they also live inside DYNAMIC lists (the Active Tasks rows): re-rendering
+// that list resets the rows without touching the static brand label, so only
+// "is ANY label/row still in the wrong state" is a sufficient signal.
+function collapseSyncNeeded(state, collapsed) {
+  const el = state && state.el;
+  if (!el || !el.classList) return false;
+
+  // 1. The state we last applied — undefined on the very first run (mount).
+  if (state.appliedCollapsed !== collapsed) return true;
+
+  // 2. The state attribute the server renders ("false").
+  if (el.dataset && el.dataset.sidebarCollapsed !== String(collapsed)) return true;
+
+  // 3. The sidebar width class pair.
+  if (!el.classList.contains(collapsed ? 'w-16' : 'w-60')) return true;
+
+  // 4. Labels: collapsed → every `.sidebar-label` carries `hidden`.
+  if (collapsed) {
+    if (el.querySelector('.sidebar-label:not(.hidden)')) return true;
+  } else if (el.querySelector('.sidebar-label.hidden')) {
+    return true;
+  }
+
+  // 5. Compact (collapsed-only) markers: collapsed → visible (no `hidden`).
+  const compact = el.querySelector('.sidebar-collapsed-only');
+  if (compact && compact.classList.contains('hidden') === collapsed) return true;
+
+  // 6. Active-task rows: collapsed → centered (`justify-center`, no `px-3`).
+  if (collapsed) {
+    if (el.querySelector('[data-sidebar-task-link]:not(.justify-center)')) return true;
+  } else if (el.querySelector('[data-sidebar-task-link].justify-center')) {
+    return true;
+  }
+
+  // 7. The collapse toggle's icon variant.
+  const toggle = state.collapseToggle;
+  if (toggle && toggle.querySelector) {
+    const icon = toggle.querySelector(
+      collapsed ? '.hero-chevron-double-right' : '.hero-chevron-double-left'
+    );
+    if (!icon) return true;
+  }
+
+  return false;
+}
+// SidebarCollapse hook:
+
 const SidebarCollapse = {
   mounted() {
     this.mobileOpen = false;
+    // The collapse state actually applied to the DOM (see `applyCollapsed`).
+    this.appliedCollapsed = undefined;
     this.mobileViewport = window.matchMedia('(max-width: 1023.98px)');
     this.layout = this.el.closest('#app-layout');
     this.main = this.layout.querySelector('.workbench-main');
@@ -86,13 +159,21 @@ const SidebarCollapse = {
     document.addEventListener('keydown', this._escapeHandler);
     this.mobileViewport.addEventListener('change', this._viewportHandler);
     this.layout.addEventListener('workbench:history-drawer', this._historyDrawerHandler);
+    // The first sync: `appliedCollapsed` is still undefined, so the probe
+    // reports "dirty" and the initial server markup gets the persisted state.
     this.updated();
   },
 
   updated() {
-    this.applyCollapsed(!this.isMobile() && this.isCollapsed());
+    const collapsed = !this.isMobile() && this.isCollapsed();
+    // Cheap probe FIRST: the sidebar sweep is O(sidebar subtree) and the
+    // sidebar carries the Active Tasks list, so it only re-runs when morphdom
+    // actually reset the server-rendered markup.
+    if (this.needsCollapseSync(collapsed)) this.applyCollapsed(collapsed);
     // Re-apply mobile open/close state — morphdom resets the sidebar's
-    // translate classes after every LiveView navigation patch.
+    // translate classes after every LiveView navigation patch. This is a
+    // constant number of classList/inert writes, so it stays unconditional
+    // and intentionally OUTSIDE the collapse sweep.
     this.applyMobileState();
   },
 
@@ -109,6 +190,11 @@ const SidebarCollapse = {
     this.layout.removeEventListener('workbench:history-drawer', this._historyDrawerHandler);
     if (this.mobileOpen) document.body.classList.remove('overflow-hidden');
     this.el.removeEventListener('click', this._sidebarNavHandler);
+  },
+
+  // Pure probe (see the block above): does the collapse sweep have to re-run?
+  needsCollapseSync(collapsed) {
+    return collapseSyncNeeded(this, collapsed);
   },
 
   isCollapsed() {
@@ -156,6 +242,23 @@ const SidebarCollapse = {
     this.el.querySelectorAll('[data-sidebar-bottom-bar] details[open]').forEach((d) => d.removeAttribute('open'));
   },
 
+  // Swaps the collapse toggle's chevron in place: the EXISTING icon element
+  // gets its hero class replaced instead of rewriting the toggle's innerHTML
+  // (an innerHTML write re-parses the markup and recreates the <svg> node on
+  // every patch). Idempotent — when the wanted variant is already there, the
+  // opposite lookup misses and nothing is written. Missing/unknown icon markup
+  // is left alone (never throws).
+  swapCollapseIcon(collapsed) {
+    if (!this.collapseToggle) return;
+    const from = collapsed ? 'hero-chevron-double-left' : 'hero-chevron-double-right';
+    const to = collapsed ? 'hero-chevron-double-right' : 'hero-chevron-double-left';
+    const target = this.collapseToggle.classList.contains(from)
+      ? this.collapseToggle
+      : this.collapseToggle.querySelector('.' + from);
+    if (!target) return;
+    target.classList.replace(from, to);
+  },
+
   applyCollapsed(collapsed) {
     const sidebar = this.el;
     sidebar.dataset.sidebarCollapsed = String(collapsed);
@@ -192,8 +295,8 @@ const SidebarCollapse = {
         });
       }
       // Icon swap: chevron-double-left → chevron-double-right
+      this.swapCollapseIcon(true);
       if (this.collapseToggle) {
-        this.collapseToggle.innerHTML = this.collapseToggle.innerHTML.replace(/hero-chevron-double-left/g, 'hero-chevron-double-right');
         this.collapseToggle.title = 'Expand sidebar';
         this.collapseToggle.classList.remove('hidden'); // ensure visible
       }
@@ -224,11 +327,14 @@ const SidebarCollapse = {
         });
       }
       // Icon swap: chevron-double-right → chevron-double-left
+      this.swapCollapseIcon(false);
       if (this.collapseToggle) {
-        this.collapseToggle.innerHTML = this.collapseToggle.innerHTML.replace(/hero-chevron-double-right/g, 'hero-chevron-double-left');
         this.collapseToggle.title = 'Collapse sidebar';
       }
     }
+
+    // Record what the DOM now reflects — the probe's first check.
+    this.appliedCollapsed = collapsed;
   }
 };
 
