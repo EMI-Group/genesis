@@ -81,6 +81,10 @@ Its `auth_mode`/`oauth_file` block pins OAuth-capable versus OAuth-unsupported v
 `generate_profile_id/2` pins base / `base-2` / `base-3` allocation that skips existing ids, the nil base and the one-arity `profile-N` wrapper.
 These compatibility assertions are not canonical provider persistence contracts; the canonical editor path lives in `provider_profiles_contract_test.exs`.
 
+## JSON object parsing coverage
+`model_profile_helpers_test.exs` pins blank `extra` producing the compact model string, valid object `extra` decoding to a map, and malformed `extra`/`provider_options` error precedence over peak validation, but has no valid-nonobject or already-map input assertions for either field and no explicit blank `provider_options` assertion.
+`provider_profiles_contract_test.exs` pins valid object JSON for both fields at account and nested-model levels, account malformed `extra`, nested nonobject `extra` (`[]`), nested malformed `provider_options`, nested blank clearing back to inheritance, and account already-map `extra` preserved from the existing profile.
+The canonical suite has no explicit account nonobject rejection, nested malformed `extra`, nested nonobject `provider_options`, or direct submitted already-map `provider_options` assertion; map-to-draft-to-parse round trips do not independently prove direct map-input acceptance.
 ## Config IO and the runtime push
 
 `config_io_test.exs` pins `:list_of_strings`, `:boolean` and `:float` category conversions, including the absent/blank/scalar delete signal versus an explicit empty list.
