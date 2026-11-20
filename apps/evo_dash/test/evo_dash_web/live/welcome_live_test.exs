@@ -23,8 +23,10 @@ defmodule EvoDashWeb.WelcomeLiveTest do
   @custom_key "sk-openai-compatible-test-123"
   # The authorization URL the sign-in stub mints (see the stub module below).
   @sign_in_url "https://auth.example.test/authorize"
-  # Budget for the stub's call notifications, which are already in flight when
-  # the event handler returns.
+  # Budget for the stub calls the LiveView event handler has ALREADY completed
+  # before returning (`begin`/`cancel`), so their notifications are in flight.
+  # An ASYNC poll tick is waited for on `@async_wait_budget_ms` instead, because
+  # its arrival is one poll interval away.
   @stub_call_timeout 5_000
 
   setup do
@@ -202,9 +204,10 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
   # Drains the poll notifications the stub already sent, so a following
   # `assert_receive` proves a status call made AFTER the test changed its mind.
+  # Each notification carries the answer that call READ.
   defp flush_signin_status do
     receive do
-      {:signin_stub, {:status, _flow_id}} -> flush_signin_status()
+      {:signin_stub, {:status, _flow_id, _answer}} -> flush_signin_status()
     after
       0 -> :ok
     end
@@ -509,9 +512,12 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert Floki.attribute(link, "target") == ["_blank"]
       assert Floki.attribute(link, "rel") |> List.first() =~ "noopener"
 
-      # The browser grants the registration: the poll reports exactly one result.
+      # The browser grants the registration: wait for the poll tick that READ
+      # the terminal result (an async tick, hence the load-tolerant budget).
       Process.put(:signin_stub_statuses, %{"welcome-flow" => {:ok, %{account: "work"}}})
-      assert_receive {:signin_stub, {:status, "welcome-flow"}}, @stub_call_timeout
+
+      assert_receive {:signin_stub, {:status, "welcome-flow", {:ok, %{account: "work"}}}},
+                     @async_wait_budget_ms
 
       await(fn ->
         has_element?(view, ~s(#welcome-chatgpt-account option[value="work"][selected]))
@@ -545,10 +551,14 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert has_element?(view, "#welcome-chatgpt-sign-in")
 
       # The flow's own terminal result is now stale and must not resurrect the
-      # waiting or error state.
+      # waiting or error state. Wait for the tick that READ it: delivery of that
+      # result races the two refutes below, and the flow-id stale guard itself is
+      # pinned by "ignores a result for a flow it is not waiting for".
       flush_signin_status()
       Process.put(:signin_stub_statuses, %{"welcome-flow" => {:error, :cancelled}})
-      assert_receive {:signin_stub, {:status, "welcome-flow"}}, @stub_call_timeout
+
+      assert_receive {:signin_stub, {:status, "welcome-flow", {:error, :cancelled}}},
+                     @async_wait_budget_ms
       refute has_element?(view, "#welcome-chatgpt-waiting")
       refute has_element?(view, "#welcome-chatgpt-sign-in-error")
     end
@@ -1279,7 +1289,9 @@ defmodule EvoDashWeb.WelcomeLiveTest.SignInStub do
   #
   # `status/1` is called from the `ChatGPTSignIn` poll task, which inherits the
   # caller chain, so it resolves the same owner and answers the SAME result every
-  # time (one terminal result, then the poll exits).
+  # time (one terminal result, then the poll exits). Its notification carries the
+  # answer the poll READ, because the tick is asynchronous: a test waits for the
+  # tick that saw its terminal answer, not merely for any tick.
 
   @default_begin {:ok, %{id: "welcome-flow", url: "https://auth.example.test/authorize"}}
   # `:pending` until a test flips the result it wants the poll to see, which
@@ -1292,10 +1304,17 @@ defmodule EvoDashWeb.WelcomeLiveTest.SignInStub do
     config(:signin_stub_begin, @default_begin)
   end
 
-  @doc "The configured terminal result for `flow_id`, else `:pending` (waiting)."
+  @doc """
+  The configured terminal result for `flow_id`, else `:pending` (waiting).
+
+  The notification carries the answer this call READ, so a test can wait for the
+  exact tick that saw its terminal result instead of a merely earlier `:pending`
+  one.
+  """
   def status(flow_id) do
-    notify({:status, flow_id})
-    :signin_stub_statuses |> config(@default_statuses) |> Map.get(flow_id, :pending)
+    answer = :signin_stub_statuses |> config(@default_statuses) |> Map.get(flow_id, :pending)
+    notify({:status, flow_id, answer})
+    answer
   end
 
   @doc "Cancels a flow, reporting the call to the owning test."
