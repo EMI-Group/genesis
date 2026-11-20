@@ -4,7 +4,9 @@
 
 Sub-component modules extracted from `EvoDashWeb.SettingsComponents` so each presentation concern stays focused: `CategoryMetadata` (pure display/schema-matching helpers), `SettingCard` (the schema-driven field renderer plus its special cases), the `provider_profiles/` family (the ONE canonical `[[llm.providers]]` account surface: panel + summary row + accordion detail + schedule editor + inline wizards), `ProviderProfileFields` (pure provider-form building blocks), `ProviderWizard` (LLM-setup step components shared with `/welcome`), the list editors (`CustomAgentsEditor`, `ModelSelectionEditor`), the read-only `CustomToolsPanel`, the sidebar/search shell (`Sidebar`, `SearchResults`) and four shared building blocks (`SaveBar`, `SectionHeader`, `CardShell`, `FormFooter`).
 
-Every module here is a pure function component (`use EvoDashWeb, :html`): it receives assigns and returns HEEx, owns no state, reads no config/catalog/clock, and emits event names the LiveView handles.
+Presentation modules receive assigns and return HEEx without owning LiveView state or reading credential/configuration files, and emit event names the LiveView handles.
+`CategoryMetadata` is a pure non-HEEx helper using Gettext directly rather than `use EvoDashWeb, :html`.
+`ProviderProfileFields` also exposes catalog-backed helpers (`reasoning_suggestions/2`, provider/auth capability helpers and provider options), so this directory is not uniformly catalog-read-free.
 
 ## Routing Table
 
