@@ -93,6 +93,8 @@ Move persists only a real move and never calls the parent persistence boundary f
 `advanced_open?/1` inspects provider and model generation/`extra`/`provider_options` in BOTH flat parser drafts and nested UI generation maps.
 An explicit `profile_advanced_open` boolean overrides the auto rule and resets on add/edit/cancel/success.
 `maybe_put_gen_opt/3` remains a legacy compatibility helper rather than the canonical connection-test path.
+The legacy `ModelProfileHelpers.parse_model_profile_params/2` decodes `extra` and `provider_options` with two parallel JSON-object branches, while canonical `ProviderProfiles.parse_value/2` implements the same object/error vocabulary separately.
+Any shared JSON-object decoder must preserve caller-specific preprocessing: legacy fields are trimmed strings with blank input omitted, while canonical fields also accept maps and stringify their keys.
 ## CategoryEvents
 `CategoryEvents` owns the generic events `save_category`, `save_search`, `reset_key`, `select_appearance_accent`, `add_list_entry`, `remove_list_entry` and `save_api_key`, whitelisted through its own event map.
 `persist_file_config/3,4` is the page's ONE config write entry point (public: the parent's `persist_file_config/3,4`, `ModelProfileEvents` and `ProviderPanelEvents` call it): it starts `ConfigSave` only when `config_loaded_scope == ConfigSave.scope(socket)`, so a whole-file write is never built from another scope's snapshot.
