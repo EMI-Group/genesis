@@ -345,7 +345,7 @@ defmodule EvoGit.Agent.Session.DurableResumeContinuityTest do
       assert length(built.context.messages) == 2
       assert built.turn == 0
       assert built.objective == @fresh_objective
-      assert Resume.crash_retry?(built) == false
+      assert Resume.restored_run?(built) == false
 
       # (d) A state that LOOKS like an interrupted run is still untouched.
       calls = [

@@ -990,7 +990,7 @@ defmodule EvoGit.Agent.Session.PersistenceTest do
 
       assert built.resume_info.restore_agent_state == true
       assert built.resume_info.resume_kind == nil
-      assert EvoGit.Agent.Resume.crash_retry?(built)
+      assert EvoGit.Agent.Resume.restored_run?(built)
       assert EvoGit.Agent.Resume.resume_kind(built) == nil
     end
 
@@ -1009,7 +1009,7 @@ defmodule EvoGit.Agent.Session.PersistenceTest do
                )
 
       assert built.resume_info == nil
-      refute EvoGit.Agent.Resume.crash_retry?(built)
+      refute EvoGit.Agent.Resume.restored_run?(built)
     end
 
     test "a malformed resume_kind value is dropped rather than acted on" do

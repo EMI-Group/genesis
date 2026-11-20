@@ -19,6 +19,13 @@ defmodule EvoGit.Agent.Session.Pause do
         checkpoint: String.t() | nil, branch: String.t() | nil,
         durable: boolean(), reason: :task_pause}
 
+  **The `checkpoint` key IS the run's persisted `pause_commit`** — the very sha
+  `EvoGit.AgentState.put_pause_commit/3` writes to `agent_states.pause_commit`
+  and the one the scheduler later reads as `worktree_resume_from` to base a
+  resumed run's worktree. The key spelling is kept because consumers outside
+  this module read it (`agent_scheduler/subagents.ex`), so only the LOCAL step
+  and variable names call it `pause_commit`.
+
   ## The ordered steps (each one total)
 
     1. `EvoGit.Agent.Session.Setup.install_process_context/3` — the OWNER stays
@@ -31,8 +38,9 @@ defmodule EvoGit.Agent.Session.Pause do
        the worktree (a CLEAN tree still yields its current HEAD sha) and anchors
        the commit under `refs/genesis/salvage/<branch>`, so reclaim cannot lose
        the resume base;
-    4. `EvoGit.AgentState.put_pause_commit/3` — the sha is persisted on the run's
-       durable row. `{:error, :not_found}` / `{:error,
+    4. `EvoGit.AgentState.put_pause_commit/3` — the PAUSE COMMIT sha (returned
+       here as `info.checkpoint`) is persisted on the run's durable row.
+       `{:error, :not_found}` / `{:error,
        :not_persistent_state_disabled}` are tolerated: a non-durable run still
        pauses, it simply cannot resume (the caller-side validation refuses such a
        pause before it starts);
@@ -47,8 +55,9 @@ defmodule EvoGit.Agent.Session.Pause do
 
   Any raise/exit/throw anywhere in that sequence degrades to
   `{:session_paused, pid, %{… checkpoint: nil, branch: nil, durable: false}}` —
-  a pause is never worth a session crash, and a nil checkpoint only means the
-  resume falls back to the task base.
+  a pause is never worth a session crash, and a nil `checkpoint` only means the
+  pause commit (the resume base) is missing, so the resume falls back to the task
+  base.
 
   ## Delivery is still exactly ONCE
 
@@ -60,6 +69,7 @@ defmodule EvoGit.Agent.Session.Pause do
 
   require Logger
 
+  alias EvoGit.Agent.Session.Durable
   alias EvoGit.Agent.Session.Setup
   alias EvoGit.Agent.State
   alias EvoGit.AgentState
@@ -68,7 +78,13 @@ defmodule EvoGit.Agent.Session.Pause do
 
   @type handle :: {pid(), reference()}
 
-  @typedoc "The paused outcome payload (see the moduledoc)."
+  @typedoc """
+  The paused outcome payload (see the moduledoc).
+
+  `checkpoint` is the PAUSE COMMIT sha — the value persisted in
+  `agent_states.pause_commit` and the one the scheduler names
+  `worktree_resume_from`.
+  """
   @type info :: %{
           agent_id: pos_integer() | nil,
           task_id: String.t() | nil,
@@ -126,26 +142,29 @@ defmodule EvoGit.Agent.Session.Pause do
   def stop(nil), do: :ok
 
   @doc """
-  Builds the paused outcome payload from a state (and the checkpoint it produced,
-  if any), reporting `durable: false`.
+  Builds the paused outcome payload from a state and the PAUSE COMMIT it produced
+  (if any), reporting `durable: false`.
 
   Public so the session can build the same shape for the belt-and-braces paths
   (a killed finalizer, an exchange worker aborted by the pause purge): those
   paths never flush, so they honestly cannot claim a durable checkpoint.
   """
   @spec info(State.t(), String.t() | nil, String.t() | nil) :: info()
-  def info(%State{} = state, checkpoint, branch), do: info(state, checkpoint, branch, false)
+  def info(%State{} = state, pause_commit, branch),
+    do: info(state, pause_commit, branch, false)
 
   @doc """
   The same payload with an explicit durability verdict — `true` ONLY when the
   writer's `flush/1` answered `:ok`.
   """
   @spec info(State.t(), String.t() | nil, String.t() | nil, boolean()) :: info()
-  def info(%State{} = state, checkpoint, branch, durable) do
+  def info(%State{} = state, pause_commit, branch, durable) do
     %{
       agent_id: state.agent_id,
       task_id: state.task_id,
-      checkpoint: checkpoint,
+      # The map KEY stays `checkpoint` (read by `agent_scheduler/subagents.ex`);
+      # the VALUE is the pause commit.
+      checkpoint: pause_commit,
       branch: branch,
       durable: durable == true,
       reason: :task_pause
@@ -155,15 +174,15 @@ defmodule EvoGit.Agent.Session.Pause do
   # --- the finalizer body ---
 
   # The whole sequence, converted into `info` in EVERY case: a raise/throw/exit
-  # answers the same payload with a nil checkpoint (the caller-side validation
+  # answers the same payload with a nil pause commit (the caller-side validation
   # refuses a resume that cannot be based, never a pause that could not be
   # checkpointed).
   defp run(%State{} = state, session_pid) do
     reap_background_jobs(session_pid)
-    {checkpoint, branch} = checkpoint(state)
-    persist(state, checkpoint)
+    {pause_commit, branch} = commit_pause_checkpoint(state)
+    persist(state, pause_commit)
     durable = flush(state) == :ok
-    info(state, checkpoint, branch, durable)
+    info(state, pause_commit, branch, durable)
   rescue
     error ->
       Logger.warning(
@@ -206,28 +225,30 @@ defmodule EvoGit.Agent.Session.Pause do
       :ok
   end
 
-  # The worktree checkpoint commit (total, `{:ok, sha} | {:ok, nil}` — and
-  # `{:ok, nil}` for a repo-less agent, which never has a worktree).
-  defp checkpoint(%State{} = state) do
+  # The worktree checkpoint commit that becomes the PAUSE COMMIT (total,
+  # `{:ok, sha} | {:ok, nil}` — and `{:ok, nil}` for a repo-less agent, which
+  # never has a worktree).
+  defp commit_pause_checkpoint(%State{} = state) do
     case WorktreeManager.checkpoint_for_pause(state.agent_id) do
       {:ok, %{commit: sha, branch: branch}} when is_binary(sha) -> {sha, branch}
       _other -> {nil, nil}
     end
   rescue
     error ->
-      Logger.warning("Pause: checkpoint failed: #{inspect(error)}")
+      Logger.warning("Pause: checkpoint commit failed: #{inspect(error)}")
       {nil, nil}
   catch
     kind, reason ->
-      Logger.warning("Pause: checkpoint failed: #{inspect({kind, reason})}")
+      Logger.warning("Pause: checkpoint commit failed: #{inspect({kind, reason})}")
       {nil, nil}
   end
 
-  # The durable marker. Skipped (never cleared) when there is no checkpoint or no
-  # identity to write it to; a non-durable run's `{:error, …}` is tolerated.
-  defp persist(%State{} = state, checkpoint) when is_binary(checkpoint) do
-    if valid_identity?(state) do
-      case AgentState.put_pause_commit(state.task_id, state.agent_id, checkpoint) do
+  # The durable marker: `agent_states.pause_commit`. Skipped (never cleared) when
+  # there is no pause commit or no identity to write it to; a non-durable run's
+  # `{:error, …}` is tolerated.
+  defp persist(%State{} = state, pause_commit) when is_binary(pause_commit) do
+    if Durable.valid_identity?(state) do
+      case AgentState.put_pause_commit(state.task_id, state.agent_id, pause_commit) do
         :ok ->
           :ok
 
@@ -243,7 +264,7 @@ defmodule EvoGit.Agent.Session.Pause do
     end
   end
 
-  defp persist(_state, _checkpoint), do: :ok
+  defp persist(_state, _pause_commit), do: :ok
 
   # The explicit durability barrier: a synchronous writer round-trip. It MUST
   # complete before the paused outcome is delivered, and its verdict decides
@@ -252,8 +273,4 @@ defmodule EvoGit.Agent.Session.Pause do
     do: AgentState.flush(agent_id)
 
   defp flush(_state), do: AgentState.flush()
-
-  defp valid_identity?(%State{task_id: task_id, agent_id: agent_id}) do
-    is_integer(agent_id) and is_binary(task_id) and String.trim(task_id) != ""
-  end
 end
