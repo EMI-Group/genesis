@@ -66,3 +66,4 @@ These are documented source behaviors, not proof of a production failure in the 
 A scripted response with non-catalog `test:model` may emit a best-effort cost warning, which stays captured by the suite's log capture.
 Do not use `process_stream/2` tracing to claim network stream coverage when the exchange seam bypasses it entirely.
 `{:interrupted, reason}` is the early-turn non-error seam contract; replacing it with `{:error, reason}` exercises a different failure path.
+One exchange may publish MORE than one `{:agent_delta, …}` (the ~75 ms coalescing window can close between the scripted emission and the exchange's own `{:turn, …}`/`{:yield, …}` events), so a presence assertion accumulates deltas to a bounded deadline and never assumes the first delta holds every event.
