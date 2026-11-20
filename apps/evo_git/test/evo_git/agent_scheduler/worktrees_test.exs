@@ -832,14 +832,12 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
 
       # A PLAIN dir at the worktree path (no `.git` file, not registered) —
       # the dangerous broken-registration state. The guard must refuse
-      # WITHOUT running any git against it. (Actual lib return shape is the
-      # unwrapped `{:worktree_prepare_failed, :not_a_linked_worktree}` — the
-      # `with` else clause passes the guard error through without the outer
-      # `:error` wrapper.)
+      # WITHOUT running any git against it, and the failure keeps the outer
+      # `:error` tag: `{:error, {:worktree_prepare_failed, detail}}`.
       File.mkdir_p!(wt_path)
       File.write!(Path.join(wt_path, "junk.txt"), "junk")
 
-      assert {:worktree_prepare_failed, :not_a_linked_worktree} =
+      assert {:error, {:worktree_prepare_failed, :not_a_linked_worktree}} =
                Worktrees.assign_and_prepare_worktree(agent_id, wt_path, tmp_dir)
 
       # Main HEAD untouched; the plain dir survives (not deleted, not
@@ -861,9 +859,9 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
 
       # The repo root has a `.git` DIRECTORY — not a linked-worktree `.git`
       # FILE — so the guard refuses without running any git against the main
-      # copy. HEAD stays put. (Return shape as in the plain-dir test above:
-      # unwrapped `{:worktree_prepare_failed, :not_a_linked_worktree}`.)
-      assert {:worktree_prepare_failed, :not_a_linked_worktree} =
+      # copy. HEAD stays put. Same documented shape as the plain-dir test
+      # above: `{:error, {:worktree_prepare_failed, :not_a_linked_worktree}}`.
+      assert {:error, {:worktree_prepare_failed, :not_a_linked_worktree}} =
                Worktrees.assign_and_prepare_worktree(agent_id, tmp_dir, tmp_dir)
 
       assert {:ok, ^base_sha} = Git.rev_parse(tmp_dir)
