@@ -49,6 +49,26 @@ defmodule EvoDashWeb.ProcessesLive do
   the list once (or not at all when the sample changed no row) instead of
   twice per render.
 
+  ## Keyed row stream
+
+  The table body is a LiveView STREAM (`phx-update="stream"`,
+  `id="processes-rows"`), so a broadcast patches ONE row instead of diffing
+  the whole list. `:executions` stays a plain list — it is the source
+  `recompute/1` and every merge helper read — while `@streams.executions` is
+  the render projection only. The stream `dom_id` is `row_dom_id/1`, which
+  mirrors the `<tr>` id the row component derives from the same record
+  (`process-row-<id>`, `process-row-unknown` when the id is nil), and the
+  DOM declares the `ListEnter` hook scope around the table.
+
+  Membership is kept EXACTLY equal to `:filtered` by two operations:
+  `stream_reset/1` replaces the whole stream from `:filtered` (the load
+  result, a node switch and every filter change — the same places that clear
+  the enter animation) and `stream_touch/2` patches only the ids ONE push
+  event touched, inserting a still-visible row from `:filtered` and
+  deleting a row that is now filtered out. A push NEVER bulk-inserts the
+  filtered list, and `update_executions/3` drops the ids whose row the event
+  left byte-identical, so an unchanged 3-second sample re-renders nothing.
+
   ## Row enter animation
 
   A row that arrives AFTER the initial snapshot — a genuinely new id, i.e. one
@@ -56,7 +76,7 @@ defmodule EvoDashWeb.ProcessesLive do
   class (`EvoDashWeb.ProcessComponents.execution_row/1`'s `entering` attr) for
   one TTL, then cleared by a `{:clear_entering, ids}` self-message. The initial
   load, a refetch, a Retry and a node/core-filter switch NEVER animate (they
-  replace the whole table), and a later `{:process_sample, ...}` /
+  replace the whole stream), and a later `{:process_sample, ...}` /
   `{:process_updated, ...}` patch for an already-cleared id cannot bring the
   class back.
 
@@ -93,42 +113,49 @@ defmodule EvoDashWeb.ProcessesLive do
     # No load in mount: the node context is not resolved until handle_params/3
     # (the ?node= param lives on the URL), so a mount-time fetch would always
     # query the LOCAL node.
+    socket =
+      socket
+      |> seed_layout_assigns()
+      |> assign(
+        # `Layouts.app` reads `@config_status` on EVERY render (dead render
+        # included), so the page must own the assign — an unset one raises
+        # KeyError before the first paint. Resolved here like the other pages
+        # (local read of config.toml, no RPC).
+        page_title: gettext("Processes"),
+        config_status: config_status(),
+        executions: [],
+        executions_loading: false,
+        executions_error: nil,
+        executions_loaded: false,
+        load_seq: 0,
+        status_filter: "live",
+        kind_filter: "all",
+        search_query: "",
+        agent_filter: nil,
+        task_filter: nil,
+        # Derived from :executions + the filter assigns by recompute/1 only.
+        filtered: [],
+        counts: %{live: 0, finished: 0, all: 0},
+        filters_active: false,
+        expanded: MapSet.new(),
+        # String ids of rows that arrived AFTER the initial snapshot; each one
+        # renders with the enter-animation class until its own TTL expires.
+        entering: MapSet.new(),
+        # Row ids (Format.id_string/1) whose control call is still in flight;
+        # a second click on such a row is dropped instead of posting a
+        # duplicate control. Cleared on every outcome.
+        action_busy: %{},
+        confirm: nil,
+        confirm_reason: "",
+        confirm_error: nil
+      )
+
+    # The table body is a keyed stream: `dom_id` is configured ONCE, before the
+    # stream exists (LiveView refuses a later re-configure), and the empty
+    # creation here guarantees every later `stream_insert/3` has a stream to
+    # patch. `:executions` above stays the plain list `recompute/1` reads.
     {:ok,
-     socket
-     |> seed_layout_assigns()
-     |> assign(
-       # `Layouts.app` reads `@config_status` on EVERY render (dead render
-       # included), so the page must own the assign — an unset one raises
-       # KeyError before the first paint. Resolved here like the other pages
-       # (local read of config.toml, no RPC).
-       page_title: gettext("Processes"),
-       config_status: config_status(),
-       executions: [],
-       executions_loading: false,
-       executions_error: nil,
-       executions_loaded: false,
-       load_seq: 0,
-       status_filter: "live",
-       kind_filter: "all",
-       search_query: "",
-       agent_filter: nil,
-       task_filter: nil,
-       # Derived from :executions + the filter assigns by recompute/1 only.
-       filtered: [],
-       counts: %{live: 0, finished: 0, all: 0},
-       filters_active: false,
-       expanded: MapSet.new(),
-       # String ids of rows that arrived AFTER the initial snapshot; each one
-       # renders with the enter-animation class until its own TTL expires.
-       entering: MapSet.new(),
-       # Row ids (Format.id_string/1) whose control call is still in flight;
-       # a second click on such a row is dropped instead of posting a
-       # duplicate control. Cleared on every outcome.
-       action_busy: %{},
-       confirm: nil,
-       confirm_reason: "",
-       confirm_error: nil
-     )}
+     socket |> stream_configure(:executions, dom_id: &row_dom_id/1) |> stream(:executions, [])}
   end
 
   # Assigns owned by the `NodeAware` / `Appearance` / `DesktopQuit` /
@@ -201,8 +228,10 @@ defmodule EvoDashWeb.ProcessesLive do
       end
 
     # The filters just changed (or the table was emptied): derive the render
-    # state once, here, instead of on every render.
-    socket = recompute(socket)
+    # state once, here, instead of on every render. The stream is REBUILT from
+    # the new `:filtered` (a filter/node switch replaces the whole table, so no
+    # row may keep a stale element), which also drops any enter animation.
+    socket = socket |> recompute() |> stream_reset()
 
     cond do
       # The disconnected (static HTTP) render's async result is discarded, so
@@ -248,7 +277,7 @@ defmodule EvoDashWeb.ProcessesLive do
 
   def handle_info({:process_updated, id, changes, node}, socket) do
     if NodeAware.event_from_current_node?(socket.assigns, node) and is_map(changes) do
-      {:noreply, update_executions(socket, &update_execution(&1, id, changes))}
+      {:noreply, update_executions(socket, &update_execution(&1, id, changes), [id])}
     else
       {:noreply, socket}
     end
@@ -264,7 +293,7 @@ defmodule EvoDashWeb.ProcessesLive do
 
   def handle_info({:process_sample, node, _seq, entries}, socket) do
     if NodeAware.event_from_current_node?(socket.assigns, node) do
-      {:noreply, update_executions(socket, &apply_sample(&1, entries))}
+      {:noreply, update_executions(socket, &apply_sample(&1, entries), sample_ids(entries))}
     else
       {:noreply, socket}
     end
@@ -272,7 +301,7 @@ defmodule EvoDashWeb.ProcessesLive do
 
   def handle_info({:process_control, id, entry, node}, socket) do
     if NodeAware.event_from_current_node?(socket.assigns, node) and is_map(entry) do
-      {:noreply, update_executions(socket, &append_control_entry(&1, id, entry))}
+      {:noreply, update_executions(socket, &append_control_entry(&1, id, entry), [id])}
     else
       {:noreply, socket}
     end
@@ -285,11 +314,17 @@ defmodule EvoDashWeb.ProcessesLive do
   end
 
   # Enter-animation expiry: drop exactly the ids whose TTL elapsed, so a later
-  # patch of that row can never re-run the animation.
+  # patch of that row can never re-run the animation. Only the rows that lost
+  # the class are re-sent — every other row is untouched.
   def handle_info({:clear_entering, ids}, socket) when is_list(ids) do
-    entering = MapSet.difference(socket.assigns.entering, MapSet.new(ids))
+    entering = socket.assigns.entering
+    cleared = Enum.filter(ids, &MapSet.member?(entering, &1))
 
-    {:noreply, socket |> assign(:entering, entering) |> recompute()}
+    {:noreply,
+     socket
+     |> assign(:entering, MapSet.difference(entering, MapSet.new(ids)))
+     |> recompute()
+     |> stream_touch(cleared)}
   end
 
   # ---------------------------------------------------------------------------
@@ -326,8 +361,16 @@ defmodule EvoDashWeb.ProcessesLive do
   @impl true
   def handle_event("toggle_process_row", params, socket) do
     case id_param(params) do
-      nil -> {:noreply, socket}
-      id -> {:noreply, assign(socket, :expanded, toggle_expanded(socket.assigns.expanded, id))}
+      nil ->
+        {:noreply, socket}
+
+      id ->
+        # `expanded` is a render attribute of the streamed row, so the row has
+        # to be re-inserted into the stream for the disclosure to show up.
+        {:noreply,
+         socket
+         |> assign(:expanded, toggle_expanded(socket.assigns.expanded, id))
+         |> stream_touch([id])}
     end
   end
 
@@ -632,6 +675,8 @@ defmodule EvoDashWeb.ProcessesLive do
         <div
           :if={@filtered != []}
           id="processes-results"
+          phx-hook="ListEnter"
+          data-list-enter-scope={list_enter_scope(assigns)}
           class="rounded-lg border border-base-300 bg-base-100"
         >
           <table
@@ -661,9 +706,14 @@ defmodule EvoDashWeb.ProcessesLive do
                 <th scope="col" role="columnheader" class="text-right">{gettext("Actions")}</th>
               </tr>
             </thead>
-            <tbody role="rowgroup" class="block xl:table-row-group">
+            <tbody
+              id="processes-rows"
+              role="rowgroup"
+              phx-update="stream"
+              class="block xl:table-row-group"
+            >
               <ProcessComponents.execution_row
-                :for={execution <- @filtered}
+                :for={{_dom_id, execution} <- @streams.executions}
                 execution={execution}
                 expanded={MapSet.member?(@expanded, Format.id_string(Map.get(execution, :id)))}
                 entering={MapSet.member?(@entering, Format.id_string(Map.get(execution, :id)))}
@@ -689,7 +739,8 @@ defmodule EvoDashWeb.ProcessesLive do
   # ---------------------------------------------------------------------------
 
   defp apply_load_result(socket, {:ok, executions}) when is_list(executions) do
-    assign(socket,
+    socket
+    |> assign(
       executions: executions,
       executions_loaded: true,
       executions_loading: false,
@@ -698,6 +749,7 @@ defmodule EvoDashWeb.ProcessesLive do
       entering: MapSet.new()
     )
     |> recompute()
+    |> stream_reset()
   end
 
   defp apply_load_result(socket, {:ok, other}) do
@@ -705,12 +757,18 @@ defmodule EvoDashWeb.ProcessesLive do
   end
 
   defp apply_load_result(socket, {:error, reason}) do
-    assign(socket,
+    # The rows stay on screen, so the stream is not rebuilt — only the rows
+    # whose enter animation was still pending need the class removed.
+    cleared = MapSet.to_list(socket.assigns.entering)
+
+    socket
+    |> assign(
       executions_loading: false,
       executions_error: Format.term_text(reason),
       entering: MapSet.new()
     )
     |> recompute()
+    |> stream_touch(cleared)
   end
 
   defp apply_load_result(socket, other) do
@@ -725,12 +783,20 @@ defmodule EvoDashWeb.ProcessesLive do
   # render state is recomputed exactly once per change — and not at all when
   # the event left the rows untouched (a sample for an id this page does not
   # show, a repeat `started` broadcast, a foreign-node record).
-  defp update_executions(socket, fun) when is_function(fun, 1) do
+  #
+  # `ids` are the ids THIS event could have touched. Only the ones whose row
+  # actually changed are patched into the stream, so an unchanged 3-second
+  # sample re-renders nothing at all instead of the whole live table.
+  defp update_executions(socket, fun, ids) when is_function(fun, 1) do
     previous = executions_list(socket)
     updated = fun.(previous)
 
     socket = assign(socket, :executions, updated)
-    if updated == previous, do: socket, else: recompute(socket)
+    socket = if updated == previous, do: socket, else: recompute(socket)
+
+    touched = Enum.filter(ids, &(find_execution(previous, &1) != find_execution(updated, &1)))
+
+    stream_touch(socket, touched)
   end
 
   defp executions_list(socket) do
@@ -747,16 +813,16 @@ defmodule EvoDashWeb.ProcessesLive do
   # A repeat broadcast for a known id only patches its row — no row movement,
   # no animation.
   defp upsert_execution(socket, execution, fun) when is_function(fun, 2) do
-    executions = Map.get(socket.assigns, :executions)
+    previous = Map.get(socket.assigns, :executions)
     id = Map.get(execution, :id)
+    # Decide BEFORE the insert (the same guard that suppresses a duplicate
+    # prepend), and mark `entering` FIRST so the row the stream inserts below
+    # already carries the animation class.
+    newly_joined? = find_execution(previous, id) == nil
 
-    socket = update_executions(socket, fn rows -> fun.(rows, execution) end)
+    socket = if newly_joined?, do: mark_entering(socket, [id]), else: socket
 
-    if find_execution(executions, id) == nil do
-      mark_entering(socket, [id])
-    else
-      socket
-    end
+    update_executions(socket, fn rows -> fun.(rows, execution) end, [id])
   end
 
   # Adds ids to `:entering` and schedules their own clear; ids are compared in
@@ -938,6 +1004,87 @@ defmodule EvoDashWeb.ProcessesLive do
   defp same_id?(_execution, _id), do: false
 
   # ---------------------------------------------------------------------------
+  # Stream projection (`@streams.executions` mirrors `:filtered`)
+  # ---------------------------------------------------------------------------
+
+  # Replaces the whole rendered stream from the current `:filtered`. Used where
+  # the membership is recomputed GLOBALLY — a snapshot load, a node switch and
+  # every filter change — because rows may have disappeared without any event
+  # naming them.
+  defp stream_reset(socket) do
+    stream(socket, :executions, Map.get(socket.assigns, :filtered, []), reset: true)
+  end
+
+  # Patches ONLY the ids one push event touched: a still-visible row is
+  # re-inserted from `:filtered` at the index it occupies there, and a row the
+  # filters now exclude is DELETED — a shorter list alone would leave a stale
+  # `<tr>` in a `phx-update="stream"` container.
+  #
+  # Every touched id is deleted FIRST: the row component renders the summary
+  # `<tr>` plus, when `expanded`, a sibling `process-details-<id>` `<tr>`, and a
+  # same-id re-insert alone only morphs the row element in place — collapsing
+  # would leave the stale details row behind.
+  defp stream_touch(socket, ids) do
+    filtered = Map.get(socket.assigns, :filtered, [])
+
+    {visible, hidden} =
+      ids
+      |> Enum.map(&Format.id_string/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.uniq()
+      |> Enum.reduce({[], []}, fn key, {visible, hidden} ->
+        case Enum.find_index(filtered, &(Format.id_string(Map.get(&1, :id)) == key)) do
+          nil -> {visible, [key | hidden]}
+          index -> {[{index, key, Enum.at(filtered, index)} | visible], hidden}
+        end
+      end)
+
+    socket =
+      Enum.reduce(hidden, socket, fn key, acc ->
+        delete_row(acc, key)
+      end)
+
+    # Ascending position, so a batch that inserts several rows lands each one at
+    # the index it occupies in `:filtered`.
+    visible
+    |> Enum.sort_by(&elem(&1, 0))
+    |> Enum.reduce(socket, fn {index, key, execution}, acc ->
+      acc
+      |> delete_row(key)
+      |> stream_insert(:executions, execution, at: index)
+    end)
+  end
+
+  # Drops BOTH elements one row can own, so the following insert (if any) is the
+  # only copy left in the container.
+  defp delete_row(socket, key) do
+    socket
+    |> stream_delete_by_dom_id(:executions, row_dom_id(%{id: key}))
+    |> stream_delete_by_dom_id(:executions, details_dom_id(key))
+  end
+
+  # The details `<tr>` id the row component renders when the disclosure is open
+  # (`key` is already the normalized id string).
+  defp details_dom_id(key), do: "process-details-" <> key
+
+  # The stream `dom_id` MUST equal the `<tr>` id the row component renders from
+  # the same record (`"process-row-#{@id || "unknown"}"`), because LiveView
+  # matches stream children by element id. A nil/absent id is the component's
+  # `"unknown"` arm.
+  defp row_dom_id(execution) do
+    id = if is_map(execution), do: Map.get(execution, :id), else: nil
+    "process-row-" <> if(id == nil, do: "unknown", else: Format.id_string(id))
+  end
+
+  # The ids a `{:process_sample, ...}` batch names (its entries may be
+  # malformed, in which case the id is simply absent).
+  defp sample_ids(entries) when is_list(entries) do
+    Enum.map(entries, &Format.entry_get(&1, :id))
+  end
+
+  defp sample_ids(_entries), do: []
+
+  # ---------------------------------------------------------------------------
   # Control actions (async: the RPC never runs in the LiveView process)
   # ---------------------------------------------------------------------------
 
@@ -1034,7 +1181,11 @@ defmodule EvoDashWeb.ProcessesLive do
       |> assign(:action_busy, Map.delete(socket.assigns.action_busy, Format.id_string(id)))
       |> put_flash(kind, message)
 
-    settle_confirm(socket, id, label_action, result, message)
+    socket
+    |> settle_confirm(id, label_action, result, message)
+    # The row's own markup does not change here, but the control outcome is
+    # the one place that leaves the busy marker: patch just that id.
+    |> stream_touch([id])
   end
 
   # Only the modal that STARTED this call is settled: one opened (or closed)
@@ -1183,6 +1334,27 @@ defmodule EvoDashWeb.ProcessesLive do
   # ---------------------------------------------------------------------------
   # Render helpers
   # ---------------------------------------------------------------------------
+
+  # The `ListEnter` hook's view identity: a filter, tab or node change is a NEW
+  # scope, so the hook re-seeds its silent baseline instead of animating the
+  # whole replacement list. Total: an unset filter contributes an empty part.
+  defp list_enter_scope(assigns) do
+    parts =
+      [
+        "processes",
+        Map.get(assigns, :current_node_id) || "local",
+        Map.get(assigns, :status_filter),
+        Map.get(assigns, :kind_filter),
+        Map.get(assigns, :search_query),
+        Map.get(assigns, :agent_filter),
+        Map.get(assigns, :task_filter)
+      ]
+
+    Enum.map_join(parts, ":", fn
+      nil -> ""
+      part -> Format.id_string(part)
+    end)
+  end
 
   defp status_tab_label("live"), do: gettext("Live")
   defp status_tab_label("finished"), do: gettext("Finished processes")
