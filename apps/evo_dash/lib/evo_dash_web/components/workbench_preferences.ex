@@ -2,6 +2,8 @@ defmodule EvoDashWeb.WorkbenchPreferences do
   @moduledoc false
   use EvoDashWeb, :html
 
+  attr(:class, :string, default: nil, doc: "extra classes from the host window")
+
   def panel(assigns) do
     assigns =
       assign(assigns,
@@ -11,7 +13,7 @@ defmodule EvoDashWeb.WorkbenchPreferences do
       )
 
     ~H"""
-    <section id="workbench-preferences" class="workbench-preferences">
+    <section id="workbench-preferences" class={["workbench-preferences", @class]}>
       <h2>{gettext("Appearance")}</h2>
       <p>{gettext("These preferences apply to this browser across all Genesis connections.")}</p>
       <div class="workbench-preference-row">
