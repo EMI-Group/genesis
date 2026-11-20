@@ -30,7 +30,7 @@ The agent no longer owns concurrency logic: `EvoGit.Agent.ToolDispatch.batch_exe
 - `{:tool_error, reason}` is an additive extension of the core reason vocabulary, carrying the reason a tool answered `{:error, reason}` with.
 - Ownership split: the SANDBOX layer settles a shell call `:exited` with its real exit code, while this layer settles the builtin, malformed-arguments, crash, timeout and tool-error outcomes.
 - `ProcessManager.finish/3` is idempotent — the FIRST fact wins — so the unconditional `:completed` + `:no_os_process` of the success arm never overwrites a shell call's `:exited` fact (no backend branch is needed).
-- Per-call settlement lives in the RUNTIME process, not the tool task: `:failed` + `:invalid_arguments` on the malformed-arguments path, `:failed` + `{:crashed, …}` on `{:tool_crashed, _}`/`{:exit, _}`, `:failed` + `{:tool_error, reason}` on `{:error, reason}`, and `kill(:timeout)` followed by `:killed` + `:timeout` on a `Task.yield` timeout.
+- Per-call settlement lives in the RUNTIME process, not the tool task: `:failed` + `:invalid_arguments` on the malformed-arguments path, `:failed` + `{:crashed, Exception.format/3 detail}` on `{:tool_crashed, kind, reason, stacktrace}`/`{:exit, _}`, `:failed` + `{:tool_error, reason}` on `{:error, reason}`, and `kill(:timeout)` followed by `:killed` + `:timeout` on a `Task.yield` timeout.
 - `Tracking.kill(id, :timeout)` settles the terminal fact `:timeout`; every other kill reason settles `{:killed_by, :tool_runtime}`, with the human prose kept in the record's `control_log`.
 - `finish/3` and `kill/2` are total (a `nil` or non-binary id is a no-op) and never raise into the tool path.
 
