@@ -9,6 +9,10 @@ defmodule EvoGit.Bench.Report do
   Nothing here performs I/O or prints — the Mix task owns stdout. Both
   renderers are total over the result map: a missing or unexpected phase entry
   renders as zeros instead of raising, so synthetic maps are safe to render.
+  Byte sizes render through `EvoGit.Util.Strings.human_size/1`, which shows
+  `"unknown"` for a nil/invalid value rather than `"0 B"` — more informative,
+  and unreachable from the benchmark's own numeric call sites (`field/2` always
+  yields a number).
   """
 
   alias EvoGit.Bench.Stats
@@ -108,7 +112,7 @@ defmodule EvoGit.Bench.Report do
       "",
       "Settings  : #{settings_line(settings)}",
       "",
-      "Repo setup: #{count(setup, :files)} files / #{human_size(field(setup, :bytes))} " <>
+      "Repo setup: #{count(setup, :files)} files / #{EvoGit.Util.Strings.human_size(field(setup, :bytes))} " <>
         "in #{Stats.format_duration_us(field(setup, :us))}",
       "",
       "Phase breakdown (per cycle, #{sample_count(settings, overall)} samples; times in ms)",
@@ -157,7 +161,7 @@ defmodule EvoGit.Bench.Report do
 
     "#{count(settings, :iterations)} cycles (+#{count(settings, :warmup)} warmup) · " <>
       "#{count(settings, :files)} seed files · #{count(settings, :reads)} reads + " <>
-      "#{count(settings, :writes)} writes/cycle @ #{human_size(field(settings, :file_size))} · " <>
+      "#{count(settings, :writes)} writes/cycle @ #{EvoGit.Util.Strings.human_size(field(settings, :file_size))} · " <>
       "fsync #{fsync} · seed #{count(settings, :seed)}"
   end
 
@@ -199,14 +203,14 @@ defmodule EvoGit.Bench.Report do
 
   defp write_line(throughput, phases) do
     "Write throughput: #{count(throughput, :files_written)} files / " <>
-      "#{human_size(field(throughput, :bytes_written))} in " <>
+      "#{EvoGit.Util.Strings.human_size(field(throughput, :bytes_written))} in " <>
       "#{Stats.format_duration_us(phase_total_us(phases, :file_write))} → " <>
       "#{one_decimal(field(throughput, :write_mib_per_sec))} MiB/s"
   end
 
   defp read_line(throughput, phases) do
     "Read throughput : #{count(throughput, :files_read)} files / " <>
-      "#{human_size(field(throughput, :bytes_read))} in " <>
+      "#{EvoGit.Util.Strings.human_size(field(throughput, :bytes_read))} in " <>
       "#{Stats.format_duration_us(phase_total_us(phases, :file_read))} → " <>
       "#{one_decimal(field(throughput, :read_mib_per_sec))} MiB/s"
   end
@@ -283,33 +287,6 @@ defmodule EvoGit.Bench.Report do
 
   defp one_decimal(value) when is_number(value) do
     :erlang.float_to_binary(value * 1.0, decimals: 1)
-  end
-
-  # Binary units: bytes as an integer, KiB trimmed of a trailing `.0`, MiB/GiB
-  # always one decimal.
-  defp human_size(bytes) when is_number(bytes) and bytes >= 0 and bytes < 1024 do
-    "#{round(bytes)} B"
-  end
-
-  defp human_size(bytes) when is_number(bytes) and bytes >= 0 and bytes < 1_048_576 do
-    trim_zero(one_decimal(bytes / 1024)) <> " KiB"
-  end
-
-  defp human_size(bytes) when is_number(bytes) and bytes >= 0 and bytes < 1_073_741_824 do
-    one_decimal(bytes / 1_048_576) <> " MiB"
-  end
-
-  defp human_size(bytes) when is_number(bytes) and bytes >= 0 do
-    one_decimal(bytes / 1_073_741_824) <> " GiB"
-  end
-
-  defp human_size(_bytes), do: "0 B"
-
-  defp trim_zero(string) do
-    case String.split(string, ".", parts: 2) do
-      [whole, "0"] -> whole
-      _ -> string
-    end
   end
 
   # ── JSON safety ───────────────────────────────────────────────────────────

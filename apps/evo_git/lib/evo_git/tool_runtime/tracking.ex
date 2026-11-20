@@ -187,19 +187,11 @@ defmodule EvoGit.ToolRuntime.Tracking do
         |> String.trim()
         |> case do
           "" -> name
-          line -> "#{name}: #{truncate(line)}"
+          line -> "#{name}: #{EvoGit.Util.Strings.truncate(line, @label_command_chars, "…")}"
         end
 
       _absent ->
         name
-    end
-  end
-
-  defp truncate(line) do
-    if String.length(line) <= @label_command_chars do
-      line
-    else
-      String.slice(line, 0, @label_command_chars) <> "…"
     end
   end
 end

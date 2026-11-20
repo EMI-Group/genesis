@@ -562,12 +562,10 @@ defmodule EvoGit.Agent.ContextMerge do
     end
   end
 
+  # Truncation uses the shared character-based helper with this module's own
+  # marker, so the rendered diff block is unchanged byte-for-byte.
   defp truncate_diff(diff) do
-    if String.length(diff) > @diff_max_chars do
-      String.slice(diff, 0, @diff_max_chars) <> "\n… (truncated)"
-    else
-      diff
-    end
+    EvoGit.Util.Strings.truncate(diff, @diff_max_chars, "\n… (truncated)")
   end
 
   defp entry(child, status) do
@@ -724,7 +722,7 @@ defmodule EvoGit.Agent.ContextMerge do
       dropped_blocks(report.dropped_edits),
       branch_handling(report.status, report.entries)
     ]
-    |> Enum.reject(&blank?/1)
+    |> Enum.reject(&EvoGit.Util.Strings.blank?/1)
     |> Enum.join("\n")
   end
 
@@ -743,7 +741,7 @@ defmodule EvoGit.Agent.ContextMerge do
       next_steps(report.entries),
       branch_handling(report.status, report.entries)
     ]
-    |> Enum.reject(&blank?/1)
+    |> Enum.reject(&EvoGit.Util.Strings.blank?/1)
     |> Enum.join("\n")
   end
 
@@ -755,7 +753,7 @@ defmodule EvoGit.Agent.ContextMerge do
         "\nYour worktree is clean at HEAD #{sha_text(report.head_sha)}."
 
     [head, child_lines(report.entries), branch_handling(report.status, report.entries)]
-    |> Enum.reject(&blank?/1)
+    |> Enum.reject(&EvoGit.Util.Strings.blank?/1)
     |> Enum.join("\n")
   end
 
@@ -958,10 +956,6 @@ defmodule EvoGit.Agent.ContextMerge do
 
   defp note_text(note) when is_binary(note) and note != "", do: note
   defp note_text(_note), do: ""
-
-  defp blank?(nil), do: true
-  defp blank?(""), do: true
-  defp blank?(_value), do: false
 
   defp text(nil), do: ""
   defp text(value) when is_binary(value), do: value

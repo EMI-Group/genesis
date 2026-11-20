@@ -55,35 +55,21 @@ defmodule EvoGit.Sandbox.Helpers do
   - Otherwise, the first and last `#{@truncate_size |> div(2)}` bytes are kept
     with a truncation notice in between.
 
-  This is used both for in-memory truncation (e.g. `run_with_partial` on
-  Windows where output comes directly from `System.cmd` rather than a temp
-  file) and indirectly by `read_tempfile/2`.
+  A ONE-LINE delegate to `EvoGit.Util.Strings.truncate_bytes/2`, the single
+  byte-based head+tail elision (UTF-8-safe via `String.byte_slice/3`), kept
+  here because `EvoGit.Sandbox.None` addresses it as
+  `Helpers.truncate_output/2`. It is used for in-memory truncation (e.g.
+  `run_with_partial` on Windows where output comes directly from `System.cmd`
+  rather than a temp file) and matches `read_tempfile/2`'s notice exactly.
   """
   @spec truncate_output(binary(), integer() | nil) :: binary()
   def truncate_output(output, max_bytes) do
-    size = byte_size(output)
-
-    cond do
-      is_nil(max_bytes) or size <= max_bytes ->
-        output
-
-      size <= @truncate_size ->
-        output
-
-      true ->
-        half_size = div(@truncate_size, 2)
-        # UTF-8-safe truncation via String.byte_slice/3: the stdlib works on
-        # bytes and then adjusts to eliminate truncated codepoints, avoiding
-        # invalid UTF-8 that crashes Jason.encode! downstream.
-        first_part = String.byte_slice(output, 0, half_size)
-        last_part = String.byte_slice(output, -half_size, half_size)
-        omitted = size - @truncate_size
-        format_truncation_notice(first_part, last_part, omitted, max_bytes)
-    end
+    EvoGit.Util.Strings.truncate_bytes(output, max_bytes)
   end
 
-  # Shared truncation message formatting used by both truncate_output/2
-  # (in-memory binary_part) and read_truncated/3 (disk reads via :file.pread).
+  # Shared truncation message formatting for read_truncated/3 (disk reads via
+  # :file.pread); `truncate_output/2` uses the identical text from
+  # `EvoGit.Util.Strings.truncate_bytes/2`.
   defp format_truncation_notice(first_part, last_part, omitted, max_bytes) do
     """
     [WARNING: Output exceeded #{max_bytes} bytes and was truncated to #{@truncate_size} bytes]
