@@ -1007,6 +1007,7 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
     render_hook(view, "file_pick", %{picker_id: picker_id, prompt: "", kind: kind})
     view
   end
+
   # Awaits the OFF-PROCESS attachment read started by a pick on `picker_id`
   # (see `EvoDashWeb.ProjectsLive.AttachFile`): `file_pick` /
   # `file_pick_manual` only snapshots the base prompt into `:file_pick_bases`
@@ -1023,7 +1024,6 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
 
     render(view)
   end
-
 
   def put_github_seams(overrides) do
     defaults = [
@@ -6688,6 +6688,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
         assert assigns(view)[:quality_level] == level
 
         seq = assigns(view)[:task_launch_seq]
+
         html =
           view
           |> element("#task-form")
