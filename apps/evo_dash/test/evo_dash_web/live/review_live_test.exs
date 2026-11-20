@@ -6626,7 +6626,7 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
       wait_hub_warm()
 
       render_click(view, "reject", %{"repo_id" => "primary"})
-      html = await_review_action_settled(view)
+      await_review_action_settled(view)
 
       # No merged repo anywhere → the aggregate completes as :rejected.
       refute_redirected(view)
@@ -6634,6 +6634,15 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
       # The aggregate status is persisted by a SEPARATE background action
       # spawned when the last repo settled — poll for it.
       wait_until(fn -> TaskRegistry.get_task(task_id).review_status == :rejected end)
+
+      # The PAGE learns about that completion through the "tasks" broadcast
+      # that arms its debounced reload, so the render must be taken AFTER that
+      # reload settles: a render captured from the action's own result would
+      # still be the pre-completion page and flake on the banner below.
+      settle_debounced_task_reload(view)
+      wait_until(fn -> render(view) =~ "All repositories rejected." end)
+      html = render(view)
+
       assert html =~ "All repositories rejected."
       assert html =~ ~s(id="review-completion-banner")
       assert html =~ ~s(id="review-completion-back")
