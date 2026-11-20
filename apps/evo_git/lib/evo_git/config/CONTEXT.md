@@ -257,6 +257,4 @@ Subscription (OAuth) auth spends an existing ChatGPT/Claude login instead of a p
 
 ## Notes for Agents
 The built-in defaults live in `EvoGit.Config.Schema.defaults/0` — a `deep_put` fold over every descriptor's `:default` — exposed as `EvoGit.Config.defaults/0`; there is NO `EvoGit.Config.Defaults` module.
-`Schema.ReasoningEffort` is the ONE reasoning-effort ladder: `Normalization.atomize_enum_values/1`, `LLM`'s re-exports, `ProviderProfiles.Normalize.string_effort/1` and the wire alias table only consume its answer, so a new effort rule belongs there.
-Tolerant key reads and key stringification belong to `EvoGit.Config.Keys`; a new caller delegates instead of re-implementing.
-The `config.toml` write half is `@doc false Config.persist_user_config/1` (serialize → write → notify), called only by `save_user_config/1` (after validating) and `Settings.update/1` (after validating the normalized candidate).
+Routing homes: the ONE reasoning-effort ladder is `Schema.ReasoningEffort`; tolerant key reads and key stringification are `EvoGit.Config.Keys`; the `config.toml` write half is `@doc false Config.persist_user_config/1` (called only by `save_user_config/1` and `Settings.update/1`).
