@@ -62,6 +62,7 @@ defmodule EvoGit.Store.Operations.Archives do
   import Ecto.Query
 
   alias EvoGit.Repo
+  alias EvoGit.Store.Operations.Filters
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskAgentArchiveRow
 
@@ -232,8 +233,14 @@ defmodule EvoGit.Store.Operations.Archives do
           {:ok, %{entries: [map()], total: non_neg_integer() | nil}}
   def list(repo, task_id, opts \\ []) when is_list(opts) do
     RepoScope.with_repo(repo, fn ->
-      limit = clamp_limit(Keyword.get(opts, :limit))
-      offset = clamp_offset(Keyword.get(opts, :offset))
+      limit =
+        Filters.clamp_limit(Keyword.get(opts, :limit),
+          default: @default_limit,
+          max: @max_limit,
+          non_positive: :minimum
+        )
+
+      offset = Filters.clamp_offset(Keyword.get(opts, :offset))
       include_results = Keyword.get(opts, :include_results, @default_include_results) == true
       include_settings = Keyword.get(opts, :include_settings, @default_include_settings) == true
       include_total = Keyword.get(opts, :include_total, @default_include_total) == true
@@ -352,14 +359,4 @@ defmodule EvoGit.Store.Operations.Archives do
   defp entry_from_row(row, fields) do
     Map.new(fields, fn field -> {Atom.to_string(field), Map.get(row, field)} end)
   end
-
-  defp clamp_limit(nil), do: @default_limit
-
-  defp clamp_limit(limit) when is_integer(limit), do: limit |> max(1) |> min(@max_limit)
-
-  defp clamp_limit(_other), do: @default_limit
-
-  defp clamp_offset(offset) when is_integer(offset) and offset > 0, do: offset
-
-  defp clamp_offset(_other), do: 0
 end
