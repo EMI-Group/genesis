@@ -108,11 +108,7 @@ Contracts: `live/settings_live/CONTEXT.md`, `components/settings_components/CONT
 
 ### Custom Tools (Settings → Agents)
 
-Users add LLM-callable tools by dropping `.ex`/`.exs`/`.beam` into `<config_dir>/tools/` (per-node; core: `apps/evo_git/lib/evo_git/custom_tools/CONTEXT.md`); a custom agent's `tools` whitelist accepts built-in or custom names, surfaced in Settings `:agents`.
-
-- `NodeContext.custom_tools_status/1` passes `EvoGit.RemoteNode.custom_tools_status/1` through VERBATIM (`%{ok: [%{name:, file:, module:, read_only?:}], errors: [%{file:, reason:}]}` or `{:error, term()}`); `SettingsLive.NodeData.fetch_custom_tools_status/1` is the sole normalizer and `refresh_custom_tools/1` runs in `EvoDash.TaskSupervisor` (node stale-guarded, no polling, also triggered by custom-agent mutations).
-- `CustomToolsPanel.custom_tools_panel/1` is a read-only card (Refresh, `ok[]`/`errors[]` rows, dashed empty state, `{:error, reason}` banner — banner and empty state mutually exclusive; pure `custom_tool_names/1` the single name source); `custom_agents_editor/1` adds those names as chips compared alias-aware through `EvoGit.Agent.ToolNames` (`matches_any?/2`, `normalize/1`) with a UI-only amber unknown warning (the store stays lenient).
-- Detail: `lib/evo_dash/CONTEXT.md`, `live/settings_live/CONTEXT.md`, `components/settings_components/CONTEXT.md`; tests → `test/CONTEXT.md`.
+LLM-callable tools drop as `.ex`/`.exs`/`.beam` into `<config_dir>/tools/` (per-node; core: `apps/evo_git/lib/evo_git/custom_tools/CONTEXT.md`) and are opt-in via a custom agent's `tools` whitelist, surfaced in Settings `:agents`; `NodeContext.custom_tools_status/1` passes `EvoGit.RemoteNode.custom_tools_status/1` through VERBATIM (`%{ok: [%{name:, file:, module:, read_only?:}], errors: [%{file:, reason:}]}` or `{:error, term()}`), `SettingsLive.NodeData.fetch_custom_tools_status/1` is the sole normalizer, `refresh_custom_tools/1` runs in `EvoDash.TaskSupervisor` (node stale-guarded, no polling, also on custom-agent mutations), `CustomToolsPanel.custom_tools_panel/1` is a read-only card (dashed empty state, `{:error, reason}` banner, mutually exclusive; pure `custom_tool_names/1` the single name source), and `custom_agents_editor/1` renders those names alias-aware via `EvoGit.Agent.ToolNames` (`matches_any?/2`, `normalize/1`) with a UI-only amber unknown warning. Detail: `lib/evo_dash/CONTEXT.md`, `live/settings_live/CONTEXT.md`, `components/settings_components/CONTEXT.md`; tests → `test/CONTEXT.md`.
 
 ### SSH Remote Development — Node-Aware Dashboard
 
