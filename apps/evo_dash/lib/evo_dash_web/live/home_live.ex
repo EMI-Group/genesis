@@ -326,6 +326,7 @@ defmodule EvoDashWeb.HomeLive do
       session_mode: nil,
       queued_echoes: [],
       session_attach_seq: 0,
+      session_attach_pending?: false,
       # Push-only delta stream state (`EvoDashWeb.HomeLive.Watch`): the
       # subscribed agent + its seeded `%Delta{}` (nil until the registration
       # snapshot lands), that snapshot's turn meta, and the monotonic attach seq.
@@ -342,7 +343,6 @@ defmodule EvoDashWeb.HomeLive do
       attach_unavailable: false,
       chat_fetch_seq: 0,
       chat_task_fetch_seq: 0,
-      shift_down: false,
       selected_model_id: nil,
       raw_entry_ids: MapSet.new(),
       # after handle_params resolves the node, never against mount's local seed.
@@ -424,7 +424,6 @@ defmodule EvoDashWeb.HomeLive do
       chat_status: restore_status(restored.chat_status)
     )
     |> ApprovalWorkflow.init()
-    |> maybe_recover_approvals()
     |> spawn_attach(id)
     |> attach_stream()
   end
@@ -477,10 +476,10 @@ defmodule EvoDashWeb.HomeLive do
              SessionActions.load_attach(node, session_id)
            end) do
         {:ok, _pid} ->
-          assign(socket, session_attach_seq: seq)
+          assign(socket, session_attach_seq: seq, session_attach_pending?: true)
 
         {:error, reason} ->
-          settle_attach(socket, {:error, reason})
+          socket |> assign(session_attach_pending?: false) |> settle_attach({:error, reason})
       end
     else
       socket
@@ -505,7 +504,6 @@ defmodule EvoDashWeb.HomeLive do
     socket
     |> ChatState.persist()
     |> maybe_load_sessions()
-    |> maybe_recover_approvals()
   end
 
   defp apply_attach(socket, {:error, reason}), do: settle_attach(socket, {:error, reason})
@@ -524,6 +522,19 @@ defmodule EvoDashWeb.HomeLive do
       |> ChatState.persist()
     end
   end
+
+  defp restore_attached_context(socket, {:ok, %{summary: %{assistant_context: context}}})
+       when is_map(context) do
+    workspace = Map.get(context, :assistant_workspace, socket.assigns.workspace)
+
+    assign(socket,
+      assistant_conversation_id:
+        context[:assistant_conversation_id] || socket.assigns.assistant_conversation_id,
+      workspace: Workspace.restore(workspace, Workspace.scope(socket.assigns))
+    )
+  end
+
+  defp restore_attached_context(socket, _result), do: socket
 
   defp attach_status(nil, false, _status), do: :ended
 
@@ -700,30 +711,6 @@ defmodule EvoDashWeb.HomeLive do
 
   def handle_event("chat_input", %{"message" => text}, socket) do
     {:noreply, socket |> assign(chat_draft: text || "") |> ChatState.persist()}
-  end
-
-  def handle_event("chat_keydown", %{"key" => key}, socket) do
-    case key do
-      "Shift" ->
-        {:noreply, assign(socket, shift_down: true)}
-
-      "Enter" ->
-        if socket.assigns[:shift_down] do
-          {:noreply, socket}
-        else
-          send_chat(socket, socket.assigns[:chat_draft])
-        end
-
-      _ ->
-        {:noreply, socket}
-    end
-  end
-
-  def handle_event("chat_keyup", %{"key" => key}, socket) do
-    case key do
-      "Shift" -> {:noreply, assign(socket, shift_down: false)}
-      _ -> {:noreply, socket}
-    end
   end
 
   def handle_event("select_provider_profile", %{"provider_profile_id" => id}, socket) do
@@ -1365,9 +1352,19 @@ defmodule EvoDashWeb.HomeLive do
   def handle_info({{:session_attached, seq, node, session_id, stream_seq}, result}, socket) do
     if seq == socket.assigns[:session_attach_seq] and
          node == socket.assigns[:current_node] and
-         stream_seq == socket.assigns[:stream_attach_seq] and
          session_id == socket.assigns[:session_id] do
-      {:noreply, apply_attach(socket, result)}
+      socket =
+        socket
+        |> assign(session_attach_pending?: false)
+        |> restore_attached_context(result)
+
+      # Stream generations own the transcript, while the owning session supplies identity.
+      socket =
+        if stream_seq == socket.assigns[:stream_attach_seq],
+          do: apply_attach(socket, result),
+          else: ChatState.persist(socket)
+
+      {:noreply, socket |> maybe_recover_approvals() |> TaskTracking.refresh()}
     else
       {:noreply, socket}
     end
@@ -1741,6 +1738,7 @@ defmodule EvoDashWeb.HomeLive do
       queued_echoes: [],
       pending_attachments: Attachments.clear(),
       approval_context: nil,
+      session_attach_pending?: false,
       approval_dialog_open: false,
       approval_dialog_index: 0,
       workspace_open: false,
@@ -1830,6 +1828,7 @@ defmodule EvoDashWeb.HomeLive do
     context =
       Map.take(socket.assigns, [
         :chat_id,
+        :assistant_conversation_id,
         :current_node_id,
         :current_node,
         :chat_node,
@@ -1837,7 +1836,8 @@ defmodule EvoDashWeb.HomeLive do
         :chat_agent_id
       ])
 
-    if connected?(socket) and context != socket.assigns[:approval_context] do
+    if connected?(socket) and !socket.assigns.session_attach_pending? and
+         context != socket.assigns[:approval_context] do
       socket
       |> assign(approval_context: context)
       |> recover_approvals()

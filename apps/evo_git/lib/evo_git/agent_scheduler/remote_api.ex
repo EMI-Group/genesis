@@ -83,6 +83,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     * `:objective` — the agent's objective string
     * `:result` — `nil` (no clean source in sched_meta)
     * `:agent_module` — module atom (e.g. `EvoGit.Agents.Manager`)
+    * `:assistant_context` — the Assistant root session’s conversation id and workspace, when present
     * `:started_at` — `nil` (no direct field)
     * `:model_id` — model profile id string
     * `:repo_root` — absolute path to the repo root (string | nil)
@@ -1652,6 +1653,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       objective: spec.objective,
       result: nil,
       agent_module: spec.agent_module,
+      assistant_context: assistant_context(meta),
       started_at: nil,
       model_id: nil,
       provider_profile_id: nil,
@@ -1695,6 +1697,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       objective: objective,
       result: nil,
       agent_module: meta.spec.agent_module,
+      assistant_context: assistant_context(meta),
       started_at: nil,
       model_id: state.model_id,
       provider_profile_id: state.provider_profile_id,
@@ -1716,6 +1719,18 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       context_window: context_window
     }
   end
+
+  defp assistant_context(%SchedMeta{
+         parent_id: nil,
+         spec: %{agent_module: EvoGit.Agents.SelfReflective, opts: opts}
+       })
+       when is_list(opts) do
+    opts
+    |> Keyword.take([:assistant_conversation_id, :assistant_workspace])
+    |> Map.new()
+  end
+
+  defp assistant_context(_meta), do: nil
 
   # Nil-tolerant phylo_node field read: repo-less agents carry a nil
   # phylo_node (no worktree, no commits) — return nil instead of raising a

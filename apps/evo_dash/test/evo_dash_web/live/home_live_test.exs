@@ -4263,6 +4263,46 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
   end
 
+  test "reattaching without a cached view recovers approvals for the original conversation", %{
+    conn: conn
+  } do
+    session_id = 987_654
+    conversation_id = 123_789
+    workspace = %{path: "/tmp/project", node: node(), node_id: nil, name: "project"}
+    attach = parked_attach(session_id)
+
+    install_session_seam(:home_session_attach_runner, fn _, ^session_id ->
+      put_in(attach, [:summary, :assistant_context], %{
+        assistant_conversation_id: conversation_id,
+        assistant_workspace: workspace
+      })
+    end)
+
+    request = %{
+      request_id: "owned-action",
+      kind: :task_control,
+      command: "genesis_start_task",
+      tool_name: "genesis_start_task",
+      parameters: %{},
+      conversation_id: conversation_id,
+      agent_id: session_id,
+      node: node()
+    }
+
+    install_session_seam(:approval_pending_runner, fn _ ->
+      [request, %{request | request_id: "other-action", conversation_id: session_id}]
+    end)
+
+    {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
+    wait_until(fn -> assigns(view).pending_approvals == [request] end)
+    assert assigns(view).workspace == workspace
+    assert assigns(view).assistant_conversation_id == conversation_id
+
+    view |> element("#approval-review-button") |> render_click()
+    assert has_element?(view, approval_button("owned-action", "approve"))
+    refute has_element?(view, approval_button("other-action", "approve"))
+  end
+
   describe "optional project and source context" do
     test "atomic workspace send failure preserves the unsent draft and conversation", %{
       conn: conn

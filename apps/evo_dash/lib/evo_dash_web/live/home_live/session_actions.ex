@@ -325,7 +325,7 @@ defmodule EvoDashWeb.HomeLive.SessionActions do
   Returns `%{summary: map | nil, awaiting?: boolean, history: list}`:
 
     * `:summary` — the root self-reflective summary row for `session_id`
-      (see `session_agent?/1`), or nil;
+      (see `session_agent?/1`), including its assistant context when present, or nil;
     * `:awaiting?` — the session is ALIVE: such a summary row exists OR
       `list_awaiting_input/1` reports the id;
     * `:history` — the agent's `%ReqLLM.Message{}` history (`[]` once the

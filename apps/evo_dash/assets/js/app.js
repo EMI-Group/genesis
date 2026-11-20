@@ -68,6 +68,7 @@ import DiffViewer from "./hooks/diff_viewer.js"
 import CommitGraph from "./hooks/commit_graph.js"
 import CapsulePanel from "./hooks/capsule_panel.js"
 import AssistantDisclosure from "./hooks/assistant_disclosure.js"
+import AssistantComposer from "./hooks/assistant_composer.js"
 import InspectorMessages from "./hooks/inspector_messages.js"
 import BrowserNotifications from "./browser_notifications.js"
 import DialogModal from "./dialog_modal.js"
@@ -1296,7 +1297,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken, guide_client_id: guideClientId},
-  hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, UpdateStatus, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, Guide, StatePersistence, BrowserNotifications, AutoClearFlash, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, LegendTooltip, FocusInput, PaletteList, DiffViewer, CommitGraph, CapsulePanel, InspectorMessages, AssistantDisclosure},
+  hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, UpdateStatus, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, Guide, StatePersistence, BrowserNotifications, AutoClearFlash, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, LegendTooltip, FocusInput, PaletteList, DiffViewer, CommitGraph, CapsulePanel, InspectorMessages, AssistantDisclosure, AssistantComposer},
 })
 
 // Show progress bar on live navigation and form submits

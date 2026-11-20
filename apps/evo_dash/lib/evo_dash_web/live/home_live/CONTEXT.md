@@ -274,7 +274,7 @@ Transcript entries are `%{id, role, text, streaming}` plus optional `:reasoning`
 `Transcript.normalize_entry/1` rebuilds every entry from the known keys only, so a NEW entry field does not survive a `ChatState.restore/1` round-trip unless it is added there.
 The turn meta line under the last assistant bubble (`Delta.meta/0`: `turn`/`total_tokens`/`duration_ms`/`usage`) is assigned as `chat_stream_meta` and passed to `ChatMessages.message_list/1` as `stream_meta`.
 New chat is enabled while `:idle` or `:ended` and clears the draft, per-chat refs, echoes and pending attachments; node switches reset chat state without cancelling the previous session.
-Enter submits through a server-maintained Shift latch, Shift+Enter keeps the newline, and model selection stays usable during a run but applies to the NEXT session only.
+The AssistantComposer hook submits the form on Enter and Shift+Enter keeps the newline, and model selection stays usable during a run but applies to the NEXT session only.
 
 ## Constraints
 

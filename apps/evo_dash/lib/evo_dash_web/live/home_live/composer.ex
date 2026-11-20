@@ -38,8 +38,8 @@ defmodule EvoDashWeb.HomeLive.Composer do
 
   ## Event contract (implemented by the page)
 
-  `send_message` (form submit), `chat_input` (form change), `chat_keydown`,
-  `chat_keyup`, `stop`, `interrupt_turn`, `chat_upload_validate`,
+  `send_message` (form submit from Enter or the Send button), `chat_input` (form change),
+  `stop`, `interrupt_turn`, `chat_upload_validate`,
   `chat_upload_cancel`, `chat_upload_clear_error`, `chat_attach_manual` (server-path form
   submit with `path`) and `chat_attachment_remove` (`phx-value-index`).
 
@@ -107,8 +107,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
           <textarea
             id="chat-message-input"
             name="message"
-            phx-keydown="chat_keydown"
-            phx-keyup="chat_keyup"
+            phx-hook="AssistantComposer"
             disabled={@composer_textarea_disabled?}
             placeholder={gettext("Message Genesis Assistant…")}
             rows="3"

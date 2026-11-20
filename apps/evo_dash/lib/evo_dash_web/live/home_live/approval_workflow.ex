@@ -341,7 +341,9 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflow do
     is_binary(id) and String.trim(id) != "" and scoped?(assigns) and
       (node_matches or legacy_node) and
       if(structured,
-        do: same_id?(Map.get(request, :conversation_id), conversation_id(assigns)),
+        do:
+          assigns[:session_attach_pending?] != true and
+            same_id?(Map.get(request, :conversation_id), conversation_id(assigns)),
         else:
           same_id?(Map.get(request, :task_id), assigns[:chat_task_id]) or
             same_id?(Map.get(request, :agent_id), assigns[:chat_agent_id])

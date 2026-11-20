@@ -302,8 +302,7 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     assert attr(dom, "#chat-form textarea", "name") == ["message"]
     assert attr(dom, "#chat-form textarea", "aria-label") == ["Message Genesis Assistant…"]
     assert attr(dom, "#chat-form textarea", "placeholder") == ["Message Genesis Assistant…"]
-    assert attr(dom, "#chat-form textarea", "phx-keydown") == ["chat_keydown"]
-    assert attr(dom, "#chat-form textarea", "phx-keyup") == ["chat_keyup"]
+    assert attr(dom, "#chat-form textarea", "phx-hook") == ["AssistantComposer"]
 
     assert Floki.find(
              dom,
