@@ -65,6 +65,8 @@ The opaque state may contain caller-defined node metadata, but the store itself 
 `put_state/2` replaces the entire stored state, without a version check or merge, so serialized calls do not prevent two LiveViews from overwriting each other's stale snapshots.
 There is no transcript byte/message cap, TTL, disk journal, replication, subscription or task/approval reconciliation in this store; `prune/1` bounds chat count only when explicitly called.
 Public functions use ordinary synchronous `GenServer.call/2` without a failure guard, so a dead or busy ChatHistory process can exit the caller even though callbacks handle malformed values safely.
+`prune/1` documents and implements zero as clear-all and malformed/negative bounds as no-ops, but its `pos_integer()` input spec excludes zero; these behaviors are directly pinned in `test/evo_dash/chat_history_test.exs`.
+`SafeCall.run/1,2` likewise explicitly handles invalid nonzero-arity-function arguments while its input specs admit only zero-arity functions, and `test/evo_dash/safe_call_test.exs` pins the invalid-function error and fallback contracts.
 
 ### `EvoDash.NodeContext` (`node_context.ex`)
 
