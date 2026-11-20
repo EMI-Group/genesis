@@ -154,7 +154,7 @@ The vendored inventory, per-platform CI/Nix staging and the "adding a new binary
 - Systemd slice ownership is OS-user-wide: `SandboxSlice` hardcodes `evogit.slice`, and init cleanup and shutdown stop that whole slice, so instances under one user share budgets and cleanup boundaries.
 - `Sandbox.capabilities/0` reports nominal capabilities without consulting `enabled?/0`, while auto-selection checks executable availability, not successful isolation.
 - **scp of a remote config path containing SPACES is unhandled**: `:copying_config` creates/probes the dir with `$HOME`-rooted double-quoted paths, but the scp destination is rewritten to the `~` form by `scp_remote_path/1` (SFTP-speaking scp re-parses it), so uploading into `~/Library/Application Support/genesis` depends on scp's protocol (sftp verbatim works; legacy scp word-splits); failures stay best-effort.
-- **Process/thread exhaustion in containers breaks git forks (EAGAIN)**: in rootless podman per-UID `RLIMIT_NPROC` spans container + host, so `fork()` fails and git prints "cannot fork() ... Resource temporarily unavailable", losing agents to crash-retry. Prevention: raise the HOST user's limit (`/etc/security/limits.conf`, `systemctl --user set-property user.slice TasksMax=infinity`), `--ulimit nproc=65536:65536 --pids-limit -1`, delegate the pids controller, or cut concurrency.
+- **Process/thread exhaustion in containers breaks git forks (EAGAIN)**: in rootless podman per-UID `RLIMIT_NPROC` spans container + host, so `fork()` fails ("cannot fork() ... Resource temporarily unavailable") and agents are lost to crash-retry; the host-limit prevention list is in root `../CONTEXT.md` § Known Issues.
 
 ## Windows-Only Runtime Hazards (audit index)
 
