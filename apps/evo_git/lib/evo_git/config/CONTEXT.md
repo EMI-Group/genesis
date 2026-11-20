@@ -180,15 +180,7 @@ There is NO app-env sandbox switch: no `.ex` reads `Application.get_env(:evo_git
 **`[sandbox] write_paths`**: `:list_of_strings`, default `nil` — nil → platform defaults, set (incl. `[]`) → REPLACES the built-in list, malformed → validation error (never a crash). Consumed ONCE by `EvoGit.Sandbox.Spec.build/2`; structural paths (cwd, tmp, nix store, repo `.git`) are always appended and deny lists are unaffected (detail: `sandbox/CONTEXT.md`).
 
 ### credentials.toml Structure
-```toml
-GOOGLE_API_KEY = "AIza..."
-ANTHROPIC_API_KEY = "sk-ant-..."
-OPENAI_API_KEY = "sk-..."
-ZAI_API_KEY = "sk-..."
-DEEPSEEK_API_KEY = "sk-..."
-GROQ_API_KEY = "gsk_..."
-TAVILY_API_KEY = "tvly-..."
-```
+A flat `ENV_VAR_NAME = "value"` table (`GOOGLE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ZAI_API_KEY`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `TAVILY_API_KEY`, …).
 Keys load into ReqLLM's in-process key store on a snapshot build; one key matching the model provider is enough, and OAuth data never lives here.
 
 ## Adding a New Config Category / Schema (round-trip contract)
