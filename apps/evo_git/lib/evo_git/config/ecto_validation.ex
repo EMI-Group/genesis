@@ -596,12 +596,16 @@ defmodule EvoGit.Config.EctoValidation do
   end
 
   # Validates the optional timezone profile field (an IANA time zone name) by
-  # delegating tz-database resolution to EvoGit.PeakHours.validate_timezone/1
+  # delegating tz-database resolution to EvoGit.PeakHours.validate_timezone/2
   # (single source of truth — do NOT re-implement tz-database probing here).
+  # The database is passed EXPLICITLY (`config_time_zone_database/0` → the
+  # bundled Tz.TimeZoneDatabase) rather than read from the ambient global: a
+  # snapshot built by `config/runtime.exs` is validated BEFORE boot installs
+  # that global, so an ambient lookup would reject every IANA name there.
   # nil/"" is valid (no timezone → local wall clock); {:error, reason} maps
   # to a ValidationError via the error/4 helper.
   defp validate_timezone_field(path, value) do
-    case EvoGit.PeakHours.validate_timezone(value) do
+    case EvoGit.PeakHours.validate_timezone(value, EvoGit.PeakHours.config_time_zone_database()) do
       :ok ->
         []
 

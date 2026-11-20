@@ -164,6 +164,24 @@ defmodule EvoGit.PeakHours do
   @probe_iso_days Calendar.ISO.naive_datetime_to_iso_days(2025, 7, 1, 12, 0, 0, {0, 0})
 
   @doc """
+  The time zone database the CONFIG SCHEMA must validate IANA names against:
+  the bundled `Tz.TimeZoneDatabase` (`:tz` is a hard dependency and its IANA
+  data is pre-compiled into the release).
+
+  Boot installs that same database as the ambient global
+  (`Calendar.put_time_zone_database/1` in `EvoGit.Application.start/2`), but a
+  config snapshot can be built BEFORE boot — `config/runtime.exs` calls
+  `EvoGit.Config.resolve/0`, which validates the config while the ambient
+  database is still Elixir's UTC-only default. Passing this module explicitly
+  makes pre-boot and post-boot validation of the same config identical.
+
+  This is a SCHEMA accessor only: callers that need the ambient database
+  (runtime peak-hour math) keep using `Calendar.get_time_zone_database/0`.
+  """
+  @spec config_time_zone_database() :: module()
+  def config_time_zone_database, do: Tz.TimeZoneDatabase
+
+  @doc """
   Validates an IANA time zone name against a time zone database.
 
   `nil` / `""` (absent/disabled) are always valid. A non-empty binary must
