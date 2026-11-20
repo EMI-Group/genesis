@@ -1,4 +1,5 @@
 import {projectPreview} from "./workbench_project_preview"
+import {closeAnimated} from "./disclosure_motion.js"
 import {initialPanelState, planPanelRequest, completePanelClose, isPanelCloseTransition,
   panelCloseWaitsForTransition, PANEL_CLOSED, PANEL_OPEN, PANEL_CLOSING,
   PANEL_CLOSE_FALLBACK_MS} from "./workbench_panel"
@@ -182,7 +183,7 @@ const Workbench = {
     this.settingsFrame = this.el.querySelector("#workbench-settings-frame")
     this.onWindowMessage = event => {
       if (event.origin === location.origin && event.source === this.settingsFrame?.contentWindow &&
-          event.data === "genesis:close-settings-window") this.settingsWindow?.close()
+          event.data === "genesis:close-settings-window") this.closeWindow(this.settingsWindow)
     }
     this.onSettingsClose = () => {
       this.settingsFrame?.removeAttribute("src")
@@ -738,6 +739,17 @@ const Workbench = {
       })
   },
 
+  // The workbench windows (`#workbench-project-window`, `#workbench-settings-window`,
+  // `#workbench-task-settings`) are plain <dialog class="workbench-window">s with
+  // no native exit animation. The shared helper plays the CSS exit gated on
+  // data-window-state="closing" (assets/css/motion.css) and only then releases the
+  // window — through its own close(), so the existing "close" listeners (the
+  // settings-frame reset) still fire, and synchronously under reduced motion.
+  closeWindow(dialog) {
+    if (!dialog) return
+    closeAnimated(dialog, {panel: dialog, attr: "data-window-state"})
+  },
+
   switchProject(tab) {
     const current = this.tabs.find(entry => entry.key === this.currentTab)
     const projectChanges = !tab || tab.node !== this.node || tab.projectPath !== this.project
@@ -756,7 +768,9 @@ const Workbench = {
 
   click(event) {
     if (event.target === this.pressedBackdrop) {
-      this.pressedBackdrop.close()
+      const dialog = this.pressedBackdrop
+      this.pressedBackdrop = null
+      this.closeWindow(dialog)
       return
     }
     const trigger = event.target.closest("button, a")
@@ -857,7 +871,7 @@ const Workbench = {
       const dialog = this.el.querySelector("#workbench-task-settings")
       if (dialog && !dialog.open) dialog.showModal()
     }
-    if ("workbenchCloseWindow" in trigger.dataset) trigger.closest("dialog")?.close()
+    if ("workbenchCloseWindow" in trigger.dataset) this.closeWindow(trigger.closest("dialog"))
     if ("workbenchOpen" in trigger.dataset && !this.media.matches) this.setHistory(false)
     if ("workbenchCloseTab" in trigger.dataset) this.closeTab(trigger.dataset.workbenchCloseTab, event.detail === 0)
   },
