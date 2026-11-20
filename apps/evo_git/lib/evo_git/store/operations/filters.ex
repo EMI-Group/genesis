@@ -21,6 +21,12 @@ defmodule EvoGit.Store.Operations.Filters do
       `status = 'completed' AND review_status IS NULL AND branch_name IS NOT
       NULL` (completed tasks with no review whose row carries a branch →
       awaiting review); any other value is exact TEXT equality.
+    * `:session_mode` (default `"all"`) — the root agent's driver mode:
+      `"oneshot"` matches a stored NULL cell (the canonical `"oneshot"`, see
+      `EvoGit.Store.Codec.decode_session_mode/1`, which also normalizes a
+      blank cell to it), the stored `"oneshot"` TEXT and a blank TEXT cell;
+      `"interactive"` is exact TEXT equality on that one value; `"all"` and
+      any other/unknown value mean no clause at all.
     * `:search` (`nil`/`""` = no clause) — ONE runtime `fragment/1`: a
       case-insensitive OR-LIKE over **`id`, `opts`, `project_path`,
       `branch_name`** with the escaped pattern `%<escaped search>%` and
@@ -115,6 +121,7 @@ defmodule EvoGit.Store.Operations.Filters do
     |> where_status_filter(Keyword.get(filters, :status, "all"))
     |> where_path_filter(Keyword.get(filters, :project_path, "all"))
     |> where_review_status_filter(Keyword.get(filters, :review_status, "all"))
+    |> where_session_mode_filter(Keyword.get(filters, :session_mode, "all"))
     |> where_search_filter(Keyword.get(filters, :search))
   end
 
@@ -140,6 +147,26 @@ defmodule EvoGit.Store.Operations.Filters do
   defp where_review_status_filter(query, review_status) do
     where(query, [t], t.review_status == ^review_status)
   end
+
+  defp where_session_mode_filter(query, "all"), do: query
+
+  defp where_session_mode_filter(query, "oneshot") do
+    # A stored NULL cell IS the canonical "oneshot" (Codec.decode_session_mode/1),
+    # and that decoder normalizes a blank cell to it as well — both spellings a
+    # row can actually carry are admitted, so a legacy row is never stranded
+    # outside BOTH session-mode filters.
+    where(
+      query,
+      [t],
+      is_nil(t.session_mode) or t.session_mode == "oneshot" or t.session_mode == ""
+    )
+  end
+
+  defp where_session_mode_filter(query, "interactive") do
+    where(query, [t], t.session_mode == "interactive")
+  end
+
+  defp where_session_mode_filter(query, _unknown), do: query
 
   defp where_search_filter(query, search) when search in [nil, ""], do: query
 

@@ -12,38 +12,31 @@ defmodule EvoDashWeb.TasksLive.PageLoad do
   killing the loader and wedging the page's loading state forever.
 
   The page itself is the LIGHTWEIGHT projection
-  (`EvoDash.NodeContext.list_tasks_page/2`): each row carries the 17 summary
+  (`EvoDash.NodeContext.list_tasks_page/2`): each row carries the 18 summary
   keys only (`id`, `status`, `review_status`, `started_at`, `finished_at`,
   `type`, `project_path`, `opts`, `branch_name`, `model_id`, `agent_count`,
   `base_sha`, `commit_sha`, `lease_expires_at`, `updated_at`, `error`,
-  `session_mode`) — the heavy `result` / `usage` / `logs` / `archive_metadata`
-  blobs are NEVER read for the list. They are fetched per card, on demand, by
-  `EvoDashWeb.TasksLive.TaskDetail` (lite detail + archive).
+  `session_mode`, `pause_kind`) — the heavy `result` / `usage` / `logs` /
+  `archive_metadata` blobs are NEVER read for the list. They are fetched per
+  card, on demand, by `EvoDashWeb.TasksLive.TaskDetail` (lite detail + archive).
 
-  ## The `session_mode` filter is applied by a server-side scan
+  ## Every filter is a SQL predicate — including `session_mode`
 
   `session_mode` is `"oneshot"` or `"interactive"` on every row (a stored NULL
-  cell reads as `"oneshot"`). The core's SQL WHERE builder has NO `session_mode`
-  predicate and silently ignores an unknown filter key, so the filter CANNOT be
-  pushed into SQL — `filters/1` merely carries it through the 4-arity
-  `:tasks_page_load_runner` seam and `load/4` strips it (`Keyword.pop/3`) and
-  applies it itself.
+  cell reads as `"oneshot"`, and so does a legacy blank cell). The core's
+  shared WHERE builder (`EvoGit.Store.Operations.Filters.where_filters/2`) has
+  a `:session_mode` predicate, so the filter travels in the SAME `filters`
+  keyword as status/path/review_status/search and the store's
+  `count(*) OVER ()` computes the FILTERED total. A page load is therefore
+  always exactly ONE `list_tasks_page/2` read: no scan, no in-memory
+  pagination, and `total_count` describes the rows the filter actually selects.
 
-  For `"oneshot"` / `"interactive"`, `load/4` therefore SCANS the SQL-filtered
-  result set page by page (`@scan_page_size` = 50 rows, the store's maximum page
-  size), collects the rows whose `session_mode` matches, and paginates that
-  collection in memory — so the reported `total_count` is the FILTERED count,
-  never the unfiltered SQL total. The scan never probes past the FIRST page's
-  reported `total`, because the store CLAMPS an out-of-range offset onto its
-  LAST page (probing past the end would keep re-reading that same page), and it
-  stops on an empty or fully-repeated page as a second, defensive bound.
-
-  `"all"` (and any other value) is the untouched single-read path: ONE
-  `list_tasks_page/2` call whose `rows` ARE the page.
+  `"all"` (and any other value, after `normalize_session_mode/1`) means "no
+  clause" — still the same single read, just without that predicate.
 
   ## `awaiting_sessions`
 
-  Both paths also report `awaiting_sessions: %{task_id => agent_id}` built from
+  Every load also reports `awaiting_sessions: %{task_id => agent_id}` built from
   `EvoDash.NodeContext.list_awaiting_input/1` — the tasks that have an idle
   interactive agent session parked at the non-terminal `:awaiting_input` status
   (the session is live but NOT busy: it is waiting for the user). Entries
@@ -63,9 +56,6 @@ defmodule EvoDashWeb.TasksLive.PageLoad do
   import Phoenix.Component, only: [assign: 3]
 
   alias EvoDash.SafeCall
-
-  # Page size of the `session_mode` SCAN — the store's maximum page size.
-  @scan_page_size 50
 
   @doc """
   Starts one async page load and returns the socket.
@@ -135,20 +125,15 @@ defmodule EvoDashWeb.TasksLive.PageLoad do
   Returns
   `%{tasks:, current_page:, total_count:, total_pages:, project_paths:, awaiting_sessions:}`.
 
-  The 4-arity signature is the `:tasks_page_load_runner` seam's contract; the
-  `:session_mode` key of `filters` is NOT a SQL predicate — it is popped here
-  and applied by this module (see the moduledoc):
-
-    * `"all"` (or any unknown value) — ONE `list_tasks_page/2` read with the
-      requested limit/offset, exactly as before. The store CLAMPS an
-      out-of-range offset onto the LAST page and returns THAT page's rows while
-      still reporting the full filtered `total` — so an out-of-range page
-      number (a stale URL, a filter that shrank the result set) needs NO second
-      fetch: the single returned page already IS the clamped page.
-    * `"oneshot"` / `"interactive"` — scan the SQL-filtered rows in pages of
-      `@scan_page_size`, keep the matching rows (in order) and slice the
-      requested page out of that in-memory collection, so `total_count` reports
-      the FILTERED count.
+  The 4-arity signature is the `:tasks_page_load_runner` seam's contract. ONE
+  `EvoDash.NodeContext.list_tasks_page/2` read serves every filter combination,
+  `:session_mode` included — it is a SQL predicate (`"oneshot"` also matches a
+  stored NULL cell), so the read's `total` IS the filtered count. The store
+  CLAMPS an out-of-range offset onto the LAST page and returns THAT page's rows
+  while still reporting the full filtered `total`, so an out-of-range page
+  number (a stale URL, a filter that shrank the result set) needs NO second
+  fetch: the single returned page already IS the clamped page, and
+  `current_page` is clamped to the same range.
 
   Failures propagate to `run/6`, which converts them to values.
   """
@@ -174,15 +159,18 @@ defmodule EvoDashWeb.TasksLive.PageLoad do
   end
 
   def load(node, requested_page, page_size, filters) do
-    {session_mode, sql_filters} = Keyword.pop(filters, :session_mode, "all")
-    session_mode = normalize_session_mode(session_mode)
+    offset = (requested_page - 1) * page_size
 
-    {tasks, total_count, current_page} =
-      page_rows(node, requested_page, page_size, sql_filters, session_mode)
+    %{rows: tasks, total: total_count} =
+      EvoDash.NodeContext.list_tasks_page(node,
+        limit: page_size,
+        offset: offset,
+        filters: sql_filters(filters)
+      )
 
     %{
       tasks: tasks,
-      current_page: current_page,
+      current_page: min(max(1, requested_page), total_pages(total_count, page_size)),
       total_count: total_count,
       total_pages: total_pages(total_count, page_size),
       project_paths: EvoDash.NodeContext.get_unique_paths(node),
@@ -193,12 +181,9 @@ defmodule EvoDashWeb.TasksLive.PageLoad do
   @doc """
   The `filters` keyword for the current filter assigns.
 
-  `"all"` / `""` passthrough is handled by the store's own WHERE builder.
-
-  `:session_mode` is NOT a SQL predicate: the core's WHERE builder has no such
-  filter and silently ignores unknown keys. It rides along here only to reach
-  the 4-arity `:tasks_page_load_runner` seam, and `load/4` strips it before the
-  `list_tasks_page/2` call and applies it server-side.
+  Every entry is a SQL predicate understood by the core's WHERE builder; the
+  store itself treats `"all"` (and, for `:session_mode`, any unknown value) as
+  "no clause", so no filter is stripped before the `list_tasks_page/2` call.
   """
   def filters(socket) do
     [
@@ -207,7 +192,8 @@ defmodule EvoDashWeb.TasksLive.PageLoad do
       review_status: socket.assigns.review_status_filter,
       search: socket.assigns.search_query,
       # Defensive read: the page seeds this assign; a context without it means
-      # "no session-mode filter", which `load/4` normalizes to `"all"` anyway.
+      # "no session-mode filter", which `normalize_session_mode/1` maps to
+      # "all".
       session_mode: Map.get(socket.assigns, :session_mode_filter, "all")
     ]
   end
@@ -227,7 +213,7 @@ defmodule EvoDashWeb.TasksLive.PageLoad do
   would pollute the cross-project list, so they are hidden unless the reveal
   toggle is on. The exclusion is client-side because the SQL `filters` keyword
   cannot express "exclude type" (the WHERE builder lives in evo_git). Rows are
-  the 17-key summary maps, so `type` is already a decoded atom — no atom
+  the 18-key summary maps, so `type` is already a decoded atom — no atom
   conversion — and it is read with `Map.get/2` (summary-safe: never a dot
   access that would raise on a row without the key).
 
@@ -245,92 +231,22 @@ defmodule EvoDashWeb.TasksLive.PageLoad do
     end)
   end
 
-  # --- page selection -------------------------------------------------------
-
-  # `"all"`: the untouched single-read path — its rows ARE the page.
-  defp page_rows(node, requested_page, page_size, sql_filters, "all") do
-    offset = (requested_page - 1) * page_size
-
-    %{rows: rows, total: total_count} =
-      EvoDash.NodeContext.list_tasks_page(node,
-        limit: page_size,
-        offset: offset,
-        filters: sql_filters
-      )
-
-    {rows, total_count, min(max(1, requested_page), total_pages(total_count, page_size))}
-  end
-
-  # `"oneshot"` / `"interactive"`: SQL cannot express the predicate, so scan the
-  # SQL-filtered rows and paginate the matches in memory.
-  defp page_rows(node, requested_page, page_size, sql_filters, session_mode) do
-    matched = scan_session_mode(node, sql_filters, session_mode)
-    total_count = length(matched)
-    total_pages = total_pages(total_count, page_size)
-    current_page = min(max(1, requested_page), total_pages)
-
-    tasks =
-      matched
-      |> Enum.drop((current_page - 1) * page_size)
-      |> Enum.take(page_size)
-
-    {tasks, total_count, current_page}
-  end
-
-  # Walks the SQL-filtered result set in `@scan_page_size` steps from offset 0.
-  #
-  # Bounds: the FIRST page's reported `total` (the store clamps an out-of-range
-  # offset onto its LAST page, so probing past the end would re-read that page
-  # forever), an EMPTY page, and a page that repeats already-seen rows (the
-  # defensive backstop for a bogus/huge reported `total`).
-  defp scan_session_mode(node, sql_filters, session_mode) do
-    scan_pages(node, sql_filters, session_mode, 0, nil, MapSet.new(), [])
-  end
-
-  defp scan_pages(node, sql_filters, session_mode, offset, total, seen, acc) do
-    if is_integer(total) and offset >= total do
-      acc
-    else
-      %{rows: rows, total: page_total} =
-        EvoDash.NodeContext.list_tasks_page(node,
-          limit: @scan_page_size,
-          offset: offset,
-          filters: sql_filters
-        )
-
-      rows = if is_list(rows), do: rows, else: []
-      total = if is_integer(total), do: total, else: page_total
-      fresh = Enum.reject(rows, &MapSet.member?(seen, &1))
-      acc = acc ++ Enum.filter(fresh, &(session_mode_of(&1) == session_mode))
-
-      cond do
-        rows == [] ->
-          acc
-
-        fresh == [] ->
-          acc
-
-        is_integer(total) and offset + @scan_page_size >= total ->
-          acc
-
-        true ->
-          scan_pages(
-            node,
-            sql_filters,
-            session_mode,
-            offset + @scan_page_size,
-            total,
-            MapSet.union(seen, MapSet.new(rows)),
-            acc
-          )
-      end
-    end
-  end
-
   # --- helpers --------------------------------------------------------------
 
+  # The filter keyword as it reaches the store: identical to the caller's, with
+  # `:session_mode` normalized so only the two canonical values ever act as a
+  # predicate (the store ignores anything else anyway — this keeps the
+  # `:tasks_page_load_runner` seam's keyword canonical for injected runners).
+  defp sql_filters(filters) do
+    Keyword.put(
+      filters,
+      :session_mode,
+      normalize_session_mode(Keyword.get(filters, :session_mode))
+    )
+  end
+
   # Only the two canonical session modes filter; anything else (a missing
-  # assign, a blank/unknown string) means "no filter".
+  # value, a blank/unknown string) means "no filter".
   defp normalize_session_mode(mode) when mode in ["oneshot", "interactive"], do: mode
   defp normalize_session_mode(_mode), do: "all"
 
