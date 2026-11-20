@@ -9,6 +9,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   """
 
   alias EvoDash.SettingsUtils
+  alias EvoDashWeb.SettingsLive.JsonObject
   alias EvoGit.Config.LLMCatalog
   alias EvoGit.Config.Schema.LLM, as: LLMSchema
   alias EvoGit.PeakHours.Holidays
@@ -180,15 +181,8 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
           if extra_raw == "" do
             {:ok, spec}
           else
-            case Jason.decode(extra_raw) do
-              {:ok, extra_map} when is_map(extra_map) ->
-                {:ok, Map.put(spec, :extra, extra_map)}
-
-              {:ok, _} ->
-                {:error, "extra_must_be_object"}
-
-              {:error, _} ->
-                {:error, "invalid_extra_json"}
+            with {:ok, extra_map} <- JsonObject.decode(extra_raw, "extra") do
+              {:ok, Map.put(spec, :extra, extra_map)}
             end
           end
 
@@ -199,16 +193,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
           if provider_options_raw == "" do
             {:ok, nil}
           else
-            case Jason.decode(provider_options_raw) do
-              {:ok, po_map} when is_map(po_map) ->
-                {:ok, po_map}
-
-              {:ok, _} ->
-                {:error, "provider_options_must_be_object"}
-
-              {:error, _} ->
-                {:error, "invalid_provider_options_json"}
-            end
+            JsonObject.decode(provider_options_raw, "provider_options")
           end
 
         # Parse the optional peak/off-peak concurrency fields (peak_concurrency

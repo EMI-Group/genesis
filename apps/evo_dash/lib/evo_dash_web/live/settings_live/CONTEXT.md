@@ -3,7 +3,7 @@
 `EvoDashWeb.SettingsLive` (`../settings_live.ex`, ~871 lines) is the stateful orchestrator only: `render/1`, `mount/3`, `handle_params/3`, one-line `handle_event/3`/`handle_info/2` routing, `persist_file_config/3,4` and the custom-agent/tool loaders.
 Everything else lives in this leaf: `Navigation` (category navigation), `PageState` (mount assigns, config scope, node-aware read helpers), `ProviderPanelEvents` (the provider-account surface state machine), `CategoryEvents` (generic categories + the ONE persistence entry point), `LlmTestEvents` (connection tests), `RemoteEvents` + `RemotePanel` (remote-target behaviour and view), `AsyncResults` (every async result and broadcast handler), `ProviderProfiles` + `ModelProfileHelpers` + `ModelProfileEvents` (canonical account transforms and detached editor state), `ConfigIO`, `ConfigSave`, `NodeData`, `AuthStatus`, `CustomAgentEvents` and `SearchEvents`.
 The parent `../settings_live.ex`, `../../components/`, the core schema/runtime and the dashboard tests are sibling-owned integration surfaces, not writable here.
-There are no child directories or temporary test handoff files in this leaf.
+There are no child directories in this leaf.
 ## Category Navigation
 `Navigation.category_from_param/2` whitelists a client value (string or atom) against the displayable category map and returns `nil` for an unknown or gated category, so no client input is ever interned as an atom.
 `Navigation.resolve/3` resolves requested → fallback → `:llm` → first available category, and `seed/3` resolves `params["category"]` against the LAST-KNOWN filtered map, else keeps the current category while it stays displayable, else takes the default.
@@ -93,8 +93,8 @@ Move persists only a real move and never calls the parent persistence boundary f
 `advanced_open?/1` inspects provider and model generation/`extra`/`provider_options` in BOTH flat parser drafts and nested UI generation maps.
 An explicit `profile_advanced_open` boolean overrides the auto rule and resets on add/edit/cancel/success.
 `maybe_put_gen_opt/3` remains a legacy compatibility helper rather than the canonical connection-test path.
-The legacy `ModelProfileHelpers.parse_model_profile_params/2` decodes `extra` and `provider_options` with two parallel JSON-object branches, while canonical `ProviderProfiles.parse_value/2` implements the same object/error vocabulary separately.
-Any shared JSON-object decoder must preserve caller-specific preprocessing: legacy fields are trimmed strings with blank input omitted, while canonical fields also accept maps and stringify their keys.
+`JsonObject.decode/2` is the shared pure JSON-object decoder for legacy and canonical `extra`/`provider_options` fields, preserving the exact field-specific object/invalid-JSON errors.
+Callers retain preprocessing and error wrapping: legacy fields are trimmed strings with blank input omitted, while canonical fields also accept maps and stringify their keys.
 ## CategoryEvents
 `CategoryEvents` owns the generic events `save_category`, `save_search`, `reset_key`, `select_appearance_accent`, `add_list_entry`, `remove_list_entry` and `save_api_key`, whitelisted through its own event map.
 `persist_file_config/3,4` is the page's ONE config write entry point (public: the parent's `persist_file_config/3,4`, `ModelProfileEvents` and `ProviderPanelEvents` call it): it starts `ConfigSave` only when `config_loaded_scope == ConfigSave.scope(socket)`, so a whole-file write is never built from another scope's snapshot.

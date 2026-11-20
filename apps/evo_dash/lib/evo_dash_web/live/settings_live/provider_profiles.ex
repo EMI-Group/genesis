@@ -8,6 +8,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
   """
   alias EvoDash.SettingsUtils
   alias EvoDashWeb.LLMSetup.Identity
+  alias EvoDashWeb.SettingsLive.JsonObject
   alias EvoDashWeb.SettingsLive.ModelProfileHelpers, as: Helpers
   alias EvoGit.Config.{LLMCatalog, Schema}
 
@@ -290,11 +291,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
         {:ok, nil}
 
       is_binary(raw) ->
-        case Jason.decode(raw) do
-          {:ok, value} when is_map(value) -> {:ok, value}
-          {:ok, _} -> {:error, "#{key}_must_be_object"}
-          {:error, _} -> {:error, "invalid_#{key}_json"}
-        end
+        JsonObject.decode(raw, key)
 
       true ->
         {:error, "invalid_#{key}_json"}
