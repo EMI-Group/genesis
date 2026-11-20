@@ -91,7 +91,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Detail do
       phx-submit="save_provider_profile"
       phx-change="provider_profile_form_change"
       aria-describedby={map_size(@errors) > 0 && "provider-profile-errors"}
-      class="min-w-0 space-y-5 border-t border-base-300 bg-base-200/30 px-4 py-5 sm:px-6"
+      class="wizard-step-enter min-w-0 space-y-5 border-t border-base-300 bg-base-200/30 px-4 py-5 sm:px-6"
     >
       <input type="hidden" name="profile_id" value={value(@profile, "id")} />
 
@@ -271,7 +271,8 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Detail do
 
       <details
         id="provider-profile-advanced"
-        class="rounded-lg border border-base-300 bg-base-100 p-3"
+        phx-hook="DisclosureMotion"
+        class="motion-disclosure rounded-lg border border-base-300 bg-base-100 p-3"
         open={@advanced_open?}
       >
         <summary
@@ -353,7 +354,11 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Detail do
             suggestions={reasoning_suggestions(@fields)}
             show_default={false}
           />
-          <details id="provider-generation-defaults" class="rounded-lg border border-base-300 p-3">
+          <details
+            id="provider-generation-defaults"
+            phx-hook="DisclosureMotion"
+            class="motion-disclosure rounded-lg border border-base-300 p-3"
+          >
             <summary class="cursor-pointer rounded-md text-sm font-medium focus-visible:outline-2 focus-visible:outline-primary-standalone">
               {gettext("Shared generation defaults")}
             </summary>
@@ -413,7 +418,11 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Detail do
           <.icon name="hero-trash" class="size-4" />
         </button>
       </div>
-      <details id={"provider-model-details-#{@index}"} class="min-w-0">
+      <details
+        id={"provider-model-details-#{@index}"}
+        phx-hook="DisclosureMotion"
+        class="motion-disclosure min-w-0"
+      >
         <summary class="cursor-pointer rounded-md text-xs font-medium text-base-content/70 focus-visible:outline-2 focus-visible:outline-primary-standalone">
           {gettext("Model details")}
         </summary>
@@ -457,7 +466,8 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Detail do
           </div>
           <details
             id={"provider-model-generation-#{@index}"}
-            class="rounded-md border border-base-300 bg-base-100 p-3"
+            phx-hook="DisclosureMotion"
+            class="motion-disclosure rounded-md border border-base-300 bg-base-100 p-3"
           >
             <summary class="cursor-pointer rounded-md text-xs font-medium focus-visible:outline-2 focus-visible:outline-primary-standalone">
               {gettext("Generation overrides")}
