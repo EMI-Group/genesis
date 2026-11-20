@@ -384,9 +384,11 @@ defmodule EvoDashWeb.ReviewComponents do
               </div>
             <% end %>
           <% :loading -> %>
-            <div class="mb-3 flex items-center gap-2 text-xs text-base-content/60">
-              <.icon name="hero-arrow-path" class="size-4 motion-safe:animate-spin" />
-              {gettext("Loading result…")}
+            <%!-- Skeleton (not a spinner) with reserved height; the caption keeps
+                 the live-status wording. --%>
+            <div class="mb-3 min-h-12 text-xs text-base-content/60" role="status">
+              <EvoDashWeb.Components.Skeleton.row count={2} />
+              <p class="mt-1.5">{gettext("Loading result…")}</p>
             </div>
           <% :error -> %>
             <div class="mb-3">
