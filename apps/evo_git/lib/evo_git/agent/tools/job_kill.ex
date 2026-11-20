@@ -8,8 +8,10 @@ defmodule EvoGit.Agent.Tools.JobKill do
       detached process is asked to stop; its status settles to `killed`)
     * `job <id> had already finished [status: <status>]` — the job had already
       reached a terminal status, so nothing was killed
-    * an `Error: ...` line — unknown id (see `job_list`), another agent's job, or
-      a backend failure to stop the process
+    * an `Error: ...` line — unknown id (see `job_list`), another agent's job, a
+      backend failure to stop the process, or an unreachable registry (nothing is
+      known about the id then: the job was NOT killed and may still be running, so
+      the caller should retry shortly)
 
   ## Completion notice
 
@@ -84,6 +86,16 @@ defmodule EvoGit.Agent.Tools.JobKill do
 
       {:error, {:already_finished, job}} ->
         "job #{job_id} had already finished #{JobOutput.status_line(job)}"
+
+      # A dead registry knows NOTHING about the id, so this must never render as
+      # "No background job" (that would claim the job is gone). `BackgroundJobs.kill/3`
+      # answers `{:error, :registry_unavailable}` verbatim for exactly this case, and
+      # `Shared.error_message/2` has no clause for it (it would `inspect` the atom).
+      {:error, :registry_unavailable} ->
+        Failure.error(
+          "The background job service is not running, so job #{job_id} was not killed " <>
+            "and may still be running. Retry shortly."
+        )
 
       {:error, error} ->
         Failure.error(Shared.error_message(error, job_id))

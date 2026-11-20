@@ -1125,15 +1125,17 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
       assert String.starts_with?(result, "Error: ")
 
-      # OBSERVED-vs-EXPECTED (pinned as shipped, not as first assumed): unlike
-      # `JobOutput`, the kill path does NOT surface the registry outage prose.
-      # `BackgroundJobs.kill/3`'s dead-registry fallback is the SEMANTIC tuple
-      # `{:error, :not_found}` — documented verbatim on `kill/3`: "unknown id, OR
-      # AN UNREACHABLE REGISTRY" — so the tool renders its unknown-job message
-      # ("No background job with id … is known to this agent") instead of
-      # `job_output`'s "service is not running" sentence (that call falls back to
-      # `registry_down_error/0`), while `job_list` stays list-shaped.
-      assert result =~ "No background job"
+      # The kill path surfaces the registry OUTAGE, never a "no such job" claim:
+      # `BackgroundJobs.kill/3` answers `{:error, :registry_unavailable}` verbatim
+      # (a dead registry knows nothing about the id, so the job is NOT known to be
+      # gone), and the tool renders that as its own honest sentence instead of the
+      # semantic unknown-id message `job_output` uses for a LIVE registry.
+      assert result =~ "background job service is not running"
+      assert result =~ "was not killed"
+      assert result =~ "may still be running"
+      assert result =~ "Retry shortly"
+      refute result =~ "No background job"
+      refute result =~ ":registry_unavailable"
 
       Process.put(:evogit_background_jobs_server, registry)
       assert Process.get(:evogit_background_jobs_server) == registry
