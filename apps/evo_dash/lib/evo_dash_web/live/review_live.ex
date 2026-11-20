@@ -16,303 +16,20 @@ defmodule EvoDashWeb.ReviewLive do
   # Git call would block the page, and a `GenServer.call` timeout EXITS it.
   alias EvoDashWeb.ReviewLive.Actions
 
-  # The render-body derivations (aggregate stats, the PRIMARY lookup, the
-  # aggregate completion status) — computed ONCE per data mutation, never in
-  # the render. See put_derived/1.
-  alias EvoDashWeb.ReviewLive.Aggregates
+  # Socket/derived-state helpers: the DERIVED render assigns, the flat
+  # per-repo projection, repo-resolution recording and the directory tree.
+  alias EvoDashWeb.ReviewLive.State
+
+  # The async action plumbing: every review action and lazy diff load runs
+  # in a supervised task, never in this process (see Runner).
+  alias EvoDashWeb.ReviewLive.Runner
+
+  # The lazy per-file diff subsystem (on-demand diff + context-expansion
+  # loads).
+  alias EvoDashWeb.ReviewLive.Diffs
 
   @impl true
-  def render(assigns) do
-    ~H"""
-    <EvoDashWeb.Layouts.app
-      flash={@flash}
-      current_page={:review}
-      config_status={@config_status}
-      current_node_id={@current_node_id}
-      remote_targets={assigns[:remote_targets] || []}
-      connection_statuses={assigns[:connection_statuses] || %{}}
-      workbench_project={@workbench_project}
-      workbench_git_project={
-        if @current_node_id || !assigns[:workbench_remote_requested], do: @workbench_project
-      }
-      workbench_task={@task_id}
-      workbench_title={assigns[:objective]}
-      current_node_name={@current_node_name}
-      running_tasks={@running_tasks}
-      session_list={assigns[:session_list] || []}
-      session_list_loading={assigns[:session_list_loading] == true}
-      session_list_error={assigns[:session_list_error]}
-      current_session_id={assigns[:current_session_id]}
-      pending_tasks={@pending_tasks}
-      desktop_quit_confirm={@desktop_quit_confirm}
-      update_status={@update_status}
-      guide={@guide}
-      accent_color={assigns[:accent_color] || "blue"}
-    >
-      <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
-        {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
-      <% else %>
-        <%= if @error do %>
-          <div
-            id="review-load-error"
-            class="rounded-lg border border-error/30 bg-error/5 p-6 text-center"
-          >
-            <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-4" />
-            <h2 class="text-xl font-bold text-error mb-2">{gettext("Review Not Available")}</h2>
-            <p class="text-sm text-base-content/80 mb-4">{@error}</p>
-            <div class="flex flex-wrap items-center justify-center gap-3">
-              <button type="button" phx-click="retry_load" class="btn btn-outline px-6 gap-2">
-                <.icon name="hero-arrow-path" class="size-4" /> {gettext("Retry")}
-              </button>
-              <.link
-                navigate={with_node_param(~p"/projects", @current_node_id)}
-                class="btn btn-primary px-6 gap-2"
-              >
-                <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Dashboard")}
-              </.link>
-            </div>
-          </div>
-        <% else %>
-          <%!-- SCOPED loading: the full-page spinner is the FIRST paint only
-               (nothing to keep on screen yet). Once the page has rendered real
-               data, a reload keeps the whole shell — header, tabs and the
-               current tab body — and only shows the compact refresh strip
-               (reload_status/1) below the tabs bar. --%>
-          <%= if @loading and not @page_ready? do %>
-            <!-- Loading state -->
-            <div role="status" class="flex items-center justify-center py-20">
-              <span class="loading loading-spinner loading-lg text-primary-standalone"></span>
-              <span class="ml-3 text-base-content/60">{gettext("Loading review data...")}</span>
-            </div>
-          <% else %>
-            <%= if @live_action == :commit do %>
-              <div class="pb-8">
-                <.reload_status :if={@loading and @page_ready?} />
-                <%!-- The commit detail renders only once its header exists: it
-                     is nil until this route's load lands, and a SCOPED reload
-                     keeps the shell on screen (the strip above says why). --%>
-                <%= if @commit_header do %>
-                  <EvoDashWeb.ReviewComponents.commit_detail_header
-                    commit={@commit_header}
-                    back_url={review_commits_path(@task_id, @current_node_id, @inspect_repo_id)}
-                    task_title={EvoDashWeb.ReviewComponents.Header.short_title(@title)}
-                    unavailable={is_nil(@commit_data)}
-                  />
-                  <EvoDashWeb.ReviewComponents.commit_diff_layout
-                    :if={@commit_data}
-                    files={@commit_data.files}
-                    expanded_files={@expanded_files}
-                    selected_file={@selected_file}
-                    file_context_levels={@file_context_levels}
-                    expanded_dirs={@tree_expanded_dirs}
-                    file_filter={@file_filter}
-                    diff_in_flight={@diff_in_flight}
-                  />
-                <% end %>
-              </div>
-            <% else %>
-              <%!-- Aggregate stats across ALL review repos (primary + foreign):
-                   the header stat row, the tab count badges, and the
-                   conversation diff-stats bar read the SUMS, never the active
-                   repo alone. Header repo fields are PRIMARY-scoped (resolved
-                   explicitly, never the active-repo projection).
-                   All three are DERIVED ONCE per data mutation
-                   (`EvoDashWeb.ReviewLive.Aggregates`, cached by LoadData and
-                   `put_derived/1`) — never recomputed in this render. --%>
-              <div class="space-y-4 pb-8">
-                <EvoDashWeb.ReviewComponents.page_header
-                  back_url={with_node_param(~p"/projects", @current_node_id)}
-                  title={@title}
-                  status={@review_status}
-                  task_status={@task_status}
-                  task_type={@task_type}
-                  task_id={@task_id}
-                  repo_path={@primary_repo && @primary_repo.repo_path}
-                  branch_name={@primary_repo && @primary_repo.branch_name}
-                  merge_target={@primary_repo && @primary_repo.default_merge_target}
-                  commit_sha={@primary_repo && @primary_repo.commit_sha}
-                  model_id={@model_id}
-                  agent_count={@agent_count}
-                  started_at={@started_at}
-                  finished_at={@finished_at}
-                  stats={@stats}
-                />
-
-                <!-- Page tabs (underline bar with count badges) -->
-                <%!-- the archive's LABEL size once a page lands; 0/unknown renders no badge.
-                     The tab itself only renders for a task that opted into archiving. --%>
-                <EvoDashWeb.ReviewComponents.page_tabs
-                  active_tab={@review_tab}
-                  files_count={@stats.files_count}
-                  commits_count={@stats.commits_count}
-                  show_archive={@archive_opt_in?}
-                  archive_count={@archive_label_total}
-                />
-
-                <%!-- A reload keeps the shell on screen and says so here. --%>
-                <.reload_status :if={@loading and @page_ready?} />
-
-                <%!-- Re-keyed per tab, so the reduced-motion-safe enter
-                     animation replays on every switch (no JS, no keyframes
-                     added: `.wizard-step-enter` is the shared CSS). --%>
-                <div
-                  class="wizard-step-enter"
-                  id={"review-tab-" <> to_string(@review_tab)}
-                  aria-busy={@loading and @page_ready?}
-                >
-                  <%= cond do %>
-                    <% @review_tab == :conversation -> %>
-                      <!-- Readability column (GitHub conversation style); the
-                         per-repo cards sit at the BOTTOM of the column. -->
-                      <div class="max-w-4xl mx-auto w-full space-y-4">
-                        <EvoDashWeb.ReviewComponents.agent_summary
-                          summary={@agent_summary}
-                          summary_raw={@summary_raw}
-                          model_id={@model_id}
-                          finished_at={@finished_at}
-                        />
-
-                        <EvoDashWeb.ReviewComponents.diff_stats_bar
-                          files_count={@stats.files_count}
-                          additions={@stats.additions}
-                          deletions={@stats.deletions}
-                          commits_count={@stats.commits_count}
-                        />
-
-                        <EvoDashWeb.ReviewComponents.task_summary
-                          usage={@task_usage}
-                          agent_count={@agent_count}
-                          task_type={@task_type}
-                          status={@task_status}
-                          model_id={@model_id}
-                          started_at={@started_at}
-                          finished_at={@finished_at}
-                        />
-
-                        <EvoDashWeb.ReviewComponents.repo_cards
-                          repos={@review_repos}
-                          completion={@completion_status}
-                          back_url={with_node_param(~p"/projects", @current_node_id)}
-                          review_action={@review_action}
-                          busy_repos={@busy_repos}
-                        />
-
-                        <EvoDashWeb.ReviewComponents.task_actions
-                          can_resume={@can_resume}
-                          loading={@action_loading}
-                          branch_exists={@branch_exists}
-                          has_pr={@has_pr}
-                          pr_url={@pr_url}
-                          show_export={EvoDashWeb.ReviewLive.ArchiveLoad.export_available?(assigns)}
-                          export_url={with_node_param("/tasks/#{@task_id}/export", @current_node_id)}
-                          no_changes={@is_no_changes}
-                        />
-
-                        <EvoDashWeb.ReviewComponents.extract_skills_modal show={@show_extract_modal} />
-                      </div>
-                    <% @review_tab == :objective -> %>
-                      <%!-- Readability column hosting the objective card
-                         (moved off the conversation pane; markdown/raw toggle
-                         + copy live inside the component header). --%>
-                      <div class="max-w-4xl mx-auto w-full space-y-4">
-                        <EvoDashWeb.ReviewComponents.objective_section
-                          objective={@objective}
-                          objective_raw={@objective_raw}
-                        />
-                      </div>
-                    <% @review_tab == :files_changed -> %>
-                      <!-- FULL WIDTH (no max-w): the split layout owns the row;
-                         repo selection lives in its toolbar. The diff + tree
-                         state maps are repo-keyed — read the ACTIVE repo's
-                         submap via inline Map.Get. -->
-                      <EvoDashWeb.ReviewComponents.split_diff_layout
-                        files={@review_data && @review_data.files}
-                        expanded_files={Map.get(@expanded_files, @active_repo_id, %{})}
-                        selected_file={Map.get(@selected_file || %{}, @active_repo_id)}
-                        file_context_levels={Map.get(@file_context_levels, @active_repo_id, %{})}
-                        expanded_dirs={Map.get(@tree_expanded_dirs, @active_repo_id, %{})}
-                        file_filter={@file_filter}
-                        repos={@review_repos}
-                        active_repo_id={@active_repo_id}
-                        diff_in_flight={@diff_in_flight}
-                      />
-                    <% @review_tab == :commits -> %>
-                      <%!-- Lists the ACTIVE repo's commits (projected by
-                         project_active_repo/1). Multi-repo reviews show a repo
-                         selector inside commits_list (rendered only when more
-                         than one repo) — active_repo_id drives the projection. --%>
-                      <EvoDashWeb.ReviewComponents.commits_list
-                        commits={@commits}
-                        repos={@review_repos}
-                        active_repo_id={@active_repo_id}
-                        task_id={@task_id}
-                        node_id={@current_node_id}
-                      />
-                    <% @review_tab == :archive -> %>
-                      <%!-- Lazy, PAGED archive: the page load is LITE (no
-                         archive transfer), so opening this tab triggers a
-                         cached on-demand load of the FIRST page; "Load more"
-                         appends further pages and each agent's heavy result is
-                         fetched on demand. Every state renders inside
-                         ArchiveLoad.panel. --%>
-                      <EvoDashWeb.ReviewLive.ArchiveLoad.panel
-                        state={@archive_state}
-                        records={@archive_records}
-                        total={@archive_total}
-                        opt_in?={@archive_opt_in?}
-                        dropped={@archive_dropped}
-                        exhausted?={@archive_exhausted?}
-                        server_total={@archive_server_total}
-                        loading_more?={@archive_loading_more?}
-                        more_error={@archive_more_error}
-                        agent_results={@archive_agent_results}
-                        error={@archive_error}
-                        task_id={@task_id}
-                        node_id={@current_node_id}
-                      />
-                  <% end %>
-                </div>
-
-                <%= if @branch_exists and is_nil(@review_data) and not @loading do %>
-                  <div class="rounded-xl border border-warning/30 bg-warning/10 p-4 text-center">
-                    <.icon name="hero-exclamation-triangle" class="size-6 text-warning mx-auto mb-3" />
-                    <p class="text-sm text-warning">
-                      {gettext(
-                        "Could not load diff data. The branch may have been modified externally."
-                      )}
-                    </p>
-                  </div>
-                <% end %>
-              </div>
-            <% end %>
-          <% end %>
-        <% end %>
-      <% end %>
-    </EvoDashWeb.Layouts.app>
-    """
-  end
-
-  # The compact in-shell refresh strip for a SCOPED reload: once the page has
-  # rendered real data (`@page_ready?`), a reload keeps the whole shell on
-  # screen (header, tabs, current tab body) and only this strip reports that
-  # the data on screen is being refreshed.
-  #
-  # The spinner + the `Loading review data...` text are deliberately the SAME
-  # vocabulary the full-page spinner used, because the page's load-settling
-  # helpers (`EvoDashWeb.TestHelpers.flush_loading/4` callers) drain a reload by
-  # waiting for that exact string.
-  defp reload_status(assigns) do
-    ~H"""
-    <div
-      id="review-reload-status"
-      role="status"
-      class="flex items-center gap-2 text-sm text-base-content/60"
-    >
-      <span class="loading loading-spinner loading-sm text-primary-standalone"></span>
-      <span>{gettext("Loading review data...")}</span>
-    </div>
-    """
-  end
+  def render(assigns), do: EvoDashWeb.ReviewLive.Page.render(assigns)
 
   @impl true
   def mount(%{"task_id" => task_id} = params, _session, socket) do
@@ -417,7 +134,7 @@ defmodule EvoDashWeb.ReviewLive do
         # refresh strip instead of blanking the page.
         page_ready?: false,
         load_generation: 0,
-        # Async ACTION plumbing (see spawn_action/4 +
+        # Async ACTION plumbing (see Runner.spawn/4 +
         # handle_info({:review_action_result, ...})): `action_seq` is the
         # monotonic ref counter, `review_action` the in-progress marker (nil |
         # %{kind:, repo_id:, seq:}) that blocks double submits, `busy_repos` the
@@ -579,11 +296,11 @@ defmodule EvoDashWeb.ReviewLive do
   # generic "value" key instead of the field name — accept both defensively.
   @impl true
   def handle_event("switch_repo", %{"repo_id" => repo_id}, socket) do
-    switch_repo(socket, repo_id)
+    {:noreply, State.switch_repo(socket, repo_id)}
   end
 
   def handle_event("switch_repo", %{"value" => repo_id}, socket) do
-    switch_repo(socket, repo_id)
+    {:noreply, State.switch_repo(socket, repo_id)}
   end
 
   @impl true
@@ -636,7 +353,7 @@ defmodule EvoDashWeb.ReviewLive do
         (socket.assigns.review_data && socket.assigns.review_data.files) || []
       end
 
-    all_dirs = all_dir_paths(files)
+    all_dirs = State.dir_paths(files)
     tree = socket.assigns.tree_expanded_dirs || %{}
 
     tree =
@@ -694,9 +411,9 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_event("select_file", %{"path" => path}, socket) do
-    scope = diff_scope(socket)
+    scope = Diffs.diff_scope(socket)
 
-    if file_present?(socket, scope, path) do
+    if Diffs.file_present?(socket, scope, path) do
       socket =
         if scope == :commit do
           assign(socket,
@@ -720,7 +437,7 @@ defmodule EvoDashWeb.ReviewLive do
 
       {:noreply,
        socket
-       |> maybe_start_diff_load(path)
+       |> Diffs.maybe_start(path)
        |> push_event("scroll_to_file", %{
          target_id: EvoDashWeb.ReviewComponents.DiffViewer.file_section_id(path)
        })}
@@ -743,7 +460,7 @@ defmodule EvoDashWeb.ReviewLive do
       if current do
         {:noreply, socket}
       else
-        {:noreply, maybe_start_diff_load(socket, path)}
+        {:noreply, Diffs.maybe_start(socket, path)}
       end
     else
       # SHOW route: per-repo expansion map keyed by repo_id — toggle only the
@@ -760,12 +477,12 @@ defmodule EvoDashWeb.ReviewLive do
       socket =
         socket
         |> assign(:expanded_files, expanded)
-        |> project_active_repo()
+        |> State.project_active_repo()
 
       # Expanding a file whose diff is nil fetches it off-process; collapsing
       # never triggers a load.
       if now_expanded? do
-        {:noreply, maybe_start_diff_load(socket, path)}
+        {:noreply, Diffs.maybe_start(socket, path)}
       else
         {:noreply, socket}
       end
@@ -774,14 +491,14 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_event("load_file_diff", %{"path" => path}, socket) do
-    {:noreply, maybe_start_diff_load(socket, path)}
+    {:noreply, Diffs.maybe_start(socket, path)}
   end
 
   @impl true
   def handle_event("expand_context", %{"path" => path}, socket) do
     # SHOW route reads the context level from the ACTIVE repo's submap;
     # :commit keeps today's legacy flat path-keyed state.
-    current_level = context_level(socket, diff_scope(socket), path)
+    current_level = Diffs.context_level(socket, Diffs.diff_scope(socket), path)
 
     new_level =
       cond do
@@ -794,7 +511,7 @@ defmodule EvoDashWeb.ReviewLive do
 
     # The re-fetch with a wider context window runs off-process; the level it
     # asks for travels in the action ref so the apply step writes it back.
-    {:noreply, start_diff_load(socket, path, :expand_context, new_level, opts)}
+    {:noreply, Diffs.start(socket, path, :expand_context, new_level, opts)}
   end
 
   @impl true
@@ -809,10 +526,10 @@ defmodule EvoDashWeb.ReviewLive do
     repo_id = params["repo_id"]
 
     with nil <- socket.assigns.review_action,
-         %{} = repo <- find_review_repo(socket.assigns.review_repos, repo_id),
-         false <- repo_actionable?(repo) do
-      target = resolve_merge_target(repo, params)
-      {seq, socket} = next_action_seq(socket)
+         %{} = repo <- State.find_review_repo(socket.assigns.review_repos, repo_id),
+         false <- State.repo_actionable?(repo) do
+      target = State.resolve_merge_target(repo, params)
+      {seq, socket} = State.next_action_seq(socket)
 
       socket =
         socket
@@ -824,7 +541,7 @@ defmodule EvoDashWeb.ReviewLive do
       branch_name = repo.branch_name
 
       {:noreply,
-       spawn_action(socket, :merge, %{repo_id: repo_id, target: target, seq: seq}, fn ->
+       Runner.spawn(socket, :merge, %{repo_id: repo_id, target: target, seq: seq}, fn ->
          Actions.merge(node, repo_path, branch_name, target)
        end)}
     else
@@ -873,7 +590,7 @@ defmodule EvoDashWeb.ReviewLive do
           end)
 
         repo_ids = Enum.map(entries, & &1.repo_id)
-        {seq, socket} = next_action_seq(socket)
+        {seq, socket} = State.next_action_seq(socket)
 
         socket =
           socket
@@ -883,7 +600,7 @@ defmodule EvoDashWeb.ReviewLive do
         node = socket.assigns.current_node
 
         {:noreply,
-         spawn_action(socket, :merge_all, %{repo_ids: repo_ids, seq: seq}, fn ->
+         Runner.spawn(socket, :merge_all, %{repo_ids: repo_ids, seq: seq}, fn ->
            Actions.merge_all(node, entries)
          end)}
     end
@@ -896,7 +613,7 @@ defmodule EvoDashWeb.ReviewLive do
     # merge check. Re-project afterwards so the flat assigns read the ACTIVE
     # repo's @merge_status / @default_merge_target.
     socket = EvoDashWeb.ReviewLive.MergeCheck.handle_target_change(socket, params)
-    {:noreply, project_active_repo(socket)}
+    {:noreply, State.project_active_repo(socket)}
   end
 
   @impl true
@@ -912,7 +629,7 @@ defmodule EvoDashWeb.ReviewLive do
     # aggregate action.
     with nil <- socket.assigns.review_action,
          {:ok, payload} <- EvoDashWeb.ReviewLive.MergeCheck.auto_resolve_payload(socket) do
-      {seq, socket} = next_action_seq(socket)
+      {seq, socket} = State.next_action_seq(socket)
 
       socket =
         socket
@@ -923,7 +640,7 @@ defmodule EvoDashWeb.ReviewLive do
       task_id = socket.assigns.task_id
 
       {:noreply,
-       spawn_action(socket, :auto_resolve, %{to: payload.to, seq: seq}, fn ->
+       Runner.spawn(socket, :auto_resolve, %{to: payload.to, seq: seq}, fn ->
          Actions.auto_resolve(node, task_id, payload.opts)
        end)}
     else
@@ -950,9 +667,9 @@ defmodule EvoDashWeb.ReviewLive do
     repo_id = params["repo_id"]
 
     with nil <- socket.assigns.review_action,
-         %{} = repo <- find_review_repo(socket.assigns.review_repos, repo_id),
-         false <- repo_actionable?(repo) do
-      {seq, socket} = next_action_seq(socket)
+         %{} = repo <- State.find_review_repo(socket.assigns.review_repos, repo_id),
+         false <- State.repo_actionable?(repo) do
+      {seq, socket} = State.next_action_seq(socket)
 
       socket =
         socket
@@ -964,7 +681,7 @@ defmodule EvoDashWeb.ReviewLive do
       branch_name = repo.branch_name
 
       {:noreply,
-       spawn_action(socket, :reject, %{repo_id: repo_id, seq: seq}, fn ->
+       Runner.spawn(socket, :reject, %{repo_id: repo_id, seq: seq}, fn ->
          Actions.reject(node, repo_path, branch_name)
        end)}
     else
@@ -977,12 +694,12 @@ defmodule EvoDashWeb.ReviewLive do
     # Per-repo "jump to this repo's diff" button on a repo card: switch the
     # active repo and land on the Files-changed tab. Whitelist the id against
     # the known review repos; an unknown id is a harmless no-op.
-    if find_review_repo(socket.assigns.review_repos, repo_id) do
+    if State.find_review_repo(socket.assigns.review_repos, repo_id) do
       {:noreply,
        socket
        |> assign(:active_repo_id, repo_id)
        |> assign(:review_tab, :files_changed)
-       |> project_active_repo()}
+       |> State.project_active_repo()}
     else
       {:noreply, socket}
     end
@@ -1037,7 +754,7 @@ defmodule EvoDashWeb.ReviewLive do
     if socket.assigns.review_action do
       {:noreply, socket}
     else
-      {seq, socket} = next_action_seq(socket)
+      {seq, socket} = State.next_action_seq(socket)
 
       socket =
         socket
@@ -1047,7 +764,7 @@ defmodule EvoDashWeb.ReviewLive do
       node = socket.assigns.current_node
 
       {:noreply,
-       spawn_action(socket, :resume, %{to: to, flash_msg: flash_msg, seq: seq}, fn ->
+       Runner.spawn(socket, :resume, %{to: to, flash_msg: flash_msg, seq: seq}, fn ->
          Actions.set_review_status(node, task_id, :continued)
        end)}
     end
@@ -1060,7 +777,7 @@ defmodule EvoDashWeb.ReviewLive do
     if socket.assigns.review_action do
       {:noreply, socket}
     else
-      {seq, socket} = next_action_seq(socket)
+      {seq, socket} = State.next_action_seq(socket)
 
       socket =
         socket
@@ -1070,7 +787,7 @@ defmodule EvoDashWeb.ReviewLive do
       node = socket.assigns.current_node
 
       {:noreply,
-       spawn_action(
+       Runner.spawn(
          socket,
          :ignore,
          %{
@@ -1096,7 +813,7 @@ defmodule EvoDashWeb.ReviewLive do
     if socket.assigns.review_action do
       {:noreply, socket}
     else
-      {seq, socket} = next_action_seq(socket)
+      {seq, socket} = State.next_action_seq(socket)
 
       socket =
         socket
@@ -1106,7 +823,7 @@ defmodule EvoDashWeb.ReviewLive do
       node = socket.assigns.current_node
 
       {:noreply,
-       spawn_action(socket, :create_pr, %{seq: seq}, fn ->
+       Runner.spawn(socket, :create_pr, %{seq: seq}, fn ->
          Actions.create_pr(node, repo_path, branch_name, objective || "", result || "")
        end)}
     end
@@ -1159,7 +876,7 @@ defmodule EvoDashWeb.ReviewLive do
     if socket.assigns.review_action do
       {:noreply, socket}
     else
-      {seq, socket} = next_action_seq(socket)
+      {seq, socket} = State.next_action_seq(socket)
 
       socket =
         socket
@@ -1173,7 +890,7 @@ defmodule EvoDashWeb.ReviewLive do
       node = socket.assigns.current_node
 
       {:noreply,
-       spawn_action(socket, :extract_skills, %{seq: seq}, fn ->
+       Runner.spawn(socket, :extract_skills, %{seq: seq}, fn ->
          Actions.start_task(node, :extract_skills, opts)
        end)}
     end
@@ -1238,14 +955,14 @@ defmodule EvoDashWeb.ReviewLive do
     #
     # Apply BEFORE clearing: the lazy-diff actions must read the PRE-clear
     # @diff_in_flight seq to detect a request that superseded them, while
-    # clear_action_state/3 only removes the in-flight entry this result owns.
+    # Runner.clear/3 only removes the in-flight entry this result owns.
     if task_id != socket.assigns.task_id or node != socket.assigns.current_node do
       {:noreply, socket}
     else
       {:noreply,
        socket
        |> apply_action_result(action, ref, result)
-       |> clear_action_state(action, ref)}
+       |> Runner.clear(action, ref)}
     end
   end
 
@@ -1269,7 +986,7 @@ defmodule EvoDashWeb.ReviewLive do
             # Loading is cleared EXPLICITLY (the loaded map already carries
             # loading: false) so no result shape can leave the spinner up.
             |> assign(:loading, false)
-            |> assign(carry_local_resolutions(assigns_map, socket.assigns))
+            |> assign(State.carry_local_resolutions(assigns_map, socket.assigns))
             # Ready: from now on a reload keeps the shell on screen instead of
             # blanking it. The DERIVED assigns are refreshed at the end of this
             # chain, i.e. AFTER the local-resolution overlay (which can change a
@@ -1284,8 +1001,8 @@ defmodule EvoDashWeb.ReviewLive do
           {:noreply,
            socket
            |> EvoDashWeb.ReviewLive.MergeCheck.maybe_start()
-           |> project_active_repo()
-           |> put_derived()}
+           |> State.project_active_repo()
+           |> State.put_derived()}
 
         {:error, reason} ->
           socket =
@@ -1305,7 +1022,7 @@ defmodule EvoDashWeb.ReviewLive do
             )
             # Back to the mount defaults: nothing on screen is derived from a
             # repo list any more (the error panel is what renders).
-            |> put_derived()
+            |> State.put_derived()
 
           {:noreply, socket}
       end
@@ -1353,8 +1070,8 @@ defmodule EvoDashWeb.ReviewLive do
     {:noreply,
      socket
      |> EvoDashWeb.ReviewLive.MergeCheck.handle_result(task_id, node, repo_id, target, result)
-     |> project_active_repo()
-     |> put_derived()}
+     |> State.project_active_repo()
+     |> State.put_derived()}
   end
 
   @impl true
@@ -1395,7 +1112,7 @@ defmodule EvoDashWeb.ReviewLive do
   # Review actions never run in the LiveView process: a store/registry/Git call
   # can take many seconds and a `GenServer.call` timeout EXITS the caller. Each
   # handler computes a cheap plan, marks the in-progress state, and spawns the
-  # work through `spawn_action/4`; the outcome arrives as
+  # work through `Runner.spawn/4`; the outcome arrives as
   # `{:review_action_result, task_id, node, action, action_ref, result}` and is
   # applied by `apply_action_result/4` (after the in-progress state is cleared).
 
@@ -1489,7 +1206,7 @@ defmodule EvoDashWeb.ReviewLive do
     case result do
       {:ok, :ok} ->
         socket
-        |> invalidate_active_tasks()
+        |> State.invalidate_active_tasks()
         |> put_flash(:info, ref.flash_msg)
         |> push_navigate(to: ref.to)
 
@@ -1557,7 +1274,7 @@ defmodule EvoDashWeb.ReviewLive do
     case result do
       {:ok, {:ok, _task}} ->
         socket
-        |> invalidate_active_tasks()
+        |> State.invalidate_active_tasks()
         |> put_flash(
           :success,
           gettext(
@@ -1596,7 +1313,7 @@ defmodule EvoDashWeb.ReviewLive do
   # Lazy file-diff loads (`:diff`) and their context expansions
   # (`:expand_context`): the result is applied only when it is still the CURRENT
   # request for its `{scope, path}` key and the file is still on screen in that
-  # scope — see apply_diff_action_result/4.
+  # scope — see Diffs.apply_result/4.
   defp apply_action_result(socket, action, ref, result) when action in [:diff, :expand_context] do
     key = {Map.get(ref, :repo_id), Map.get(ref, :path)}
 
@@ -1606,121 +1323,12 @@ defmodule EvoDashWeb.ReviewLive do
     if Map.get(socket.assigns.diff_in_flight, key) != Map.get(ref, :seq) do
       socket
     else
-      apply_diff_action_result(socket, action, ref, result)
+      Diffs.apply_result(socket, action, ref, result)
     end
   end
 
   # An unexpected action shape must never crash the page.
   defp apply_action_result(socket, _action, _ref, _result), do: socket
-
-  # Applies one lazy-diff outcome. The scope is the one CAPTURED at spawn time
-  # (the active repo id on the SHOW route, the :commit atom on the :commit
-  # route), never the scope that happens to be active now — a result landing
-  # after a repo switch is dropped instead of written into the wrong repo.
-  defp apply_diff_action_result(socket, action, ref, result) do
-    scope = Map.get(ref, :repo_id)
-    path = Map.get(ref, :path)
-    level = if action == :expand_context, do: Map.get(ref, :level, 3), else: 3
-
-    if diff_result_relevant?(socket, action, scope, path) do
-      case result do
-        {:ok, {:ok, diff_string}} ->
-          update_file_diff_in_socket(socket, scope, path, diff_string, level)
-
-        other ->
-          put_flash(socket, :error, diff_error_message(action, path, other))
-      end
-    else
-      socket
-    end
-  end
-
-  # A diff result may be applied only while its scope and file are still on
-  # screen: the route still shows that scope, the active repo is still the
-  # captured one (:show), and the file still exists in that scope's file list.
-  # Selection-driven loads additionally require the file to still be the
-  # selection or still expanded; a context expansion applies whenever the file
-  # is present (it may have been triggered from an unselected file).
-  defp diff_result_relevant?(socket, action, scope, path) do
-    scope_in_view?(socket, scope) and file_present?(socket, scope, path) and
-      (action == :expand_context or file_selected_or_expanded?(socket, scope, path))
-  end
-
-  # The route/scope still on screen: :commit requires the commit route, a repo
-  # id requires the SHOW route with that repo still active.
-  defp scope_in_view?(socket, :commit), do: socket.assigns.live_action == :commit
-
-  defp scope_in_view?(socket, scope),
-    do: socket.assigns.live_action != :commit and socket.assigns.active_repo_id == scope
-
-  defp file_present?(socket, scope, path) do
-    case scope_files(socket, scope) do
-      files when is_list(files) -> Enum.any?(files, &(Map.get(&1, :path) == path))
-      _ -> false
-    end
-  end
-
-  defp file_selected_or_expanded?(socket, scope, path) do
-    selected?(socket, scope, path) or expanded?(socket, scope, path)
-  end
-
-  defp selected?(socket, :commit, path), do: socket.assigns.selected_file == path
-
-  defp selected?(socket, scope, path),
-    do: Map.get(socket.assigns.selected_file || %{}, scope) == path
-
-  defp expanded?(socket, :commit, path),
-    do: Map.get(socket.assigns.expanded_files || %{}, path, false) == true
-
-  defp expanded?(socket, scope, path) do
-    expanded = socket.assigns.expanded_files || %{}
-
-    expanded
-    |> Map.get(scope, %{})
-    |> Map.get(path, false) == true
-  end
-
-  # The scope's review data: @commit_data on the :commit route, the scoped
-  # @review_repos entry's review_data on the SHOW route (nil when the repo is
-  # gone or has no diff data).
-  defp scope_files(socket, :commit) do
-    case socket.assigns.commit_data do
-      %{} = data -> Map.get(data, :files)
-      _ -> nil
-    end
-  end
-
-  defp scope_files(socket, scope) do
-    case find_review_repo(socket.assigns.review_repos, scope) do
-      %{} = repo ->
-        case Map.get(repo, :review_data) do
-          %{} = data -> Map.get(data, :files)
-          _ -> nil
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  # The failure flash for a lazy-diff load, keeping the two established
-  # strings: context expansion has its own message.
-  defp diff_error_message(:expand_context, _path, result) do
-    gettext("Failed to expand context: %{reason}", reason: inspect(diff_failure_reason(result)))
-  end
-
-  defp diff_error_message(_action, path, result) do
-    gettext("Failed to load diff for %{path}: %{reason}",
-      path: path,
-      reason: inspect(diff_failure_reason(result))
-    )
-  end
-
-  # The reason behind a failed diff load: the Actions outcome's `{:error,
-  # reason}`, a SafeCall exit/exception wrapper, or an unexpected shape.
-  defp diff_failure_reason({:ok, {:error, reason}}), do: reason
-  defp diff_failure_reason({:error, reason}), do: reason
-  defp diff_failure_reason(other), do: other
 
   # One batch outcome: a merged repo records its TERMINAL resolution and counts
   # toward the batch tally; a conflict/error repo lands in its non-terminal
@@ -1729,17 +1337,19 @@ defmodule EvoDashWeb.ReviewLive do
   defp settle_batch_outcome({repo_id, outcome}, {socket, merged}) when is_binary(repo_id) do
     case outcome do
       {:merged, target} ->
-        {set_repo_resolution(socket, repo_id, %{state: :merged, target: target}), merged + 1}
+        {State.set_repo_resolution(socket, repo_id, %{state: :merged, target: target}),
+         merged + 1}
 
       {:conflict, details} ->
-        {set_repo_resolution(
+        {State.set_repo_resolution(
            socket,
            repo_id,
            %{state: :conflict, detail: truncate_string(details, 200)}
          ), merged}
 
       {:error, reason} ->
-        {set_repo_resolution(socket, repo_id, %{state: :error, detail: inspect(reason)}), merged}
+        {State.set_repo_resolution(socket, repo_id, %{state: :error, detail: inspect(reason)}),
+         merged}
 
       _other ->
         {socket, merged}
@@ -1767,101 +1377,11 @@ defmodule EvoDashWeb.ReviewLive do
 
   # A repo's current branch name (nil when the repo is gone).
   defp repo_branch(socket, repo_id) do
-    case find_review_repo(socket.assigns.review_repos, repo_id) do
+    case State.find_review_repo(socket.assigns.review_repos, repo_id) do
       %{} = repo -> Map.get(repo, :branch_name)
       _ -> nil
     end
   end
-
-  # A repo offers no action once its resolution is TERMINAL or it has no
-  # changes (nil/blank branch — nothing to merge or reject).
-  defp repo_actionable?(repo) do
-    Aggregates.terminal_resolution?(Map.get(repo, :resolution)) or
-      not RepoCards.repo_has_changes?(repo)
-  end
-
-  # Monotonic action-ref counter (mirrors `load_generation`): every spawned
-  # action carries the current sequence in its ref.
-  defp next_action_seq(socket) do
-    seq = Map.get(socket.assigns, :action_seq, 0) + 1
-    {seq, assign(socket, :action_seq, seq)}
-  end
-
-  # Runs `fun` in `EvoDash.TaskSupervisor` behind `EvoDash.SafeCall.run/1` and
-  # reports `{:review_action_result, task_id, node, action, ref, result}` back to
-  # this LiveView. The boundary guarantees a result message is ALWAYS sent (an
-  # exit inside the child would otherwise leave the in-progress state stuck).
-  # When the child cannot even be started, the in-progress state is cleared
-  # here and the failure surfaces as an error flash.
-  defp spawn_action(socket, action, ref, fun) do
-    parent = self()
-    node = socket.assigns.current_node
-    task_id = socket.assigns.task_id
-
-    case Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-           result = EvoDash.SafeCall.run(fun)
-           send(parent, {:review_action_result, task_id, node, action, ref, result})
-         end) do
-      {:ok, _pid} ->
-        socket
-
-      {:error, reason} ->
-        socket
-        |> clear_action_state(action, ref)
-        |> put_flash(
-          :error,
-          gettext("Failed to start action: %{reason}", reason: inspect(reason))
-        )
-    end
-  end
-
-  # Clears the in-progress state an action set, for the action's shape:
-  # diff loads release their `{scope, path}` entry (only when this result still
-  # owns it — a newer request for the same file keeps its own marker), the
-  # background completion write owns none, and every other action clears the
-  # marker (plus its repo's busy flag) and the task-level spinner.
-  defp clear_action_state(socket, action, ref) when action in [:diff, :expand_context] do
-    key = {Map.get(ref, :repo_id), Map.get(ref, :path)}
-    seq = Map.get(ref, :seq)
-
-    case Map.get(socket.assigns.diff_in_flight, key) do
-      ^seq -> assign(socket, :diff_in_flight, Map.delete(socket.assigns.diff_in_flight, key))
-      _superseded -> socket
-    end
-  end
-
-  defp clear_action_state(socket, :completion, _ref), do: socket
-
-  defp clear_action_state(socket, action, ref) do
-    busy_repos =
-      case action do
-        :merge_all ->
-          MapSet.difference(
-            socket.assigns.busy_repos,
-            MapSet.new(Map.get(ref, :repo_ids, []))
-          )
-
-        _ ->
-          case Map.get(ref, :repo_id) do
-            nil -> socket.assigns.busy_repos
-            repo_id -> MapSet.delete(socket.assigns.busy_repos, repo_id)
-          end
-      end
-
-    socket
-    |> assign(:review_action, nil)
-    |> assign(:busy_repos, busy_repos)
-    |> clear_action_loading(action)
-  end
-
-  # The spinner feeds the primary/aggregate action bar — only the task-level
-  # actions set it.
-  defp clear_action_loading(socket, action)
-       when action in [:resume, :ignore, :create_pr, :extract_skills, :auto_resolve] do
-    assign(socket, :action_loading, false)
-  end
-
-  defp clear_action_loading(socket, _action), do: socket
 
   # --- Private Helpers ---
 
@@ -1935,367 +1455,6 @@ defmodule EvoDashWeb.ReviewLive do
     |> Enum.join("\n")
   end
 
-  # --- Lazy file-diff loads ---
-  #
-  # A file's diff is fetched on demand (first selection / expansion, or an
-  # explicit context expansion) OFF the LiveView process, through the shared
-  # action plumbing (`spawn_action/4` + `{:review_action_result, ...}`), so a
-  # slow git/RPC call can neither block the page nor exit the LiveView.
-
-  # The scope a lazy diff load belongs to: the ACTIVE repo id on the SHOW
-  # route, the `:commit` atom on the `:commit` route. Captured at spawn time so
-  # a result landing after a repo switch is never written into the wrong repo.
-  defp diff_scope(socket) do
-    if socket.assigns.live_action == :commit, do: :commit, else: socket.assigns.active_repo_id
-  end
-
-  # Starts the load for `path` only when the current scope does not have its
-  # diff yet (the lazy gate shared by every selection/expansion path). A file
-  # missing from the scope's list is never fetched.
-  defp maybe_start_diff_load(socket, path) do
-    scope = diff_scope(socket)
-
-    case scope_files(socket, scope) do
-      files when is_list(files) ->
-        case Enum.find(files, &(Map.get(&1, :path) == path)) do
-          %{} = file ->
-            if is_nil(Map.get(file, :diff)),
-              do: start_diff_load(socket, path, :diff, 3, []),
-              else: socket
-
-          _ ->
-            socket
-        end
-
-      _ ->
-        socket
-    end
-  end
-
-  # Spawns one exit-safe diff load. The `{scope, path}` entry in
-  # @diff_in_flight stores the seq of the LATEST request: a second request for
-  # the same file is a no-op while one is in flight, and the apply step uses
-  # the seq to discard a superseded result.
-  defp start_diff_load(socket, path, action, level, opts) do
-    scope = diff_scope(socket)
-    key = {scope, path}
-
-    if Map.has_key?(socket.assigns.diff_in_flight, key) do
-      socket
-    else
-      {seq, socket} = next_action_seq(socket)
-      socket = assign(socket, :diff_in_flight, Map.put(socket.assigns.diff_in_flight, key, seq))
-
-      fun = diff_load_fun(socket, scope, path, opts)
-      spawn_action(socket, action, %{repo_id: scope, path: path, level: level, seq: seq}, fun)
-    end
-  end
-
-  # The off-process load for one scope, with every argument captured here (the
-  # closure runs after the socket may have moved on). SHOW loads the reviewed
-  # range (base → tip) of the scoped repo; :commit loads the inspected commit
-  # (its plain diff, or — when the caller asked for more context — a diff
-  # against its parent).
-  defp diff_load_fun(socket, :commit, path, opts) do
-    node = socket.assigns.current_node
-    repo_path = socket.assigns.repo_path
-    commit_sha = socket.assigns.inspect_commit_sha
-
-    if opts == [] do
-      fn -> Actions.load_commit_diff(node, repo_path, commit_sha, path) end
-    else
-      fn -> Actions.load_commit_diff_with_opts(node, repo_path, commit_sha, path, opts) end
-    end
-  end
-
-  defp diff_load_fun(socket, scope, path, opts) do
-    node = socket.assigns.current_node
-    repo = find_review_repo(socket.assigns.review_repos, scope) || %{}
-
-    repo_path = Map.get(repo, :repo_path) || socket.assigns.repo_path
-    base_sha = Map.get(repo, :base_sha) || socket.assigns.base_sha
-    commit_sha = Map.get(repo, :commit_sha) || socket.assigns.commit_sha
-
-    fn -> Actions.load_review_diff(node, repo_path, base_sha, commit_sha, path, opts) end
-  end
-
-  # The context level currently shown for `path` in `scope` (default 3 lines
-  # of context). SHOW reads the ACTIVE repo's submap; :commit keeps today's
-  # legacy flat path-keyed state.
-  defp context_level(socket, :commit, path) do
-    Map.get(socket.assigns.file_context_levels || %{}, path, 3)
-  end
-
-  defp context_level(socket, scope, path) do
-    levels = socket.assigns.file_context_levels || %{}
-
-    levels
-    |> Map.get(scope, %{})
-    |> Map.get(path, 3)
-  end
-
-  # Never downgrade a file's context window: :all is unbounded, and an integer
-  # level only grows (a plain `:diff` load landing after an expansion keeps the
-  # expanded level).
-  defp max_context_level(:all, _requested), do: :all
-  defp max_context_level(_current, :all), do: :all
-
-  defp max_context_level(current, requested) when is_integer(current) and is_integer(requested),
-    do: max(current, requested)
-
-  defp max_context_level(_current, requested), do: requested
-
-  # Writes a loaded diff into the CAPTURED scope's data source (commit_data on
-  # the :commit route, the scoped @review_repos entry's review_data on SHOW),
-  # and records the context level. Expansion and selection belong to the controls
-  # that requested the load and may have changed while Git was running.
-  defp update_file_diff_in_socket(socket, :commit, path, diff_string, context_level) do
-    data = socket.assigns.commit_data
-
-    updated_files =
-      Enum.map(data.files, fn f ->
-        if f.path == path do
-          %{f | diff: diff_string}
-        else
-          f
-        end
-      end)
-
-    levels = socket.assigns.file_context_levels || %{}
-    level = max_context_level(Map.get(levels, path), context_level)
-
-    assign(socket,
-      commit_data: %{data | files: updated_files},
-      file_context_levels: Map.put(levels, path, level)
-    )
-  end
-
-  defp update_file_diff_in_socket(socket, repo_id, path, diff_string, context_level) do
-    review_repos =
-      Enum.map(socket.assigns.review_repos, fn repo ->
-        if repo.repo_id == repo_id do
-          case repo.review_data do
-            nil ->
-              repo
-
-            data ->
-              updated_files =
-                Enum.map(data.files, fn f ->
-                  if f.path == path, do: %{f | diff: diff_string}, else: f
-                end)
-
-              %{repo | review_data: %{data | files: updated_files}}
-          end
-        else
-          repo
-        end
-      end)
-
-    levels = socket.assigns.file_context_levels || %{}
-    levels_sub = Map.get(levels, repo_id, %{})
-    level = max_context_level(Map.get(levels_sub, path), context_level)
-    levels = Map.put(levels, repo_id, Map.put(levels_sub, path, level))
-
-    socket
-    |> assign(review_repos: review_repos, file_context_levels: levels)
-    |> project_active_repo()
-    # A lazily loaded diff rewrites the repo's review_data, so the aggregate
-    # stats come from here (they never re-walk the repos in the render).
-    |> put_derived()
-  end
-
-  # Refreshes the DERIVED assigns (`stats`, `primary_repo`,
-  # `completion_status`) from the CURRENT `@review_repos` / `@review_status`.
-  #
-  # These used to be computed in the render body, so every tab switch, keystroke
-  # in the file filter and debounced task broadcast re-walked the repo list.
-  # Instead EVERY mutation of those two assigns funnels through here — the
-  # event pays for the derivation once and the render just reads plain assigns.
-  #
-  # The single ordering rule: `set_repo_resolution/3` refreshes these BEFORE
-  # `maybe_persist_completion/1` reads `completion_status`, which is guaranteed
-  # because `settle_repo_action/4` runs them in exactly that order.
-  defp put_derived(socket) do
-    review_repos = socket.assigns.review_repos
-    review_status = socket.assigns.review_status
-
-    assign(socket,
-      stats: Aggregates.stats(review_repos),
-      primary_repo: Aggregates.primary(review_repos),
-      completion_status: Aggregates.completion_status(review_repos, review_status)
-    )
-  end
-
-  # Projects the ACTIVE repo's per-repo data onto the flat assigns the template
-  # and action components read (repo_path/branch_name/commit_sha/base_sha/
-  # branch_exists/review_data/commits/merge_targets/default_merge_target/
-  # merge_status). The :commit route is a NO-OP — it keeps today's legacy flat
-  # path-keyed state (single repo, no review_repos). The diff-state maps
-  # (selected_file / expanded_files / file_context_levels) are NOT re-projected
-  # here: they hold the canonical repo-keyed per-repo state, and the template
-  # reads the ACTIVE repo's submap via inline Map.get (see the :files_changed
-  # tab in render/1). Falls back to the primary entry when the active id is not
-  # found (defensive — switch_repo whitelists, so this only guards reloads).
-  defp project_active_repo(socket) do
-    if socket.assigns.live_action == :commit do
-      socket
-    else
-      active_repo_id = socket.assigns.active_repo_id
-
-      repo =
-        Enum.find(socket.assigns.review_repos, &(&1.repo_id == active_repo_id)) ||
-          Aggregates.primary(socket.assigns.review_repos)
-
-      assign(socket,
-        repo_path: repo && repo.repo_path,
-        branch_name: repo && repo.branch_name,
-        commit_sha: repo && repo.commit_sha,
-        base_sha: repo && repo.base_sha,
-        branch_exists: (repo && repo.branch_exists) || false,
-        review_data: repo && repo.review_data,
-        commits: (repo && repo.commits) || [],
-        merge_targets: (repo && repo.merge_targets) || [],
-        default_merge_target: repo && repo.default_merge_target,
-        merge_status: repo && repo.merge_status
-      )
-    end
-  end
-
-  # Whitelist-validate the submitted repo id against the known review repos
-  # (never String.to_atom on client input). Per-repo diff state is keyed by
-  # repo_id and persists across switches — only the active id, the flat
-  # projections, and the shared file filter change. Shared by both switch_repo
-  # handler clauses (%{"repo_id" => id} from form-wrapped selects and the
-  # form-less %{"value" => id} legacy shape).
-  defp switch_repo(socket, repo_id) do
-    if repo_id in Enum.map(socket.assigns.review_repos, & &1.repo_id) do
-      {:noreply,
-       socket
-       |> assign(:active_repo_id, repo_id)
-       # The filter string is shared across repos — reset it so switching
-       # never leaves the new repo's file list filtered by stale text.
-       |> assign(:file_filter, "")
-       |> project_active_repo()}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  # Finds one review-repo entry by its whitelisted id: the untrusted client
-  # string is compared against the known ids (never String.to_atom). A missing
-  # or non-binary id finds nothing.
-  defp find_review_repo(review_repos, repo_id) when is_binary(repo_id) do
-    Enum.find(review_repos, &(&1.repo_id == repo_id))
-  end
-
-  defp find_review_repo(_review_repos, _repo_id), do: nil
-
-  # Resolves the branch a per-repo merge submits into: the trimmed
-  # `target_branch` param, validated against the repo's known target list
-  # (falling back to its resolved default when the submitted value is not a
-  # member — or when the param is blank/absent).
-  defp resolve_merge_target(repo, params) do
-    submitted =
-      case params["target_branch"] do
-        target when is_binary(target) -> String.trim(target)
-        _ -> ""
-      end
-
-    case submitted do
-      "" ->
-        repo.default_merge_target
-
-      target ->
-        if repo.merge_targets != [] and target not in repo.merge_targets do
-          repo.default_merge_target
-        else
-          target
-        end
-    end
-  end
-
-  # Writes one repo's RESOLUTION into @review_repos (clearing branch_exists on a
-  # TERMINAL outcome — the branch was deleted) and re-projects the flat assigns.
-  # Reuses MergeCheck.update_repo/3 (the single per-entry update path).
-  #
-  # This is the SINGLE funnel written ONLY by the in-page action tail (merge /
-  # reject / merge_all) — never by the load seeding or test fixtures — so it
-  # ALSO records the resolution in the dedicated :local_repo_resolutions assign.
-  # That assign lets a self-triggered reload (the page's own review-status
-  # broadcast → 300ms debounce → load_data, which re-derives resolutions from
-  # REPOSITORY state alone) keep the outcome the user just earned instead of
-  # reverting the settled card (see carry_local_resolutions/2).
-  defp set_repo_resolution(socket, repo_id, resolution) do
-    recorded = Map.put(socket.assigns.local_repo_resolutions, repo_id, resolution)
-
-    socket
-    |> assign(:local_repo_resolutions, recorded)
-    |> EvoDashWeb.ReviewLive.MergeCheck.update_repo(repo_id, fn repo ->
-      repo
-      |> Map.put(:resolution, resolution)
-      |> maybe_clear_branch(resolution)
-    end)
-    |> project_active_repo()
-    # Refresh the derived completion BEFORE any caller reads it (see
-    # maybe_persist_completion/1).
-    |> put_derived()
-  end
-
-  defp maybe_clear_branch(repo, %{state: state}) when state in [:merged, :rejected],
-    do: %{repo | branch_exists: false}
-
-  defp maybe_clear_branch(repo, _resolution), do: repo
-
-  # Applies a freshly loaded assigns map (from LoadData) with the in-page
-  # action-earned TERMINAL resolutions overlaid onto @review_repos.
-  #
-  # load_data derives each repo's resolution from REPOSITORY state ONLY
-  # (build_repo_entry/2: :handled when a non-blank branch no longer exists, else
-  # nil). A reload triggered by the page's OWN review-status broadcast therefore
-  # knows nothing about the action just taken and would revert the settled card
-  # (dropping the completion banner for a fully-resolved review). Overlay the
-  # dedicated :local_repo_resolutions entries — and ONLY those, never the
-  # fixture/seeded values in @review_repos — for repos whose loaded resolution
-  # is nil; when the load independently determined a resolution (e.g. a truly
-  # gone branch → :handled) that value stays authoritative. Entries for repos no
-  # longer in the loaded list are dropped so the map cannot grow unboundedly.
-  defp carry_local_resolutions(assigns_map, assigns) do
-    local = Map.get(assigns, :local_repo_resolutions, %{})
-
-    case {Map.get(assigns_map, :review_repos), is_map(local)} do
-      {review_repos, true} when is_list(review_repos) and local != %{} ->
-        {review_repos, local} = overlay_local_resolutions(review_repos, local)
-
-        assigns_map
-        |> Map.put(:review_repos, review_repos)
-        |> Map.put(:local_repo_resolutions, local)
-
-      _ ->
-        assigns_map
-    end
-  end
-
-  # Overlays the TERMINAL entries of `local` onto the loaded `review_repos`
-  # (repo_id match, loaded resolution nil only) and returns the pruned `local`
-  # (kept only for repos still present in the loaded list).
-  defp overlay_local_resolutions(review_repos, local) do
-    present_ids = review_repos |> Enum.map(&Map.get(&1, :repo_id)) |> MapSet.new()
-    local = Map.take(local, MapSet.to_list(present_ids))
-
-    overlaid =
-      Enum.map(review_repos, fn repo ->
-        resolution = Map.get(local, Map.get(repo, :repo_id))
-
-        if Aggregates.terminal_resolution?(resolution) and Map.get(repo, :resolution) == nil do
-          Map.put(repo, :resolution, resolution)
-        else
-          repo
-        end
-      end)
-
-    {overlaid, local}
-  end
-
   # The batch summary flash for merge_all/1: all merged → success, otherwise an
   # error naming how many landed (the batch puts ONE flash, never per-repo ones).
   defp merge_all_flash(merged, total) when total > 0 and merged == total do
@@ -2327,7 +1486,7 @@ defmodule EvoDashWeb.ReviewLive do
   # Returns the updated socket.
   defp settle_repo_action(socket, repo_id, resolution, success_flash) do
     socket
-    |> set_repo_resolution(repo_id, resolution)
+    |> State.set_repo_resolution(repo_id, resolution)
     |> put_flash(:success, success_flash)
     |> maybe_persist_completion()
   end
@@ -2347,7 +1506,7 @@ defmodule EvoDashWeb.ReviewLive do
         socket
 
       status ->
-        {seq, socket} = next_action_seq(socket)
+        {seq, socket} = State.next_action_seq(socket)
         node = socket.assigns.current_node
         task_id = socket.assigns.task_id
 
@@ -2355,9 +1514,9 @@ defmodule EvoDashWeb.ReviewLive do
         |> assign(:review_status, status)
         # review_status is one of the three inputs of the aggregate, so the
         # derived values are refreshed once it changed.
-        |> put_derived()
-        |> invalidate_active_tasks()
-        |> spawn_action(:completion, %{status: status, seq: seq}, fn ->
+        |> State.put_derived()
+        |> State.invalidate_active_tasks()
+        |> Runner.spawn(:completion, %{status: status, seq: seq}, fn ->
           Actions.set_review_status(node, task_id, status)
         end)
     end
@@ -2367,7 +1526,7 @@ defmodule EvoDashWeb.ReviewLive do
   # stays retryable, so record the outcome on its own card and STAY on the page.
   # Returns the updated socket (callers wrap it in {:noreply, _}).
   defp resolve_non_terminal(socket, repo_id, state, detail, error_flash) do
-    socket = set_repo_resolution(socket, repo_id, %{state: state, detail: detail})
+    socket = State.set_repo_resolution(socket, repo_id, %{state: state, detail: detail})
     put_flash(socket, :error, error_flash)
   end
 
@@ -2390,52 +1549,4 @@ defmodule EvoDashWeb.ReviewLive do
        do: repo_id
 
   defp previous_review_repo(_), do: nil
-
-  defp review_commits_path(task_id, node_id, repo_id) do
-    params = %{tab: "commits"}
-    params = if node_id, do: Map.put(params, :node, node_id), else: params
-    params = if repo_id != "primary", do: Map.put(params, :repo, repo_id), else: params
-    ~p"/review/#{task_id}?#{params}"
-  end
-
-  # Every ancestor directory path of every file path (each `Path.dirname`
-  # chain segment), excluding the "." root — e.g. "a/b/c.ex" yields
-  # ["a", "a/b"]. Drives expand_all_dirs: marking all ancestors true fully
-  # opens the tree so every file is visible.
-  defp all_dir_paths(files) do
-    files
-    |> Enum.reduce(MapSet.new(), fn file, acc ->
-      file.path
-      |> dir_chain()
-      |> Enum.reduce(acc, fn dir, acc -> MapSet.put(acc, dir) end)
-    end)
-    |> MapSet.to_list()
-    |> Map.new(fn dir -> {dir, true} end)
-  end
-
-  defp dir_chain(path) do
-    path
-    |> Path.dirname()
-    |> dir_chain([])
-  end
-
-  defp dir_chain(".", acc), do: acc
-
-  defp dir_chain(dir, acc), do: dir_chain(Path.dirname(dir), [dir | acc])
-
-  # Review actions on completed tasks (merge/reject/resume/ignore success
-  # paths) change the task's review status, which removes it from the sidebar's
-  # pending-review partition. Invalidate the `EvoDash.ActiveTasks` hub snapshot
-  # for the ACTING node context ({current_node_id, current_node} — the same key
-  # the hub keys on) right after the set_review_status call and before the
-  # push_navigate, so the destination mount is COLD and re-fetches via the
-  # existing machinery instead of seeding the pre-action snapshot (which would
-  # keep the acted-on task listed until some unrelated task event). Only ever
-  # called on status-change success paths that navigate away — partial-failure
-  # branches that stay on the page must NOT invalidate (a still-mounted page
-  # refreshes via the existing broadcast → 300ms debounce path).
-  defp invalidate_active_tasks(socket) do
-    EvoDash.ActiveTasks.invalidate(socket.assigns.current_node_id, socket.assigns.current_node)
-    socket
-  end
 end
