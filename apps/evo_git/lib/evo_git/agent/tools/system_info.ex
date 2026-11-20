@@ -10,35 +10,40 @@ defmodule EvoGit.Agent.Tools.SystemInfo do
   directory.
   """
 
+  alias EvoGit.Agent.Tools.Boundary
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
   Executes the system_info tool.
 
-  Returns a multi-line `key: value` string of local system facts. Never
-  raises: the whole body runs under a tool-boundary rescue/catch (data_dir
-  resolution can call `System.user_home!()`, and other system calls can fail
-  in exotic environments) — a failure is reported as a readable error string.
+  Returns a multi-line `key: value` string of local system facts. Never raises:
+  the whole body runs under the tool boundary guard
+  (`EvoGit.Agent.Tools.Boundary`), because the platform/data-dir resolution reads
+  app config and the environment and can raise in an exotic setup — a failure is
+  reported as a readable `system info unavailable: …` string instead of crashing
+  the agent loop.
   """
   def execute(_args, _repo_path, _repo_root) do
-    [
-      key_value("os", "#{EvoGit.Platform.os()} (#{inspect(:os.type())})"),
-      key_value("architecture", architecture()),
-      key_value("hostname", hostname()),
-      key_value("local time", Shared.format_datetime(NaiveDateTime.local_now())),
-      key_value("timezone", timezone()),
-      key_value("utc time", Shared.format_datetime(DateTime.utc_now())),
-      key_value("elixir version", System.version()),
-      key_value("otp version", System.otp_release()),
-      key_value("data directory", EvoGit.Platform.data_dir())
-    ]
-    |> Enum.join("\n")
-  rescue
-    e ->
-      "system info unavailable: #{Exception.message(e)}"
-  catch
-    :exit, reason ->
-      "system info unavailable: #{inspect(reason)}"
+    # Tool boundary: see `EvoGit.Agent.Tools.Boundary` for the ONE guard
+    # rationale (a dependency that raises must not crash the agent loop).
+    Boundary.run(
+      fn ->
+        [
+          key_value("os", "#{EvoGit.Platform.os()} (#{inspect(:os.type())})"),
+          key_value("architecture", architecture()),
+          key_value("hostname", hostname()),
+          key_value("local time", Shared.format_datetime(NaiveDateTime.local_now())),
+          key_value("timezone", timezone()),
+          key_value("utc time", Shared.format_datetime(DateTime.utc_now())),
+          key_value("elixir version", System.version()),
+          key_value("otp version", System.otp_release()),
+          key_value("data directory", EvoGit.Platform.data_dir())
+        ]
+        |> Enum.join("\n")
+      end,
+      fn reason -> "system info unavailable: #{Failure.format_reason(reason)}" end
+    )
   end
 
   defp architecture do

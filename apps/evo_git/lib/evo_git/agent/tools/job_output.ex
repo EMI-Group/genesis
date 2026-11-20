@@ -97,6 +97,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   is always the LAST line). An explicit `job_id` renders no note line.
   """
 
+  alias EvoGit.Agent.Tools.Boundary
   alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
   alias EvoGit.BackgroundJobs
@@ -171,15 +172,18 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   an unexpected raise/exit at the tool boundary is caught too.
   """
   def execute(args, _repo_path, _repo_root) do
-    with {:ok, job_id, source} <- resolve_job_id(args) do
-      read_job(job_id, source, args)
-    else
-      {:error, message} -> Failure.error(message)
-    end
-  rescue
-    e -> Failure.error(Exception.message(e))
-  catch
-    :exit, reason -> Failure.error(inspect(reason))
+    # Cross-GenServer boundary (BackgroundJobs): see
+    # `EvoGit.Agent.Tools.Boundary` for the ONE guard rationale.
+    Boundary.run(
+      fn ->
+        with {:ok, job_id, source} <- resolve_job_id(args) do
+          read_job(job_id, source, args)
+        else
+          {:error, message} -> Failure.error(message)
+        end
+      end,
+      &Failure.error/1
+    )
   end
 
   ## Job-id resolution (explicit id, else this agent's only job)
@@ -268,7 +272,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
     case BackgroundJobs.read(job_id, read_opts(args, owner)) do
       {:ok, %{text: text, job: job}} -> render(text, job, wait, source, job_id)
-      {:error, reason} -> Failure.error(error_message(reason, job_id))
+      {:error, reason} -> Failure.error(Shared.error_message(reason, job_id))
     end
   end
 
@@ -326,7 +330,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
     if System.monotonic_time(:millisecond) >= deadline do
       false
     else
-      case BackgroundJobs.job(job_id, owner_opts(owner)) do
+      case BackgroundJobs.job(job_id, Shared.owner_opts(owner)) do
         {:ok, job} ->
           cond do
             terminal?(job) ->
@@ -428,7 +432,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
   ## Read options
 
-  defp read_opts(args, owner), do: [max_bytes: max_bytes(args)] ++ owner_opts(owner)
+  defp read_opts(args, owner), do: [max_bytes: max_bytes(args)] ++ Shared.owner_opts(owner)
 
   defp max_bytes(args) do
     default = EvoGit.Config.resolve([:truncation, :tool_output_default_max_bytes])
@@ -438,12 +442,6 @@ defmodule EvoGit.Agent.Tools.JobOutput do
       _ -> default
     end
   end
-
-  # The ownership fence is passed ONLY when the runner installed an owner pid;
-  # otherwise an unscoped lookup is used (fencing on a nil owner would hide every
-  # job).
-  defp owner_opts(nil), do: []
-  defp owner_opts(pid), do: [owner_pid: pid]
 
   ## Rendering
 
@@ -554,17 +552,4 @@ defmodule EvoGit.Agent.Tools.JobOutput do
       "Start one with the `bash` tool and `run_in_background: true`, then call " <>
       "job_output with its job_id."
   end
-
-  defp error_message(:not_found, job_id) do
-    "No background job with id #{inspect(job_id)} is known to this agent. " <>
-      "Call job_list to see this agent's background jobs, then retry with a valid id."
-  end
-
-  defp error_message(:not_owner, job_id) do
-    "Background job #{inspect(job_id)} belongs to another agent, so this agent cannot read it. " <>
-      "Call job_list to see this agent's own background jobs."
-  end
-
-  defp error_message(message, _job_id) when is_binary(message), do: message
-  defp error_message(other, _job_id), do: inspect(other)
 end

@@ -1030,15 +1030,88 @@ defmodule EvoGit.Agent.Tools.Shared do
   def format_datetime(other), do: to_string(other)
 
   @doc """
-  Truncates a string to `max` characters, appending the "...[truncated]"
+  Truncates a string to `max` characters, appending the `...[truncated]`
   marker when it exceeds the cap.
+
+  The implementation lives in `EvoGit.Util.Strings` (`truncate/2`, the house
+  CHARACTER-based head cut); this function is the tool layer's documented entry
+  point and delegates to it. A string at or below the cap is returned
+  byte-identically.
   """
-  def truncate(string, max) when is_binary(string) do
-    if String.length(string) <= max do
-      string
-    else
-      String.slice(string, 0, max) <> "...[truncated]"
-    end
+  @spec truncate(String.t(), non_neg_integer()) :: String.t()
+  def truncate(string, max) when is_binary(string), do: EvoGit.Util.Strings.truncate(string, max)
+
+  # --- Background-Job Helpers ---
+
+  @doc """
+  Builds the `EvoGit.BackgroundJobs` ownership option from the owning agent pid.
+
+  `nil` (no owning agent pid installed by the runner) renders `[]`, so the call
+  stays UNSCOPED; a pid renders `[owner_pid: pid]`. The option is OMITTED rather
+  than passed as `nil` because fencing on a nil owner would hide every job.
+
+  Shared by the three job tools (`job_output`, `job_list`, `job_kill`) —
+  previously each carried a byte-identical private copy.
+  """
+  @spec owner_opts(pid() | nil) :: keyword()
+  def owner_opts(nil), do: []
+  def owner_opts(pid), do: [owner_pid: pid]
+
+  @doc """
+  Renders a background-job failure reason as display text for `job_id`.
+
+  `:not_found` and `:not_owner` become actionable prose naming the job and
+  pointing at `job_list`; a binary passes through VERBATIM (the registry's own
+  readable message); anything else renders through `inspect/1`, so the formatter
+  never raises.
+
+  The `:not_owner` wording speaks of READING the job: the read and kill paths
+  share this ONE text (the two copies differed only by the verb), and the
+  job_output wording was kept verbatim.
+  """
+  @spec error_message(term(), term()) :: String.t()
+  def error_message(:not_found, job_id) do
+    "No background job with id #{inspect(job_id)} is known to this agent. " <>
+      "Call job_list to see this agent's background jobs, then retry with a valid id."
+  end
+
+  def error_message(:not_owner, job_id) do
+    "Background job #{inspect(job_id)} belongs to another agent, so this agent cannot read it. " <>
+      "Call job_list to see this agent's own background jobs."
+  end
+
+  def error_message(message, _job_id) when is_binary(message), do: message
+  def error_message(other, _job_id), do: inspect(other)
+
+  # --- VCT Ref Formatting ---
+
+  @doc """
+  Renders ONE VCT workspace member REF for display.
+
+  A map renders its first non-empty `"point"`/`:point` value, else its first
+  non-empty `"path"`/`:path` value, else `"<invalid>"`; a non-map value renders
+  through `Failure.format_reason/1` (a binary verbatim, any other term
+  readably). The ONE member-ref renderer shared by the workspace tools.
+  """
+  @spec format_member_ref(term()) :: String.t()
+  def format_member_ref(ref) when is_map(ref) do
+    first_non_empty(ref, ["point", :point]) ||
+      first_non_empty(ref, ["path", :path]) ||
+      "<invalid>"
+  end
+
+  def format_member_ref(ref), do: Failure.format_reason(ref)
+
+  # The first STRING-keyed or atom-keyed value that is a non-empty binary; both
+  # spellings occur because the ref survives a JSON round trip (string keys) and
+  # an in-memory normalization (atom keys).
+  defp first_non_empty(ref, keys) do
+    Enum.find_value(keys, fn key ->
+      case Map.get(ref, key) do
+        value when is_binary(value) and value != "" -> value
+        _value -> nil
+      end
+    end)
   end
 
   @doc """

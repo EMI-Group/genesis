@@ -9,6 +9,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval do
 
   alias EvoGit.Agent.Tools.ElixirEval.{Authorization, DirectAPI, Engine}
   alias EvoGit.Agent.Tools.Failure
+  alias EvoGit.Util.Coerce
 
   @max_code_bytes 16_000
   @default_timeout_ms 2_000
@@ -262,9 +263,17 @@ defmodule EvoGit.Agent.Tools.ElixirEval do
   end
 
   defp positive_integer(args, key, default) do
-    case Map.get(args, key, default) do
-      n when is_integer(n) and n > 0 -> {:ok, n}
-      _ -> {:error, "#{key} must be a positive integer."}
+    case Map.fetch(args, key) do
+      # An absent key means "use the documented default" — the schema's own
+      # default is a compile-time positive integer, so it is returned as is.
+      :error ->
+        {:ok, default}
+
+      {:ok, value} ->
+        case Coerce.positive_integer(value, nil) do
+          nil -> {:error, "#{key} must be a positive integer."}
+          n -> {:ok, n}
+        end
     end
   end
 
