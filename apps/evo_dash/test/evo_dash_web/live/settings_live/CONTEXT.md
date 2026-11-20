@@ -18,6 +18,7 @@ Config-directory isolation is per process (`EvoDash.Test.ConfigDir.isolate!/1` t
 - `navigation_test.exs` — 23 (`EvoDashWeb.SettingsLive.NavigationTest`, 17, `async: true`; `EvoDashWeb.SettingsLive.NavigationLiveTest`, 6, SYNC): `/settings` category resolution/URL helpers plus the mounted sidebar.
 - `provider_panel_live_test.exs` — 13, `async: true` (`EvoDashWeb.SettingsLive.ProviderPanelLiveTest`): the seeded account list and its single expanded editor.
 - `provider_wizard_test.exs` — 9, `async: true` (`EvoDashWeb.SettingsLive.ProviderWizardTest`): the account-creation wizard, the per-account model and schedule editors, and the removed-Quick-Setup regression pin.
+  Its in-browser sign-in test reads the `#settings-chatgpt-waiting` block AND its `#settings-chatgpt-sign-in-url` link from the CLICK's own `render_click/1` reply, because the stub's queued terminal status (`[:pending, {:ok, …}]`) can be applied the moment the event returns; the rule and its siblings are documented in `../CONTEXT.md` ("deterministic waits").
 - `NavigationLiveTest` is the only sync module in this directory: it drives platform/nix gating through the BEAM-global app-env seams `:platform_os_override` and `:nix_available_override`, which the `async: true` `EvoDashWeb.PlatformInfoTest` / `system_live_test` also read (and `SettingsLiveGlobalStateTest` mutates).
 
 ## Provider account identity (pure)

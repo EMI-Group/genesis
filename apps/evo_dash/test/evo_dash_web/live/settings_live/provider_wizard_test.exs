@@ -691,15 +691,23 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
       # page waits; the poll's success is what reloads the account list.
       EvoGit.TestSupport.ChatGPTFixture.seed!("work")
 
-      view |> element("#settings-chatgpt-sign-in") |> render_click()
+      click_html = view |> element("#settings-chatgpt-sign-in") |> render_click()
       assert_receive {:chatgpt_stub, :begin, account}
       # No explicit selection yet -> the account the picker resolves to.
       assert account == "default"
 
-      assert has_element?(view, "#settings-chatgpt-waiting")
-      link = view |> element("#settings-chatgpt-sign-in-url") |> render()
-      assert link =~ "https://auth.openai.com/x"
-      assert link =~ ~s|target="_blank"|
+      # The WAITING state and its authorization link are read from the CLICK's
+      # OWN render. The stub resolves the flow on its SECOND poll tick, which the
+      # LiveView may apply the instant this event returns, so a further client
+      # call (`has_element?` and then `element(...)` are two separate renders)
+      # could already see the connected state and lose the link. The click reply
+      # is the one snapshot atomic with the state it pins.
+      assert [waiting] =
+               Floki.find(Floki.parse_fragment!(click_html), "#settings-chatgpt-waiting")
+
+      assert [link] = Floki.find(waiting, "#settings-chatgpt-sign-in-url")
+      assert Floki.attribute(link, "href") == ["https://auth.openai.com/x"]
+      assert Floki.attribute(link, "target") == ["_blank"]
 
       html = await_sign_in(view, :ok)
 
