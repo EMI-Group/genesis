@@ -12,23 +12,20 @@ Reads are served from ONE RAM snapshot per config directory (`EvoGit.Config.Cach
 ## API Surface
 
 ### `EvoGit.Config`
-| Function | Description |
-|----------|-------------|
-| `resolve/0` | Merged config map (defaults + user config) from the RAM snapshot — one `:persistent_term` lookup, no file I/O, no validation. Runtime overrides live in `AgentScheduler` state. |
-| `resolve/1` | Value at an atom key or atom list from the same snapshot; a MISSING path answers the schema default (possibly `nil`), never an error. |
-| `user_config/0` | Parsed `config.toml` from the snapshot, or `%{}` if absent/unparseable; zero `File.stat`/`File.read` per call. |
-| `save_user_config/1` | Validates, then REPLACES `config.toml` through `persist_user_config/1` (creates the config dir) and raises `Watcher.notify_change/1`, so the snapshot refreshes synchronously. `:ok \| {:error, reason}` (`reason` = `[ValidationError]` or a filesystem term). |
-| `save_credentials/1` | MERGES into `credentials.toml` with a SHALLOW per-key `Map.merge/2` (flat `ENV_VAR_NAME = "value"` table: same key replaced, unknown keys preserved, `nil`/`""` written rather than deleted); sets keys via `ReqLLM.put_key` BEFORE the write, then `Watcher.notify_change/1`. `:ok \| {:error, reason}` |
-| `config_status/0` | `%{missing, warnings, ok?, validation_errors}`: `:llm_model` + `:api_key` (plus `:search_api_key` when search is enabled but unconfigured) checks; `resolved` and `validation_errors` come from ONE `Cache.get/0` snapshot value; the `:api_key` check is OAuth-aware; GitHub username is optional and NOT checked. |
-| `credentials/0` | Credentials map from the snapshot; `ReqLLM.put_key` side effects run only on a snapshot BUILD, never on a hit. |
-| `defaults/0` | `Schema.defaults/0` — a `deep_put` fold over every descriptor's `:default`; three values are CPU-thread-derived. |
-| `list_settings/0` | `Settings.list_settings/0` → `Schema.all_schemas/0` |
-| `show/0,1` / `update/1` | Settings facade (below). |
-| `config_path/0` / `config_dir/0` / `credentials_path/0` | `config.toml` / `EvoGit.Platform.config_dir("genesis")` / `credentials.toml` |
-| `api_key_present?/1` | `true` when any catalog credential key is in ReqLLM's key store or is a non-empty value in the given credentials map. |
-| `tools_search_enabled?/0` | Provider-generic `[tools.search]` gate (see "Web Search Provider Config"). |
-| `lsp_enabled?/0` | SINGLE gate for offering the `lsp` tool (see `[lsp]` below): `true` only when `[:lsp]` is a map whose `:enabled` is `true`/`"true"` AND `:command` is a non-blank binary; never raises. |
-| `read_toml_file/2,3` / `ensure_trailing_newline/1` | `@doc false` shared helpers (see Constraints). |
+- `resolve/0` — the merged map (defaults + user config) from the RAM snapshot: one `:persistent_term` lookup, no file I/O, no validation. Runtime overrides live in `AgentScheduler` state.
+- `resolve/1` — the value at an atom key or atom list from the same snapshot; a MISSING path answers the schema default (possibly `nil`), never an error.
+- `user_config/0` — the parsed `config.toml` from the snapshot (`%{}` if absent/unparseable); zero `File.stat`/`File.read` per call.
+- `save_user_config/1` — validates, then REPLACES `config.toml` through `persist_user_config/1` (creating the config dir) and raises `Watcher.notify_change/1` so the snapshot refreshes synchronously: `:ok | {:error, reason}` (`reason` = `[ValidationError]` or a filesystem term).
+- `save_credentials/1` — a SHALLOW per-key `Map.merge/2` into the flat `ENV_VAR_NAME = "value"` table (unknown keys preserved, `nil`/`""` written not deleted); `ReqLLM.put_key` runs BEFORE the write, then `Watcher.notify_change/1`: `:ok | {:error, reason}`.
+- `config_status/0` — `%{missing, warnings, ok?, validation_errors}` (see "LLM Model Presence Decision" + "Direct API Admission"): `:llm_model` + `:api_key` (plus `:search_api_key` when search is enabled but unconfigured) checks, OAuth-aware; `resolved` and `validation_errors` come from ONE `Cache.get/0`; GitHub username is optional and NOT checked.
+- `credentials/0` — the credentials map from the snapshot; `ReqLLM.put_key` side effects run only on a snapshot BUILD, never on a hit.
+- `defaults/0` — `Schema.defaults/0`, a `deep_put` fold over every descriptor's `:default`; three values are CPU-thread-derived.
+- `list_settings/0` — `Settings.list_settings/0` → `Schema.all_schemas/0`; `show/0,1` / `update/1` — the Settings facade (below).
+- `config_path/0` / `config_dir/0` / `credentials_path/0` — `config.toml` / `EvoGit.Platform.config_dir("genesis")` / `credentials.toml`.
+- `api_key_present?/1` — `true` when any catalog credential key is in ReqLLM's key store or is a non-empty value in the given credentials map.
+- `tools_search_enabled?/0` — the provider-generic `[tools.search]` gate ("Web Search Provider Config").
+- `lsp_enabled?/0` — the SINGLE gate for offering the `lsp` tool (`[lsp]` below): `true` only when `[:lsp]` is a map whose `:enabled` is `true`/`"true"` AND `:command` is a non-blank binary; never raises.
+- `read_toml_file/2,3` / `ensure_trailing_newline/1` — `@doc false` shared helpers (see Constraints).
 
 ### Settings facade (`EvoGit.Config` → `settings.ex`)
 
