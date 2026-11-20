@@ -265,10 +265,7 @@ defmodule Mix.Tasks.Store.Maintenance do
   defp percent(_part, 0), do: "0.0"
   defp percent(part, whole), do: :erlang.float_to_binary(part / whole * 100, decimals: 1)
 
-  defp human_size(nil), do: "unknown"
-  defp human_size(bytes) when bytes < 1024, do: "#{bytes} B"
-
-  defp human_size(bytes) do
-    "#{:erlang.float_to_binary(bytes / 1024 / 1024, decimals: 1)} MiB (#{bytes} B)"
-  end
+  # Rendered through the shared binary-unit formatter, which answers
+  # `"unknown"` for an absent/unmeasurable size and picks B/KiB/MiB/GiB.
+  defp human_size(bytes), do: EvoGit.Util.Strings.human_size(bytes)
 end

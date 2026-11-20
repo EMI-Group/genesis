@@ -623,10 +623,18 @@ defmodule EvoGit.PeakHourEngine do
     end
   end
 
-  # One field off an atom- or string-keyed profile map; `off_peak_holidays`
-  # goes through its tolerant reader.
+  # One field off an atom- or string-keyed profile map, with the shared
+  # tolerant read semantics (`EvoGit.Config.Keys.fetch/2`: atom spelling wins,
+  # then the string spelling, and an absent key answers `nil`).
+  # `off_peak_holidays` goes through its own validating reader.
   defp profile_field(p, :off_peak_holidays), do: profile_off_peak_holidays(p)
-  defp profile_field(p, key), do: Map.get(p, key, Map.get(p, Atom.to_string(key)))
+
+  defp profile_field(p, key) do
+    case EvoGit.Config.Keys.fetch(p, key) do
+      {:ok, value} -> value
+      :error -> nil
+    end
+  end
 
   # Resolves the wall clock for a tz profile from the utc seam, falling back
   # to the local `now` on any resolution error.

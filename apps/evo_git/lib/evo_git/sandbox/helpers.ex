@@ -594,8 +594,13 @@ defmodule EvoGit.Sandbox.Helpers do
 
   Total by construction: a missing or restarting manager, or a handle the
   registry does not accept, can never fail or slow the command being tracked.
+  The manager's own failure value (`{:error, :timeout}` /
+  `{:error, {:registry_exit, reason}}`) is returned verbatim for an operator
+  who wants it — every caller in the sandbox layer ignores it, and this
+  function never turns a failure into a raise.
   """
-  @spec attach_execution(keyword() | nil, EvoGit.ProcessManager.Handle.kind(), keyword()) :: :ok
+  @spec attach_execution(keyword() | nil, EvoGit.ProcessManager.Handle.kind(), keyword()) ::
+          :ok | {:error, term()}
   def attach_execution(opts, kind, attrs \\ []) do
     case execution_id(opts) do
       id when is_binary(id) ->

@@ -1442,7 +1442,9 @@ defmodule EvoGit.BackgroundJobs do
     end
   end
 
-  defp now_ms, do: System.monotonic_time(:millisecond)
+  # One clock read for the probe throttles, delegated to the shared monotonic
+  # clock so the millisecond source has exactly one definition.
+  defp now_ms, do: EvoGit.Util.Time.now_ms()
 
   # Test-only CALL-TIME override (`:background_wait_default_ms`); the production
   # default `@wait_default_ms` is unchanged. Read on EVERY call (`wait_default_ms/0`)
