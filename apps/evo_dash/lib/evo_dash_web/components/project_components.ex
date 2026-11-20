@@ -122,43 +122,65 @@ defmodule EvoDashWeb.ProjectComponents do
       </button>
 
       <%= if @palette_open do %>
+        <%!-- Both palette layers fade out through the shared motion-exit
+             helpers: LiveView runs the JS command BEFORE detaching the
+             element, so `if @palette_open` removal is smooth with no hook. --%>
         <!-- Backdrop (click-outside to close) -->
-        <div class="project-palette-backdrop" phx-click="close_project_palette"></div>
+        <div
+          class="project-palette-backdrop"
+          phx-click="close_project_palette"
+          phx-remove={
+            JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})
+          }
+        >
+        </div>
 
         <!-- Palette overlay -->
         <div
+          id="project-palette"
           class="project-palette-overlay"
           phx-keydown="palette_keydown"
           phx-click-away="close_project_palette"
+          phx-remove={
+            JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})
+          }
         >
-          <%= case @palette_mode do %>
-            <% :menu -> %>
-              <.palette_menu
-                projects={@projects}
-                palette_search={@palette_search}
-                palette_selected_index={@palette_selected_index}
-                remote={@remote}
-                workspaces={@workspaces}
-                expanded_workspaces={@expanded_workspaces}
-              />
-            <% :open_path -> %>
-              <.palette_open_path
-                path_suggestions={@path_suggestions}
-                tauri_detected={@tauri_detected}
-                remote={@remote}
-              />
-            <% :new_project -> %>
-              <.palette_new_project
-                path_suggestions={@path_suggestions}
-                tauri_detected={@tauri_detected}
-                remote={@remote}
-              />
-            <% :new_workspace -> %>
-              <.palette_new_workspace
-                projects={@projects}
-                new_workspace_members={@new_workspace_members}
-              />
-          <% end %>
+          <%!-- Re-keyed per mode: switching modes mounts a fresh element, which
+               replays the shared entrance animation. The wrapper keeps the
+               flex column contract the overlay's scroll list depends on. --%>
+          <div
+            id={"palette-body-" <> to_string(@palette_mode)}
+            class="wizard-step-enter flex min-h-0 flex-1 flex-col"
+          >
+            <%= case @palette_mode do %>
+              <% :menu -> %>
+                <.palette_menu
+                  projects={@projects}
+                  palette_search={@palette_search}
+                  palette_selected_index={@palette_selected_index}
+                  remote={@remote}
+                  workspaces={@workspaces}
+                  expanded_workspaces={@expanded_workspaces}
+                />
+              <% :open_path -> %>
+                <.palette_open_path
+                  path_suggestions={@path_suggestions}
+                  tauri_detected={@tauri_detected}
+                  remote={@remote}
+                />
+              <% :new_project -> %>
+                <.palette_new_project
+                  path_suggestions={@path_suggestions}
+                  tauri_detected={@tauri_detected}
+                  remote={@remote}
+                />
+              <% :new_workspace -> %>
+                <.palette_new_workspace
+                  projects={@projects}
+                  new_workspace_members={@new_workspace_members}
+                />
+            <% end %>
+          </div>
         </div>
       <% end %>
     </div>
@@ -177,14 +199,25 @@ defmodule EvoDashWeb.ProjectComponents do
   attr(:expanded_workspaces, :list, default: [])
 
   defp palette_menu(assigns) do
+    # Everything the template reads is computed ONCE here — the filter, the
+    # keyboard index math and the workspace view models (see `workspace_rows/2`).
+    filtered = filter_projects(assigns.projects, assigns.palette_search)
+    action_base = length(filtered)
+
+    # The workspace action sits AFTER the existing actions, so the keyboard
+    # index math stays `action_base` + a fixed offset: locally Open by Path,
+    # Create New Project, New Workspace (indices +0/+1/+2); on a remote node
+    # Create New Project is hidden, so New Workspace is +1.
+    new_workspace_index = action_base + if assigns.remote, do: 1, else: 2
+
+    assigns =
+      assigns
+      |> assign(:filtered_projects, filtered)
+      |> assign(:action_base, action_base)
+      |> assign(:new_workspace_index, new_workspace_index)
+      |> assign(:workspace_view, workspace_rows(assigns.workspaces, assigns.expanded_workspaces))
+
     ~H"""
-    <% filtered = filter_projects(@projects, @palette_search) %>
-    <% action_base = length(filtered) %>
-    <%!-- The workspace action sits AFTER the existing actions, so the keyboard
-         index math stays `action_base` + a fixed offset: locally Open by Path,
-         Create New Project, New Workspace (indices +0/+1/+2); on a remote node
-         Create New Project is hidden, so New Workspace is +1. --%>
-    <% new_workspace_index = action_base + if @remote, do: 1, else: 2 %>
     <!-- Search input -->
     <div class="p-3 border-b border-base-200">
       <div class="relative">
@@ -213,11 +246,11 @@ defmodule EvoDashWeb.ProjectComponents do
       class="project-palette-list overflow-y-auto flex-1 p-2"
       phx-hook="PaletteList"
     >
-      <%= if filtered != [] do %>
+      <%= if @filtered_projects != [] do %>
         <p class="text-xs font-semibold uppercase tracking-wide text-base-content/60 px-2 py-1">
           {gettext("Projects")}
         </p>
-        <%= for {project, i} <- Enum.with_index(filtered) do %>
+        <%= for {project, i} <- Enum.with_index(@filtered_projects) do %>
           <div class="relative group">
             <button
               type="button"
@@ -257,7 +290,7 @@ defmodule EvoDashWeb.ProjectComponents do
         <% end %>
       <% end %>
 
-      <%= if filtered != [] do %>
+      <%= if @filtered_projects != [] do %>
         <div class="border-t border-base-200 my-1"></div>
       <% end %>
 
@@ -267,7 +300,7 @@ defmodule EvoDashWeb.ProjectComponents do
         phx-click="palette_mode"
         phx-value-mode="open_path"
         data-workbench-project-window="open"
-        data-selected={@palette_selected_index == action_base}
+        data-selected={@palette_selected_index == @action_base}
         class="project-palette-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors"
       >
         <.icon name="hero-folder-open" class="size-4 shrink-0" />
@@ -280,7 +313,7 @@ defmodule EvoDashWeb.ProjectComponents do
           phx-click="palette_mode"
           phx-value-mode="new_project"
           data-workbench-project-window="create"
-          data-selected={@palette_selected_index == action_base + 1}
+          data-selected={@palette_selected_index == @action_base + 1}
           class="project-palette-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors"
         >
           <.icon name="hero-plus-circle" class="size-4 shrink-0" />
@@ -294,14 +327,14 @@ defmodule EvoDashWeb.ProjectComponents do
         type="button"
         phx-click="palette_mode"
         phx-value-mode="new_workspace"
-        data-selected={@palette_selected_index == new_workspace_index}
+        data-selected={@palette_selected_index == @new_workspace_index}
         class="project-palette-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors"
       >
         <.icon name="hero-rectangle-stack" class="size-4 shrink-0" />
         <span class="text-sm">{gettext("New Workspace")}</span>
       </button>
 
-      <%= if filtered == [] and @palette_search != "" do %>
+      <%= if @filtered_projects == [] and @palette_search != "" do %>
         <p class="text-xs text-base-content/60 px-3 py-2 text-center">
           {gettext("No matching projects")}
         </p>
@@ -311,7 +344,7 @@ defmodule EvoDashWeb.ProjectComponents do
            rows AND the action buttons so the existing keyboard index math
            above is untouched. A workspace has `path: nil` and is NEVER
            activatable: it is not a runnable project. --%>
-      <%= if @workspaces != [] do %>
+      <%= if @workspace_view != [] do %>
         <div class="border-t border-base-200 my-1"></div>
         <p class="text-xs font-semibold uppercase tracking-wide text-base-content/60 px-2 py-1">
           {gettext("Workspaces")}
@@ -320,25 +353,23 @@ defmodule EvoDashWeb.ProjectComponents do
           <%!-- zh_CN: 工作区只是把项目分组，本身不是可运行的项目，不能作为任务执行路径 --%>
           {gettext("A workspace groups projects; it is not a runnable project.")}
         </p>
-        <%= for ws <- @workspaces do %>
-          <% point = workspace_point(ws) %>
-          <% expanded? = is_binary(point) and point in @expanded_workspaces %>
+        <%= for ws <- @workspace_view do %>
           <div
-            id={"workspace-row-#{workspace_slug(point)}"}
-            data-workspace-point={point}
+            id={"workspace-row-#{ws.slug}"}
+            data-workspace-point={ws.point}
             class="px-2 py-1"
           >
             <div class="flex items-start gap-2">
               <div class="min-w-0 flex-1">
-                <div class="text-sm font-medium truncate">{workspace_name(ws)}</div>
-                <%= if is_binary(point) do %>
-                  <div class="text-xs text-base-content/70 font-mono truncate" title={point}>
-                    {point}
+                <div class="text-sm font-medium truncate">{ws.name}</div>
+                <%= if is_binary(ws.point) do %>
+                  <div class="text-xs text-base-content/70 font-mono truncate" title={ws.point}>
+                    {ws.point}
                   </div>
                 <% end %>
-                <%= if is_binary(workspace_description(ws)) do %>
+                <%= if is_binary(ws.description) do %>
                   <div class="text-xs text-base-content/60 truncate">
-                    {workspace_description(ws)}
+                    {ws.description}
                   </div>
                 <% end %>
               </div>
@@ -346,49 +377,47 @@ defmodule EvoDashWeb.ProjectComponents do
               <button
                 type="button"
                 phx-click="toggle_workspace"
-                phx-value-point={point}
-                aria-expanded={to_string(expanded?)}
+                phx-value-point={ws.point}
+                aria-expanded={to_string(ws.expanded?)}
                 class="btn btn-ghost btn-xs gap-1 shrink-0"
               >
                 <span class="text-[11px] font-normal">
-                  {gettext("%{count} members", count: workspace_member_count(ws))}
+                  {gettext("%{count} members", count: ws.count)}
                 </span>
                 <.icon
-                  name={if expanded?, do: "hero-chevron-up", else: "hero-chevron-down"}
+                  name={if ws.expanded?, do: "hero-chevron-up", else: "hero-chevron-down"}
                   class="size-3"
                 />
               </button>
             </div>
 
-            <%= if expanded? do %>
-              <%= if workspace_entries(ws) == [] do %>
+            <%= if ws.expanded? do %>
+              <%= if ws.empty? do %>
                 <p class="text-[11px] text-base-content/60 pl-2 mt-1">
                   {gettext("No members yet.")}
                 </p>
               <% else %>
                 <ul class="mt-1.5 space-y-1 border-l border-base-200 pl-2">
-                  <%= for member <- workspace_resolved(ws) do %>
-                    <% ref_key = member_ref_key(member) %>
+                  <%= for member <- ws.resolved do %>
                     <li
-                      data-workspace-member={ref_key}
-                      title={ref_key}
+                      data-workspace-member={member.ref_key}
+                      title={member.ref_key}
                       class="flex items-center gap-2 min-w-0"
                     >
                       <.icon name="hero-folder" class="size-3 shrink-0" />
                       <span class="min-w-0 flex-1">
                         <span class="block text-xs font-medium truncate">
-                          {display_name(member)}
+                          {member.name}
                         </span>
-                        <%= if is_binary(ref_key) do %>
+                        <%= if is_binary(member.ref_key) do %>
                           <span class="block text-[11px] text-base-content/60 font-mono truncate">
-                            {ref_key}
+                            {member.ref_key}
                           </span>
                         <% end %>
                       </span>
                     </li>
                   <% end %>
-                  <%= for ref <- workspace_missing(ws) do %>
-                    <% ref_key = ref_string(ref) %>
+                  <%= for ref_key <- ws.missing do %>
                     <li
                       data-workspace-missing={ref_key}
                       title={ref_key}
@@ -401,8 +430,7 @@ defmodule EvoDashWeb.ProjectComponents do
                       <span class="badge badge-warning badge-xs shrink-0">{gettext("Missing")}</span>
                     </li>
                   <% end %>
-                  <%= for ref <- workspace_nested(ws) do %>
-                    <% ref_key = ref_string(ref) %>
+                  <%= for ref_key <- ws.nested do %>
                     <li
                       data-workspace-nested={ref_key}
                       title={ref_key}
@@ -713,6 +741,42 @@ defmodule EvoDashWeb.ProjectComponents do
   # Every field is treated as possibly nil.
   # ---------------------------------------------------------------------------
 
+  # The ONE builder the palette renders from: every per-workspace value is
+  # computed exactly ONCE per render here, so the template only reads fields
+  # and never re-traverses the member lists per call.
+  defp workspace_rows(workspaces, expanded_workspaces) do
+    expanded = list_or_empty(expanded_workspaces)
+
+    workspaces
+    |> list_or_empty()
+    |> Enum.map(fn entry ->
+      point = workspace_point(entry)
+      resolved = workspace_resolved(entry)
+      missing = workspace_missing(entry)
+      nested = workspace_nested(entry)
+      count = length(resolved) + length(missing) + length(nested)
+
+      %{
+        point: point,
+        slug: workspace_slug(point),
+        name: workspace_name(entry),
+        description: workspace_description(entry),
+        count: count,
+        expanded?: is_binary(point) and point in expanded,
+        resolved: Enum.map(resolved, &workspace_member_row/1),
+        missing: Enum.map(missing, &ref_string/1),
+        nested: Enum.map(nested, &ref_string/1),
+        empty?: count == 0
+      }
+    end)
+  end
+
+  defp workspace_member_row(member) when is_map(member) do
+    %{ref_key: member_ref_key(member), name: display_name(member)}
+  end
+
+  defp workspace_member_row(_member), do: %{ref_key: nil, name: nil}
+
   defp workspace_mount(%{workspace: %{} = mount}), do: mount
   defp workspace_mount(%{} = entry), do: entry
   defp workspace_mount(_entry), do: %{}
@@ -746,18 +810,9 @@ defmodule EvoDashWeb.ProjectComponents do
     end
   end
 
-  defp workspace_member_count(entry) do
-    length(workspace_resolved(entry)) + length(workspace_missing(entry)) +
-      length(workspace_nested(entry))
-  end
-
   defp workspace_resolved(entry), do: Map.get(entry, :resolved) |> list_or_empty()
   defp workspace_missing(entry), do: Map.get(entry, :missing) |> list_or_empty()
   defp workspace_nested(entry), do: Map.get(entry, :nested) |> list_or_empty()
-
-  defp workspace_entries(entry) do
-    workspace_resolved(entry) ++ workspace_missing(entry) ++ workspace_nested(entry)
-  end
 
   defp list_or_empty(list) when is_list(list), do: list
   defp list_or_empty(_other), do: []
@@ -902,6 +957,11 @@ defmodule EvoDashWeb.ProjectComponents do
   attr(:remote, :boolean, default: false)
 
   defp project_settings_body(assigns) do
+    # Sorted ONCE per render: the template reads the list, never re-sorts it.
+    # TOTAL — a nil/non-enumerable `commands` value degrades to no rows.
+    commands = sorted_commands(assigns.commands)
+    assigns = assign(assigns, :sorted_commands, commands)
+
     ~H"""
     <!-- Config status -->
     <p class="text-sm">
@@ -938,7 +998,7 @@ defmodule EvoDashWeb.ProjectComponents do
     <% end %>
 
     <!-- Dev Commands -->
-    <%= if @commands != %{} do %>
+    <%= if @sorted_commands != [] do %>
       <div class="border-t border-base-200 pt-3">
         <h3 class="text-sm font-semibold flex items-center gap-2 mb-2">
           <.icon name="hero-terminal" class="size-4 text-secondary" /> {gettext("Dev Commands")}
@@ -947,7 +1007,7 @@ defmodule EvoDashWeb.ProjectComponents do
           } />
         </h3>
         <div class="space-y-1.5">
-          <%= for {name, cmd} <- Enum.sort(@commands) do %>
+          <%= for {name, cmd} <- @sorted_commands do %>
             <div class="flex items-center gap-2 bg-base-200/40 rounded-lg p-2 border border-base-200 border-l-2 border-l-accent/40">
               <span class="badge badge-accent badge-sm font-mono">{name}</span>
               <span class="text-xs font-mono flex-1 truncate">{cmd}</span>
@@ -1243,6 +1303,11 @@ defmodule EvoDashWeb.ProjectComponents do
     </div>
     """
   end
+
+  # Dev-command pairs in a stable (sorted) order — TOTAL over any input shape.
+  defp sorted_commands(commands) when is_map(commands), do: Enum.sort(commands)
+  defp sorted_commands(commands) when is_list(commands), do: Enum.sort(commands)
+  defp sorted_commands(_commands), do: []
 
   defp platform_placeholder(_platform), do: gettext("Project path")
 end
