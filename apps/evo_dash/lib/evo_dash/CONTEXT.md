@@ -65,6 +65,8 @@ The opaque state may contain caller-defined node metadata, but the store itself 
 `put_state/2` replaces the entire stored state, without a version check or merge, so serialized calls do not prevent two LiveViews from overwriting each other's stale snapshots.
 There is no transcript byte/message cap, TTL, disk journal, replication, subscription or task/approval reconciliation in this store; `prune/1` bounds chat count only when explicitly called.
 Public functions use ordinary synchronous `GenServer.call/2` without a failure guard, so a dead or busy ChatHistory process can exit the caller even though callbacks handle malformed values safely.
+`prune/1` documents and implements zero as clear-all and malformed/negative bounds as no-ops, but its `pos_integer()` input spec excludes zero; these behaviors are directly pinned in `test/evo_dash/chat_history_test.exs`.
+`SafeCall.run/1,2` likewise explicitly handles invalid nonzero-arity-function arguments while its input specs admit only zero-arity functions, and `test/evo_dash/safe_call_test.exs` pins the invalid-function error and fallback contracts.
 
 ### `EvoDash.NodeContext` (`node_context.ex`)
 
@@ -195,6 +197,10 @@ Text-pipeline error shapes: bare POSIX atom (file read failure), `{:invalid, rea
 `media_type_for/1` maps a normalized lowercase extension to its pinned IANA media type (`nil` when unknown).
 `read_kind/2` returns `{:ok, %{type:, media_type:, bytes:}}`; error shapes: bare POSIX atom, `{:unsupported_extension, ext}`, `{:file_too_large, byte_size}`, `{:unsupported_kind, kind}`.
 `describe_error/2` builds user-ready messages for all error shapes.
+Browser uploads use `upload_name/1` (basename normalization, control-character cleanup and invalid-name rejection), `upload_extensions/0`, and `read_uploaded/2`, which classifies an extensionless temporary file by the sanitized original client filename, rejects unsupported/nonregular/oversized files, and returns either `%{type: "text", name:, text:}` or the existing image/audio byte payload.
+`read/1` intentionally treats unknown extensions, including media extensions, as plain text, whereas `read_uploaded/2` explicitly recognizes image/audio; any shared document-dispatch helper must preserve those distinct outer policies.
+The upload media lookup is rebuilt from fixed module-attribute maps by `upload_media_types/0` on each call, and text/DOCX/PDF dispatch is repeated between `read/1` and `read_uploaded/2`.
+Coverage lives in `test/evo_dash/attached_file_test.exs`, including original-filename upload dispatch and the deliberate `read/1` versus `read_kind/2` distinction; `upload_extensions/0` and the full uploaded-media matrix have no direct tests.
 
 ### `EvoDash.MarkdownRender` (`markdown_render.ex`)
 
