@@ -244,12 +244,18 @@ defmodule EvoGit.Store do
 
   ## Public API — Tasks
 
-  @doc "Inserts or replaces a task. Validates that id (string) and status are present."
+  @doc """
+  Inserts or replaces a task. Validates that id (string) and status are present.
+
+  A non-`%TaskInfo{}` argument is outside the typed callers' contract and
+  answers the documented `{:error, :invalid_task_struct}` instead of raising.
+  """
   @spec put_task(store(), TaskInfo.t()) ::
           :ok
           | {:error, :missing_task_id}
           | {:error, :missing_task_status}
           | {:error, :disk_full}
+          | {:error, :invalid_task_struct}
   def put_task(store \\ __MODULE__, task)
 
   def put_task(store, %TaskInfo{} = task) do
