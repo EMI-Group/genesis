@@ -32,22 +32,18 @@ defmodule EvoDashWeb.AgentsLive do
   alias EvoDash.SafeCall
 
   alias EvoDashWeb.AgentsLive.{
-    AgentList,
+    AgentMerge,
     CommitGraph,
     CommitGraphRefresh,
     ContextMeter,
-    HistoryGate,
     Inspector,
     LoadData,
     OptimisticMessages,
     PendingEvents,
     StreamPanel,
     StreamWatch,
-    ThresholdCache,
     ToolCallDisplay
   }
-
-  alias EvoDashWeb.ModelLabel
 
   # Minimum interval between commit-graph fetches. Refreshes are already coalesced
   # by the agent-event flush; this further throttles the (heavier) per-repo git
@@ -301,7 +297,7 @@ defmodule EvoDashWeb.AgentsLive do
         {:ok, %{agents: agents, config_status: config_status, threshold_cache: threshold_cache}} ->
           socket =
             socket
-            |> apply_agents_result(agents)
+            |> AgentMerge.apply_result(agents)
             |> assign(
               config_status: config_status,
               threshold_cache: threshold_cache,
@@ -310,6 +306,7 @@ defmodule EvoDashWeb.AgentsLive do
               previous_node: node
             )
             |> Inspector.select_requested()
+            |> maybe_load_commit_graph([])
 
           {:noreply, socket}
 
@@ -330,10 +327,7 @@ defmodule EvoDashWeb.AgentsLive do
   # events are dropped (the socket is unchanged).
   def handle_info({:agents_updated, node}, socket) do
     if EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) do
-      socket
-      |> assign(:pending_agents_refresh, true)
-      |> maybe_schedule_agent_flush()
-      |> then(&{:noreply, &1})
+      {:noreply, AgentMerge.buffer_refresh(socket)}
     else
       # Foreign-node event — dropped before buffering so it never schedules a
       # flush.
@@ -405,8 +399,9 @@ defmodule EvoDashWeb.AgentsLive do
         {:ok, agents, threshold_cache} ->
           socket =
             socket
-            |> apply_agents_result(agents)
+            |> AgentMerge.apply_result(agents)
             |> assign(threshold_cache: threshold_cache)
+            |> maybe_load_commit_graph([])
 
           {:noreply, socket}
 
@@ -419,60 +414,48 @@ defmodule EvoDashWeb.AgentsLive do
 
   @impl true
   # Incremental agent events are COALESCED: each clause only node-filters and
-  # buffers the raw event (see EvoDashWeb.AgentsLive.PendingEvents), then arms
-  # a single 300ms trailing-edge flush. No merge work happens here — the whole
-  # burst collapses into ONE merge + render on :flush_agent_events below, so a
-  # burst cannot starve the LiveView mailbox (a user phx-click no longer waits
-  # behind N synchronous merges) and cannot flush as N rapid DOM patches.
+  # buffers the raw event (see EvoDashWeb.AgentsLive.AgentMerge + PendingEvents),
+  # then arms a single 300ms trailing-edge flush. No merge work happens here —
+  # the whole burst collapses into ONE merge + render on :flush_agent_events
+  # below, so a burst cannot starve the LiveView mailbox (a user phx-click no
+  # longer waits behind N synchronous merges) and cannot flush as N rapid DOM
+  # patches.
   def handle_info({:agent_registered, _id, _summary, _node} = event, socket) do
-    {:noreply, buffer_agent_event(socket, event)}
+    {:noreply, AgentMerge.buffer_event(socket, event)}
   end
 
   @impl true
   def handle_info({:agent_updated, _id, _changed_fields, _node} = event, socket) do
-    {:noreply, buffer_agent_event(socket, event)}
+    {:noreply, AgentMerge.buffer_event(socket, event)}
   end
 
   @impl true
   def handle_info({:agent_removed, _id, _node} = event, socket) do
-    {:noreply, buffer_agent_event(socket, event)}
+    {:noreply, AgentMerge.buffer_event(socket, event)}
   end
 
   @impl true
-  # Trailing-edge flush of the coalesced agent-event buffer. Drains the
-  # buffered events in ARRIVAL order and applies them through the same
-  # in-memory merge paths as before — threading the socket through each apply
-  # and returning a SINGLE {:noreply, socket}, so the burst yields exactly one
-  # render/diff. The fallback refresh and the selected-agent history refetch
-  # are coalesced to at most one each.
+  # Trailing-edge flush of the coalesced agent-event buffer. AgentMerge drains
+  # the buffered events in ARRIVAL order, applies the whole burst in ONE merged
+  # list (see its moduledoc) and answers the single follow-up still owed:
+  # :refresh (spawn the ONE fallback refresh), :refetch (refresh the selected
+  # agent's history once) or :none. Either way the burst yields exactly one
+  # render/diff.
   def handle_info(:flush_agent_events, socket) do
-    events = PendingEvents.drain(socket.assigns.pending_agent_events)
-    refresh? = socket.assigns.pending_agents_refresh
+    {socket, after_flush} = AgentMerge.flush(socket)
 
     socket =
-      assign(socket,
-        pending_agent_events: PendingEvents.new(),
-        agent_flush_scheduled: false,
-        pending_agents_refresh: false
-      )
-
-    {socket, needs_refresh?, refetch?} =
-      Enum.reduce(events, {socket, refresh?, false}, &apply_buffered_agent_event/2)
-
-    socket =
-      cond do
+      case after_flush do
         # A refresh was spawned — its result path already runs
         # Inspector.maybe_fetch_selected_history/1, so do not also refetch here.
-        needs_refresh? -> spawn_agents_refresh(socket)
-        refetch? -> Inspector.refetch_selected_history(socket)
-        true -> socket
+        :refresh -> spawn_agents_refresh(socket)
+        :refetch -> Inspector.refetch_selected_history(socket)
+        :none -> socket
       end
 
     # A burst of agent commits extends the graph (new dots + moved rings;
     # throttled/coalesced); no-op unless the commit-history view is active.
-    socket = maybe_load_commit_graph(socket, [])
-
-    {:noreply, socket}
+    {:noreply, maybe_load_commit_graph(socket, [])}
   end
 
   @impl true
@@ -1121,681 +1104,6 @@ defmodule EvoDashWeb.AgentsLive do
     socket
   end
 
-  # Shared application of a fresh agent list (from the async load or a refresh
-  # task): recomputes all the tracking assigns, carries over already-fetched
-  # histories when the history gate says they are still current, records the
-  # fresh message counts into the gate, and (re)triggers a history fetch for
-  # the selected agent when its count moved on.
-  defp apply_agents_result(socket, agents) do
-    agents = Enum.map(agents, &Inspector.preserve_terminal(socket, &1))
-    current_ids = MapSet.new(agents, & &1.id)
-    current_statuses = Map.new(agents, fn a -> {a.id, a.status} end)
-
-    # In-session retention of ended agents: an id that was previously known (live
-    # or already retained) but is ABSENT from the fresh list has ended — keep its
-    # last-known row marked `ended: true` so the commit-history view keeps its
-    # lane and START/END markers after the core recycles the agent (which deletes
-    # the agent's ETS rows AND its branch). A live id always SUPERSEDES its
-    # retained copy. The FIRST apply (and the first after a node switch) sees an
-    # empty @agents + empty @retained_agents, so nothing is mass-retained on
-    # load. The agent tree renders @agents only — retained agents never appear
-    # there.
-    retained_agents =
-      socket.assigns.retained_agents
-      |> retain_absent_agents(socket.assigns.agents, current_ids)
-      |> Map.drop(MapSet.to_list(current_ids))
-
-    # Detect new agents. The FIRST apply per node (initial page mount and the
-    # first load after a node switch) must not mark pre-existing agents as
-    # new — otherwise every already-registered agent plays the one-shot
-    # spawn animation on page load.
-    new_agent_ids =
-      if socket.assigns.agents_initialized do
-        MapSet.difference(current_ids, socket.assigns.previous_agent_ids)
-      else
-        MapSet.new()
-      end
-
-    # Detect status changes (agents that exist in both but have different status)
-    changed_status_ids =
-      current_ids
-      |> MapSet.intersection(socket.assigns.previous_agent_ids)
-      |> MapSet.filter(fn id ->
-        current_statuses[id] != socket.assigns.previous_statuses[id]
-      end)
-
-    id_to_display = Map.new(agents, fn a -> {a.id, a.task_local_id || a.id} end)
-
-    # Carry over already-fetched histories and (conditionally) record the gate.
-    # A fresh agent built from summaries carries history: [], so the old
-    # (fetched) history is carried over while an old row exists — this keeps the
-    # already-rendered entries MOUNTED while the refresh-induced refetch is in
-    # flight. Blanking it on a moved message count would swap the whole list for
-    # the "Loading history…" spinner and re-animate every entry once the
-    # refetch landed. Carry-over is scoped to SAME-NODE agents via
-    # HistoryGate.known?/2: the gate is reset on a node switch while @agents is
-    # kept mounted, and agent ids are per-node, so without this check a same-id
-    # row from the PREVIOUS node could leak its history into the new node's
-    # list. A brand-new agent has no gate entry either — but it has history: []
-    # anyway, so skipping the carry-over is a no-op for it. The gate is
-    # recorded ONLY when the count is unchanged (its last-seen entry), so a
-    # moved count still reports "needs fetch" and the refetch is triggered — no
-    # redundant re-transfers.
-    old_agents = socket.assigns.agents
-
-    {agents, history_gate} =
-      Enum.reduce(agents, {[], socket.assigns.history_gate}, fn agent, {acc, gate} ->
-        old_agent = Enum.find(old_agents, &(&1.id == agent.id))
-
-        keep_history =
-          old_agent != nil and old_agent.history != [] and HistoryGate.known?(gate, agent.id)
-
-        agent = if keep_history, do: %{agent | history: old_agent.history}, else: agent
-
-        gate =
-          if keep_history and not HistoryGate.need_fetch?(gate, agent.id, agent.message_count) do
-            HistoryGate.record(gate, agent.id, agent.message_count)
-          else
-            gate
-          end
-
-        {[agent | acc], gate}
-      end)
-
-    agents = Enum.reverse(agents)
-
-    socket
-    |> assign(
-      agents: agents,
-      id_to_display: id_to_display,
-      repo_trees: build_repo_trees(agents),
-      previous_agent_ids: current_ids,
-      previous_statuses: current_statuses,
-      new_agent_ids: new_agent_ids,
-      changed_status_ids: changed_status_ids,
-      agents_initialized: true,
-      history_gate: history_gate,
-      retained_agents: retained_agents
-    )
-    |> Inspector.detach_absent()
-    |> Inspector.maybe_fetch_selected_history()
-    |> maybe_load_commit_graph([])
-  end
-
-  # Folds the old live agents that are ABSENT from `current_ids` into the
-  # retained map (marked `ended: true`), preserving every field the
-  # commit-history view reads (id, task_local_id, task_id, repo_id, repo_root,
-  # depth, status, base_commit, current_commit, usage, ...).
-  defp retain_absent_agents(retained, old_agents, current_ids) do
-    Enum.reduce(old_agents, retained, fn agent, acc ->
-      if MapSet.member?(current_ids, agent.id) do
-        acc
-      else
-        Map.put(acc, agent.id, Map.put(agent, :ended, true))
-      end
-    end)
-  end
-
-  # ---------------------------------------------------------------------------
-  # Helpers
-  # ---------------------------------------------------------------------------
-
-  # ---------------------------------------------------------------------------
-  # Agent-event coalescing (see EvoDashWeb.AgentsLive.PendingEvents)
-  # ---------------------------------------------------------------------------
-
-  # Node-filters an incremental agent event, appends it to the coalescing
-  # buffer (newest-first), and arms the single trailing-edge flush timer.
-  # Foreign-node events are dropped BEFORE buffering, so they can never
-  # schedule a flush or leak into the currently-viewed node's tree.
-  # (Two clauses: the four-tuple registered/updated shapes and the three-tuple
-  # removed shape.)
-  defp buffer_agent_event(socket, {_tag, _id, node} = event) do
-    buffer_node_event(socket, node, event)
-  end
-
-  defp buffer_agent_event(socket, {_tag, _id, _payload, node} = event) do
-    buffer_node_event(socket, node, event)
-  end
-
-  defp buffer_node_event(socket, node, event) do
-    if EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) do
-      socket
-      |> assign(
-        :pending_agent_events,
-        PendingEvents.append(socket.assigns.pending_agent_events, event)
-      )
-      |> maybe_schedule_agent_flush()
-    else
-      socket
-    end
-  end
-
-  # Schedules the trailing-edge flush timer ONLY when one is not already
-  # pending — the first event of a window arms it, every subsequent event just
-  # appends to the existing buffer. The window is read AT CALL TIME through the
-  # :agents_live_flush_ms app-env seam (production default =
-  # PendingEvents.flush_ms() = 300ms); the pure PendingEvents module stays
-  # constant-only.
-  defp maybe_schedule_agent_flush(socket) do
-    if PendingEvents.should_schedule?(socket.assigns.agent_flush_scheduled) do
-      Process.send_after(
-        self(),
-        :flush_agent_events,
-        Application.get_env(:evo_dash, :agents_live_flush_ms, PendingEvents.flush_ms())
-      )
-
-      assign(socket, :agent_flush_scheduled, true)
-    else
-      socket
-    end
-  end
-
-  # Reducer over the buffered events in ARRIVAL order: threads the socket
-  # through each apply and threads two coalescing flags — whether a single
-  # fallback refresh is needed, and whether the selected agent needs ONE
-  # history refetch (any buffered :agent_updated for the selected agent that
-  # carried :message_count). The caller performs at most one of each after the
-  # whole burst is applied.
-  defp apply_buffered_agent_event(
-         {:agent_registered, agent_id, summary, _node},
-         {socket, needs_refresh?, refetch?}
-       ) do
-    case apply_agent_registered(socket, agent_id, summary) do
-      {:ok, socket} -> {socket, needs_refresh?, refetch?}
-      :fallback -> {socket, true, refetch?}
-    end
-  end
-
-  defp apply_buffered_agent_event(
-         {:agent_updated, agent_id, changed_fields, _node},
-         {socket, needs_refresh?, refetch?}
-       ) do
-    # The refetch is gate-checked by Inspector.refetch_selected_history/1 at the
-    # end; here we only remember whether the selected agent's context moved.
-    moved? =
-      agent_id == socket.assigns.selected_agent_id and
-        Keyword.has_key?(changed_fields, :message_count)
-
-    refetch? = refetch? or moved?
-
-    case apply_agent_updated(socket, agent_id, changed_fields) do
-      {:ok, socket} -> {socket, needs_refresh?, refetch?}
-      :fallback -> {socket, true, refetch?}
-    end
-  end
-
-  defp apply_buffered_agent_event(
-         {:agent_removed, agent_id, _node},
-         {socket, needs_refresh?, refetch?}
-       ) do
-    {apply_agent_removed(socket, agent_id), needs_refresh?, refetch?}
-  end
-
-  # Applies ONE buffered {:agent_registered, id, summary, node} event: a
-  # duplicate id (a race with the agents_updated fallback) is a no-op; the
-  # event's summary is otherwise merged in-memory for BOTH local and remote
-  # events through ONE shared path. Returns {:ok, socket}, or :fallback when
-  # the summary lacks fields the tree needs (the caller coalesces one async
-  # full refresh instead of merging a broken row).
-  defp apply_agent_registered(socket, agent_id, summary) do
-    already_exists = Enum.any?(socket.assigns.agents, fn a -> a.id == agent_id end)
-
-    retained_terminal? =
-      StreamWatch.terminal?(socket, agent_id) and
-        Map.has_key?(socket.assigns.retained_agents, agent_id)
-
-    if already_exists or retained_terminal? do
-      {:ok, socket}
-    else
-      merge_registered_agent(socket, agent_id, summary)
-    end
-  end
-
-  # Applies ONE buffered {:agent_updated, id, changed_fields, node} event to
-  # the socket's in-memory agent tree (the body of the former handle_info
-  # clause). Returns {:ok, socket} (already merged), or :fallback when the
-  # agent is not yet in our list (a race) — the caller then coalesces a single
-  # async full refresh. The selected-agent history refetch is NOT performed
-  # here: the flush tracks it across the whole burst and calls
-  # Inspector.refetch_selected_history/1 at most once at the end.
-  defp apply_agent_updated(socket, agent_id, changed_fields) do
-    agents = socket.assigns.agents
-    agent_idx = Map.get(AgentList.positions(agents), agent_id)
-
-    if agent_idx == nil do
-      case Map.get(socket.assigns.retained_agents, agent_id) do
-        nil ->
-          # Race — agent not yet in our list, fall back to an async full refresh
-          :fallback
-
-        retained ->
-          if StreamWatch.terminal?(socket, agent_id) do
-            # Removal can precede the terminal summary. Settle the retained
-            # detail without resurrecting a live tree row or its old history.
-            agent =
-              retained
-              |> Map.merge(handle_special_fields(Map.new(changed_fields)))
-              |> then(&Inspector.preserve_terminal(socket, &1))
-
-            {:ok,
-             assign(
-               socket,
-               :retained_agents,
-               Map.put(socket.assigns.retained_agents, agent_id, agent)
-             )}
-          else
-            :fallback
-          end
-      end
-    else
-      agent = Enum.at(agents, agent_idx)
-
-      # Track old parent_id for children recalculation
-      old_parent_id = agent.parent_id
-      previous_threshold = agent.compression_threshold
-      previous_context_window = ContextMeter.context_window_from(agent)
-
-      # Convert changed_fields keyword list to a map for merging
-      changed_map =
-        changed_fields
-        |> Enum.into(%{})
-        |> handle_special_fields()
-
-      # Merge changed fields into agent
-      agent = agent |> Map.merge(changed_map) |> then(&Inspector.preserve_terminal(socket, &1))
-
-      # A nil/non-positive threshold delta means "unknown" — keep the row's
-      # previous (usable) denominator so a bar can never divide by nil.
-      agent =
-        case agent.compression_threshold do
-          threshold when is_integer(threshold) and threshold > 0 ->
-            agent
-
-          _ ->
-            %{agent | compression_threshold: restore_threshold(previous_threshold, socket)}
-        end
-
-      # The optional :context_window is NOT part of the delta contract — the
-      # merge above therefore keeps the row's value when the delta omits it.
-      # A delta carrying an unusable value (nil/non-positive/non-integer) must
-      # never reset a known window back to the 200_000 default.
-      agent =
-        case Map.get(changed_map, :context_window) do
-          window when is_integer(window) and window > 0 ->
-            %{agent | context_window: window}
-
-          _ ->
-            %{agent | context_window: previous_context_window}
-        end
-
-      # Recalculate compression_pct when total_tokens OR the threshold changed.
-      agent =
-        if Keyword.has_key?(changed_fields, :total_tokens) or
-             Keyword.has_key?(changed_fields, :compression_threshold) do
-          threshold = agent.compression_threshold
-          pct = trunc(min(agent.total_tokens / max(threshold, 1) * 100, 100))
-          %{agent | compression_pct: pct}
-        else
-          agent
-        end
-
-      agents = List.replace_at(agents, agent_idx, agent)
-
-      # Recalculate children if parent_id changed
-      agents =
-        if Keyword.has_key?(changed_fields, :parent_id) do
-          new_parent_id = agent.parent_id
-
-          agents
-          |> maybe_update_parent_children(old_parent_id)
-          |> maybe_update_parent_children(new_parent_id)
-        else
-          agents
-        end
-
-      socket = assign(socket, :agents, agents)
-
-      # Queue anchoring: the core broadcasts the agent's pending_user_messages
-      # queue on every append AND on drain (reset to []). Whenever the delta
-      # carries it, snapshot the queue and TERMINALLY prune the optimistic
-      # assign — an entry that is no longer queued (and not reflected by the
-      # fetched history) has been drained for good, so a later context
-      # compression can never resurrect it. A delta WITHOUT
-      # :pending_user_messages leaves the snapshot untouched (absent key = queue
-      # unknown -> still-pending entries are kept).
-      {pending_user_messages, optimistic_messages} =
-        if Keyword.has_key?(changed_fields, :pending_user_messages) do
-          queue = Keyword.get(changed_fields, :pending_user_messages)
-
-          optimistic_messages =
-            OptimisticMessages.prune(
-              socket.assigns.optimistic_messages,
-              agent_id,
-              agent.history || [],
-              queue
-            )
-
-          {(socket.assigns.pending_user_messages || %{}) |> Map.put(agent_id, queue),
-           optimistic_messages}
-        else
-          {socket.assigns.pending_user_messages, socket.assigns.optimistic_messages}
-        end
-
-      # Detect status change
-      old_status = socket.assigns.previous_statuses[agent_id]
-      new_status = agent.status
-
-      previous_statuses = socket.assigns.previous_statuses
-      changed_status_ids = socket.assigns.changed_status_ids
-
-      {previous_statuses, changed_status_ids} =
-        if old_status != new_status do
-          {Map.put(previous_statuses, agent_id, new_status),
-           MapSet.put(changed_status_ids, agent_id)}
-        else
-          {previous_statuses, changed_status_ids}
-        end
-
-      # Update id_to_display if task_local_id changed
-      id_to_display = socket.assigns.id_to_display
-
-      id_to_display =
-        if Keyword.has_key?(changed_fields, :task_local_id) do
-          Map.put(id_to_display, agent_id, agent.task_local_id || agent_id)
-        else
-          id_to_display
-        end
-
-      # Rebuild repo_trees only if context_node or repo_root changed
-      repo_trees =
-        if Keyword.has_key?(changed_fields, :context_node) or
-             Keyword.has_key?(changed_fields, :repo_root) do
-          build_repo_trees(agents)
-        else
-          socket.assigns.repo_trees
-        end
-
-      {:ok,
-       assign(socket,
-         id_to_display: id_to_display,
-         repo_trees: repo_trees,
-         previous_statuses: previous_statuses,
-         changed_status_ids: changed_status_ids,
-         pending_user_messages: pending_user_messages,
-         optimistic_messages: optimistic_messages
-       )}
-    end
-  end
-
-  # Applies ONE buffered {:agent_removed, id, node} event to the socket's
-  # in-memory agent tree (the body of the former handle_info clause): drops the
-  # row from @agents (the TREE view — an ended agent must not linger there),
-  # orphans its children to parent_id: nil, refreshes the parent's children list,
-  # cleans the tracking sets/repo_trees, and RETAINS the removed row in
-  # @retained_agents (marked `ended: true`) so the commit-history view keeps its
-  # lane and START/END markers — the core deletes the agent's ETS rows and
-  # branch when it recycles, so nothing else remembers it. Returns the socket.
-  defp apply_agent_removed(socket, agent_id) do
-    socket =
-      if socket.assigns.selected_agent_id == agent_id and not StreamWatch.owns?(socket, agent_id) do
-        socket
-        |> StreamWatch.detach()
-        |> Inspector.clear_history_loading_flags(agent_id)
-      else
-        socket
-      end
-
-    agents = socket.assigns.agents
-    removed_agent = AgentList.find(agents, agent_id)
-
-    if removed_agent == nil do
-      socket
-    else
-      parent_id = removed_agent.parent_id
-
-      # Remove the agent
-      agents = Enum.reject(agents, fn a -> a.id == agent_id end)
-
-      # Set parent_id to nil for orphaned children
-      agents =
-        Enum.map(agents, fn a ->
-          if a.parent_id == agent_id, do: %{a | parent_id: nil}, else: a
-        end)
-
-      # Recalculate children for the removed agent's parent
-      agents = maybe_update_parent_children(agents, parent_id)
-
-      # Remove from tracking sets
-      id_to_display = Map.delete(socket.assigns.id_to_display, agent_id)
-      previous_agent_ids = MapSet.delete(socket.assigns.previous_agent_ids, agent_id)
-      new_agent_ids = MapSet.delete(socket.assigns.new_agent_ids, agent_id)
-      previous_statuses = Map.delete(socket.assigns.previous_statuses, agent_id)
-
-      repo_trees = build_repo_trees(agents)
-
-      # Keep the selected owned watch's ended detail independently of the live
-      # tree; retention also preserves the commit graph's lane and markers.
-      retained_agents =
-        Map.put(socket.assigns.retained_agents, agent_id, Map.put(removed_agent, :ended, true))
-
-      assign(socket,
-        agents: agents,
-        id_to_display: id_to_display,
-        repo_trees: repo_trees,
-        previous_agent_ids: previous_agent_ids,
-        new_agent_ids: new_agent_ids,
-        previous_statuses: previous_statuses,
-        retained_agents: retained_agents
-      )
-    end
-  end
-
-  defp handle_special_fields(changed_map) do
-    changed_map =
-      if Map.has_key?(changed_map, :context_node) do
-        context_node = changed_map[:context_node]
-        path = context_node && context_node.path
-
-        changed_map
-        |> Map.put(:context_path, path)
-        |> Map.delete(:context_node)
-      else
-        changed_map
-      end
-
-    changed_map =
-      if Map.has_key?(changed_map, :phylo_node) do
-        phylo_node = changed_map[:phylo_node]
-        current_commit = phylo_node && phylo_node.current_commit
-
-        changed_map
-        |> Map.put(:current_commit, current_commit)
-        |> Map.delete(:phylo_node)
-      else
-        changed_map
-      end
-
-    if Map.has_key?(changed_map, :usage) && is_nil(changed_map[:usage]) do
-      Map.put(changed_map, :usage, EvoGit.Agent.Usage.zero())
-    else
-      changed_map
-    end
-  end
-
-  # Incremental agent registration for BOTH local and remote events. The
-  # {:agent_registered, id, summary, node} broadcast carries the agent's
-  # summary (the same RemoteAPI.list_agents/0 summary shape
-  # LoadData.build_agents consumes — a native term in both cases, no ETS
-  # reads and no RPC), so the row is built in-memory and merged into the
-  # tree at its sorted position, recomputing the derived fields
-  # (children/has_children from parent_id, compression_pct from total_tokens
-  # + the node threshold). Returns {:ok, socket}, or :fallback when the
-  # summary lacks fields the tree needs (the caller spawns a full async
-  # refresh instead).
-  defp merge_registered_agent(socket, agent_id, summary) when is_map(summary) do
-    case build_registered_agent(socket, agent_id, summary) do
-      {:ok, new_agent} ->
-        agents = socket.assigns.agents
-
-        # Insert at correct sorted position (by {depth, id})
-        insert_idx =
-          Enum.find_index(agents, fn a -> {a.depth, a.id} > {new_agent.depth, new_agent.id} end)
-
-        agents =
-          if insert_idx do
-            List.insert_at(agents, insert_idx, new_agent)
-          else
-            agents ++ [new_agent]
-          end
-
-        # Update parent's children if parent_id is set
-        agents =
-          if new_agent.parent_id do
-            AgentList.update(agents, new_agent.parent_id, fn parent ->
-              children = LoadData.find_children_from_agents(parent.id, agents)
-              %{parent | children: children, has_children: length(children) > 0}
-            end)
-          else
-            agents
-          end
-
-        id_to_display =
-          Map.put(socket.assigns.id_to_display, agent_id, new_agent.task_local_id || agent_id)
-
-        # A (re-)registered agent is LIVE again — it supersedes any retained
-        # (ended) copy of the same id in the commit-history view.
-        retained_agents = Map.delete(socket.assigns.retained_agents, agent_id)
-
-        {:ok,
-         assign(socket,
-           agents: agents,
-           id_to_display: id_to_display,
-           previous_agent_ids: MapSet.put(socket.assigns.previous_agent_ids, agent_id),
-           new_agent_ids: MapSet.put(socket.assigns.new_agent_ids, agent_id),
-           repo_trees: build_repo_trees(agents),
-           retained_agents: retained_agents
-         )}
-
-      :error ->
-        :fallback
-    end
-  end
-
-  defp merge_registered_agent(_socket, _agent_id, _summary), do: :fallback
-
-  # Builds a full tree row from an {:agent_registered} event summary (the
-  # RemoteAPI.list_agents/0 summary shape — field mapping mirrors
-  # LoadData.build_agents). Returns {:ok, agent_map}, or :error when the
-  # summary lacks the fields the tree needs to render a meaningful row
-  # (the caller then falls back to a full refresh).
-  defp build_registered_agent(socket, agent_id, summary) do
-    required = [:status, :depth, :parent_id]
-
-    if Enum.all?(required, &Map.has_key?(summary, &1)) do
-      total_tokens = summary[:total_tokens] || 0
-      compression_count = summary[:compression_count] || 0
-
-      # Prefer the summary's OWN pre-computed threshold (per model context
-      # window); the node-level value is only the fallback.
-      compression_threshold =
-        ThresholdCache.threshold_for_agent(summary, safe_compression_threshold(socket))
-
-      compression_pct =
-        trunc(min(total_tokens / max(compression_threshold, 1) * 100, 100))
-
-      {:ok,
-       %{
-         id: agent_id,
-         task_local_id: summary[:task_local_id] || agent_id,
-         repo_id: summary[:repo_id] || "primary",
-         repo_root: summary[:repo_root],
-         task_id: summary[:task_id],
-         task_number: summary[:task_number],
-         status: summary[:status] || :pending,
-         depth: summary[:depth] || 0,
-         parent_id: summary[:parent_id],
-         worktree: summary[:worktree],
-         retries: summary[:retries] || 0,
-         agent_module: summary[:agent_module],
-         model_id: summary[:model_id],
-         # Display-only label (same derivation as LoadData.build_agents) so a
-         # live-registered agent never renders "N/A" while the full refresh
-         # would show a model.
-         model_label: ModelLabel.label(summary),
-         objective: summary[:objective] || "",
-         context_path: summary[:context_path],
-         current_commit: summary[:current_commit],
-         base_commit: summary[:base_commit],
-         children: [],
-         has_children: false,
-         pending_sub_agents: [],
-         sub_agent_results: %{},
-         task_ref: nil,
-         result_sent: false,
-         history: [],
-         usage: normalize_registered_usage(summary[:usage]),
-         total_tokens: total_tokens,
-         compression_count: compression_count,
-         compression_threshold: compression_threshold,
-         compression_pct: compression_pct,
-         # The model's context window (the Context meter's full-bar width).
-         # OPTIONAL in the summary — absent on remote/older daemons, in which
-         # case the core default (200_000) applies.
-         context_window: ContextMeter.context_window_from(summary),
-         # History-gate input: number of messages in the agent's context. NOT
-         # recorded into the gate here — the history is empty until first fetch,
-         # and recording a count would wrongly suppress the fetch on selection.
-         message_count: summary[:message_count]
-       }}
-    else
-      :error
-    end
-  end
-
-  # Normalizes the usage value from a registered-event summary into a struct
-  # so the rendering code (which reads usage.input_tokens etc.) works
-  # uniformly. A native %EvoGit.Agent.Usage{} passes through; nil or any
-  # other shape falls back to zero.
-  defp normalize_registered_usage(%EvoGit.Agent.Usage{} = usage), do: usage
-  defp normalize_registered_usage(_), do: EvoGit.Agent.Usage.zero()
-
-  defp maybe_update_parent_children(agents, nil), do: agents
-
-  defp maybe_update_parent_children(agents, parent_id) do
-    AgentList.update(agents, parent_id, fn parent ->
-      children = LoadData.find_children_from_agents(parent.id, agents)
-      %{parent | children: children, has_children: length(children) > 0}
-    end)
-  end
-
-  defp build_repo_trees(agents) do
-    agents
-    |> Enum.group_by(&grouping_key/1)
-    |> Enum.map(fn {key, repo_agents} ->
-      display_name = repo_display_name(key)
-      tree = build_path_tree(repo_agents)
-      # Rename the "." root node to the repo display name so each repo has a distinct root
-      tree = rename_root(tree, display_name)
-      {display_name, tree}
-    end)
-    |> Enum.sort_by(fn {name, _} -> name end)
-  end
-
-  # Repo grouping / display naming lives in the pure CommitGraph module (shared
-  # with the temporal commit-graph view); keep these delegates so the tree path is
-  # unchanged.
-  defp grouping_key(agent), do: CommitGraph.grouping_key(agent)
-
-  defp rename_root(nodes, new_name) do
-    Enum.map(nodes, fn
-      %{name: "."} = node -> %{node | name: new_name}
-      node -> node
-    end)
-  end
-
-  defp repo_display_name(key), do: CommitGraph.repo_display_name(key)
-
   defp commit_bg_class(agent) do
     if agent.current_commit != agent.base_commit do
       # Uncommitted changes on this agent's branch — warning-family highlight
@@ -1815,90 +1123,6 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   defp shorten_sha(other), do: other
-
-  defp build_path_tree(agents) do
-    tree =
-      Enum.reduce(agents, %{}, fn agent, acc ->
-        path = agent.context_path || "./"
-        path = if path == "/", do: "./", else: path
-
-        segments =
-          path
-          |> Path.split()
-          |> case do
-            ["." | rest] -> ["." | rest]
-            other -> ["." | other]
-          end
-
-        insert_into_tree(acc, segments, [], agent)
-      end)
-
-    sort_tree(tree)
-  end
-
-  defp insert_into_tree(tree, [], _acc_segments, _agent), do: tree
-
-  defp insert_into_tree(tree, [segment | rest], acc_segments, agent) do
-    current_segments = acc_segments ++ [segment]
-    current_path = Path.join(current_segments)
-
-    node = Map.get(tree, segment, %{name: segment, path: current_path, agents: [], children: %{}})
-
-    if rest == [] do
-      node = %{node | agents: [agent | node.agents]}
-      Map.put(tree, segment, node)
-    else
-      node = %{node | children: insert_into_tree(node.children, rest, current_segments, agent)}
-      Map.put(tree, segment, node)
-    end
-  end
-
-  defp sort_tree(tree) do
-    tree
-    |> Map.values()
-    |> Enum.sort_by(& &1.name)
-    |> Enum.map(fn node ->
-      %{node | children: sort_tree(node.children), agents: Enum.sort_by(node.agents, & &1.id)}
-    end)
-  end
-
-  # Reads the NODE-LEVEL compression threshold for the currently viewed node
-  # from the threshold cache. The cache is filled ONLY by the async load/refresh
-  # tasks (see ThresholdCache) — this never RPCs from the LiveView process. On a
-  # cache miss the LOCAL node resolves its config directly (cheap, local); a
-  # remote miss falls back to the default until the next async refresh fills the
-  # cache. A nil/blank config value now means "unknown" (the setting is
-  # optional; the core derives the real trigger per model), so 180_000 here is a
-  # LAST-RESORT fallback only — each agent's own summary threshold takes
-  # precedence wherever one is available.
-  defp safe_compression_threshold(socket) do
-    node = socket.assigns.current_node
-
-    case ThresholdCache.read(
-           socket.assigns.threshold_cache,
-           node,
-           System.monotonic_time(:millisecond)
-         ) do
-      {:ok, threshold} ->
-        threshold
-
-      :miss ->
-        if node == node() do
-          EvoGit.Config.resolve([:llm, :compression_threshold_tokens]) ||
-            ThresholdCache.default_threshold()
-        else
-          ThresholdCache.default_threshold()
-        end
-    end
-  end
-
-  # Restores the denominator after a threshold delta that is nil/non-positive
-  # ("unknown"): keep the row's previous usable value, else fall back to the
-  # node-level threshold (which itself normalizes to the 180_000 last resort).
-  defp restore_threshold(previous, _socket) when is_integer(previous) and previous > 0,
-    do: previous
-
-  defp restore_threshold(_previous, socket), do: safe_compression_threshold(socket)
 
   # Shared error flash for failed send attempts (nested {:ok, {:error, _}} on
   # the local path and {:error, _} erpc failures both land here).
