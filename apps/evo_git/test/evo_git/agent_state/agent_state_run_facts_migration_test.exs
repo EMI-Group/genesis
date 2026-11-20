@@ -3,13 +3,17 @@ defmodule EvoGit.AgentState.RunFactsMigrationTest do
   Migration `000004_add_run_facts` on the REAL migration chain: the seven v2
   run-fact columns, the `(task_id, parent_id)` roster index, the
   `completed → done` status normalization and a rollback that removes ONLY what
-  the migration added.
+  the migration added — plus the index families `000005_agent_state_indexes`
+  adds (`MAX(agent_id)` id-seed and `ORDER BY depth, agent_id` roster reads).
 
   Every test starts its own unnamed `EvoGit.AgentState` server on its own temp
   SQLite file, so the schema comes from
   `EvoGit.AgentState.Boot.start_dynamic/2` → `000001_create_agent_state`,
-  `000002_add_pending_tool_batch`, `000003_add_pause_commit`, then
-  `000004_add_run_facts`. No test hand-writes the v2 schema.
+  `000002_add_pending_tool_batch`, `000003_add_pause_commit`,
+  `000004_add_run_facts`, then the index-only
+  `000005_agent_state_indexes`. No test hand-writes the v2 schema; the chain is
+  asserted END TO END as `@versions` (`1..5`), so a boot that quietly stopped
+  one version short cannot pass.
 
   The UPGRADE case is the important one: it builds a version-3 database by hand
   (raw `Xqlite`, exactly the file an earlier release left on disk, stamped in
@@ -31,9 +35,16 @@ defmodule EvoGit.AgentState.RunFactsMigrationTest do
 
   @moduletag :tmp_dir
 
-  @versions [1, 2, 3, 4]
+  @versions [1, 2, 3, 4, 5]
   @retention_indexes ["agent_states_status_completed_at_index", "agent_states_updated_at_index"]
   @roster_index "agent_states_task_parent_index"
+
+  # The two indexes `000005_agent_state_indexes` adds: the `MAX(agent_id)` seed
+  # and the `roster/2` `ORDER BY depth, agent_id` read paths.
+  @v5_indexes ["agent_states_agent_id_index", "agent_states_task_depth_agent_index"]
+
+  # Every index family a booted (or upgraded) database must carry.
+  @all_indexes @retention_indexes ++ [@roster_index] ++ @v5_indexes
 
   @run_fact_columns [
     {"spawn_turn", "INTEGER", 0, 0},
@@ -260,7 +271,7 @@ defmodule EvoGit.AgentState.RunFactsMigrationTest do
 
   ## (a) A fresh database
 
-  test "a fresh boot ends with all seven run-fact columns and both index families", %{
+  test "a fresh boot ends with all seven run-fact columns and every index family", %{
     tmp_dir: tmp_dir
   } do
     pid = start_store!(tmp_dir, :run_facts_fresh)
@@ -283,7 +294,7 @@ defmodule EvoGit.AgentState.RunFactsMigrationTest do
 
     indexes = index_names!(pid)
 
-    for name <- @retention_indexes ++ [@roster_index] do
+    for name <- @all_indexes do
       assert name in indexes, "expected index #{name}, got #{inspect(indexes)}"
     end
   end
@@ -317,7 +328,7 @@ defmodule EvoGit.AgentState.RunFactsMigrationTest do
     for name <- @run_fact_names, do: assert(Map.get(row, name) == nil)
 
     indexes = index_names!(pid)
-    for name <- @retention_indexes ++ [@roster_index], do: assert(name in indexes)
+    for name <- @all_indexes, do: assert(name in indexes)
   end
 
   ## (c) Re-running up/0
@@ -334,7 +345,7 @@ defmodule EvoGit.AgentState.RunFactsMigrationTest do
     # Force version 4 to re-apply on the SAME database. An unguarded re-run
     # fails with "duplicate column name" / "index already exists".
     sql!(pid, "DELETE FROM schema_migrations WHERE version = ?", [4])
-    assert is_list(Boot.run_migrations(AgentState.repo(pid)))
+    assert {:ok, [4]} = Boot.run_migrations(AgentState.repo(pid))
 
     assert applied_versions!(pid) == @versions
 
@@ -397,7 +408,7 @@ defmodule EvoGit.AgentState.RunFactsMigrationTest do
     assert row["current_commit"] == "abc123"
 
     # Re-applying the migration restores the facts' columns, empty for that row.
-    assert is_list(Boot.run_migrations(AgentState.repo(pid)))
+    assert {:ok, [4]} = Boot.run_migrations(AgentState.repo(pid))
     assert applied_versions!(pid) == @versions
 
     columns = state_columns!(pid)
@@ -408,8 +419,22 @@ defmodule EvoGit.AgentState.RunFactsMigrationTest do
 
   # The migration module is reached through `Boot.migration_source/0` (public
   # seam) so this file never names a runtime-compiled module directly.
+  #
+  # `migration_source/0` answers `{:error, :migration_lock_unavailable}` when
+  # the source is not memoized yet AND the migration lock could not be taken, so
+  # the error shape is handled explicitly here — feeding it to `Enum.find/2`
+  # would crash with an opaque `Protocol.UndefinedError`.
   defp run_down!(pid) do
-    {4, module} = Enum.find(Boot.migration_source(), fn {version, _m} -> version == 4 end)
+    source =
+      case Boot.migration_source() do
+        {:error, reason} ->
+          flunk("the agent-state migration source is unavailable: #{inspect(reason)}")
+
+        source when is_list(source) ->
+          source
+      end
+
+    {4, module} = Enum.find(source, fn {version, _m} -> version == 4 end)
 
     assert [4] =
              RepoScope.with_repo(AgentState.repo(pid), fn ->

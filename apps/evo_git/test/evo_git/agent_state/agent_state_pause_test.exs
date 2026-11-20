@@ -190,10 +190,15 @@ defmodule EvoGit.AgentState.PauseTest do
     end
 
     test "is inert without a store", %{tmp_dir: tmp_dir} do
+      # An UNREGISTERED name is a DEGRADED store (no repo behind it), never a
+      # `persistent_state: false` task: the flag has no producer inside
+      # `EvoGit.AgentState`, and the writer answers `:store_unavailable` for a
+      # missing/degraded repo by design (answering the flag tag would send an
+      # operator to debug a setting that was never set).
       absent = absent_store()
       assert Process.whereis(absent) == nil
 
-      assert {:error, :not_persistent_state_disabled} =
+      assert {:error, :store_unavailable} =
                AgentState.put_pause_commit("task-inert", 1, @sha, store: absent)
 
       assert AgentState.pause_commit("task-inert", 1, store: absent) == nil
