@@ -342,6 +342,18 @@ defmodule EvoDashWeb.ProjectsLive.GitHub do
         |> NodeAware.assign_active_tasks()
         |> close_modal()
 
+      # No model configured: the launch guard refuses, so nothing was started.
+      # Render the SAME friendly, actionable line task submission uses for
+      # `:no_task_model` (byte-identical), instead of dumping the raw reason
+      # into the generic "Failed to start task" wording.
+      # zh_CN: 服务器尚未配置模型，任务未启动，提示用户先去配置模型。
+      {:error, :no_task_model} ->
+        put_flash(
+          socket,
+          :error,
+          gettext("Configure a model on this server before launching a task.")
+        )
+
       {:error, reason} ->
         put_flash(
           socket,
