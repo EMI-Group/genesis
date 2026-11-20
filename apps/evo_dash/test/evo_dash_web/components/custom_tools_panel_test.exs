@@ -80,6 +80,47 @@ defmodule EvoDashWeb.CustomToolsPanelTest do
       assert html =~ "bad"
     end
 
+    test "malformed error entries retain missing-field fallbacks and skip non-maps" do
+      html =
+        render_panel(%{
+          ok: [],
+          errors: [
+            nil,
+            "invalid",
+            %{},
+            %{file: "/cfg/tools/missing_reason.ex"},
+            %{file: %{invalid: true}, reason: %{detail: "bad"}}
+          ]
+        })
+
+      assert Enum.map(error_rows(html), fn row ->
+               row |> Floki.find("p") |> Enum.map(&(Floki.text(&1) |> String.trim()))
+             end) == [
+               ["unknown file", "nil"],
+               ["/cfg/tools/missing_reason.ex", "nil"],
+               ["unknown file", inspect(%{detail: "bad"})]
+             ]
+
+      refute html =~ "No custom tools loaded"
+      refute html =~ "Custom Tools Unavailable"
+    end
+
+    test "string-keyed errors render their file and reason" do
+      html =
+        render_panel(%{
+          "ok" => [],
+          "errors" => [%{"file" => "/cfg/tools/string_error.ex", "reason" => "compile failed"}]
+        })
+
+      [row] = error_rows(html)
+
+      assert row |> Floki.find("p") |> Enum.map(&(Floki.text(&1) |> String.trim())) ==
+               ["/cfg/tools/string_error.ex", "compile failed"]
+
+      refute html =~ "No custom tools loaded"
+      refute html =~ "Custom Tools Unavailable"
+    end
+
     test "an empty status renders the empty state and no error banner" do
       html = render_panel(%{ok: [], errors: []})
 
