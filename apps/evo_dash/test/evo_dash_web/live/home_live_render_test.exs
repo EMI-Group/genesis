@@ -532,12 +532,8 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     assert Floki.find(dom, "#chat-session-list") != []
     assert Floki.find(dom, "#chat-session-list h2") == []
 
-    section =
-      dom
-      |> Floki.find("div.pt-5.mt-4")
-      |> Enum.find(fn node -> Floki.find(node, "#chat-session-list") != [] end)
-
-    assert section
+    section = Floki.find(dom, "#workbench-conversations")
+    assert section != []
 
     assert section |> Floki.find("span.sidebar-label") |> Floki.text() |> String.trim() ==
              "Conversations"

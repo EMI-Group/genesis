@@ -107,12 +107,12 @@ defmodule EvoDashWeb.HomeLive.ChatState do
           ChatHistory.put_state(assigns.chat_id, build(assigns))
           if key, do: ChatHistory.delete_draft(key)
 
-        key && is_nil(assigns[:session_id]) &&
+        is_nil(assigns[:session_id]) and
             (assigns[:draft_edited?] == true or String.trim(assigns.chat_draft) != "") ->
           draft = Map.merge(build(assigns), Map.take(assigns, [:chat_id, :draft_edited?]))
           ChatHistory.put_draft(key, draft)
 
-        key && opts[:clear_empty_draft] ->
+        opts[:clear_empty_draft] ->
           ChatHistory.delete_draft(key)
 
         true ->
