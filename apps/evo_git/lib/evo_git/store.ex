@@ -59,7 +59,7 @@ defmodule EvoGit.Store do
   | Read | Degraded value |
   |------|----------------|
   | `get_task/2`, `get_task_lite/2`, `get_task_status/2`, `select_task_update_info/2`, `get_agent_archive/3` | `nil` |
-  | `select_task_paths/1`, `select_finished_task_ids/1`, `select_task_ids/2`, `select_running_lease_info/1`, `select_cleanup_info/1,3`, `select_tasks_summary/3`, `select_tasks_summary_by_path/4`, `select_tasks_changed_since/2`, `list_vct_mounts/1`, `safe_select_all_tasks/1` | `[]` |
+  | `select_task_paths/1`, `select_finished_task_ids/1`, `select_task_ids/2`, `select_running_lease_info/1`, `select_cleanup_info/1,3`, `select_tasks_summary/3,4`, `select_tasks_summary_by_path/4,5`, `select_tasks_changed_since/2`, `list_vct_mounts/1`, `safe_select_all_tasks/1` | `[]` |
   | `safe_select_paginated_tasks/2` | `{[], 0}` |
   | `select_tasks_page/2` | `%{rows: [], total: 0}` |
   | `list_task_archives/3` | `%{entries: [], total: 0}` |
@@ -613,38 +613,45 @@ defmodule EvoGit.Store do
   `since` is an optional fixed-precision ISO string; when non-nil, only tasks
   whose `updated_at` is strictly newer are returned (string comparison — the
   fixed-precision 24-char ISO format sorts chronologically).
+
+  `opts` carries the ONE add-only option `:limit`: a positive integer bounds
+  the read (newest `updated_at` first, capped at 1_000 rows); every other value
+  keeps the unbounded, unordered read. See
+  `EvoGit.Store.Operations.Summaries.select_tasks_summary/4`.
   """
-  @spec select_tasks_summary(store(), [atom()], String.t() | nil) :: [
+  @spec select_tasks_summary(store(), [atom()], String.t() | nil, keyword()) :: [
           Operations.Summaries.summary()
         ]
-  def select_tasks_summary(store \\ __MODULE__, statuses \\ [], since \\ nil) do
-    GenServer.call(store, {:select_tasks_summary, statuses, since}, @call_timeout)
+  def select_tasks_summary(store \\ __MODULE__, statuses \\ [], since \\ nil, opts \\ []) do
+    GenServer.call(store, {:select_tasks_summary, statuses, since, opts}, @call_timeout)
   end
 
   @doc """
-  Same as select_tasks_summary/3 but filtered to a specific project_path.
+  Same as select_tasks_summary/4 but filtered to a specific project_path.
 
-  `statuses` and `since` behave as in select_tasks_summary/3.
+  `statuses`, `since` and `opts` behave as in select_tasks_summary/4.
   """
-  @spec select_tasks_summary_by_path(store(), String.t(), [atom()], String.t() | nil) :: [
-          Operations.Summaries.summary()
-        ]
+  @spec select_tasks_summary_by_path(store(), String.t(), [atom()], String.t() | nil, keyword()) ::
+          [
+            Operations.Summaries.summary()
+          ]
   def select_tasks_summary_by_path(
         store \\ __MODULE__,
         project_path,
         statuses \\ [],
-        since \\ nil
+        since \\ nil,
+        opts \\ []
       ) do
     GenServer.call(
       store,
-      {:select_tasks_summary_by_path, project_path, statuses, since},
+      {:select_tasks_summary_by_path, project_path, statuses, since, opts},
       @call_timeout
     )
   end
 
   @doc """
   Returns lightweight task summaries (same 16-key projection as
-  select_tasks_summary/1, including the raw `updated_at` string) for all tasks
+  select_tasks_summary/3,4, including the raw `updated_at` string) for all tasks
   whose `updated_at` is strictly newer than the given fixed-precision ISO
   string. No heavy JSON fields (logs, usage) are decoded.
   Returns `[]` on query failure.
@@ -971,21 +978,26 @@ defmodule EvoGit.Store do
   # this GenServer's heap, and a fault degrades to `[]` instead of killing it.
   # The skip-and-log boundary runs inside the worker.
   @impl true
-  def handle_call({:select_tasks_summary, statuses, since}, from, state) do
+  def handle_call({:select_tasks_summary, statuses, since, opts}, from, state) do
     offload(from, state, "select_tasks_summary", [], fn ->
-      Operations.Summaries.select_tasks_summary(state.repo, statuses, since)
+      Operations.Summaries.select_tasks_summary(state.repo, statuses, since, opts)
     end)
   end
 
   @impl true
-  def handle_call({:select_tasks_summary_by_path, project_path, statuses, since}, from, state) do
+  def handle_call(
+        {:select_tasks_summary_by_path, project_path, statuses, since, opts},
+        from,
+        state
+      ) do
     # Offloaded — same rationale as select_tasks_summary.
     offload(from, state, "select_tasks_summary_by_path", [], fn ->
       Operations.Summaries.select_tasks_summary_by_path(
         state.repo,
         project_path,
         statuses,
-        since
+        since,
+        opts
       )
     end)
   end

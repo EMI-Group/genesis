@@ -49,15 +49,22 @@ defmodule EvoGit.Store.Operations.Summaries do
       fixed-ms format sorts chronologically). `nil` means no filter.
     * `project_path` — exact TEXT equality (`WHERE project_path = ?`).
 
-  Deliberately NO `ORDER BY` and NO `LIMIT` anywhere (the raw-SQL handlers
-  never ordered or truncated; consumers sort/filter client-side).
+  No `ORDER BY` and no `LIMIT` by DEFAULT (the raw-SQL handlers never ordered
+  or truncated; consumers sort/filter client-side). `select_tasks_summary/4`
+  and `select_tasks_summary_by_path/5` accept ONE add-only option, `:limit`:
+  a POSITIVE integer applies `ORDER BY updated_at DESC` and truncates to
+  `min(n, 1_000)` rows (the implicit order exists only to make that
+  truncation deterministic — it always accompanies a limit and is never added
+  without one; `idx_tasks_updated_at` serves it). Any other `:limit` value
+  (absent, `nil`, a non-integer, zero or negative) leaves the read EXACTLY as
+  before: no order, no limit.
 
   ## Lenient per-row decode (skip + log)
 
   Rows are loaded as RAW wire values and decoded per-row through the Codec
   (`Codec` is the decode oracle). The Codec decoders RAISE by design on
   corrupt/legacy wire values (notably `decode_opts/1` on non-object JSON), so
-  — exactly like the raw store's `decode_skipping_bad/3` boundary — a row that
+  — through the SHARED `EvoGit.Store.Operations.Decoding` boundary — a row that
   raises is SKIPPED with a `Logger.warning` instead of poisoning the whole
   read. The lenient decoders (`decode_atom/1`, `decode_datetime/1`,
   `decode_error/1`) never raise, so only genuinely undecodable `opts` text
@@ -72,10 +79,13 @@ defmodule EvoGit.Store.Operations.Summaries do
 
   alias EvoGit.Repo
   alias EvoGit.Store.Codec
+  alias EvoGit.Store.Operations.Decoding
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskRowRaw
 
-  require Logger
+  # Hard ceiling for the add-only `:limit` option: a bounded sidebar read, not
+  # an unbounded history dump.
+  @max_summary_limit 1_000
 
   @typedoc "One task row in the 18-key summary projection."
   @type summary :: %{
@@ -104,35 +114,39 @@ defmodule EvoGit.Store.Operations.Summaries do
   `statuses` (atoms; `[]` = all) and `since` (strict raw-string
   `updated_at >` compare; `nil` = no filter).
 
-  Undecodable rows are skipped and logged (see moduledoc). No `ORDER BY`, no
-  `LIMIT`.
+  `opts` carries the ONE add-only option `:limit`: a positive integer applies
+  `ORDER BY updated_at DESC` and truncates to `min(n, #{@max_summary_limit})`
+  rows; any other value keeps the unbounded, unordered read.
+
+  Undecodable rows are skipped and logged (see moduledoc).
   """
-  @spec select_tasks_summary(pid(), [atom()], String.t() | nil) :: [summary()]
-  def select_tasks_summary(repo_pid, statuses, since) when is_pid(repo_pid) do
+  @spec select_tasks_summary(pid(), [atom()], String.t() | nil, keyword()) :: [summary()]
+  def select_tasks_summary(repo_pid, statuses, since, opts \\ []) when is_pid(repo_pid) do
     RepoScope.with_repo(repo_pid, fn ->
       summary_query()
       |> where_statuses(statuses)
       |> where_since(since)
+      |> maybe_limit(opts)
       |> Repo.all()
       |> decode_skipping_bad()
     end)
   end
 
   @doc """
-  Same as `select_tasks_summary/3` but restricted to rows whose
+  Same as `select_tasks_summary/4` but restricted to rows whose
   `project_path` equals `project_path` (exact TEXT equality), then optionally
-  filtered by `statuses` and `since` as in `select_tasks_summary/3`.
+  filtered by `statuses` and `since` as in `select_tasks_summary/4`.
   """
-  @spec select_tasks_summary_by_path(pid(), String.t(), [atom()], String.t() | nil) :: [
-          summary()
-        ]
-  def select_tasks_summary_by_path(repo_pid, project_path, statuses, since)
+  @spec select_tasks_summary_by_path(pid(), String.t(), [atom()], String.t() | nil, keyword()) ::
+          [summary()]
+  def select_tasks_summary_by_path(repo_pid, project_path, statuses, since, opts \\ [])
       when is_pid(repo_pid) do
     RepoScope.with_repo(repo_pid, fn ->
       summary_query()
       |> where([t], t.project_path == ^project_path)
       |> where_statuses(statuses)
       |> where_since(since)
+      |> maybe_limit(opts)
       |> Repo.all()
       |> decode_skipping_bad()
     end)
@@ -205,6 +219,25 @@ defmodule EvoGit.Store.Operations.Summaries do
   defp where_since(query, nil), do: query
   defp where_since(query, since), do: where(query, [t], t.updated_at > ^since)
 
+  # The add-only `:limit` option (see the moduledoc): a POSITIVE integer bounds
+  # the read and — because truncation needs a well-defined "which rows" answer —
+  # brings an implicit `updated_at DESC` order (`idx_tasks_updated_at` serves
+  # it). Every other value (absent, `nil`, non-integer, `<= 0`) leaves the
+  # query byte-identical to the unbounded read: no order, no limit.
+  defp maybe_limit(query, opts) when is_list(opts) do
+    case Keyword.get(opts, :limit) do
+      limit when is_integer(limit) and limit > 0 ->
+        query
+        |> order_by([t], desc: t.updated_at)
+        |> limit(^min(limit, @max_summary_limit))
+
+      _ ->
+        query
+    end
+  end
+
+  defp maybe_limit(query, _other), do: query
+
   @doc """
   Restricts a query to rows whose `opts` column can be DECODED — i.e. the rows
   `decode_skipping_bad/1` will not drop.
@@ -257,31 +290,16 @@ defmodule EvoGit.Store.Operations.Summaries do
     }
   end
 
-  # Lenient per-row decode boundary — ported verbatim from the raw store's
-  # decode_skipping_bad/3: rows whose Codec decode RAISES (by design, e.g.
-  # non-object `opts` JSON) are skipped with a warning instead of crashing the
-  # whole read. No data-movement INSERT/DELETE is performed on bad rows.
+  # Lenient per-row decode boundary — the SHARED skip-and-log rule
+  # (`EvoGit.Store.Operations.Decoding`, which owns the justified per-row
+  # try/rescue): rows whose Codec decode RAISES (by design, e.g. non-object
+  # `opts` JSON) are skipped with a warning instead of crashing the whole read.
   #
   # Public (but `@doc false`) so the lightweight paged read shares the EXACT
   # same skip-and-log boundary as the summary reads.
   @doc false
   @spec decode_skipping_bad([map()]) :: [summary()]
   def decode_skipping_bad(rows) do
-    Enum.flat_map(rows, fn row ->
-      # Justified try/rescue — safe-select boundary (mirrors the raw store):
-      # DB rows may contain corrupt or legacy data that fails to decode; the
-      # Codec decoders raise by design and skipping is the recovery boundary.
-      try do
-        [decode_summary_row(row)]
-      rescue
-        e ->
-          Logger.warning(
-            "Store: skipping undecodable row in tasks (id: #{inspect(row.id)}): " <>
-              Exception.message(e)
-          )
-
-          []
-      end
-    end)
+    Decoding.decode_skipping_bad(rows, "tasks", & &1.id, &decode_summary_row/1)
   end
 end
