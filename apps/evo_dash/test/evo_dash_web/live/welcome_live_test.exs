@@ -1271,6 +1271,14 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       refute read_config() |> inspect() =~ @anthropic_key
     end
 
+    test "debounces the API key field so typing never round-trips per keystroke", %{conn: conn} do
+      {:ok, view, _html} = start(conn)
+
+      pick(view, "anthropic")
+
+      assert has_element?(view, "#wizard-api-key[phx-debounce='300']")
+    end
+
     test "rejects every mutation on a remote node", %{conn: conn} do
       {:ok, view, _html} = start(conn)
 

@@ -36,7 +36,8 @@ defmodule EvoDashWeb.WelcomeLive do
     providers = Catalog.providers()
 
     {:ok,
-     assign(socket,
+     socket
+     |> assign(
        has_model?: Setup.has_model?(config),
        credentials: EvoGit.Config.credentials(),
        llm_providers: providers,
@@ -53,7 +54,16 @@ defmodule EvoDashWeb.WelcomeLive do
        llm_test_seq: 0,
        search_query: "",
        preset_dismissed: false
-     )}
+     )
+     # The on-mount hooks seed these (NodeAware / Appearance); `assign_new` keeps
+     # the render a strict `@key` read without ever overwriting a hook value.
+     |> assign_new(:remote_targets, fn -> [] end)
+     |> assign_new(:connection_statuses, fn -> %{} end)
+     |> assign_new(:session_list, fn -> [] end)
+     |> assign_new(:session_list_loading, fn -> false end)
+     |> assign_new(:session_list_error, fn -> nil end)
+     |> assign_new(:current_session_id, fn -> nil end)
+     |> assign_new(:accent_color, fn -> "blue" end)}
   end
 
   @impl true
@@ -500,19 +510,19 @@ defmodule EvoDashWeb.WelcomeLive do
       current_page={:welcome}
       simple_nav={false}
       current_node_id={@current_node_id}
-      remote_targets={assigns[:remote_targets] || []}
-      connection_statuses={assigns[:connection_statuses] || %{}}
+      remote_targets={@remote_targets}
+      connection_statuses={@connection_statuses}
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
-      session_list={assigns[:session_list] || []}
-      session_list_loading={assigns[:session_list_loading] == true}
-      session_list_error={assigns[:session_list_error]}
-      current_session_id={assigns[:current_session_id]}
+      session_list={@session_list}
+      session_list_loading={@session_list_loading}
+      session_list_error={@session_list_error}
+      current_session_id={@current_session_id}
       pending_tasks={@pending_tasks}
       desktop_quit_confirm={@desktop_quit_confirm}
       update_status={@update_status}
       guide={@guide}
-      accent_color={assigns[:accent_color] || "blue"}
+      accent_color={@accent_color}
     >
       <div class="min-h-screen max-w-5xl mx-auto px-4 lg:px-6 py-4 space-y-5">
         <div class="flex items-center justify-between gap-3">
