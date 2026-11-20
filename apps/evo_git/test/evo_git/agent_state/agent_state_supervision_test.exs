@@ -18,9 +18,22 @@ defmodule EvoGit.AgentState.SupervisionTest do
   alias EvoGit.AgentState
 
   @moduletag :tmp_dir
+  # EVERY boot of this subsystem runs its migrations under the BEAM-global
+  # `{:evo_git_agent_state_migrations, self()}` lock, shared with every other
+  # agent-state store the suite boots concurrently. A boot's latency is
+  # therefore set by the contenders queued ahead of it, not by this module: a
+  # solo boot measures ~14 ms, while a saturated cohort has produced waits
+  # above 5 s (measured p95 ~25 ms, >5 s on ~1% of attempts under a 32-way
+  # boot load). The waits below stay event-driven — they return the moment the
+  # boot lands — but their budget has to cover that queue, and the per-test
+  # timeout has to cover test 2's five sequential writer restarts.
+  @moduletag timeout: 300_000
 
   @poll_interval 10
+  # A boot-independent condition (a writer pid, a repo that went away).
   @poll_timeout 5_000
+  # A condition that needs a BOOT (a fresh repo, a restarted writer).
+  @boot_timeout 30_000
 
   ## Isolation helpers (duplicated per file on purpose: no shared support module)
 
@@ -51,21 +64,20 @@ defmodule EvoGit.AgentState.SupervisionTest do
   end
 
   defp await(fun, timeout \\ @poll_timeout) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-    do_await(fun, deadline)
+    do_await(fun, System.monotonic_time(:millisecond) + timeout, timeout)
   end
 
-  defp do_await(fun, deadline) do
+  defp do_await(fun, deadline, timeout) do
     case fun.() do
       {:ok, value} ->
         value
 
       :retry ->
         if System.monotonic_time(:millisecond) >= deadline do
-          flunk("condition not met within #{@poll_timeout} ms")
+          flunk("condition not met within #{timeout} ms")
         else
           Process.sleep(@poll_interval)
-          do_await(fun, deadline)
+          do_await(fun, deadline, timeout)
         end
     end
   end
@@ -112,8 +124,12 @@ defmodule EvoGit.AgentState.SupervisionTest do
         assert :ok = AgentState.delete_task("task-broken", store: supervisor)
         assert :ok = AgentState.delete_tasks(["task-broken"], store: supervisor)
 
-        # Several retry ticks have happened (the timer keeps rescheduling).
-        Process.sleep(120)
+        # A failed attempt re-arms the retry timer (`schedule_retry/1`), which
+        # the writer reports in its OWN state: reading it is a SYSTEM message,
+        # a real barrier through the writer's mailbox rather than a fixed
+        # delay. The recovery below then proves that armed retry actually
+        # fires (a dropped timer could never recover without a restart).
+        assert %{retry_scheduled?: true, repo: nil} = :sys.get_state(server, @boot_timeout)
         assert Process.alive?(server)
         assert AgentState.repo(supervisor) == nil
 
@@ -122,12 +138,15 @@ defmodule EvoGit.AgentState.SupervisionTest do
         File.mkdir_p!(blocker)
 
         repo =
-          await(fn ->
-            case AgentState.repo(supervisor) do
-              repo when is_pid(repo) -> {:ok, repo}
-              nil -> :retry
-            end
-          end)
+          await(
+            fn ->
+              case AgentState.repo(supervisor) do
+                repo when is_pid(repo) -> {:ok, repo}
+                nil -> :retry
+              end
+            end,
+            @boot_timeout
+          )
 
         assert Process.alive?(repo)
 
@@ -151,19 +170,23 @@ defmodule EvoGit.AgentState.SupervisionTest do
     supervisor = start_store!(tmp_dir)
     first = server_pid(supervisor)
 
-    # Five restarts inside a few hundred ms — more than the 3/5 s intensity of
-    # the application supervisor, so a writer parented directly by it would be
-    # shut down. The subsystem's own supervisor (10/60) must absorb them.
+    # Five back-to-back restarts with no pause in between — more than the 3/5 s
+    # intensity of the application supervisor, so a writer parented directly by
+    # it would be shut down. The subsystem's own supervisor (10/60) must absorb
+    # them.
     last =
       Enum.reduce(1..5, first, fn _index, previous ->
         Process.exit(previous, :kill)
 
-        await(fn ->
-          case server_pid(supervisor) do
-            pid when is_pid(pid) and pid != previous -> {:ok, pid}
-            _other -> :retry
-          end
-        end)
+        await(
+          fn ->
+            case server_pid(supervisor) do
+              pid when is_pid(pid) and pid != previous -> {:ok, pid}
+              _other -> :retry
+            end
+          end,
+          @boot_timeout
+        )
       end)
 
     assert is_pid(last)
@@ -176,8 +199,13 @@ defmodule EvoGit.AgentState.SupervisionTest do
 
   test "a killed repo degrades the server and the reboot path re-establishes it",
        %{tmp_dir: tmp_dir} do
+    # The reboot ladder is deliberately out of reach of this test, so the
+    # degraded contract below cannot race an automatic reboot (whose own
+    # firing is covered by case 1's 20-40 ms ladder). The reboot is then
+    # triggered with the message the retry timer delivers — the same
+    # `handle_info(:boot_retry, …)` production path, on the test's schedule.
     supervisor =
-      start_store!(tmp_dir, boot_retry_base: 300, boot_retry_max: 300)
+      start_store!(tmp_dir, boot_retry_base: 30_000, boot_retry_max: 30_000)
 
     server = server_pid(supervisor)
     repo = await(fn -> if pid = AgentState.repo(supervisor), do: {:ok, pid}, else: :retry end)
@@ -185,23 +213,41 @@ defmodule EvoGit.AgentState.SupervisionTest do
     capture_log(fn ->
       Process.exit(repo, :kill)
 
-      # Repo gone, server ALIVE and honest about it.
-      await(fn -> if AgentState.repo(supervisor) == nil, do: {:ok, :gone}, else: :retry end)
+      # Repo gone, server ALIVE and honest about it. The writer's OWN state is
+      # the barrier: it reports the death only after `handle_repo_death/2` ran
+      # and published the cleared repo, so the answers below cannot straddle
+      # the transition.
+      await(
+        fn ->
+          case :sys.get_state(server, @boot_timeout) do
+            %{repo: nil} -> {:ok, :degraded}
+            _other -> :retry
+          end
+        end,
+        @boot_timeout
+      )
+
       assert Process.alive?(server)
 
       assert {:error, :store_unavailable} =
                AgentState.load("task-dead-repo", 1, store: supervisor)
 
       assert {:error, :timeout} = AgentState.flush(store: supervisor)
+      assert AgentState.repo(supervisor) == nil
 
       # The same server boots a FRESH repo through the backoff path.
+      send(server, :boot_retry)
+
       new_repo =
-        await(fn ->
-          case AgentState.repo(supervisor) do
-            pid when is_pid(pid) and pid != repo -> {:ok, pid}
-            _other -> :retry
-          end
-        end)
+        await(
+          fn ->
+            case AgentState.repo(supervisor) do
+              pid when is_pid(pid) and pid != repo -> {:ok, pid}
+              _other -> :retry
+            end
+          end,
+          @boot_timeout
+        )
 
       assert Process.alive?(new_repo)
       assert Process.alive?(server)
