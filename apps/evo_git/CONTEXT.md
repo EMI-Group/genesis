@@ -208,7 +208,7 @@ In-place resume restores the durable ROOT of the SAME task id, while the Review 
 
 Ordinary upgrades run only pending immutable migrations 1–9 and 11 in order; shipped version identities are never reused or renumbered, version 10 is retired, and there is no automatic physical-schema collision reconciliation; before migration `Store.HistoricalSources` fails closed on reserved objects left by an interrupted preservation attempt.
 Migration contracts and boot hazards belong to `priv/repo/migrations/CONTEXT.md` and `store/CONTEXT.md`; upgrades and interrupted-preservation refusal are pinned by `test/evo_git/store/{boot_migration_test,v0138_upgrade_path_test,boot_migration_source_test,historical_sources_test}.exs`.
-The one-time development repair is `scripts/repair_inspected_store.py`, documented in `scripts/README.md` and tested by `scripts/test_repair_inspected_store.py`; it requires an explicit database path, defaults to inspection-only, refuses schemas outside its inspected fingerprint and preserves the migration ledger and existing cells.
+The one-time development repair is `scripts/repair_inspected_store.py` (`scripts/README.md`, tested by `scripts/test_repair_inspected_store.py`): explicit database path, inspection-only by default, refuses schemas outside its inspected fingerprint and preserves the migration ledger.
 
 ## Mix Tasks
 
