@@ -59,9 +59,13 @@ defmodule EvoGit.VCT do
 
   `EvoGit.Core.ContextNode` and other callers may ask the VCT for data from any
   process, including during boot or after a crash, so every read resolves a
-  missing/dead server to its documented empty value (`[]`, `nil`, `""`,
-  `{:error, :not_found}`) instead of raising; mutations resolve to
-  `{:error, :vct_unavailable}`. A store that is down or unavailable never
+  missing/dead server to its documented value instead of raising: a LIST or
+  SCALAR read answers its empty shape (`[]`, `nil`, `""`), while a read whose
+  return type is an error union (`resolve/1`, `workspace_members/1`,
+  `workspace_entries/2`) answers `{:error, :vct_unavailable}`, exactly like a
+  mutation. A transport failure is therefore never disguised as data: a
+  `{:error, :not_found}` from this module means ONE thing — the point, path or
+  workspace genuinely has no row. A store that is down or unavailable never
   crashes the init or a caller: the mount list loads as `[]` and a mutation
   returns an error.
 
@@ -313,6 +317,8 @@ defmodule EvoGit.VCT do
   `{:error, :not_a_workspace}`; a workspace point (or bare name) with no row
   answers `{:error, :not_found}`; anything else (a non-binary, an unparseable
   `vct:` point, an OS path) answers `{:error, :invalid_point}`.
+  An unreachable VCT server answers `{:error, :vct_unavailable}` — never
+  `:not_found`, which stays reserved for a genuinely absent workspace.
 
   Returns `{:ok, %{workspace: mount, members: [...], missing: [...], nested:
   [...]}}` — every member is resolved IN STORED ORDER with
@@ -321,9 +327,10 @@ defmodule EvoGit.VCT do
   workspace to `:nested` (the STORED ref, never expanded).
   """
   @spec workspace_members(String.t() | VctPath.t()) ::
-          {:ok, workspace_resolution()} | {:error, :not_found | :not_a_workspace | :invalid_point}
+          {:ok, workspace_resolution()}
+          | {:error, :not_found | :not_a_workspace | :invalid_point | :vct_unavailable}
   def workspace_members(point_or_name),
-    do: call({:workspace_members, point_or_name}, {:error, :not_found})
+    do: call({:workspace_members, point_or_name}, {:error, :vct_unavailable})
 
   @doc """
   Returns the WORKSPACE mounts whose membership covers `project`, newest first
@@ -421,10 +428,12 @@ defmodule EvoGit.VCT do
   project mounts, and a WORKSPACE POINT resolves to its workspace mount. A
   workspace owns no OS path, so an OS-path lookup never answers a workspace
   (`{:error, :not_found}` unless a real file mount holds that path).
+  An unreachable VCT server answers `{:error, :vct_unavailable}`, never
+  `:not_found`: absence of a row and absence of a server are different facts.
   """
   @spec resolve(String.t() | VctPath.t()) ::
-          {:ok, Mount.t()} | {:error, :not_found} | {:error, term()}
-  def resolve(point_or_path), do: call({:resolve, point_or_path}, {:error, :not_found})
+          {:ok, Mount.t()} | {:error, :not_found | :invalid_point | :vct_unavailable}
+  def resolve(point_or_path), do: call({:resolve, point_or_path}, {:error, :vct_unavailable})
 
   @doc """
   Returns the mount containing `os_path` (longest OS-path prefix, path-boundary
@@ -842,6 +851,8 @@ defmodule EvoGit.VCT do
   defp broadcast_mount_change(state),
     do: safe_broadcast(state.pubsub, "vct", {:vct_updated, node()})
 
+  # Best effort and deliberately swallowed: PubSub may be down or unreachable,
+  # and a broadcast failure must NEVER fail a mutation that already persisted.
   defp safe_broadcast(pubsub, topic, message) do
     Phoenix.PubSub.broadcast(pubsub, topic, message)
   rescue
@@ -1272,10 +1283,23 @@ defmodule EvoGit.VCT do
 
   # Every client function routes through here so a missing/dead server (a read
   # from `EvoGit.Core.ContextNode`, a boot race, a crash) resolves to the
-  # caller's documented empty value instead of an exit.
+  # caller's documented value instead of an exit. The DEFAULT is the caller's
+  # declared degradation, so an error-union read passes
+  # `{:error, :vct_unavailable}` and a list/scalar read passes its empty shape;
+  # either way a transport failure is announced once and never invented data.
   defp call(request, default) do
     GenServer.call(server(), request, @call_timeout)
   catch
-    :exit, _reason -> default
+    :exit, reason -> transport_failure(request, default, reason)
+  end
+
+  # ONE warning per failed call (no throttling state): a dead or absent VCT
+  # server names itself and the request it could not serve.
+  defp transport_failure(request, default, reason) do
+    Logger.warning(
+      "VCT: #{inspect(server())} unavailable for #{inspect(request)}: #{inspect(reason)}"
+    )
+
+    default
   end
 end
