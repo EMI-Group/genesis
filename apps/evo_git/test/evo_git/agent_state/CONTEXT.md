@@ -110,6 +110,7 @@ The `start_store!`/`checkpoint!`/`sql!`/`chunks!`/`counts!` helpers are duplicat
 - `Store.checkpoint_batch/4` commits every operation of a fold in ONE transaction and rolls the WHOLE fold back on a `:resync`; `[]` is a no-op `:ok` and a non-list is `{:error, :invalid_operations}`.
 
 ## Constraints
-No module here is `async: false`, and no test waits on a fixed sleep: every wait is a `flush/1` reply, a synchronous call, a mailbox assertion made deterministic by that barrier, or a BOUNDED condition poll whose own tick is the `Process.sleep` (`agent_state_coalescing_test.exs` 1 ms, `agent_state_supervision_test.exs` `@poll_interval`, plus its one bounded 120 ms wait for retry ticks).
+No module here is `async: false`, and no test waits on a fixed sleep: every wait is a `flush/1` reply, a synchronous call, a mailbox assertion made deterministic by that barrier, or a BOUNDED condition poll whose own tick is the `Process.sleep` (`agent_state_coalescing_test.exs` 1 ms, `agent_state_supervision_test.exs` `@poll_interval` 10 ms), and a condition the WRITER owns (its retry armed, its repo cleared) is observed with `:sys.get_state/2` — a system message ordered behind every earlier cast/call, so it is a real barrier rather than a delay.
+`agent_state_supervision_test.exs` splits its budgets by what the wait needs: `@poll_timeout` (5 s) for a boot-independent condition, `@boot_timeout` (30 s) for anything that needs a BOOT, and `@moduletag timeout: 300_000` to cover its five sequential writer restarts (see the migration-lock note below for why a boot's budget cannot be small).
 No shared support module: the isolation helpers are intentionally duplicated in each file.
 No test uses the app-global `tasks.sqlite` or the app-booted agent-state server.
