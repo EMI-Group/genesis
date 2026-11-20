@@ -189,7 +189,7 @@ Shared status chrome appears in the live row's header, or as a compact status-on
 The public `stream_panel/1` API and all stream ownership, snapshot and reducer protocols are unchanged; placement is the parent template's responsibility.
 `RuntimeStream.message_index` is a local monotonic live-call DOM ordinal, not an index into checkpoint messages, and neither it nor `turn` can identify a checkpoint bubble to replace.
 `OptimisticMessages.merge/2` appends queued user echoes after checkpoint rows, so the final displayed row is not necessarily the assistant/live call's placement target.
-The template never calls it directly: `Inspector.merged_history(agent, @optimistic_messages)` is the ONE entry source for the detail panel, and it returns `agent.history` verbatim (no merge, no per-entry hashing) when that agent has no optimistic entries.
+The detail panel never calls it directly: `Inspector.merged_history(agent, page.optimistic_messages)` (in `EvoDashWeb.AgentsLive.DetailPanel`) is the ONE entry source for the panel, and it returns `agent.history` verbatim (no merge, no per-entry hashing) when that agent has no optimistic entries.
 
 ## Inspector Streaming Integration & Core Constraints
 
