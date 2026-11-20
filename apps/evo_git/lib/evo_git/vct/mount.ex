@@ -295,7 +295,9 @@ defmodule EvoGit.VCT.Mount do
   An absent, `nil` or unparseable ISO-8601 `last_opened_at` decodes to `nil`
   without raising.
   """
-  @spec from_map(map()) :: {:ok, t()} | {:error, decode_error() | :invalid_mount}
+  # TOTAL: the non-map clause answers `{:error, :invalid_mount}`, so the input is
+  # `term()` rather than `map()`.
+  @spec from_map(term()) :: {:ok, t()} | {:error, decode_error() | :invalid_mount}
   def from_map(map) when is_map(map) do
     with {:ok, point} <- decode_point(map),
          {:ok, path} <- decode_path(map),
