@@ -100,7 +100,9 @@ The complete subtree passes 365 tests at seeds 0 and 42.
 The explicit missing-provider test in `task_executor_reflect_test.exs` establishes executor admission rejection; implicit-selection tests retain the missing-path reflect runtime route coverage.
 
 ## StoreGuard and Pause Cleanup Coverage
-`StoreGuard.read/3` and `write/2` have no direct callback-boundary tests in this subtree; `read_fault_isolation_test.exs` covers absent-server exits through registry APIs, not rescue/throw handling, successful value passthrough or exact exception-versus-catch log details.
+`store_guard_test.exs` is a compact async callback-boundary suite for `StoreGuard.read/3` and `write/2`, with no global mutations or database fixtures.
+It pins successful passthrough (including error tuples), exact per-read and write fallbacks on raises/throws/exits, operation-labelled error logs and caller survival, and original exception stacktrace formatting limited to five frames.
+`read_fault_isolation_test.exs` separately covers absent-server exits through registry APIs.
 Pause tests exercise registered atom Store names through the isolated fixture, including direct `Pause.resume/4` and `pause_kind_for_restart/2` calls in `agent_state_read_test.exs`, so a pid-only Store typespec would exclude tested callers.
 `agent_state_read_test.exs` supplies an arity-four resume callback returning a live pid, while `pause_test.exs` supplies the registry's arity-four `wrapper_spawn_fun` returning `%Task{}`; these are distinct callback layers and should not be conflated in typing.
 Pause coverage does not directly test a pid-addressed task Store or callback raises, throws, exits and malformed return values.

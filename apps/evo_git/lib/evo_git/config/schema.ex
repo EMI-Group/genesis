@@ -93,15 +93,18 @@ defmodule EvoGit.Config.Schema do
     Represents a single validation error found during config validation.
 
     Fields:
-    - `:key_path` — the path to the invalid key as a list of atoms
+    - `:key_path` — the path to the invalid key as atoms and non-negative list indexes
     - `:message` — human-readable description of the validation failure
     - `:value` — the actual value that failed validation
     - `:rule` — which validation rule failed (e.g., `{:min, 1}`, `{:max, 100}`, `{:in, [...]}`, or the expected type atom)
     """
     defstruct [:key_path, :message, :value, :rule]
 
+    @typedoc "Path to an invalid config key, including non-negative list indexes"
+    @type key_path :: [atom() | non_neg_integer()]
+
     @type t :: %__MODULE__{
-            key_path: [atom()],
+            key_path: key_path(),
             message: String.t(),
             value: term(),
             rule: term()
