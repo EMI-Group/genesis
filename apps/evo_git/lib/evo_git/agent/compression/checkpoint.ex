@@ -63,6 +63,7 @@ defmodule EvoGit.Agent.Compression.Checkpoint do
 
   alias EvoGit.Agent.Compression.Recency
   alias EvoGit.Agent.Compression.SummaryPrompt
+  alias EvoGit.Util.Strings
   alias ReqLLM.Message
 
   # The head is the system message + the original first user message. It is
@@ -168,7 +169,7 @@ defmodule EvoGit.Agent.Compression.Checkpoint do
 
     %{head: head, old: old, recent: recent} = split(messages, opts)
 
-    if old == [] or blank?(summary) do
+    if old == [] or Strings.blank?(summary) do
       %{
         messages: messages,
         replaced: 0,
@@ -443,9 +444,9 @@ defmodule EvoGit.Agent.Compression.Checkpoint do
     end
   end
 
-  # A nil/blank summary must never produce a checkpoint, and a non-binary value
-  # is out of contract — either way `build/3` reports `replaced: 0` with the
-  # input unchanged, so the caller always sees that nothing was compacted.
-  defp blank?(summary) when is_binary(summary), do: String.trim(summary) == ""
-  defp blank?(_summary), do: true
+  # A nil/blank summary must never produce a checkpoint, so `build/3` reports
+  # `replaced: 0` with the input unchanged and the caller always sees that
+  # nothing was compacted. `summary` is only ever the summarising call's response
+  # text (`String.t() | nil`), which `EvoGit.Util.Strings.blank?/1` classifies
+  # exactly like the former local predicate.
 end

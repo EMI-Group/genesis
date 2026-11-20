@@ -65,6 +65,7 @@ defmodule EvoGit.Agent.Compression.Recency do
   alias ReqLLM.Message
 
   alias EvoGit.Agent.Compression.SummaryPrompt
+  alias EvoGit.Util.Strings
 
   @default_keep_recent_turns 4
   @default_tail_budget_fraction 0.2
@@ -605,18 +606,5 @@ defmodule EvoGit.Agent.Compression.Recency do
     end
   end
 
-  defp text_of(%Message{content: content}), do: content_text(content)
-
-  defp content_text(content) when is_binary(content), do: content
-
-  defp content_text(content) when is_list(content) do
-    content
-    |> Enum.map(fn
-      %ReqLLM.Message.ContentPart{type: :text, text: text} when is_binary(text) -> text
-      _part -> ""
-    end)
-    |> Enum.join("\n")
-  end
-
-  defp content_text(_content), do: ""
+  defp text_of(%Message{content: content}), do: Strings.content_text(content, "\n")
 end
