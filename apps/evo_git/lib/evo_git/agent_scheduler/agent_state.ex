@@ -49,7 +49,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `total_tokens` — cumulative token count across all LLM calls since the last compression (mirrors `EvoGit.Agent.State.total_tokens`). Used by the dashboard to display context progress. Reset to 0 on each compression.
   - `foreign_repos` — list of foreign repos available to this agent (inherited from parent; root agents get this from task opts or genesis.toml)
   - `repo_notes` — the already-rendered git-submodules note block (markdown text) for this agent's repo tree, or `nil` when the repo has no submodules (or detection failed). Rendered into the agent's `<context>` block; subagents inherit it from the parent (no re-detection).
-  - `status` — the summary status (`:pending`/`:running`/`:done`/`:failed`), published by the session
+  - `status` — the summary status (`nil` until the session publishes one, then one of `statuses/0`), published by the session
   - `mode` — `:oneshot` or `:interactive`
   - `objective_preview` — a bounded (≤ 4096 characters) preview of the objective, published for display
   - `message_count` — number of messages in the session's conversation
@@ -119,7 +119,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
           total_tokens: non_neg_integer(),
           foreign_repos: [ForeignRepo.t()],
           repo_notes: String.t() | nil,
-          status: atom() | nil,
+          status: status(),
           mode: :oneshot | :interactive,
           objective_preview: String.t() | nil,
           message_count: non_neg_integer(),
@@ -127,4 +127,50 @@ defmodule EvoGit.AgentScheduler.AgentState do
           current_commit: String.t() | nil,
           last_activity_at: DateTime.t() | nil
         }
+
+  # --- The summary STATUS vocabulary (defined ONCE, next to the struct) ---
+  #
+  # These are the values the owning session actually PUBLISHES through
+  # `EvoGit.Agent.Session.Summary.publish/3` — NOT the TaskRegistry TASK status
+  # vocabulary (`:completed`/`:failed`/`:cancelled`/`:paused`), which describes
+  # a task row and never appears on an agent summary row.
+
+  # `nil` means the session has not published a status yet, so it is neither
+  # live nor terminal.
+  @type status :: :running | :awaiting_input | :cancelling | :done | :failed | nil
+
+  @statuses [:running, :awaiting_input, :cancelling, :done, :failed]
+  # LIVE: the session process exists and is expected to keep going (a parked
+  # `:awaiting_input` idle interactive session is live but not busy).
+  @live_statuses [:running, :awaiting_input, :cancelling]
+  # TERMINAL: the run has settled (`:done` on success/yield-out, `:failed`).
+  @terminal_statuses [:done, :failed]
+
+  @doc "Every status a summary row can carry, in one list."
+  @spec statuses() :: [status()]
+  def statuses, do: @statuses
+
+  @doc "The statuses of an agent whose session is still alive."
+  @spec live_statuses() :: [status()]
+  def live_statuses, do: @live_statuses
+
+  @doc "The statuses of a settled agent."
+  @spec terminal_statuses() :: [status()]
+  def terminal_statuses, do: @terminal_statuses
+
+  @doc """
+  Whether `status` is a LIVE one (`:running`, `:awaiting_input`, `:cancelling`).
+
+  Total: `nil` (no status published yet) and any unknown value answer `false`.
+  """
+  @spec live?(term()) :: boolean()
+  def live?(status), do: status in @live_statuses
+
+  @doc """
+  Whether `status` is a TERMINAL one (`:done`, `:failed`).
+
+  Total: `nil` (no status published yet) and any unknown value answer `false`.
+  """
+  @spec terminal?(term()) :: boolean()
+  def terminal?(status), do: status in @terminal_statuses
 end

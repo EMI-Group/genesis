@@ -457,37 +457,49 @@ defmodule EvoGit.AgentScheduler.Worktrees do
 
   Returns `{:ok, commit_sha}` or `{:error, {:worktree_prepare_failed, ...}}`
   (the guard failure shape is `{:error, {:worktree_prepare_failed,
-  :not_a_linked_worktree}}`).
+  :not_a_linked_worktree}}`). Neither the scheduler metadata row nor the agent
+  state row is guaranteed to exist at this point (both are written/deleted by
+  other processes), so a missing row answers the final error shape
+  `{:error, {:worktree_prepare_failed, {:rows_missing, agent_id}}}` instead of
+  raising.
   """
   @spec assign_and_prepare_worktree(pos_integer(), String.t(), String.t()) ::
           {:ok, String.t()} | {:error, term()}
   def assign_and_prepare_worktree(agent_id, wt, repo_root) do
-    {:ok, meta} = Store.get_sched_meta(agent_id)
-    {:ok, %AgentState{} = agent_state} = Store.get_agent_state(agent_id)
-    spec = meta.spec
+    # Both rows are written/deleted by other processes, so a missing row is a
+    # normal race rather than a crash: report it in the final error shape.
+    with {:ok, meta} <- Store.get_sched_meta(agent_id),
+         {:ok, %AgentState{} = agent_state} <- Store.get_agent_state(agent_id) do
+      spec = meta.spec
 
-    commit_sha = spec.phylo_node.current_commit
-    branch_name = branch_for(meta, agent_state.task_local_id, spec)
+      commit_sha = spec.phylo_node.current_commit
+      branch_name = branch_for(meta, agent_state.task_local_id, spec)
 
-    with :ok <- ensure_linked_worktree(wt, repo_root),
-         {:ok, _} <- Git.clean(wt),
-         {:ok, _} <- Git.checkout(wt, branch_name) do
-      # The worktree is prepared at `commit_sha`: record it as the agent's
-      # current commit (registration write — the session publishes it onwards).
-      Store.put_agent_state(agent_id, %AgentState{agent_state | current_commit: commit_sha})
+      with :ok <- ensure_linked_worktree(wt, repo_root),
+           {:ok, _} <- Git.clean(wt),
+           {:ok, _} <- Git.checkout(wt, branch_name) do
+        # The worktree is prepared at `commit_sha`: record it as the agent's
+        # current commit (registration write — the session publishes it onwards).
+        Store.put_agent_state(agent_id, %AgentState{agent_state | current_commit: commit_sha})
 
-      {:ok, commit_sha}
+        {:ok, commit_sha}
+      else
+        # Guard failures arrive in the FINAL error shape already — log and pass
+        # through unchanged (no double wrapping).
+        {:error, {:worktree_prepare_failed, _} = error} ->
+          Logger.error("AgentScheduler: Failed to prepare worktree #{wt}: #{inspect(error)}")
+          error
+
+        {:error, {_tag, _output} = error} ->
+          Logger.error("AgentScheduler: Failed to prepare worktree #{wt}: #{inspect(error)}")
+
+          {:error, {:worktree_prepare_failed, error}}
+      end
     else
-      # Guard failures arrive in the FINAL error shape already — log and pass
-      # through unchanged (no double wrapping).
-      {:error, {:worktree_prepare_failed, _} = error} ->
+      :error ->
+        error = {:worktree_prepare_failed, {:rows_missing, agent_id}}
         Logger.error("AgentScheduler: Failed to prepare worktree #{wt}: #{inspect(error)}")
-        error
-
-      {:error, {_tag, _output} = error} ->
-        Logger.error("AgentScheduler: Failed to prepare worktree #{wt}: #{inspect(error)}")
-
-        {:error, {:worktree_prepare_failed, error}}
+        {:error, error}
     end
   end
 

@@ -82,6 +82,7 @@ defmodule EvoGit.AgentScheduler.State do
   alias EvoGit.AgentScheduler.Lifecycle
   alias EvoGit.AgentScheduler.ModelSelection
   alias EvoGit.AgentScheduler.Slots
+  alias EvoGit.Config.Keys
 
   @enforce_keys []
   defstruct default_llm_max_concurrency: 3,
@@ -155,20 +156,14 @@ defmodule EvoGit.AgentScheduler.State do
         }
 
   @doc """
-  Returns the default legacy selection/provider id.
+  Legacy name for `default_pool_id/1` — the default provider/ACCOUNT resource
+  pool id, never a concrete model id.
 
-  Schema-backed state honors the configured default provider; legacy state uses
-  the first profile id, or `"default"` when no profiles are configured.
+  Kept callable because in-tree callers and regression tests still use it; new
+  code reads `default_pool_id/1`.
   """
   @spec default_model_id(t()) :: String.t()
-  def default_model_id(%__MODULE__{model_selection_config: config} = state) when is_map(config),
-    do: default_pool_id(state)
-
-  def default_model_id(%__MODULE__{model_profiles: []}), do: "default"
-
-  def default_model_id(%__MODULE__{model_profiles: [profile | _]}) do
-    Map.get(profile, :id, "default")
-  end
+  def default_model_id(%__MODULE__{} = state), do: default_pool_id(state)
 
   @doc "Builds scheduler model/pool state from the same config snapshot as reload."
   def from_config(config, opts \\ []) do
@@ -176,8 +171,8 @@ defmodule EvoGit.AgentScheduler.State do
 
     default =
       config
-      |> ModelSelection.value(:scheduler, %{})
-      |> ModelSelection.value(:default_llm_max_concurrency)
+      |> Keys.get(:scheduler, %{})
+      |> Keys.get(:default_llm_max_concurrency)
 
     opts =
       if is_nil(default),
@@ -192,10 +187,10 @@ defmodule EvoGit.AgentScheduler.State do
 
   @doc "Maps a legacy selection id to its provider/account resource identity."
   def pool_id(%__MODULE__{} = state, id) do
-    if Enum.any?(state.provider_profiles, &(ModelSelection.value(&1, :id) == id)) do
+    if Enum.any?(state.provider_profiles, &(Keys.get(&1, :id) == id)) do
       id
     else
-      case Enum.find(state.model_profiles, &(ModelSelection.value(&1, :id) == id)) do
+      case Enum.find(state.model_profiles, &(Keys.get(&1, :id) == id)) do
         nil -> id
         profile -> ModelSelection.pool_id(profile)
       end
@@ -207,8 +202,8 @@ defmodule EvoGit.AgentScheduler.State do
     configured_id =
       if is_map(state.model_selection_config) do
         state.model_selection_config
-        |> ModelSelection.value(:llm, %{})
-        |> ModelSelection.value(:default_provider_profile)
+        |> Keys.get(:llm, %{})
+        |> Keys.get(:default_provider_profile)
       end
 
     profile = List.first(state.provider_profiles) || List.first(state.model_profiles)
@@ -230,7 +225,7 @@ defmodule EvoGit.AgentScheduler.State do
 
     model_concurrency =
       Map.new(pool_profiles, fn profile ->
-        {ModelSelection.pool_id(profile), ModelSelection.value(profile, :concurrency, 3)}
+        {ModelSelection.pool_id(profile), Keys.get(profile, :concurrency, 3)}
       end)
 
     empty_pools =
@@ -693,7 +688,7 @@ defmodule EvoGit.AgentScheduler.State do
     if canonical_account?(profile) do
       canonical_fallback_default(profile)
     else
-      {ModelSelection.value(profile, :model), EvoGit.Config.Schema.llm_generation_params(profile)}
+      {Keys.get(profile, :model), EvoGit.Config.Schema.llm_generation_params(profile)}
     end
   end
 
@@ -702,13 +697,13 @@ defmodule EvoGit.AgentScheduler.State do
   # profile carries `"model"` but no `"provider"`, so it stays on the legacy
   # path above rather than failing account normalization.
   defp canonical_account?(%{"id" => id} = profile) when is_binary(id),
-    do: is_binary(ModelSelection.value(profile, :provider))
+    do: is_binary(Keys.get(profile, :provider))
 
   defp canonical_account?(_profile), do: false
 
   defp canonical_fallback_default(account) do
     config = %{"llm" => %{"providers" => [account]}}
-    spec = %{"provider_profile_id" => ModelSelection.value(account, :id)}
+    spec = %{"provider_profile_id" => Keys.get(account, :id)}
 
     spec =
       case fallback_model_id(account) do
@@ -724,7 +719,7 @@ defmodule EvoGit.AgentScheduler.State do
       {:error, reason} ->
         Logger.warning(
           "Default model unavailable from provider account " <>
-            "#{inspect(ModelSelection.value(account, :id))}: #{inspect(reason)}"
+            "#{inspect(Keys.get(account, :id))}: #{inspect(reason)}"
         )
 
         {nil, []}
@@ -734,11 +729,11 @@ defmodule EvoGit.AgentScheduler.State do
   # Key-agnostic model id: the selection's own `:model`/`"model"`, else the
   # account's `"default_model"`/`:default_model`, else its first inventory model.
   defp fallback_model_id(profile) do
-    ModelSelection.value(profile, :model) || ModelSelection.value(profile, :default_model) ||
-      first_inventory_model(ModelSelection.value(profile, :models))
+    Keys.get(profile, :model) || Keys.get(profile, :default_model) ||
+      first_inventory_model(Keys.get(profile, :models))
   end
 
   defp first_inventory_model([model | _]) when is_binary(model), do: model
-  defp first_inventory_model([%{} = model | _]), do: ModelSelection.value(model, :model)
+  defp first_inventory_model([%{} = model | _]), do: Keys.get(model, :model)
   defp first_inventory_model(_models), do: nil
 end

@@ -22,8 +22,8 @@ defmodule EvoGit.AgentScheduler.InteractiveRoot do
   GenServer call and never inside the approval GenServer, which must stay
   answerable. A missing table, a missing row or a dying scheduler answers
   `false` instead of raising: tables are created by `EvoGit.Application` and
-  can vanish during a scheduler restart, and `:ets` exits must never escape
-  into admission logic.
+  can vanish during a scheduler restart, so every read is guarded by
+  `:ets.whereis/1` and no `:ets` exit can escape into admission logic.
 
   The double read of the SchedMeta row (`session_meta?/3` before and after the
   summary check) is deliberate: a session that ends or is recycled between the
@@ -106,29 +106,32 @@ defmodule EvoGit.AgentScheduler.InteractiveRoot do
   # session, or `:any` to check liveness only.
   @spec live?(term(), String.t() | nil, pid() | :any) :: boolean()
   def live?(agent_id, task_id, expected_owner \\ :any) do
-    try do
+    tables_present?() and
       is_integer(agent_id) and agent_id > 0 and is_binary(task_id) and task_id != "" and
-        case :ets.lookup(:evogit_sched_meta, agent_id) do
-          [{^agent_id, meta}] ->
-            session_meta?(meta, task_id, expected_owner) and summary_admits?(agent_id) and
-              :ets.lookup(:evogit_sched_meta, agent_id) == [{agent_id, meta}] and
-              summary_admits?(agent_id)
+      case :ets.lookup(:evogit_sched_meta, agent_id) do
+        [{^agent_id, meta}] ->
+          session_meta?(meta, task_id, expected_owner) and summary_admits?(agent_id) and
+            :ets.lookup(:evogit_sched_meta, agent_id) == [{agent_id, meta}] and
+            summary_admits?(agent_id)
 
-          _missing_or_malformed ->
-            false
-        end
-    rescue
-      _ -> false
-    catch
-      :exit, _ -> false
-    end
+        _missing_or_malformed ->
+          false
+      end
+  end
+
+  # A missing table means no such agent exists on this node, i.e. it is not this
+  # principal's session, so the gate answers the documented `false` instead of
+  # reading a table that a scheduler restart may have removed.
+  defp tables_present? do
+    :ets.whereis(:evogit_sched_meta) != :undefined and
+      :ets.whereis(:evogit_agent_summary) != :undefined
   end
 
   defp owner_matches?(_session_pid, :any), do: true
   defp owner_matches?(session_pid, expected_owner), do: session_pid == expected_owner
 
   # Project inside ETS: copy only the role/ownership fields of the summary row.
-  # A missing row/field never grants access.
+  # A missing table, missing row or missing field never grants access.
   #
   # The cancellation flag is read from the CONTROL PLANE (its single writer is
   # the scheduler's `Store.set_cancel_requested/1`); the summary row does not
@@ -143,7 +146,8 @@ defmodule EvoGit.AgentScheduler.InteractiveRoot do
          foreign_repos: []
        }}
 
-    match?({[true], _}, :ets.select(:evogit_agent_summary, [{pattern, [], [true]}], 1)) and
+    :ets.whereis(:evogit_agent_summary) != :undefined and
+      match?({[true], _}, :ets.select(:evogit_agent_summary, [{pattern, [], [true]}], 1)) and
       not ControlPlane.cancel_requested?(agent_id)
   end
 end
