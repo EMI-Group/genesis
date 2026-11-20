@@ -20,7 +20,7 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
   """
   def maybe_persist_state(socket) do
     state = %{
-      project: socket.assigns.active_project_path,
+      project: draft_project(socket) || socket.assigns.active_project_path,
       task_mode: socket.assigns.task_mode,
       selected_agent_id: socket.assigns.selected_agent_id,
       quality_level: socket.assigns[:quality_level],
@@ -59,12 +59,15 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
         socket.assigns
         |> model_selection_state()
         |> Map.put(:node, socket.assigns[:current_node_id] || "local")
+        |> Map.put(:project, draft_project(socket))
 
       push_event(socket, "persist_model_selection", state)
     else
       socket
     end
   end
+
+  defp draft_project(socket), do: get_in(socket.assigns, [:workbench_reconnect_params, "project"])
 
   @doc """
   Serializes only the three canonical model-spec fields, never the picker

@@ -532,90 +532,129 @@ const FilePicker = {
   }
 };
 
-// StatePersistence hook: saves/restores dashboard state via sessionStorage
+// StatePersistence hook: keeps the task form's draft with its node and project.
 const StatePersistence = {
   mounted() {
-    // Restore saved state from sessionStorage
-    const saved = sessionStorage.getItem('dashboard_state');
-    if (saved) {
-      try {
-        const state = JSON.parse(saved);
-        this.pushEvent("restore_state", state);
-        // Directly restore the prompt textarea value in the DOM since
-        // phx-update="ignore" prevents the server from setting it during re-renders
-        const promptEl = this.el.querySelector('[name="prompt"]');
-        if (promptEl && state.task_prompt) {
-          promptEl.value = state.task_prompt;
-        }
-      } catch (e) {}
-    }
+    this.restore();
 
-    // Listen for save requests from the server (still needed for task_mode changes, project switches, task starts)
-    this.handleEvent("persist_state", (state) => {
-      // The server no longer receives per-keystroke prompt updates (the
-      // task_prompt_change phx-change event was removed), so its task_prompt
-      // in the persist payload can be stale. The DOM is the source of truth
-      // for the prompt — override it before persisting. (The client-side
-      // input watcher below, persistFormState, is the prompt's persistence
-      // path; this override protects it from stale server pushes triggered
-      // by OTHER events, e.g. mode/model select changes.)
-      state.task_prompt = this.el.querySelector('[name="prompt"]')?.value || '';
-      sessionStorage.setItem('dashboard_state', JSON.stringify(state));
+    this.handleEvent("persist_state", state => {
+      const scope = this.scope();
+      if (!this.matches(state, scope)) return;
+      const prompt = this.el.querySelector('[name="prompt"]');
+      if (scope.project && !prompt) return;
+
+      // The ignored textarea owns the current prompt, including unsaved typing.
+      this.flush();
+      this.write(scope.key, {...state, task_prompt: prompt?.value || ''});
     });
 
-    // Picker-only updates must not replace the prompt or a pending node restore.
-    this.handleEvent("persist_model_selection", ({node, model_spec}) => {
-      if (node !== (this.el.dataset.nodeId || "local")) return;
-      const saved = sessionStorage.getItem('dashboard_state');
-      let existing = {};
-      // A malformed browser-stored JSON value cannot be merged; start fresh.
-      try { existing = JSON.parse(saved || '{}'); } catch (e) {}
-      if (saved && (existing.node || "local") !== node) return;
-      sessionStorage.setItem('dashboard_state', JSON.stringify({
-        ...existing, node, model_spec
-      }));
+    this.handleEvent("persist_model_selection", ({node, project, model_spec}) => {
+      const scope = this.scope();
+      if (!this.matches({node, project}, scope)) return;
+      const existing = this.read(scope.key);
+      if (existing && !this.matches(existing, scope)) return;
+
+      this.write(scope.key, {
+        ...(existing || this.saved(scope)), node, model_spec,
+        ...(scope.project ? {project: scope.project} : {})
+      });
     });
 
-    // Client-side form field watching — debounced persistence to sessionStorage
-    let debounceTimer;
-    const persistFormState = () => {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        const project = this.el.dataset.project || '';
-        const taskMode = this.el.dataset.taskMode || '';
-        // Merge with existing state to preserve server-managed fields (e.g. foreign_repos)
-        let existing = {};
-        try { existing = JSON.parse(sessionStorage.getItem('dashboard_state') || '{}'); } catch (e) {}
-        const state = Object.assign({}, existing, {
-          project: project,
-          task_mode: taskMode,
-          node: this.el.dataset.nodeId || "local",
+    this.handleEvent("clear_prompt", () => {
+      const scope = this.scope();
+      this.flush();
+      this.write(scope.key, {...this.saved(scope), node: scope.node, task_prompt: '',
+        ...(scope.project ? {project: scope.project} : {})});
+    });
+
+    const onFormChange = event => {
+      const name = event.target.getAttribute('name');
+      if (!['prompt', 'node_path', 'seeds', 'starting_commit', 'model_id'].includes(name)) return;
+
+      const scope = this.scope();
+      const legacyModel = this.el.querySelector('[name="model_id"]');
+      this.pending = {
+        scope,
+        fields: {
+          project: scope.project || this.el.dataset.project || '',
+          task_mode: this.el.dataset.taskMode || '',
+          node: scope.node,
           task_prompt: this.el.querySelector('[name="prompt"]')?.value || '',
           task_node_path: this.el.querySelector('[name="node_path"]')?.value || '',
           task_seeds: this.el.querySelector('[name="seeds"]')?.value || '',
           task_starting_commit: this.el.querySelector('[name="starting_commit"]')?.value || '',
-        });
-        const legacyModel = this.el.querySelector('[name="model_id"]');
-        if (legacyModel) state.selected_model_id = legacyModel.value;
-        sessionStorage.setItem('dashboard_state', JSON.stringify(state));
-      }, 300);
+          ...(legacyModel ? {selected_model_id: legacyModel.value} : {})
+        }
+      };
+      clearTimeout(this.saveTimer);
+      this.saveTimer = setTimeout(() => this.flush(), 300);
     };
 
-    // Watch all form fields for input events
-    this.el.addEventListener('input', (e) => {
-      const name = e.target.getAttribute('name');
-      if (['prompt', 'node_path', 'seeds', 'starting_commit'].includes(name)) {
-        persistFormState();
-      }
-    });
+    this.el.addEventListener('input', onFormChange);
+    this.el.addEventListener('change', onFormChange);
+  },
 
-    // Watch select elements for change events (model_id, etc.)
-    this.el.addEventListener('change', (e) => {
-      const name = e.target.getAttribute('name');
-      if (['model_id'].includes(name)) {
-        persistFormState();
-      }
-    });
+  updated() {
+    this.restore();
+  },
+
+  destroyed() {
+    this.flush();
+  },
+
+  scope() {
+    const node = this.el.dataset.nodeId || 'local';
+    const project = this.el.dataset.taskDraftProject || '';
+    const key = project ? 'dashboard_state:' + JSON.stringify([node, project]) : 'dashboard_state';
+    return {node, project, key};
+  },
+
+  matches(state, scope) {
+    return (state.node || 'local') === scope.node &&
+      (!scope.project || state.project === scope.project);
+  },
+
+  read(key) {
+    try {
+      const state = JSON.parse(sessionStorage.getItem(key));
+      return state && typeof state === 'object' && !Array.isArray(state) ? state : null;
+    } catch {
+      return null;
+    }
+  },
+
+  write(key, state) {
+    sessionStorage.setItem(key, JSON.stringify(state));
+  },
+
+  saved(scope) {
+    const state = this.read(scope.key) || (scope.project && this.read('dashboard_state'));
+    return state && this.matches(state, scope) ? state : null;
+  },
+
+  restore() {
+    const scope = this.scope();
+    const prompt = this.el.querySelector('[name="prompt"]');
+    if (scope.project && !prompt) return;
+
+    const restoreKey = JSON.stringify([scope.node, scope.key]);
+    if (restoreKey === this.restoreKey) return;
+    const previous = this.restoreKey;
+    this.flush();
+    this.restoreKey = restoreKey;
+
+    const state = this.saved(scope);
+    if (state) this.pushEvent("restore_state", state);
+    // On an in-place scope change, the ignored textarea may still contain the old draft.
+    if (prompt && (previous || state?.task_prompt)) prompt.value = state?.task_prompt || '';
+  },
+
+  flush() {
+    if (!this.pending) return;
+    const {scope, fields} = this.pending;
+    clearTimeout(this.saveTimer);
+    this.pending = null;
+    this.write(scope.key, {...this.saved(scope), ...fields});
   }
 };
 

@@ -3133,6 +3133,32 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:active_project] == nil
     end
 
+    test "restore_state stays with the project in the explicit task draft URL", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: 1}}")
+
+      render_hook(view, "restore_state", %{
+        "node" => "local",
+        "project" => Path.join(tmp_dir, "other-project"),
+        "task_prompt" => "another project's draft",
+        "task_starting_commit" => "foreign-commit"
+      })
+
+      assert assigns(view)[:active_project_path] == tmp_dir
+      assert assigns(view)[:task_prompt] == ""
+      assert assigns(view)[:task_starting_commit] == ""
+
+      render_hook(view, "restore_state", %{
+        "node" => "local",
+        "project" => tmp_dir,
+        "task_prompt" => "the selected project's draft"
+      })
+
+      assert assigns(view)[:task_prompt] == "the selected project's draft"
+    end
+
     test "remote open_project accepts a POSIX absolute path (cross-OS regression)", %{
       conn: conn
     } do

@@ -139,6 +139,7 @@ defmodule EvoDashWeb.ProjectsLive do
           phx-hook={unless @workbench_idle?, do: "StatePersistence"}
           data-workbench-compose={to_string(!@workbench_idle?)}
           data-project={workbench_project}
+          data-task-draft-project={@workbench_reconnect_params["project"]}
           data-task-mode={@task_mode}
           data-node-id={@current_node_id || "local"}
           class="flex flex-col min-h-full"
@@ -1200,16 +1201,11 @@ defmodule EvoDashWeb.ProjectsLive do
 
   @impl true
   def handle_event("restore_state", params, socket) do
-    # Per-node sessionStorage gate: the StatePersistence JS hook merges
-    # `node` (from #dashboard-root's data-node-id) into the persisted state.
-    # If the saved state belongs to a different node context (or an older
-    # session without the node key), skip restoring ALL persisted values so
-    # no task/project state leaks across nodes.
-    # Per-node storage gate: state persisted under one node context must never
-    # be restored in another. The StatePersistence JS hook always sends the
-    # `node` key (defaulting to "local"); a missing key is treated as "local"
-    # for backward compatibility with legacy callers.
-    if (params["node"] || "local") != (socket.assigns[:current_node_id] || "local") do
+    requested_project = socket.assigns.workbench_reconnect_params["project"]
+    same_node? = (params["node"] || "local") == (socket.assigns[:current_node_id] || "local")
+    same_project? = is_nil(requested_project) or params["project"] in [nil, requested_project]
+
+    if !same_node? or !same_project? do
       {:noreply, socket}
     else
       # Don't let restore_state overwrite a starting_commit that came from the URL
@@ -1260,11 +1256,9 @@ defmodule EvoDashWeb.ProjectsLive do
           StatePersistence.maybe_restore_task_mode(socket, params["task_mode"])
         end
 
-      # Restore project if we don't already have one active.
-      # Only restore project-specific assigns (node_path) when no project is
-      # active — otherwise the auto-detected values from detect_mode/1 should win.
+      # The URL owns project activation, including while a remote load is pending.
       socket =
-        if is_nil(socket.assigns.active_project) do
+        if is_nil(requested_project) and is_nil(socket.assigns.active_project) do
           socket =
             socket
             |> StatePersistence.maybe_restore_assign(:task_node_path, params["task_node_path"])
