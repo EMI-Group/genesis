@@ -1050,7 +1050,10 @@ defmodule EvoGit.RemoteConnectionTest do
       # :start_stderr (the start command fails and does NOT touch the marker),
       # :remote_config_exists? (the fake reports the remote
       # config.toml/credentials.toml as already present, so the
-      # :copying_config stage skips their upload), :probe_exit (the pre-flight
+      # :copying_config stage skips their upload), :test_f_exit (the
+      # `test -f` config-existence probe ANSWERS with this exit status instead
+      # of a yes/no — 255 makes it ssh's transport code, so the probe is
+      # retried once and then fails), :probe_exit (the pre-flight
       # `uname -s && uname -m` probe exits non-zero, simulating an unreachable
       # remote), :scp_exit (the fake scp exits non-zero, simulating a failed
       # upload), :staging_exit / :staging_stderr (the one-shot `tar -xJf`
@@ -1231,8 +1234,10 @@ defmodule EvoGit.RemoteConnectionTest do
             *"curl"*|*"wget"*) exit 0 ;;
             # The only `test -f` command issued is the config-existence check
             # (remote_file_exists?) — :remote_config_exists? makes the fake
-            # report the remote already has the file.
-            *"test -f"*) printf '__CONFIG_EXISTS__\n'; exit 0 ;;
+            # report the remote already has the file, while :test_f_exit makes
+            # the probe itself FAIL (a three-state answer: `{:error, _}` is not
+            # "the remote has nothing").
+            *"test -f"*) printf '__CONFIG_EXISTS__\n'; exit __TEST_F_EXIT__ ;;
             *"mkdir"*|*"tar"*|*"chmod"*) exit 0 ;;
             *) exit 0 ;;
           esac
@@ -1283,6 +1288,10 @@ defmodule EvoGit.RemoteConnectionTest do
           |> String.replace(
             "__CONFIG_EXISTS__",
             if(Keyword.get(opts, :remote_config_exists?, false), do: "yes", else: "no")
+          )
+          |> String.replace(
+            "__TEST_F_EXIT__",
+            Integer.to_string(Keyword.get(opts, :test_f_exit, 0))
           )
 
         ssh_path = Path.join(tmp, "ssh")
@@ -1491,6 +1500,24 @@ defmodule EvoGit.RemoteConnectionTest do
         File.write!(Path.join(config_dir, "config.toml"), "[node]\ncookie = \"#{cookie}\"\n")
         # Config reads come from the RAM snapshot; a direct write needs the reload.
         EvoGit.Config.Cache.reload(dir: config_dir)
+      end
+
+      # Makes the LOCAL `config.toml` path unwritable in a uid-independent
+      # way: the config DIRECTORY itself stays usable (the connection target
+      # store persists `remote_connections.toml` beside it, and the config
+      # layer reads a `:missing` file as defaults), while a DIRECTORY sits at
+      # `config.toml` so `File.write/2` answers `{:error, :eisdir}` — exactly
+      # the persist failure `ensure_cookie/0` must report. A chmod-based
+      # fixture would silently pass when the suite runs as root; this cannot.
+      # The directory is removed in `on_exit`.
+      defp with_blocked_config_toml(fun) do
+        config_path = EvoGit.Config.config_path()
+        File.mkdir_p!(Path.dirname(config_path))
+        File.mkdir_p!(config_path)
+
+        on_exit(fn -> File.rm_rf!(config_path) end)
+
+        fun.(config_path)
       end
 
       # Like write_test_config_cookie/1 but additionally carries an
@@ -2145,6 +2172,95 @@ defmodule EvoGit.RemoteConnectionTest do
             refute File.exists?(Path.join(scp_dir, "credentials.toml"))
 
             cleanup_connections()
+          end
+        )
+      end
+
+      test "a FAILING config-existence probe skips the copy and logs a warning" do
+        ensure_registry_and_supervisor()
+        envs = put_test_env(remote_ssh_retry_backoff_ms: 0)
+        on_exit(fn -> restore_test_env(envs) end)
+
+        # A local config.toml makes the :copying_config stage reach its
+        # `test -f` existence probe. The probe is THREE-STATE on purpose:
+        # `{:ok, false}` is the only answer that licenses an upload, so a
+        # transport failure (ssh's own 255) must skip the copy rather than
+        # clobber whatever the remote has.
+        write_test_config_cookie("known-cookie")
+
+        with_fake_ssh_tools(
+          [os: "Linux", test_f_exit: 255],
+          fn %{log: log, tarball: tarball, scp_dir: scp_dir} ->
+            target_id = save_test_target(local_binary_path: tarball)
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+            log_output =
+              ExUnit.CaptureLog.capture_log(fn ->
+                # The config copy is best-effort: an undecidable probe never
+                # fails the bootstrap (the instance boots without config).
+                assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+              end)
+
+            # ssh's 255 is the transport code, so the probe is retried ONCE —
+            # and both attempts fail. Exactly one file was probed (only
+            # config.toml exists locally).
+            assert count_commands(log, "test -f") == 2
+
+            # The SKIP: the tarball did land (scp ran), but no config payload
+            # was uploaded over the file we could not inspect.
+            assert File.exists?(Path.join(scp_dir, "genesis_server.tar.xz"))
+            refute File.exists?(Path.join(scp_dir, "config.toml"))
+
+            # The WARNING: said out loud, naming the file it refused to clobber.
+            assert log_output =~ "could not check for existing remote file"
+            assert log_output =~ "$HOME/.config/genesis/config.toml"
+            assert log_output =~ "NOT overwriting it"
+
+            cleanup_connections()
+          end
+        )
+      end
+
+      test "a cookie-persist failure answers {:error, {:cookie_persist_failed, _}} and floors to phase :error" do
+        ensure_registry_and_supervisor()
+        envs = put_test_env(remote_ssh_retry_backoff_ms: 0)
+        on_exit(fn -> restore_test_env(envs) end)
+
+        # No persisted [node] cookie + an unwritable `config.toml` path: the
+        # config copy is skipped (the fake reports the remote already has the
+        # file) and `ensure_cookie/0` reaches its persist arm.
+        with_fake_ssh_tools(
+          [os: "Linux", remote_config_exists?: true],
+          fn %{tarball: tarball} ->
+            target_id = save_test_target(local_binary_path: tarball)
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+            with_blocked_config_toml(fn config_path ->
+              assert {:error, {:cookie_persist_failed, reason}} =
+                       EvoGit.RemoteConnection.bootstrap(target_id)
+
+              # A filesystem term, NOT a schema/validation error list — the
+              # persist is what failed.
+              assert reason == :eisdir
+
+              # The failure travels the ordinary error path (never a crash):
+              # the state is floored to :error with the readable reason, and
+              # that state is BROADCAST on the documented topic.
+              assert %{phase: :error, bootstrap_stage: nil, last_error: last_error} =
+                       EvoGit.RemoteConnection.status(target_id)
+
+              assert last_error =~ "cookie_persist_failed"
+              assert last_error =~ "eisdir"
+
+              assert_receive {:remote_connection_status, ^target_id,
+                              %{phase: :error, last_error: ^last_error}},
+                             2_000
+
+              # Nothing was written through the blocked path.
+              assert File.dir?(config_path)
+
+              cleanup_connections()
+            end)
           end
         )
       end
