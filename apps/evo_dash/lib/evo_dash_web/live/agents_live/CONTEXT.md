@@ -53,7 +53,7 @@ Each result is stale-guarded on its monotonic counter (`@load_generation` / `@re
 The loader seams (`:agents_list_runner` / `:agents_config_runner` via `LoadData`, `:agents_commit_graph_runner`) are resolved AT SPAWN TIME inside the task, so tests can stub them.
 `ThresholdCache.fetch/3` runs ONLY inside those spawned tasks (never in the LiveView process) and has no flag of its own to wedge.
 Every loading/error assign clears on its result path: `@agents_loading` + `@agents_error` (page load), `@commit_graph_loading` + `@commit_graph_error` (commit-graph fetch).
-A failed page load keeps the last good tree, clears `@agents_loading` and records `@agents_error`, which the template renders as a compact inline banner (`#agents-load-error`, `rounded-lg border border-error/30 bg-error/5`) with a Retry button (`#agents-load-retry`, `phx-click="retry_agents_load"`).
+A failed page load keeps the last good tree, clears `@agents_loading` and records `@agents_error`, which `EvoDashWeb.AgentsLive.TreePanel` renders as a compact inline banner (`#agents-load-error`, `rounded-lg border border-error/30 bg-error/5`) with a Retry button (`#agents-load-retry`, `phx-click="retry_agents_load"`).
 `retry_agents_load` clears `@agents_error` and re-runs `Loader.start_page_load/1`; there is NO polling and NO auto-retry timer, and `@agents_error` is cleared whenever a load starts, on any successful load, and on a node switch.
 
 ## Left-Panel View Switcher & Commit-History (Temporal) View
