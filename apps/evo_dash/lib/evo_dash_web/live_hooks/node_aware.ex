@@ -795,7 +795,8 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   If the target exists but is not yet connected, the context is "pending" —
   data comes from the local node but `@current_node_id` is preserved so that
   `handle_connection_status/2` can re-resolve once the connection completes.
-  Unknown ids fall back to local.
+  Unknown ids fall back to local unless `:preserve_unresolved?` is enabled.
+  Pages that open a saved project or session use the retained id to gate local operations.
 
   The sidebar reload this triggers is ASYNC (spawn → `:node_aware_active_tasks`
   message → `handle_tasks_result/2` stale-guard — see

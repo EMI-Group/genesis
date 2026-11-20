@@ -91,6 +91,7 @@ defmodule EvoDashWeb.HomeLive do
       remote_targets={assigns[:remote_targets] || []}
       connection_statuses={assigns[:connection_statuses] || %{}}
       workbench_project={(@workspace && @workspace.path) || @draft_project}
+      workbench_git_project={@workspace && @workspace.path}
       workbench_draft={assigns[:workbench_draft]}
       workbench_draft_project={@draft_project}
       current_node_name={@current_node_name}
