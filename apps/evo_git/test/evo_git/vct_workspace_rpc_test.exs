@@ -191,9 +191,9 @@ defmodule EvoGit.VCTWorkspaceRPCTest do
       assert RemoteAPI.workspaces_for("vct:///projects/anything") == []
     end
 
-    test "workspace_members/1 degrades to {:error, :not_found}" do
+    test "workspace_members/1 degrades to {:error, :vct_unavailable}" do
       assert RemoteAPI.workspace_members("vct:///workspaces/anything") ==
-               {:error, :not_found}
+               {:error, :vct_unavailable}
     end
 
     test "create_workspace/3 degrades to {:error, :vct_unavailable}" do
@@ -241,7 +241,7 @@ defmodule EvoGit.VCTWorkspaceRPCTest do
 
       assert RemoteNode.workspaces(node()) == []
       assert RemoteNode.workspaces_for(node(), "vct:///projects/x") == []
-      assert RemoteNode.workspace_members(node(), "Group") == {:error, :not_found}
+      assert RemoteNode.workspace_members(node(), "Group") == {:error, :vct_unavailable}
 
       assert RemoteNode.create_workspace(node(), "Group", [], []) ==
                {:error, :vct_unavailable}

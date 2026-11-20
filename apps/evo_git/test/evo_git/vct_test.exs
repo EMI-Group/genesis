@@ -757,7 +757,7 @@ defmodule EvoGit.VCTTest do
       assert VCT.search("x") == []
       assert VCT.mount_for_path(Path.join(tmp, "repo")) == nil
       assert VCT.vct_path_for(Path.join(tmp, "repo"), "./src") == nil
-      assert VCT.resolve("vct:///projects/foo") == {:error, :not_found}
+      assert VCT.resolve("vct:///projects/foo") == {:error, :vct_unavailable}
       assert VCT.global_context() == ""
       assert is_binary(VCT.global_context_path())
       assert VCT.mount(Path.join(tmp, "repo")) == {:error, :vct_unavailable}
