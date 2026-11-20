@@ -36,7 +36,7 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
   - `pending_sub_agents` — `MapSet` of subagent IDs still running
   - `sub_agent_results` — `%{index => result}` accumulated subagent results by original spec index
   - `sub_agent_indices` — `%{agent_id => index}` mapping from subagent ID to original spec index
-  - `foreign_repo_commits` — `%{repo_id => commit_sha}` latest known commit per foreign repo for this agent's subtree
+  - `foreign_repo_commits` — `%{repo_id => commit_sha}` latest known commit per foreign repo for this agent's subtree (string repo IDs and commit SHAs)
   - `crash_commit` — sha of the SALVAGED state of the previous (crashed) attempt: the
     `WorktreeManager` committed the crashed run's dirty worktree and kept that commit
     reachable, and a crash retry bases its fresh worktree on it so the resumed agent
@@ -150,7 +150,7 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
           pending_sub_agents: MapSet.t(pos_integer()),
           sub_agent_results: %{optional(non_neg_integer()) => term()},
           sub_agent_indices: %{optional(pos_integer()) => non_neg_integer()},
-          foreign_repo_commits: %{atom() => String.t()},
+          foreign_repo_commits: %{optional(String.t()) => String.t()},
           crash_commit: String.t() | nil,
           crash_reason: term()
         }
