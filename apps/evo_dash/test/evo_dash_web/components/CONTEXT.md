@@ -144,6 +144,8 @@ Every test builds a marker-bearing oversized blob, renders the component, and as
 ## `custom_tools_panel_test.exs` (2 describes / 22 tests)
 
 `custom_tools_panel/1` (13) — renders the `EvoGit.CustomTools.status/0` value through the shared `CardShell`: ok entries (atom- AND string-keyed) render name/module/file with a `badge-ghost` "Read-only" or `badge-warning` "Write" badge; error entries render file (nil → gettext "unknown file") + reason; the empty state ("No custom tools loaded") renders ONLY for `%{ok: [], errors: []}`-shaped statuses and is MUTUALLY EXCLUSIVE with the `{:error, _}` red banner ("Custom Tools Unavailable" + a `<pre>` with `inspect(reason)`); the Refresh `<button phx-click="reload_custom_tools">` always renders and carries `disabled` (Floki parses it as `["disabled"]`) when `loading: true`; totality on `nil`, non-list `ok`/`errors`, non-map entries, missing `errors` key.
+Error-entry normalization coverage is limited to an atom-keyed file/reason row and an explicit nil file; the string-keyed fixture has an empty errors list, and the malformed collection fixture uses `errors: %{}` rather than `errors: [%{}]`.
+There is no render regression for an empty-map error entry, missing error-entry keys, string-keyed error entries, non-map error-list members or complex file/reason values.
 `custom_tool_names/1` (9) — order-preserving extraction, `{:error,_}`/`nil`/bare-list → `[]`, blank + complex entries dropped, dedup, atoms/integers/floats stringified (`%{name: 1}` → `"1"`).
 
 ## `custom_agents_editor_test.exs` (2 describes / 7 tests)
