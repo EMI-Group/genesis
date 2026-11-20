@@ -152,6 +152,16 @@ A repo-less run (no repository) and a `persistent_state: false` task never ancho
 - `with_migration_lock/1` returns `:aborted` when the `:global` lock is not granted and `migrate_synchronized!/0` ignores it, so a contended boot can silently skip migrations.
 - The 2-connection pool is shared by the writer and every caller-side read (`load/3` in the session, `pause_commit/2` in the scheduler's dispatch path, `roster/2` in `TaskRegistry`), and those reads run INSIDE those GenServers.
 
+## Known Issues — Query & Write Amplification
+
+- Retention `prune/2` issues two DELETEs per expired row inside ONE writer transaction and has no batch limit (`store.ex:639-660`), so a post-downtime backlog of expired runs holds the single writer (and every checkpoint) for the whole pass.
+- `delete_tasks/2` runs two statements per task id inside one transaction (`store.ex:372-384`), so clearing many finished tasks costs 2N statements.
+- `max_agent_id/1` is `SELECT MAX(agent_id)` with no index on `agent_id` (the PK leads with `task_id`), i.e. a full scan at scheduler boot behind a 2 s offload budget (`store.ex:486-497`).
+- `roster/2` selects every column (including the `redispatch` blob and `objective`) and eagerly JSON-decodes each row (`store.ex:462-477`, `record.ex:146-150`), and no index provides its `depth ASC, agent_id ASC` order; restart classification issues one such read PER orphaned task (`task_registry.ex:2461`).
+- Every checkpoint supplies all 34 scalar fields, so `redispatch`/`objective` are Jason-encoded and all columns rewritten each turn although the store only touches supplied keys (`agent/session/persistence.ex:103-144`, `record.ex:132-140`).
+- `agent_states_status_completed_at_index` is indexed on a column no query filters (`store.ex:530`), yet every `mark_done` maintains it (migration `000001_create_agent_state.exs:57-60`).
+- `delete_done_children/4` reads the ids then builds a per-call IN list (`store.ex:571-614`), so its statement shape varies per batch.
+
 ## Notes for Agents
 
 - Never add a second writer: the server's single process is what guarantees strict checkpoint ordering (a later `:append` must see the earlier `message_count`).
