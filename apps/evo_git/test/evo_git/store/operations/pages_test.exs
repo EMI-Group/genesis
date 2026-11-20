@@ -577,44 +577,42 @@ defmodule EvoGit.Store.Operations.PagesTest do
     end
   end
 
-  # ── Query plan: no blob columns, no temp B-tree ─────────────────────────
+  # ── Query plan: ONE statement, window count, no blob columns ────────────
 
   describe "query plans" do
-    test "the page SELECT reads no blob column and ORDER BY is index-served" do
+    test "the page SELECT is ONE statement carrying its own window count" do
       repo = start_repo!(:plan)
       for i <- 1..40, do: put_timed!(repo, "plan-#{i}", i)
 
       statements = capture_statements(repo, fn -> Pages.select_tasks_page(repo, limit: 10) end)
 
-      assert length(statements) == 2,
-             "expected the COUNT + page SELECT, captured: #{inspect(statements)}"
+      # The page is ONE statement: the summary projection plus a window count,
+      # so the filter predicate is evaluated once and `total` describes exactly
+      # the row set the page is cut from.
+      assert length(statements) == 1,
+             "expected the page SELECT alone, captured: #{inspect(statements)}"
 
-      # No statement that feeds the page references a heavy column.
-      for {sql, _params} <- statements do
-        for blob <- ["result", "logs", "usage"] do
-          refute String.contains?(sql, blob),
-                 "page SQL must not read #{blob}: #{sql}"
-        end
+      [{page_sql, page_params}] = statements
+
+      assert page_sql =~ ~r/count\(\*\) OVER \(\)/,
+             "expected the page statement to carry a window count, got: #{page_sql}"
+
+      # …and that statement still references no heavy column.
+      for blob <- ["result", "logs", "usage"] do
+        refute String.contains?(page_sql, blob),
+               "page SQL must not read #{blob}: #{page_sql}"
       end
 
-      page_statement =
-        Enum.find(statements, fn {sql, _} -> String.contains?(sql, "ORDER BY") end) ||
-          flunk("no ORDER BY statement captured: #{inspect(statements)}")
+      assert String.contains?(page_sql, "ORDER BY")
 
-      plan = plan_text(repo, page_statement)
+      # The honest trade of the window count: SQLite must see EVERY matching row
+      # to compute it, so `ORDER BY started_at DESC` sorts in a TEMP B-TREE
+      # instead of walking `idx_tasks_started_at` (see the `Pages` moduledoc —
+      # the query is deliberately not weakened to recover an index-served sort).
+      plan = plan_text(repo, {page_sql, page_params})
 
-      assert plan =~ "idx_tasks_started_at",
-             "expected the started_at index to serve ORDER BY, got: #{plan}"
-
-      refute plan =~ "TEMP B-TREE",
-             "ORDER BY must not sort in a temp B-tree, got: #{plan}"
-
-      # The COUNT twin is index-served too (no sort at all).
-      count_statement =
-        Enum.find(statements, fn {sql, _} -> String.contains?(sql, "count(") end) ||
-          flunk("no COUNT statement captured: #{inspect(statements)}")
-
-      refute plan_text(repo, count_statement) =~ "TEMP B-TREE"
+      assert plan =~ "TEMP B-TREE",
+             "expected the window count to sort in a temp B-tree, got: #{plan}"
     end
 
     test "get_task_lite and get_task select the SAME task columns (no archive column exists)" do
