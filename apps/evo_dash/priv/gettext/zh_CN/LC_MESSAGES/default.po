@@ -8521,3 +8521,302 @@ msgstr "处理中…"
 #, elixir-autogen, elixir-format
 msgid "assistant"
 msgstr "助手"
+
+msgid "Close history"
+msgstr "关闭历史侧栏"
+
+msgid "Close tab"
+msgstr "关闭标签"
+
+msgid "Connect to see this project's history."
+msgstr "连接后即可查看此项目的历史。"
+
+msgid "Could not load history"
+msgstr "无法加载历史记录"
+
+msgid "Could not load projects"
+msgstr "无法加载项目"
+
+msgid "History type"
+msgstr "历史类型"
+
+msgid "New conversation"
+msgstr "新建助手会话"
+
+msgid "New task"
+msgstr "新建任务"
+
+msgid "No activity in this view."
+msgstr "暂无记录"
+
+msgid "Open tabs"
+msgstr "已打开的标签"
+
+msgid "Project history"
+msgstr "项目历史"
+
+msgid "Workspace"
+msgstr "工作区"
+
+msgid "Open project"
+msgstr "打开项目"
+
+msgid "Could not add project. Try again."
+msgstr "无法添加项目，请重试。"
+
+msgid "Accent Color"
+msgstr "强调色"
+
+msgid "Language"
+msgstr "语言"
+
+msgid "Search history"
+msgstr "搜索历史"
+
+msgid "Theme"
+msgstr "主题"
+
+msgid "These preferences apply to this browser across all Genesis connections."
+msgstr "这些偏好保存在当前客户端，切换项目或实例时仍然生效。"
+
+msgid "Use instance default"
+msgstr "使用实例默认值"
+
+msgid "A directory with this name already exists. Open it as an existing project."
+msgstr "同名目录已存在，可从「打开已有项目」进入。"
+
+msgid "Connect this Genesis server to browse its directories."
+msgstr "连接这台 Genesis 服务器后即可浏览目录。"
+
+msgid "Connecting…"
+msgstr "连接中…"
+
+msgid "Could not read this directory on the selected server."
+msgstr "无法读取所选服务器上的目录。"
+
+msgid "Enter a path"
+msgstr "输入路径"
+
+msgid "Enter a project name without path separators."
+msgstr "请输入项目名称，名称中不能包含路径分隔符。"
+
+msgid "Genesis servers"
+msgstr "Genesis 服务器"
+
+msgid "Home directory"
+msgstr "主目录"
+
+msgid "No directory selected"
+msgstr "未选择目录"
+
+msgid "No subdirectories"
+msgstr "没有子目录"
+
+msgid "Open Existing Project"
+msgstr "打开已有项目"
+
+msgid "Parent directory"
+msgstr "上级目录"
+
+msgid "Permission denied for this directory."
+msgstr "没有权限访问或写入此目录。"
+
+msgid "Project name"
+msgstr "项目名称"
+
+msgid "Run on"
+msgstr "运行于"
+
+msgid "Client settings"
+msgstr "客户端"
+
+msgid "Server settings"
+msgstr "服务端"
+
+msgid "Settings server"
+msgstr "适用服务器"
+
+msgid "No projects"
+msgstr "无任何项目"
+
+msgid "No window selected"
+msgstr "无选中窗口"
+
+msgid "Settings categories"
+msgstr "设置分类"
+
+msgid "Commit unavailable"
+msgstr "提交不可用"
+
+msgid "This commit’s changes could not be loaded."
+msgstr "无法加载该提交的变更。"
+
+msgid "No changed files."
+msgstr "没有变更文件。"
+
+msgid "No commits to review."
+msgstr "没有可审查的提交。"
+
+msgid "No agent report recorded."
+msgstr "此任务没有记录智能体报告。"
+
+#, elixir-autogen
+msgid "Clear filters"
+msgstr "清除筛选"
+
+#, elixir-autogen
+msgid "Monitor tool calls and background jobs on this node."
+msgstr "查看此节点上的工具调用与后台任务。"
+
+#, elixir-autogen, elixir-format
+msgid "Process details: %{command}"
+msgstr "进程详情：%{command}"
+
+#, elixir-autogen
+msgid "Process status"
+msgstr "进程状态"
+
+#, elixir-autogen
+msgid "Show finished processes"
+msgstr "查看已结束的进程"
+
+#, elixir-autogen, elixir-format
+msgid "Signal %{signal}"
+msgstr "发送 %{signal} 信号"
+
+msgid "Show more diff context"
+msgstr "显示更多差异上下文"
+
+msgid "Task actions"
+msgstr "任务操作"
+
+#, elixir-autogen
+msgid "Dashboard"
+msgstr "仪表盘"
+
+#, elixir-autogen
+msgid "Finished processes"
+msgstr "已结束"
+
+msgid "Project Git"
+msgstr "项目 Git"
+
+msgid "Git is unavailable on the selected server."
+msgstr "所选服务器的 Git 状态暂不可用。"
+
+msgid "Git operation failed. Refresh and try again."
+msgstr "Git 操作失败，请刷新后重试。"
+
+msgid "Conflicts"
+msgstr "冲突"
+
+msgid "Staged"
+msgstr "已暂存"
+
+msgid "Unstaged"
+msgstr "未暂存"
+
+msgid "Untracked"
+msgstr "未跟踪"
+
+msgid "Local branch"
+msgstr "本地分支"
+
+msgid "Remote branch"
+msgstr "远端分支"
+
+msgid "Refresh Git status"
+msgstr "刷新 Git 状态"
+
+msgid "Close Git panel"
+msgstr "关闭 Git 面板"
+
+msgid "Connect to see the project's Git status."
+msgstr "连接服务器后可查看项目 Git 状态。"
+
+msgid "Loading Git status…"
+msgstr "正在读取 Git 状态…"
+
+msgid "Detached HEAD"
+msgstr "分离的 HEAD"
+
+msgid "Behind upstream"
+msgstr "落后于上游"
+
+msgid "Ahead of upstream"
+msgstr "领先于上游"
+
+msgid "Git views"
+msgstr "Git 视图"
+
+msgid "Changes"
+msgstr "改动"
+
+msgid "Branches"
+msgstr "分支"
+
+msgid "Working tree is clean."
+msgstr "工作区没有未提交的改动。"
+
+msgid "Close diff"
+msgstr "关闭差异预览"
+
+msgid "Diff"
+msgstr "差异"
+
+msgid "Diff preview truncated."
+msgstr "差异预览已截断。"
+
+msgid "Search branches"
+msgstr "搜索分支"
+
+msgid "Check out tracking branch"
+msgstr "检出跟踪分支"
+
+msgid "Switch project branch"
+msgstr "切换项目分支"
+
+msgid "Start task from branch"
+msgstr "从此分支新建任务"
+
+msgid "No matching branches."
+msgstr "没有匹配的分支。"
+
+msgid "Current"
+msgstr "当前"
+
+msgid "Search to narrow the branch list."
+msgstr "搜索以缩小分支范围。"
+
+msgid "This project does not have a Git repository."
+msgstr "该项目目录尚未初始化 Git 仓库。"
+
+msgid "Show more files"
+msgstr "显示更多文件"
+
+msgid "Resize project sidebar"
+msgstr "调整左侧项目栏宽度"
+
+msgid "Resize right sidebar"
+msgstr "调整右侧面板宽度"
+
+msgid "No commits on this branch."
+msgstr "此分支尚无提交。"
+
+msgid "Show more commits"
+msgstr "显示更多提交"
+
+msgid "No diff to display."
+msgstr "没有可显示的差异。"
+
+msgid "Configure a model"
+msgstr "配置模型"
+
+msgid "Loading models…"
+msgstr "正在加载模型…"
+
+msgid "Configure a model on this server before launching a task."
+msgstr "请先在此服务器配置模型，再启动任务。"
+
+msgid "Projects and workspaces"
+msgstr "项目与工作区"

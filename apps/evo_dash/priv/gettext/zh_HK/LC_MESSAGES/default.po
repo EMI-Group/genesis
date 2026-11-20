@@ -8521,3 +8521,53 @@ msgstr "處理中…"
 #, elixir-autogen, elixir-format
 msgid "assistant"
 msgstr "助理"
+
+msgid "No projects"
+msgstr "無任何專案"
+
+msgid "No window selected"
+msgstr "未選取視窗"
+
+msgid "Settings categories"
+msgstr "設定分類"
+
+#, elixir-autogen
+msgid "Clear filters"
+msgstr "清除篩選"
+
+#, elixir-autogen
+msgid "Monitor tool calls and background jobs on this node."
+msgstr "查看此節點上的工具呼叫與後台任務。"
+
+#, elixir-autogen, elixir-format
+msgid "Process details: %{command}"
+msgstr "進程詳細資料：%{command}"
+
+#, elixir-autogen
+msgid "Process status"
+msgstr "進程狀態"
+
+#, elixir-autogen
+msgid "Show finished processes"
+msgstr "查看已結束的進程"
+
+#, elixir-autogen, elixir-format
+msgid "Signal %{signal}"
+msgstr "傳送 %{signal} 訊號"
+
+msgid "Task actions"
+msgstr "工作操作"
+
+#, elixir-autogen
+msgid "Dashboard"
+msgstr "儀表板"
+
+#, elixir-autogen
+msgid "Finished processes"
+msgstr "已結束"
+
+msgid "Projects and workspaces"
+msgstr "專案與工作區"
+
+msgid "Settings server"
+msgstr "適用伺服器"
