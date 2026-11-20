@@ -68,3 +68,9 @@ Primitives in this directory:
 - Workspaces are ONE level deep by construction: a workspace member may not be a workspace point, so nesting and cycles are unrepresentable, and a workspace is never expanded into its members by any VCT API.
 - A workspace has no OS path and no worktree, so it is NEVER an execution path: `EvoGit.TaskRegistry.RuntimeOpts.admit_task_path/1` refuses `vct:///workspaces/…` with `{:error, :workspace_not_executable}` (and any other `vct:` point with `:vct_point_not_executable`) at task admission, and `build_common_runtime_opts/3` raises `ArgumentError` for a direct caller.
 - Isolated instances use a unique `:name` + `:data_dir` + `:store` (an isolated `EvoGit.Store` owning its own database), so a test's mounts never reach the app-global table.
+## Known Issues
+- "Is this a workspace?" has TWO answers: `EvoGit.VCT.Mount.workspace?/1` reads `kind`, while `EvoGit.VCT.Table.workspace_point?/1` (used by `workspace_mounts/1` and `member_mount/2`) reads the POINT — and `EvoGit.VCT.workspace_row/2` uses the `kind` test while `Table.member_mount/2` uses the point test, so a hand-written row where the two disagree answers `:not_a_workspace` from `workspace_members/1` and `:nested` from member resolution.
+- `EvoGit.VCT.Mount.git?/1` has no caller, and `kind: "git"` is a storage-class label shared by PROJECT and RESERVED mounts, so `kind` never expresses the project/workspace/reserved split.
+- `EvoGit.VCT.Table.workspace_mount?/1` is a pure alias of `workspace_point?/1` kept for terminology parity (no production caller).
+- `EvoGit.VCT.Table.display_name/1`'s `""` clause is unreachable: `path_basename/1` normalizes a blank path to `"/"`, which returns `"root"`.
+- Three private `canonical_point/1` copies exist (`../vct.ex`, `table.ex`, `mount.ex`) with two contracts: the first two return `{:ok, point} | {:error, :invalid_point}`, `Mount`'s returns the point or raises.
