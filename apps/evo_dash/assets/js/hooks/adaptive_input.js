@@ -59,6 +59,8 @@
 const AdaptiveInput = {
   mounted() {
     this._inputHandler = () => this._apply();
+    // The single pending deferred-apply frame (see _scheduleApply).
+    this._frame = null;
 
     this.el.addEventListener("input", this._inputHandler);
 
@@ -99,7 +101,7 @@ const AdaptiveInput = {
     // element so scrollHeight/lineHeight are accurate. StatePersistence may
     // restore a saved prompt into the textarea on mount, so measure even
     // before any user input.
-    requestAnimationFrame(() => this._apply());
+    this._scheduleApply();
 
     // Keyboard-aware visible height (mobile): sync --app-vh from
     // window.visualViewport so the @media (max-width: 640px) overrides in
@@ -134,11 +136,28 @@ const AdaptiveInput = {
   updated() {
     // The textarea value may have changed via LiveView morphdom or
     // StatePersistence restore — re-measure and re-derive the layout.
-    requestAnimationFrame(() => this._apply());
+    this._scheduleApply();
+  },
+
+  // ONE deferred apply per frame. A broadcast burst (several patches landing in
+  // consecutive frames, each calling updated()) would otherwise queue a full
+  // measure + layout pass per patch for the SAME element; coalescing onto the
+  // one pending frame runs the identical pass once. Measurement must happen
+  // AFTER layout, hence the frame — this is the only scheduling seam.
+  _scheduleApply() {
+    if (this._frame != null) return;
+    this._frame = requestAnimationFrame(() => {
+      this._frame = null;
+      this._apply();
+    });
   },
 
   destroyed() {
     this.el.removeEventListener("input", this._inputHandler);
+    if (this._frame != null) {
+      cancelAnimationFrame(this._frame);
+      this._frame = null;
+    }
     if (this._layoutObserver) this._layoutObserver.disconnect();
     if (this._placeholderObserver) this._placeholderObserver.disconnect();
     if (this._syncAppVh && window.visualViewport) {

@@ -25,7 +25,18 @@
 // There is NO phx-click on the hook element and no stopPropagation anywhere:
 // the LiveView-bound clicks inside the panel (model item, provider item) must
 // reach the server untouched.
-const CLOSE_FALLBACK_MS = 200;
+//
+// The CLOSE itself is not this hook's private machinery: it delegates to the
+// shared motion foundation (./disclosure_motion.js), the one place that owns
+// "wait for the panel's own exit before releasing it" — idempotent one-close-
+// per-root, target-verified animationend, the bounded fallback, same-task
+// completion under reduced motion and the attribute + `open` release.
+import {closeAnimated as closeAnimatedShared} from "./disclosure_motion.js";
+
+// The exit keyframes in css/app.css are gated on this attribute
+// (details.capsule[data-capsule-state="closing"]), so the shared helper is
+// told to own exactly it.
+const CAPSULE_STATE_ATTR = "data-capsule-state";
 
 const CapsulePanel = {
   mounted() {
@@ -34,8 +45,6 @@ const CapsulePanel = {
     // the `open` attribute cannot silently close a panel the user has open.
     this.openRequested = this.el.open;
     this.view = this.el.dataset.capsuleView || "model";
-    this._closeTimer = null;
-    this._closeAnimHandler = null;
 
     // Seed the view attribute so a view-owning capsule never renders with
     // every .capsule-view hidden (a no-op when the server already wrote it).
@@ -112,72 +121,52 @@ const CapsulePanel = {
     this.el.removeEventListener("click", this._clickHandler);
     this.el.removeEventListener("toggle", this._toggleHandler);
 
-    if (this._closeTimer) {
-      clearTimeout(this._closeTimer);
-      this._closeTimer = null;
+    // Release a running exit (its listener and its timer) with the element — it
+    // is leaving the DOM, so the close simply completes now (fallbackMs 0 makes
+    // the shared helper skip the wait; a close already in flight completes
+    // synchronously and still runs its completion callbacks). Without this a
+    // mid-exit teardown would leave data-capsule-state="closing" behind and the
+    // panel would never be released.
+    if (this.el.dataset.capsuleState === "closing") {
+      closeAnimatedShared(this.el, {
+        panel: this.el.querySelector(".capsule-panel"),
+        attr: CAPSULE_STATE_ATTR,
+        fallbackMs: 0
+      });
     }
-    const panel = this.el.querySelector(".capsule-panel");
-    if (panel && this._closeAnimHandler) {
-      panel.removeEventListener("animationend", this._closeAnimHandler);
-    }
-    this._closeAnimHandler = null;
   },
 
-  // The one close path: native <details> cannot animate its exit, so the hook
-  // plays the CSS exit keyframes (attribute-gated) and only then removes
-  // `open`.
+  // The one close path: native <details> cannot animate its exit, so the exit
+  // is played first (attribute-gated) and `open` is removed only once it
+  // finished — all of it delegated to the shared motion foundation.
   closeAnimated() {
     if (!this.el.open) return;
     // Re-entrancy guard: a second outside press / Escape during the exit
-    // animation must not restart it (and must not re-arm the timer).
+    // animation must not restart it.
     if (this.el.dataset.capsuleState === "closing") return;
 
     // Drop the intent FIRST — everything downstream (toggle events,
     // updated()) must agree that this panel is meant to be closed.
     this.openRequested = false;
-    this.el.dataset.capsuleState = "closing";
 
-    // Reduced motion: no exit animation at all, close on the spot.
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      this._finishClose();
-      return;
-    }
-
-    const panel = this.el.querySelector(".capsule-panel");
-    if (panel) {
-      // Listen on the panel, not `{once: true}`: child animations
-      // (.capsule-view fades, the nested submenu) bubble their animationend
-      // up to the panel, and a once-listener would be consumed by the first
-      // of them. Verify the target and remove the listener by hand.
-      this._closeAnimHandler = (event) => {
-        if (event.target !== panel) return;
-        panel.removeEventListener("animationend", this._closeAnimHandler);
-        this._closeAnimHandler = null;
-        this._finishClose();
-      };
-      panel.addEventListener("animationend", this._closeAnimHandler);
-    }
-
-    // Fallback: an unrendered/zero-content panel fires no animationend at all
-    // (and an OS/browser that suppresses animations fires none either) —
-    // without the timer data-capsule-state="closing" would stick and the
-    // panel would never actually close.
-    this._closeTimer = setTimeout(() => this._finishClose(), CLOSE_FALLBACK_MS);
+    // The helper writes CAPSULE_STATE_ATTR="closing", waits for the panel's own
+    // animationend (target-verified, so a child view animation cannot finish it
+    // early) or its bounded 200 ms fallback, then removes BOTH the attribute and
+    // `open` — and completes in the same task under reduced motion or when there
+    // is no .capsule-panel to animate.
+    closeAnimatedShared(this.el, {
+      panel: this.el.querySelector(".capsule-panel"),
+      attr: CAPSULE_STATE_ATTR,
+      onComplete: () => this._afterClose()
+    });
   },
 
-  _finishClose() {
-    if (this._closeTimer) {
-      clearTimeout(this._closeTimer);
-      this._closeTimer = null;
-    }
-    const panel = this.el.querySelector(".capsule-panel");
-    if (panel && this._closeAnimHandler) {
-      panel.removeEventListener("animationend", this._closeAnimHandler);
-    }
-    this._closeAnimHandler = null;
-    delete this.el.dataset.capsuleState;
+  // The helper owns the attribute and the `open` release; this only re-asserts
+  // the hook's own bookkeeping (shared with the `toggle` listener) so a
+  // straggling toggle/patch can never resurrect the closed panel.
+  _afterClose() {
     this.openRequested = false;
-    this.el.open = false;
+    if (this.el.open) this.el.open = false;
   },
 
   // Switches the panel's view. Roots without any .capsule-view children (the
