@@ -161,8 +161,8 @@ ChatGPT-style chat that IS the Genesis Assistant; sidebar **Assistant** at `/ass
 
 ### Task Cancellation Model
 
-The core model (graceful `:cancelling` with a 3-turn grace and preserved result/archive vs force kill → `:failed` with a nil result) lives in the root `./CONTEXT.md`; on the dashboard `NodeContext.cancel_task/2` and `force_kill_task/2` are plain `EvoGit.RemoteNode` delegations, and `TaskCardComponents.show_review_button?/1` shows Review for every `:completed`/`:cancelled` task (repo-less `:reflect` excluded) and never for `:paused`.
-UI: card Cancel (`[:pending, :running, :awaiting_input]`) → confirmation modal; three-dot "Force kill" (`[:running, :awaiting_input, :cancelling, :pausing, :paused]` — a draining or stuck pause must stay killable; Delete unconditional behind a "Danger zone" divider); `:cancelling` renders violet in-progress end-to-end (badge, accent, tint, pulsing dot + `gettext("Cancelling…")`, running partition, status filter); `:awaiting_input` is violet ("waiting for you") and an idle session's card carries a reply box plus a confirm-gated Close session action.
+The core model (graceful `:cancelling` with a 3-turn grace and preserved result/archive vs force kill → `:failed` with a nil result) lives in the root `./CONTEXT.md`; here `NodeContext.cancel_task/2` and `force_kill_task/2` are plain `EvoGit.RemoteNode` delegations, and `TaskCardComponents.show_review_button?/1` shows Review for every `:completed`/`:cancelled` task (repo-less `:reflect` excluded) and never for `:paused`.
+UI: card Cancel (`[:pending, :running, :awaiting_input]`) → confirmation modal; three-dot "Force kill" (`[:running, :awaiting_input, :cancelling, :pausing, :paused]` — a draining or stuck pause must stay killable; Delete unconditional behind a "Danger zone" divider); `:cancelling` renders violet end-to-end (badge, accent, tint, pulsing dot + `gettext("Cancelling…")`, running partition, status filter); `:awaiting_input` is violet ("waiting for you") and an idle session's card carries a reply box plus a confirm-gated Close session action.
 
 ### Task pause & resume (dashboard half)
 
