@@ -559,6 +559,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       assert_receive {:signin_stub, {:status, "welcome-flow", {:error, :cancelled}}},
                      @async_wait_budget_ms
+
       refute has_element?(view, "#welcome-chatgpt-waiting")
       refute has_element?(view, "#welcome-chatgpt-sign-in-error")
     end
