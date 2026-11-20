@@ -4,6 +4,10 @@
 @import "tailwindcss" source(none);
 @import "./assistant.css";
 @import "./workbench.css";
+/* The shared motion foundation. CSS requires @import before every other rule,
+   so it is "last" within the import block (a literal append at EOF is invalid
+   and would be dropped); its !important reduced-motion backstop is order-proof. */
+@import "./motion.css";
 @source "../css";
 @source "../js";
 @source "../../lib/evo_dash_web";
@@ -2028,6 +2032,13 @@ button, a, input, textarea, select, summary,
   to { opacity: 1; }
 }
 
+/* Exit half of the palette motion; [data-palette-state="closing"] rules in
+   motion.css apply it (see that file's section 7). */
+@keyframes palette-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
 @keyframes palette-slide-down {
   from {
     opacity: 0;
@@ -2079,13 +2090,15 @@ button, a, input, textarea, select, summary,
    height drops ~1 line-height below the cap (hysteresis against boundary
    flicker while deleting) AND the char/line thresholds are under. The
    0.35s transitions on .input-layout/.input-card/.input-prompt animate the
-   min-height jump (120px → calc(1.6em * 10)) at the flip. The hook does not
+   min-height jump (120px → calc(1.6em * 10)) at the flip. They are
+   ENUMERATED on purpose — `transition: all` competes with the AdaptiveInput
+   hook's inline height writes and animates unrelated properties. The hook does not
    position any floating controls panel (the --input-layout-center /
    position: fixed logic is gone). */
 .input-layout {
   display: flex;
   flex-direction: column;
-  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: min-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* --- The single card containing BOTH the textarea and the controls row ---
@@ -2112,7 +2125,9 @@ button, a, input, textarea, select, summary,
     0 0 0 2px color-mix(in oklch, var(--project-accent) 15%, transparent),
     0 0 90px -18px color-mix(in oklch, var(--project-accent) 25%, transparent),
     0 0 160px 20px color-mix(in oklch, var(--project-accent) 12%, transparent);
-  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: min-height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Accent top-edge gradient on the input card (shared by BOTH layouts).
@@ -2186,7 +2201,8 @@ button, a, input, textarea, select, summary,
   padding: 1.25rem 1.25rem 0.75rem;
   outline: none;
   line-height: 1.6;
-  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: min-height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    padding 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .input-prompt::placeholder {
@@ -2284,7 +2300,8 @@ button, a, input, textarea, select, summary,
   align-items: center;
   gap: 0.75rem;
   padding: 0.625rem 1rem;
-  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: padding 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    gap 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* --- Launch button: colored hover ring keyed on the selected mode ---
