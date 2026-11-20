@@ -32,19 +32,19 @@ defmodule EvoDashWeb.SystemLive do
       current_page={:system}
       config_status={@config_status}
       current_node_id={@current_node_id}
-      remote_targets={assigns[:remote_targets] || []}
-      connection_statuses={assigns[:connection_statuses] || %{}}
+      remote_targets={@remote_targets}
+      connection_statuses={@connection_statuses}
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
-      session_list={assigns[:session_list] || []}
-      session_list_loading={assigns[:session_list_loading] == true}
-      session_list_error={assigns[:session_list_error]}
-      current_session_id={assigns[:current_session_id]}
+      session_list={@session_list}
+      session_list_loading={@session_list_loading}
+      session_list_error={@session_list_error}
+      current_session_id={@current_session_id}
       pending_tasks={@pending_tasks}
       desktop_quit_confirm={@desktop_quit_confirm}
       update_status={@update_status}
       guide={@guide}
-      accent_color={assigns[:accent_color] || "blue"}
+      accent_color={@accent_color}
     >
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
@@ -531,8 +531,12 @@ defmodule EvoDashWeb.SystemLive do
           </div>
         </div>
 
-        <!-- Scheduler status charts (server-rendered SVG, no JS plotting lib) -->
-        <Charts.charts_section
+        <!-- Scheduler status charts (server-rendered SVG, no JS plotting lib).
+             Rendered through a stateful LiveComponent so the once-per-tick
+             sample diff is scoped to the chart section instead of the page. -->
+        <.live_component
+          module={EvoDashWeb.SystemLive.ChartsComponent}
+          id="system-charts"
           samples={@chart_samples}
           paused={@scheduler_paused}
           selected_llm_model={@selected_llm_model}
@@ -859,7 +863,38 @@ defmodule EvoDashWeb.SystemLive do
         source_status_seq: 0
       )
 
-    {:ok, socket}
+    {:ok, seed_layout_assigns(socket)}
+  end
+
+  # Assigns owned by the `NodeAware` / `Appearance` / `DesktopQuit` /
+  # `UpdateStatus` / `Guide` on-mount hooks plus the shared layout's session
+  # key. The hooks run BEFORE this mount, so `assign_new/3` never overwrites
+  # them — the seeds only keep `render/1` total when a page is mounted without
+  # them, so every layout assign is read as `@key` instead of a
+  # `assigns[:key] || default` fallback.
+  defp seed_layout_assigns(socket) do
+    Enum.reduce(
+      [
+        current_node: node(),
+        current_node_name: "Local",
+        current_node_id: nil,
+        remote_status: nil,
+        remote_targets: [],
+        connection_statuses: %{},
+        running_tasks: [],
+        pending_tasks: [],
+        session_list: [],
+        session_list_loading: false,
+        session_list_error: nil,
+        current_session_id: nil,
+        accent_color: "blue",
+        desktop_quit_confirm: false,
+        update_status: nil,
+        guide: nil
+      ],
+      socket,
+      fn {key, value}, acc -> assign_new(acc, key, fn -> value end) end
+    )
   end
 
   @impl true
