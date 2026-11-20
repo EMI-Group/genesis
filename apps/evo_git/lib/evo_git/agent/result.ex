@@ -31,7 +31,9 @@ defmodule EvoGit.Agent.Result do
 
   @type t :: %__MODULE__{
           result: String.t(),
-          commit_sha: String.t(),
+          # `nil` means NO commit / repo-less run (a repo-less agent has no
+          # worktree), so consumers must not treat this field as total.
+          commit_sha: String.t() | nil,
           tag: String.t() | nil,
           branch: String.t() | nil,
           base_commit: String.t() | nil,
@@ -47,7 +49,8 @@ defmodule EvoGit.Agent.Result do
   ## Parameters
 
     * `result`      — human-readable summary of what the agent accomplished
-    * `commit_sha`  — SHA of the commit produced by the agent
+    * `commit_sha`  — SHA of the commit produced by the agent, or `nil` when the
+      run produced no commit (a repo-less agent has no worktree)
     * `opts`        — optional keyword list (`:tag`, `:branch`, `:base_commit`, `:repo_id`, `:usage`, `:agent_count`, `:foreign_repo_commits`)
 
   ## Examples
@@ -55,7 +58,7 @@ defmodule EvoGit.Agent.Result do
       iex> EvoGit.Agent.Result.new("Fixed the bug", "abc123", tag: "fix")
       %EvoGit.Agent.Result{result: "Fixed the bug", commit_sha: "abc123", tag: "fix"}
   """
-  @spec new(String.t(), String.t(), keyword()) :: t()
+  @spec new(String.t(), String.t() | nil, keyword()) :: t()
   def new(result, commit_sha, opts \\ []) do
     %__MODULE__{
       result: result,

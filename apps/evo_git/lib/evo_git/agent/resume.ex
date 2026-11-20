@@ -37,7 +37,7 @@ defmodule EvoGit.Agent.Resume do
      `:tool` message per unanswered call, in the assistant's call order, built
      with the same `EvoGit.Agent.ToolDispatch.assemble_tool_result/3` and
      turn-tagged exactly like a real result. The content is class-specific and
-     honest (`EvoGit.Agent.Resume.ToolBatch`); without it the next provider call
+     honest (`EvoGit.Agent.Resume.ImpactText`); without it the next provider call
      rejects the unpaired `tool_call_id` (HTTP 400 → `EvoGit.Agent.LlmError`
      fail-fast → a `:failed` task).
      A `:subagent` call is the ONE class whose real answer may still arrive: the
@@ -79,9 +79,9 @@ defmodule EvoGit.Agent.Resume do
   require Logger
 
   alias EvoGit.Agent.ContextBuilder
+  alias EvoGit.Agent.Resume.ImpactText
   alias EvoGit.Agent.Resume.Notice
   alias EvoGit.Agent.Resume.Reattach
-  alias EvoGit.Agent.Resume.ToolBatch, as: Impact
   alias EvoGit.Agent.State
   alias EvoGit.Agent.ToolBatch
   alias EvoGit.Agent.ToolDispatch
@@ -278,7 +278,7 @@ defmodule EvoGit.Agent.Resume do
   end
 
   defp synthetic_result({index, call, class}, reattach) do
-    text = Map.get(reattach.texts, index) || Impact.impact(class, call)
+    text = Map.get(reattach.texts, index) || ImpactText.impact(class, call)
     ToolDispatch.assemble_tool_result(call_id(call), call_name(call), text)
   end
 

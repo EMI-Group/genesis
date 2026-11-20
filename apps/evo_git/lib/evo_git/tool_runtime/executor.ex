@@ -26,8 +26,6 @@ defmodule EvoGit.ToolRuntime.Executor do
   # Also retained for legacy level-2/3 run_command timeout compatibility.
   @approval_execution_buffer 30_000
 
-  @type result :: {non_neg_integer(), String.t(), String.t(), term()}
-
   @doc """
   Executes `indexed_calls` (`[{ReqLLM.ToolCall.t(), index}]`) for one request.
 
@@ -35,7 +33,9 @@ defmodule EvoGit.ToolRuntime.Executor do
   tuples, where `output` is the sanitized tool output (`String.t()`,
   `%EvoGit.Agent.ToolOutput{}` or `nil`).
   """
-  @spec execute_batch([{ReqLLM.ToolCall.t(), non_neg_integer()}], Request.t()) :: [result()]
+  @spec execute_batch([{ReqLLM.ToolCall.t(), non_neg_integer()}], Request.t()) :: [
+          EvoGit.ToolRuntime.result()
+        ]
   def execute_batch(indexed_calls, %Request{} = request) do
     # Resolved ONCE per batch (it reads configuration) and threaded into every
     # call's tracking meta; `Tracking.tracked_backend/2` then picks the SANDBOX
@@ -198,9 +198,14 @@ defmodule EvoGit.ToolRuntime.Executor do
         task = start_tool_task(name, args, request, exec_id, permit)
 
         case Task.yield(task, tool_timeout) do
-          {:ok, {:tool_crashed, message}} ->
-            Tracking.finish(exec_id, :failed, reason: {:crashed, message})
-            "Error: Tool execution crashed: #{message}"
+          {:ok, {:tool_crashed, kind, reason, stacktrace}} ->
+            # The tool task carries the failure RAW (`kind`, `reason`,
+            # `__STACKTRACE__`); this boundary is the ONE place it is rendered, so
+            # the exception CLASS and its stacktrace reach BOTH the tracked
+            # terminal fact and the model-facing text.
+            detail = Exception.format(kind, reason, stacktrace)
+            Tracking.finish(exec_id, :failed, reason: {:crashed, detail})
+            "Error: Tool execution crashed: " <> detail
 
           {:ok, {:error, reason}} ->
             Tracking.finish(exec_id, :failed, reason: {:tool_error, reason})
@@ -428,6 +433,12 @@ defmodule EvoGit.ToolRuntime.Executor do
     # on the next turn. `:kill` (this module's own timeout shutdown) and the
     # `:shutdown`/`:normal` exit family are re-raised unchanged so a legitimate
     # task exit is never swallowed and still reaches the `{:exit, reason}` arm.
+    #
+    # The failure payload is carried RAW — `{:tool_crashed, kind, reason,
+    # __STACKTRACE__}` — and formatted exactly ONCE at the reporting boundary
+    # (`execute_tool_with_timeout/4`, `Exception.format/3`), so the exception
+    # class, struct and stacktrace survive instead of collapsing into a banner
+    # head line that cannot tell a `FunctionClauseError` from a thrown value.
     try do
       EvoGit.Agent.Tools.execute(
         name,
@@ -438,7 +449,7 @@ defmodule EvoGit.ToolRuntime.Executor do
       )
     rescue
       exception ->
-        {:tool_crashed, Exception.format_banner(:error, exception)}
+        {:tool_crashed, :error, exception, __STACKTRACE__}
     catch
       :exit, reason when reason in [:normal, :shutdown, :kill] ->
         exit(reason)
@@ -447,7 +458,7 @@ defmodule EvoGit.ToolRuntime.Executor do
         exit(reason)
 
       kind, reason ->
-        {:tool_crashed, "#{kind} #{inspect(reason)}"}
+        {:tool_crashed, kind, reason, __STACKTRACE__}
     end
   end
 

@@ -125,12 +125,11 @@ defmodule EvoGit.Agent.Completion do
         Logger.info("Wrote git note for commit #{commit_sha} (ref: evogit)")
         :ok
 
-      {:error, {:conflict, _msg}} ->
-        # git notes add returns exit code 1 when note already exists — overwrite with force
-        handle_fallback(repo_path, commit_sha, note_content)
-
       {:error, {_, _msg}} ->
-        # If custom ref fails (might not exist yet), try with force to create it
+        # Any git failure here (exit 1 means the note already exists, and a
+        # custom `--ref=evogit` may not exist yet) is handled by FORCING the
+        # note: a git note is best-effort metadata, never a reason to fail the
+        # completion.
         handle_fallback(repo_path, commit_sha, note_content)
     end
   end

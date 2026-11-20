@@ -28,7 +28,24 @@ defmodule EvoGit.ToolRuntime do
   alias EvoGit.ToolRuntime.Executor
   alias EvoGit.ToolRuntime.Request
 
-  @type result :: {non_neg_integer(), String.t(), String.t(), term()}
+  @typedoc """
+  The sanitized output of ONE tool call.
+
+  A plain binary for an all-text result (the legacy shape), a
+  `%EvoGit.Agent.ToolOutput{}` when the tool attached media, or `nil` when the
+  tool produced no output at all.
+  """
+  @type output :: String.t() | EvoGit.Agent.ToolOutput.t() | nil
+
+  @typedoc """
+  One entry of a completed batch: `{index, tool_call_id, name, output}`.
+
+  `index` is the call's position in the request (results come back sorted by
+  it), `tool_call_id` is the provider's call id or a fallback identifier, `name`
+  is the model-facing tool name (`nil` when the call carried none) and `output`
+  is the sanitized `output()` — sanitized but NOT hint-adjusted.
+  """
+  @type result :: {non_neg_integer(), String.t(), String.t() | nil, output()}
 
   @doc """
   Executes a batch of standard (non-subagent) tool calls.

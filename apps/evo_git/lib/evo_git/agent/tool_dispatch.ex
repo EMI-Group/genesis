@@ -100,14 +100,15 @@ defmodule EvoGit.Agent.ToolDispatch do
   def normalize_context_window(_window),
     do: EvoGit.Config.Schema.LLM.default_context_window()
 
-  # Shared lookup for current_model/0 + current_generation_params/0.
-  # DISPLAY / IMMUTABLE-IDENTITY METADATA ONLY — neither is a conversation or
-  # loop value (both are fixed at registration). Raises a
-  # descriptive ArgumentError instead of a context-free MatchError when the
-  # calling process is not a scheduled agent (no :evogit_agent_id) or the
-  # scheduler has no ETS state for it — the latter typically means the agent
-  # was purged/cancelled mid-call or the scheduler restarted while the process
-  # was blocked waiting for an LLM slot.
+  # Shared lookup for current_model/0 + current_generation_params/0, and for
+  # `batch_execute_tools/5`'s node path. DISPLAY / IMMUTABLE-IDENTITY METADATA
+  # ONLY — none of it is a conversation or loop value (all fixed at
+  # registration). Raises a descriptive ArgumentError instead of a context-free
+  # MatchError when the calling process is not a scheduled agent (no
+  # :evogit_agent_id) or the scheduler has no ETS state for it — the latter
+  # typically means the agent was purged/cancelled mid-call or the scheduler
+  # restarted while the process was blocked waiting for an LLM slot.
+  # `fetch_agent_state!/2` is that same check addressed by an already-known id.
   defp fetch_current_agent_state!(caller) do
     case AgentScheduler.current_agent_id() do
       nil ->
@@ -117,16 +118,25 @@ defmodule EvoGit.Agent.ToolDispatch do
                 "no agent state to read"
 
       agent_id ->
-        case AgentScheduler.get_agent_state(agent_id) do
-          {:ok, agent_state} ->
-            agent_state
+        fetch_agent_state!(agent_id, caller)
+    end
+  end
 
-          :error ->
-            raise ArgumentError,
-                  "#{inspect(caller)}: the scheduler has no agent state for agent " <>
-                    "#{inspect(agent_id)} — the agent was likely purged or cancelled " <>
-                    "mid-call, or the scheduler restarted"
-        end
+  # The agent-id-addressed half of the lookup above, for callers that already
+  # hold an agent id (so they never depend on the process dictionary).
+  # `AgentScheduler.get_agent_state/1` is TOTAL (`{:ok, state} | :error`), so
+  # the `:error` arm raises the descriptive ArgumentError instead of a
+  # context-free MatchError.
+  defp fetch_agent_state!(agent_id, caller) do
+    case AgentScheduler.get_agent_state(agent_id) do
+      {:ok, agent_state} ->
+        agent_state
+
+      :error ->
+        raise ArgumentError,
+              "#{inspect(caller)}: the scheduler has no agent state for agent " <>
+                "#{inspect(agent_id)} — the agent was likely purged or cancelled " <>
+                "mid-call, or the scheduler restarted"
     end
   end
 
@@ -1043,8 +1053,8 @@ defmodule EvoGit.Agent.ToolDispatch do
 
     # DISPLAY / SPATIAL-AUTHORIZATION METADATA ONLY: the node path (plus the
     # per-batch identity below) is registration data, never a loop value.
-    {:ok, %{context_node: %{path: node_path}}} =
-      AgentScheduler.get_agent_state(agent_id)
+    %{context_node: %{path: node_path}} =
+      fetch_agent_state!(agent_id, "batch_execute_tools/5")
 
     # The AGENT-side identity, resolved ONCE per batch and handed to the managed
     # runtime in ONE request struct.
