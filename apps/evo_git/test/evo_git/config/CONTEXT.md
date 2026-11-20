@@ -66,6 +66,9 @@ Provider defaults apply before nested model context/generation/effort overrides,
 `resolved.generation_params` can contain the selected account's API credential and must not be assumed credential-free.
 Canonical validation checks raw input before normalization can discard malformed values or deduplicate inventories.
 Duplicate effort errors include the duplicate element's index, context-window validation uses rule `:integer`, and auth-mode validation uses rule `:string` for compatibility with the shared legacy validators.
+`ValidationError.key_path` runtime tests require mixed atom/integer lists, including terminal indices (`ecto_validation_test.exs:596`), nonzero profile indices (`:430`), nested window indices (`:296`, `:312`) and canonical provider/model/effort indices (`provider_profile_validation_test.exs:161`, `:195`, `:275`).
+`settings_test.exs:407` also requires indexed `%ValidationError{}` paths from public `Config.update/1`, so indices are not only an internal validator detail.
+These runtime assertions do not inspect `ValidationError.t/0` or enforce typespec parity, and this node has no explicit indexed-error formatting/serialization regression.
 There is no global `[llm] oauth_file` schema key; OAuth files are per account/profile.
 `Schema.all_schemas/0` has exactly 112 entries and its LLM category has exactly 14 while its tools category has exactly 45, so adding/removing descriptors requires updating the count assertions.
 `settings_test.exs` uses unique ConfigDir isolation and real TOML persistence without reading or mutating global scheduler configuration.

@@ -280,6 +280,10 @@ Adding a NEW top-level category is additive for: enumeration (append a schema ma
 
 Dashboard-side requirements for a new schema-driven category (evo_dash, not core): `category_display_name/1`, `category_icon/1`, `category_description/1` clauses in `EvoDashWeb.SettingsComponents.CategoryMetadata` (no catch-all — a missing clause = FunctionClauseError in the sidebar/header) plus an entry in its `sort_categories/1` order list (missing = sorts last). `:agents`/`:remote_connections` are NOT core categories — the dashboard injects them as empty-schema pseudo-categories rendered by dedicated inline UI branches.
 
+## Validation Path Typing
+`Schema.key_path/0` describes atom-only descriptor paths, but `Schema.ValidationError.t/0` also currently declares atom-only paths even though composite validators append non-negative list indices (`ecto_validation.ex:272`, `provider_profile_validation.ex:15,117`).
+Error paths therefore need a distinct atom-or-non-negative-integer segment type rather than widening descriptor paths indiscriminately.
+
 ## Validation Engine — Ecto-backed (architecture)
 
 The scalar/rule validator beneath the DSL is **Ecto-backed, but Ecto is a VALIDATOR ONLY** — no `Ecto.Changeset` is ever built, `apply_changes` is never called, and the validated map passes through unchanged on `{:ok, config}` (unknown keys survive, model profiles stay plain maps).
