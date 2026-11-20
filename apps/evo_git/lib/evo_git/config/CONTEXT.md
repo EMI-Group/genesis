@@ -137,56 +137,15 @@ description = "Legacy Project"
 3. **Runtime overrides** — `AgentScheduler` state via `handle_call({:update_config, opts})`; concurrency/retry/turn values are config.toml-only, and model selection is task-level in task opts, never a scheduler override.
 
 ### config.toml Structure
-```toml
-[scheduler]
-default_llm_max_concurrency = 3    # per-account concurrency when unset
-max_tool_concurrency = 8           # default = CPU thread count
-agent_max_retries = 3              # crash-retry limit per agent
-max_agent_depth = 8                # subagent recursion DEPTH only
-max_retries = 15                   # total LLM API retries
-max_turns = 128                    # SUB-agent turn cap
-max_turns_root = 1000              # ROOT agent turn cap only
-delegation_hint_threshold = 5      # write calls to a child dir before a nudge (0 disables)
-read_delegation_hint_threshold = 8 # read calls to a child dir before a nudge (0 disables)
-max_tool_timeout = 1_800_000       # ms cap on any agent-requested tool timeout
-default_tool_timeout = 10_000      # ms default when the agent omits one
-
-[llm]
-model = "provider:model"                  # required when no [[llm.providers]] exist
-# compression_threshold_tokens = 150_000  # optional explicit override
-tool_result_pruning = true
-tool_result_pruning_target_fraction = 0.5
-
-[user]
-github_username = "..."            # PR creation only (optional)
-
-[sandbox]
-mode = "auto"                      # "auto" | "enabled" | "disabled"
-backend = "auto"                   # "auto" | "systemd" | "bwrap"
-write_paths = []                   # nil = platform defaults; set (incl. []) REPLACES them
-
-[nix]
-enabled = false                    # tool calls in a cached Nix dev env (config-dir flake.nix)
-flake_output = nil
-
-[appearance]
-accent_color = "blue"              # GNOME palette: blue|teal|green|yellow|orange|red|pink|purple|brown|slate
-
-[data]
-dir = "/abs/path/to/data"          # relocate the runtime data dir; next boot
-
-[tmp]
-mode = "system"                    # "system" | "custom" | "per_repo"
-path = "/abs/path/to/tmp"          # base for :custom mode
-
-[lsp]
-enabled = false                    # offers the `lsp` tool only when true
-command = "lexical"
-args = ["start"]
-timeout = 30_000
-diagnostics_timeout = 10_000
-```
-Per-key types/defaults of all 112 descriptors (19 under `[sandbox]`): `schema/CONTEXT.md`; canonical `[[llm.providers]]` / legacy `[[llm.models]]` syntax and peak-schedule semantics: `docs/llm-profiles.md`.
+Key names by table (per-key types/defaults of all 112 descriptors — 19 under `[sandbox]` — and canonical `[[llm.providers]]` / legacy `[[llm.models]]` syntax with peak schedules: `schema/CONTEXT.md` + `docs/llm-profiles.md`):
+- `[scheduler]` `default_llm_max_concurrency` (per-account fallback 3), `max_tool_concurrency` (default = CPU thread count), `agent_max_retries`, `max_agent_depth` (recursion DEPTH only), `max_retries` (LLM API), `max_turns` (SUB-agents), `max_turns_root` (ROOT only), `delegation_hint_threshold` / `read_delegation_hint_threshold` (0 disables), `max_tool_timeout`, `default_tool_timeout` (ms).
+- `[llm]` `model` (`"provider:model"`, required only when no `[[llm.providers]]` exist), optional `compression_threshold_tokens`, `tool_result_pruning`, `tool_result_pruning_target_fraction`, `reasoning_effort`, `default_provider_profile`.
+- `[user]` `github_username` (PR creation only, optional).
+- `[sandbox]` `mode` (`"auto" | "enabled" | "disabled"`), `backend` (`"auto" | "systemd" | "bwrap"`), `write_paths` (nil = platform defaults; set incl. `[]` REPLACES them), plus `[sandbox.resources]` / `[sandbox.process]`.
+- `[nix]` `enabled`, `flake_output` (cached dev env from a config-dir flake).
+- `[appearance]` `accent_color` (GNOME/libadwaita palette: blue|teal|green|yellow|orange|red|pink|purple|brown|slate).
+- `[data]` `dir`; `[tmp]` `mode` (`"system" | "custom" | "per_repo"`), `path`; `[lsp]` `enabled`, `command`, `args`, `timeout`, `diagnostics_timeout`.
+- `[tools.search]` `enabled`, `provider`, per-provider sections (see "Web Search Provider Config").
 
 **`[data] dir` relocates the whole runtime data dir** (`tasks.sqlite`, `agent_state.sqlite`, logs, caches, `genesis-source`); `Platform.data_dir/0` returns it, and an invalid value (nil/empty/non-binary/relative) logs a `Logger.warning` + falls back to the OS+env default — it NEVER raises.
 Precedence: TaskRegistry `opts[:data_dir]` test seam → app env `config :evo_git, :data_dir` (read only by the Store child spec, `TaskRegistry.init/1` and `mix migrate.store`; set only in `config/test.exs`) → TOML `[data] dir` → XDG default; per-repo `.genesis` artifacts stay repo-root-fixed.
