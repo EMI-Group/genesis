@@ -276,7 +276,7 @@ The purpose is unchanged: `InspectorMessages` animates only newly keyed rows, so
 
 ## Notes for Agents — bounded inspect helpers
 
-`agents_live.html.heex` renders NO raw `inspect/2` call: all four sites (the tool-call arguments and the fallback data of the compact history row, and the same two in the full-message modal) go through `EvoDashWeb.AgentsLive.Render.args/1` / `Render.data/1`.
+The Agents page templates (`agents_live/detail_panel.ex` and `agents_live/modals.ex`) render NO raw `inspect/2` call: all four sites (the tool-call arguments and the fallback data of the compact history row, and the same two in the full-message modal) go through `EvoDashWeb.AgentsLive.Render.args/1` / `Render.data/1`.
 `EvoDashWeb.AgentsLive.Render.args/1` and `Render.data/1` are `inspect(term, inspect_opts/0)` with `limit: 200`, `printable_limit: 20_000`, `pretty: true`.
 The bounds are two-dimensional on purpose: `:limit` caps collection depth/length and `:printable_limit` caps binary content, so neither a huge payload nor a deep nesting can blow up a render.
 `Render` is TOTAL (never raises, no rescue wrapper) and its output is model/user data, so it is never gettext-wrapped.
