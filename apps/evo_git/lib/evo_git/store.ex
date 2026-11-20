@@ -165,8 +165,46 @@ defmodule EvoGit.Store do
   # Bounded wait for the writer to drain in-flight writes at terminate/2.
   @writer_stop_timeout 5_000
 
+  ## Types
+
+  # The client handle every public function accepts: a registered name (the
+  # default `__MODULE__`) or a pid. Spelled `GenServer.server()` so a caller
+  # that passes `{:global, term} | {:via, module, term}` type-checks too.
+  @typedoc """
+  A store handle — a registered name (by default `EvoGit.Store`) or a pid.
+  """
+  @type store :: GenServer.server()
+
+  @typedoc """
+  The union of per-WRITE outcomes documented by this module.
+
+  `:ok` and `{:error, :disk_full}` are this store's OWN outcomes: the disk-full
+  error class is converted at the write choke point (`write_call/2`), every
+  other error re-raises. `{:error, :store_unavailable}` is the answer a
+  caller-side guard produces when the store is dead or its write crashed
+  (`EvoGit.TaskRegistry.StoreGuard`, `EvoGit.VCT`), so callers are written
+  against the full union while each `@spec` below states exactly what THIS
+  module returns.
+  """
+  @type write_result :: :ok | {:error, :disk_full} | {:error, :store_unavailable}
+
+  @typedoc """
+  The union of per-READ EMPTY shapes answered when an offloaded read fails —
+  exactly the values in the moduledoc's "Read degradation policy" table, and
+  the `degraded_value` each handler passes to `offload/5`.
+
+  `nil` (single-row reads), `[]` (list reads), `{[], 0}`
+  (`safe_select_paginated_tasks/2`), `%{rows: [], total: 0}`
+  (`select_tasks_page/2`), `%{entries: [], total: 0}` (`list_task_archives/3`)
+  and `0` (`size/1`). A failed read never raises, never exits and never
+  returns `{:error, ...}`.
+  """
+  @type read_degradation ::
+          nil | [] | {[], 0} | %{rows: [], total: 0} | %{entries: [], total: 0} | 0
+
   ## Child spec & start
 
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
   def child_spec(opts) do
     %{
       id: __MODULE__,
@@ -191,6 +229,7 @@ defmodule EvoGit.Store do
       `PRAGMA query_only` arm they use is CONNECTION-scoped and therefore only
       deterministic when the pool has exactly one connection.
   """
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     data_dir = Keyword.fetch!(opts, :data_dir)
     name = Keyword.get(opts, :name, __MODULE__)
@@ -206,17 +245,27 @@ defmodule EvoGit.Store do
   ## Public API — Tasks
 
   @doc "Inserts or replaces a task. Validates that id (string) and status are present."
+  @spec put_task(store(), TaskInfo.t()) ::
+          :ok
+          | {:error, :missing_task_id}
+          | {:error, :missing_task_status}
+          | {:error, :disk_full}
   def put_task(store \\ __MODULE__, task)
 
   def put_task(store, %TaskInfo{} = task) do
     GenServer.call(store, {:put_task, task}, @call_timeout)
   end
 
+  # Tolerant fallback for a mistyped argument, pinned by `store_test.exs`
+  # ("malformed input is rejected with the documented error tuples"): the
+  # `%TaskInfo{}` head above is the typed contract, this clause answers an
+  # error tuple instead of raising.
   def put_task(_store, _other) do
     {:error, :invalid_task_struct}
   end
 
   @doc "Reads a single task by id, returning the struct or nil."
+  @spec get_task(store(), String.t()) :: TaskInfo.t() | nil
   def get_task(store \\ __MODULE__, task_id) do
     GenServer.call(store, {:get_task, task_id}, @call_timeout)
   end
@@ -232,6 +281,7 @@ defmodule EvoGit.Store do
   (`list_task_archives/3` + `get_agent_archive/3`). Returns `nil` when the row
   is absent (and on a failed read — see the moduledoc's degradation table).
   """
+  @spec get_task_lite(store(), String.t()) :: TaskInfo.t() | nil
   def get_task_lite(store \\ __MODULE__, task_id) do
     GenServer.call(store, {:get_task_lite, task_id}, @call_timeout)
   end
@@ -253,6 +303,12 @@ defmodule EvoGit.Store do
   `{:error, :missing_task_id}` / `{:error, :missing_agent_id}` for an entry
   that cannot identify its row — no statement is issued for those).
   """
+  @spec put_task_archive(store(), map()) ::
+          :ok
+          | {:error, :missing_task_id}
+          | {:error, :missing_agent_id}
+          | {:error, :invalid_repo_id}
+          | {:error, :disk_full}
   def put_task_archive(store \\ __MODULE__, entry) do
     GenServer.call(store, {:put_task_archive, entry}, @call_timeout)
   end
@@ -281,6 +337,8 @@ defmodule EvoGit.Store do
   moduledoc).
   """
 
+  @spec list_task_archives(store(), String.t(), keyword()) ::
+          %{entries: [map()], total: non_neg_integer() | nil}
   def list_task_archives(store \\ __MODULE__, task_id, opts \\ []) do
     GenServer.call(store, {:list_task_archives, task_id, opts}, @call_timeout)
   end
@@ -292,6 +350,7 @@ defmodule EvoGit.Store do
   This is the lazy detail half of the archive API: `list_task_archives/3` pages
   the roster without results, this fetches the opened agent's conversation.
   """
+  @spec get_agent_archive(store(), String.t(), integer()) :: map() | nil
   def get_agent_archive(store \\ __MODULE__, task_id, agent_id) do
     GenServer.call(store, {:get_agent_archive, task_id, agent_id}, @call_timeout)
   end
@@ -302,16 +361,19 @@ defmodule EvoGit.Store do
 
   Dispatched through the WRITE offload, like every other write.
   """
+  @spec delete_task_archives(store(), String.t()) :: :ok | {:error, :disk_full}
   def delete_task_archives(store \\ __MODULE__, task_id) do
     GenServer.call(store, {:delete_task_archives, task_id}, @call_timeout)
   end
 
   @doc "Deletes a single task by id."
+  @spec delete_task(store(), String.t()) :: :ok | {:error, :disk_full}
   def delete_task(store \\ __MODULE__, task_id) do
     GenServer.call(store, {:delete_task, task_id}, @call_timeout)
   end
 
   @doc "Deletes multiple tasks by id in one call. `task_ids` is a list of id strings."
+  @spec delete_tasks(store(), [String.t()]) :: :ok | {:error, :disk_full}
   def delete_tasks(store \\ __MODULE__, task_ids) do
     GenServer.call(store, {:delete_tasks, task_ids}, @call_timeout)
   end
@@ -331,6 +393,8 @@ defmodule EvoGit.Store do
   independent of the page). Rows that fail to decode are SKIPPED and logged
   (same skip-and-log boundary as `safe_select_all_tasks/1`).
   """
+  @spec safe_select_paginated_tasks(store(), keyword()) ::
+          {[TaskInfo.t()], non_neg_integer()}
   def safe_select_paginated_tasks(store \\ __MODULE__, opts) do
     GenServer.call(store, {:safe_select_paginated_tasks, opts}, @call_timeout)
   end
@@ -353,11 +417,16 @@ defmodule EvoGit.Store do
 
   Degrades to `%{rows: [], total: 0}` on a failed read (see the moduledoc).
   """
+  @spec select_tasks_page(store(), keyword()) :: %{
+          rows: [Operations.Summaries.summary()],
+          total: non_neg_integer()
+        }
   def select_tasks_page(store \\ __MODULE__, opts) do
     GenServer.call(store, {:select_tasks_page, opts}, @call_timeout)
   end
 
   @doc "Deletes all task rows."
+  @spec clear_tasks(store()) :: :ok | {:error, :disk_full}
   def clear_tasks(store \\ __MODULE__) do
     GenServer.call(store, :clear_tasks, @call_timeout)
   end
@@ -370,6 +439,7 @@ defmodule EvoGit.Store do
   This is a lightweight query — only the `project_path` column is read, no
   JSON blobs are decoded. Used by TaskRegistry.get_unique_paths/0.
   """
+  @spec select_task_paths(store()) :: [String.t()]
   def select_task_paths(store \\ __MODULE__) do
     GenServer.call(store, :select_task_paths, @call_timeout)
   end
@@ -382,6 +452,7 @@ defmodule EvoGit.Store do
   to filter by status — the status filtering happens in SQL. `:cancelling` is
   excluded so an in-flight graceful cancel is never deleted.
   """
+  @spec select_finished_task_ids(store()) :: [String.t()]
   def select_finished_task_ids(store \\ __MODULE__) do
     GenServer.call(store, :select_finished_task_ids, @call_timeout)
   end
@@ -399,6 +470,9 @@ defmodule EvoGit.Store do
   Used by the dashboard to track which tasks changed without decoding the heavy
   summary projection.
   """
+  @spec select_task_ids(store(), [atom()]) :: [
+          %{id: String.t(), status: atom() | nil, updated_at: String.t() | nil}
+        ]
   def select_task_ids(store \\ __MODULE__, statuses \\ []) do
     GenServer.call(store, {:select_task_ids, statuses}, @call_timeout)
   end
@@ -415,6 +489,9 @@ defmodule EvoGit.Store do
   is included so startup reconciliation can resolve orphaned cancelling
   tasks; the lease_sweep keeps its `:running`-only Elixir filter.
   """
+  @spec select_running_lease_info(store()) :: [
+          %{id: String.t(), status: atom() | nil, lease_expires_at: integer() | nil}
+        ]
   def select_running_lease_info(store \\ __MODULE__) do
     GenServer.call(store, :select_running_lease_info, @call_timeout)
   end
@@ -426,6 +503,8 @@ defmodule EvoGit.Store do
   Returns `:ok`. Used by TaskRegistry.heartbeat to renew leases without
   decoding + re-encoding the whole task struct.
   """
+  @spec update_lease_expires_at(store(), String.t(), integer() | nil) ::
+          :ok | {:error, :disk_full}
   def update_lease_expires_at(store \\ __MODULE__, task_id, expires_at) do
     GenServer.call(store, {:update_lease_expires_at, task_id, expires_at}, @call_timeout)
   end
@@ -444,6 +523,7 @@ defmodule EvoGit.Store do
   Returns `:ok`. Used by TaskRegistry for partial updates like setting
   review_status, appending logs, and status transitions.
   """
+  @spec update_task_columns(store(), String.t(), keyword()) :: :ok | {:error, :disk_full}
   def update_task_columns(store \\ __MODULE__, task_id, columns) when is_list(columns) do
     GenServer.call(store, {:update_task_columns, task_id, columns}, @call_timeout)
   end
@@ -458,6 +538,7 @@ defmodule EvoGit.Store do
   alive and the sweep conservative for such a row.
   Reads only the `status` column — no heavy JSON decode.
   """
+  @spec get_task_status(store(), String.t()) :: atom() | {:unknown, term()} | nil
   def get_task_status(store \\ __MODULE__, task_id) do
     GenServer.call(store, {:get_task_status, task_id}, @call_timeout)
   end
@@ -471,6 +552,14 @@ defmodule EvoGit.Store do
   decoded. Used by TaskRegistry.handle_update_status to
   replace the full `task_get` read-modify-write.
   """
+  @spec select_task_update_info(store(), String.t()) ::
+          %{
+            status: atom() | nil,
+            opts: keyword() | nil,
+            finished_at: DateTime.t() | nil,
+            lease_expires_at: integer() | nil
+          }
+          | nil
   def select_task_update_info(store \\ __MODULE__, task_id) do
     GenServer.call(store, {:select_task_update_info, task_id}, @call_timeout)
   end
@@ -484,6 +573,7 @@ defmodule EvoGit.Store do
   NOTE: `select_cleanup_info/3` is the SQL-pushdown variant used by cleanup —
   it performs the age/count filtering in SQL and returns plain id strings.
   """
+  @spec select_cleanup_info(store()) :: [%{id: String.t(), finished_at: DateTime.t() | nil}]
   def select_cleanup_info(store \\ __MODULE__) do
     GenServer.call(store, :select_cleanup_info, @call_timeout)
   end
@@ -506,6 +596,7 @@ defmodule EvoGit.Store do
   fixed-precision ISO string (string comparison works — the fixed-precision
   24-char ISO format sorts chronologically).
   """
+  @spec select_cleanup_info(store(), String.t(), non_neg_integer()) :: [String.t()]
   def select_cleanup_info(store \\ __MODULE__, cutoff_iso, max_tasks) do
     GenServer.call(store, {:select_cleanup_info, cutoff_iso, max_tasks}, @call_timeout)
   end
@@ -523,6 +614,9 @@ defmodule EvoGit.Store do
   whose `updated_at` is strictly newer are returned (string comparison — the
   fixed-precision 24-char ISO format sorts chronologically).
   """
+  @spec select_tasks_summary(store(), [atom()], String.t() | nil) :: [
+          Operations.Summaries.summary()
+        ]
   def select_tasks_summary(store \\ __MODULE__, statuses \\ [], since \\ nil) do
     GenServer.call(store, {:select_tasks_summary, statuses, since}, @call_timeout)
   end
@@ -532,6 +626,9 @@ defmodule EvoGit.Store do
 
   `statuses` and `since` behave as in select_tasks_summary/3.
   """
+  @spec select_tasks_summary_by_path(store(), String.t(), [atom()], String.t() | nil) :: [
+          Operations.Summaries.summary()
+        ]
   def select_tasks_summary_by_path(
         store \\ __MODULE__,
         project_path,
@@ -552,6 +649,7 @@ defmodule EvoGit.Store do
   string. No heavy JSON fields (logs, usage) are decoded.
   Returns `[]` on query failure.
   """
+  @spec select_tasks_changed_since(store(), String.t()) :: [Operations.Summaries.summary()]
   def select_tasks_changed_since(store \\ __MODULE__, since_iso) do
     GenServer.call(store, {:select_tasks_changed_since, since_iso}, @call_timeout)
   end
@@ -571,7 +669,7 @@ defmodule EvoGit.Store do
   `point` ASC tie-break. Degrades to `[]` on a failed read (see the
   moduledoc's degradation table).
   """
-  @spec list_vct_mounts(term()) :: [map()]
+  @spec list_vct_mounts(store()) :: [map()]
   def list_vct_mounts(store \\ __MODULE__) do
     GenServer.call(store, :list_vct_mounts, @call_timeout)
   end
@@ -589,7 +687,7 @@ defmodule EvoGit.Store do
 
   Returns `:ok` (`{:error, :disk_full}` on a full disk, see the moduledoc).
   """
-  @spec save_vct_mounts(term(), [map()]) :: :ok | {:error, :disk_full}
+  @spec save_vct_mounts(store(), [map()]) :: :ok | {:error, :disk_full}
   def save_vct_mounts(store \\ __MODULE__, mounts) do
     GenServer.call(store, {:save_vct_mounts, mounts}, @call_timeout)
   end
@@ -600,6 +698,7 @@ defmodule EvoGit.Store do
   Enumerates all tasks, skipping (not raising on) rows that fail to decode.
   Bad rows are logged with a warning and excluded from the returned list.
   """
+  @spec safe_select_all_tasks(store()) :: [TaskInfo.t()]
   def safe_select_all_tasks(store \\ __MODULE__) do
     GenServer.call(store, :safe_select_all_tasks, @call_timeout)
   end
@@ -608,6 +707,7 @@ defmodule EvoGit.Store do
   Returns the total number of rows across both tables (`tasks` and
   `vct_mounts`).
   """
+  @spec size(store()) :: non_neg_integer()
   def size(store \\ __MODULE__) do
     GenServer.call(store, :size, @call_timeout)
   end
@@ -616,6 +716,7 @@ defmodule EvoGit.Store do
   # disk-full tests (and any test that must talk to the store's OWN database
   # connection) instead of reaching into GenServer state.
   @doc false
+  @spec __repo_pid__(store()) :: pid() | nil
   def __repo_pid__(store \\ __MODULE__) do
     GenServer.call(store, :__repo_pid__, @call_timeout)
   end
@@ -624,6 +725,7 @@ defmodule EvoGit.Store do
   # write-offload tests to assert the writer's lifecycle (e.g. that a store
   # stop takes the writer down with it) instead of reaching into state.
   @doc false
+  @spec __writer__(store()) :: pid()
   def __writer__(store \\ __MODULE__) do
     GenServer.call(store, :__writer__, @call_timeout)
   end
