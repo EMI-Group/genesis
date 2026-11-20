@@ -134,8 +134,8 @@ Explicit invalid selections fail closed before registration; a locked parent sel
 
 ## Custom Agents & Model Selection
 
-User-defined agents live in `<config_dir>/agents.toml` (name/prompt, read/read_write authority, delegation level, optional turn cap, tools/subagents whitelists, optional canonical `model_spec` with legacy `model_id` fallback); `CustomAgents` normalizes keys/efforts, rejects malformed definitions with `:invalid_model_spec` on save, whitelists are alias-aware and may include custom tools, and `CustomAgents.reload/0` invalidates caches.
-`ModelSelector` evaluates the administrator's compile-once `fn agent -> <script> end` body per spawn (nil/empty/false → fallback; script errors logged, never crashing); dispatch priority is explicit task or inherited locked selection → script → canonical definition/inherited `default_model_spec` → legacy `model_id` → configured default, invalid canonical script selections fail closed, and custom `max_turns` overrides scheduler caps — details: `custom_agents/CONTEXT.md`.
+`<config_dir>/agents.toml` defines name/prompt, read/read_write authority, delegation level, optional turn cap, tools/subagents whitelists and an optional canonical `model_spec` (legacy `model_id` fallback); `CustomAgents` normalizes keys/efforts, rejects malformed definitions with `:invalid_model_spec` on save, is alias-aware for tools and `reload/0` invalidates caches.
+`ModelSelector` evaluates the administrator's compile-once `fn agent -> <script> end` body per spawn (nil/empty/false → fallback; errors logged, never crashing); priority: explicit task or inherited locked selection → script → canonical/inherited `default_model_spec` → legacy `model_id` → configured default, invalid canonical selections fail closed, and custom `max_turns` overrides scheduler caps — details: `custom_agents/CONTEXT.md`.
 
 ## Multi-Modal Content (objective, tool results, injected messages)
 
