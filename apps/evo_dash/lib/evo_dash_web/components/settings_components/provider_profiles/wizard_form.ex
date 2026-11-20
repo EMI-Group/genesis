@@ -103,7 +103,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
       |> assign(:wizard_error, wizard_error(wizard.errors))
 
     ~H"""
-    <div id="provider-wizard" class="bg-base-200/30 px-4 py-5 sm:px-6">
+    <div id="provider-wizard" class="wizard-step-enter bg-base-200/30 px-4 py-5 sm:px-6">
       <ProviderWizard.wizard_shell
         step={@step}
         steps={@steps}
@@ -212,7 +212,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
     ~H"""
     <div
       id={"provider-model-form-" <> @slug}
-      class="border-t border-base-300 bg-base-200/30 px-4 py-5 sm:px-6"
+      class="wizard-step-enter border-t border-base-300 bg-base-200/30 px-4 py-5 sm:px-6"
     >
       <p class="mb-4 text-sm font-medium text-base-content">
         {gettext("Add a model to %{account}", account: @account_name)}
