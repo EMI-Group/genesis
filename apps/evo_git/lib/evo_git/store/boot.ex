@@ -53,6 +53,12 @@ defmodule EvoGit.Store.Boot do
   # One BEAM-wide memo slot for the pre-loaded `[{version, module}]` source.
   @migration_source_key {__MODULE__, :migration_source}
 
+  # The ONE message `run_migrations/1` raises with when the migration lock
+  # cannot be taken. `start_dynamic/2` matches the SAME attribute (it must never
+  # re-derive the text), so the lock-unavailable outcome becomes an error tuple
+  # while every other migration failure keeps its raise.
+  @migration_lock_unavailable "task-store migration lock unavailable; refusing to report a successful boot"
+
   # Connections opened by each per-store dynamic repo pool.
   #
   # >1 is SAFE here. The journal is WAL, so readers and the writer run
@@ -110,10 +116,15 @@ defmodule EvoGit.Store.Boot do
       restored afterwards.
 
   Returns the list of migrated versions (empty when current).
+
+  RAISES a descriptive `RuntimeError` when the migration lock
+  (`:global.trans/2`) cannot be taken: the migration run then did NOT happen,
+  so a caller must never treat that as a booted schema. `start_dynamic/2`
+  converts exactly that failure into `{:error, :migration_lock_unavailable}`.
   """
   @spec run_migrations(keyword() | pid()) :: [integer()]
   def run_migrations(pid) when is_pid(pid) do
-    ensure_database_dir!(pid)
+    ensure_database_dir!()
 
     # The pdict save/restore stays OUTSIDE the global lock: the dynamic-repo
     # binding is PER-PROCESS state, so only this caller's own dictionary is
@@ -123,15 +134,15 @@ defmodule EvoGit.Store.Boot do
     previous = @repo.put_dynamic_repo(pid)
 
     try do
-      migrate_synchronized!()
+      reject_lock_unavailable(migrate_synchronized!())
     after
       @repo.put_dynamic_repo(previous)
     end
   end
 
   def run_migrations(opts) when is_list(opts) do
-    ensure_database_dir!(@repo.get_dynamic_repo())
-    migrate_synchronized!()
+    ensure_database_dir!()
+    reject_lock_unavailable(migrate_synchronized!())
   end
 
   @doc """
@@ -160,23 +171,64 @@ defmodule EvoGit.Store.Boot do
   the migrations have completed (see `optimize_after_migrations/1`) so the
   query planner gets statistics for the migrated schema; it can never fail the
   boot.
+
+  Answers `{:error, :migration_lock_unavailable}` when the migration lock could
+  not be taken: the boot instance is stopped first, so the caller never gets a
+  pid for a database where NO migration ran. Every other boot failure is the
+  repo start's own `{:error, reason}`.
   """
-  @spec start_dynamic(Path.t(), keyword()) :: {:ok, pid()}
+  @spec start_dynamic(Path.t(), keyword()) :: {:ok, pid()} | {:error, term()}
   def start_dynamic(database, opts \\ []) do
     database = Path.expand(database)
-    :ok = File.mkdir_p(Path.dirname(database))
+    # ONE dir-creation implementation (`ensure_dir!/1`), shared with
+    # `run_migrations/1`'s configured-database probe: `EvoGit.Repo.config/0`
+    # never reports a DYNAMIC instance's `database:` start opt, so the path
+    # handed to THIS function still needs its parent created here.
+    ensure_dir!(Path.dirname(database))
     pool_size = resolve_pool_size(opts)
 
     with {:ok, boot} <- @repo.start_link(start_opts(database, 1)) do
-      run_migrations(boot)
-      optimize_after_migrations(boot)
-
-      if pool_size == 1 do
-        {:ok, boot}
-      else
-        reopen_pool(database, boot, pool_size)
-      end
+      complete_boot(boot, database, pool_size)
     end
+  end
+
+  # Migrate, optimize, then hand back the boot instance (pool 1) or reopen at
+  # the requested size.
+  #
+  # A migration run that could not take the lock is a FAILED boot, never a
+  # schema-less one: the boot instance is stopped and the caller answers
+  # `{:error, :migration_lock_unavailable}`. Every OTHER migration failure
+  # keeps its historical raise (an operator must see a broken migration).
+  defp complete_boot(boot, database, pool_size) do
+    run_migrations(boot)
+    optimize_after_migrations(boot)
+
+    if pool_size == 1 do
+      {:ok, boot}
+    else
+      reopen_pool(database, boot, pool_size)
+    end
+  rescue
+    error ->
+      if lock_unavailable?(error) do
+        stop_boot_repo(boot)
+        {:error, :migration_lock_unavailable}
+      else
+        reraise error, __STACKTRACE__
+      end
+  end
+
+  defp lock_unavailable?(%RuntimeError{message: @migration_lock_unavailable}), do: true
+  defp lock_unavailable?(_error), do: false
+
+  # A stopped/failed boot repo must never turn a boot error into a raise.
+  defp stop_boot_repo(boot) do
+    _ = stop(boot)
+    :ok
+  rescue
+    _error -> :ok
+  catch
+    _kind, _reason -> :ok
   end
 
   # Start opts for a dynamic instance: the per-instance shape FIRST, then the
@@ -359,10 +411,28 @@ defmodule EvoGit.Store.Boot do
   # re-entry by the same owner and re-grant). Only the boot window is
   # serialized, and the compile it guards is a one-time per-BEAM cost.
   defp migrate_synchronized! do
-    with_migration_lock(fn ->
-      EvoGit.Store.HistoricalSources.run(load_migration_source())
-    end)
+    case with_migration_lock(fn ->
+           EvoGit.Store.HistoricalSources.run(load_migration_source())
+         end) do
+      # `:global.trans/2` answers the BARE ATOM `:aborted` when the lock cannot
+      # be taken (the fun never ran). That atom must NEVER be discarded or
+      # handed back as a result: every caller treats the return value as "the
+      # migration versions applied", so a discarded `:aborted` reported a
+      # SUCCESSFUL boot for a database where NO migration ran — a schema-less
+      # task store that then serves reads and writes.
+      :aborted -> {:error, :migration_lock_unavailable}
+      versions -> versions
+    end
   end
+
+  # The PUBLIC contract keeps its version list (`mix migrate.store` and many
+  # tests pin `run_migrations/1 == []` / `== [version]`); only the lock failure
+  # becomes a raise, because returning a list for it would be a lie.
+  defp reject_lock_unavailable({:error, :migration_lock_unavailable}) do
+    raise RuntimeError, @migration_lock_unavailable
+  end
+
+  defp reject_lock_unavailable(versions) when is_list(versions), do: versions
 
   defp with_migration_lock(fun) do
     :global.trans({:evo_git_store_migrations, self()}, fun)
@@ -430,19 +500,40 @@ defmodule EvoGit.Store.Boot do
   # the primary database file of ITS connection — keep the guarantee
   # identical to the raw store boot (mkdir_p before anything touches the
   # file), which also covers exotic parent paths the driver may refuse.
-  defp ensure_database_dir!(repo) do
-    case repo_config_database(repo) do
-      {:ok, database} -> :ok = File.mkdir_p(Path.dirname(Path.expand(database)))
+  #
+  # The path comes from the repo's RUNTIME CONFIG (`EvoGit.Repo.config/0`, the
+  # app-config database): Ecto does not expose a dynamic instance's start-opts
+  # `database:` as config, which is why `start_dynamic/2` ensures the parent dir
+  # of the database IT was given through the same `ensure_dir!/1`.
+  defp ensure_database_dir! do
+    case repo_config_database() do
+      {:ok, database} -> ensure_dir!(Path.dirname(Path.expand(database)))
       :error -> :ok
     end
   end
 
-  defp repo_config_database(repo) when is_atom(repo) or is_pid(repo) do
-    try do
-      config = @repo.config()
-      Keyword.fetch(config, :database)
-    rescue
-      _e in _ -> :error
+  # `File.mkdir_p/1` answers `{:error, posix}` — matching only `:ok` turned a
+  # POSIX failure into an opaque `MatchError` that never named the directory.
+  # Name the path and the cause instead (still a raise: no store can boot
+  # without its parent dir).
+  defp ensure_dir!(dir) do
+    case File.mkdir_p(dir) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        raise File.Error, reason: reason, action: "make directory (with -p)", path: dir
     end
+  end
+
+  # Best-effort config probe: `EvoGit.Repo.config/0` can raise for an
+  # unstarted/broken repo (`init_config/4` fails), and the parent-dir
+  # pre-creation is a nicety whose absence must never fail a boot — the
+  # adapter still resolves/creates its own database file.
+  defp repo_config_database do
+    config = @repo.config()
+    Keyword.fetch(config, :database)
+  rescue
+    _e in _ -> :error
   end
 end

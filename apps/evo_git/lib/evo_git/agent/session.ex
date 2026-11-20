@@ -103,12 +103,16 @@ defmodule EvoGit.Agent.Session do
   exactly like the completion `Finalize` (so `inspect/2`, `history/2` and `cancel/2` stay
   answerable): it re-installs the process context with THIS session as owner, reaps the agent's
   live background jobs, makes a worktree checkpoint commit anchored under
-  `refs/genesis/salvage/<branch>`, persists it with `EvoGit.AgentState.put_pause_commit/3` and
-  then `EvoGit.AgentState.flush/1` before reporting `{:session_paused, pid, info}`.
+  `refs/genesis/salvage/<branch>`, persists that sha as the run's PAUSE COMMIT with
+  `EvoGit.AgentState.put_pause_commit/3` and then `EvoGit.AgentState.flush/1` before reporting
+  `{:session_paused, pid, info}`.
   The session delivers `{:paused, info}` (with `info = %{agent_id, task_id, checkpoint, branch,
   reason: :task_pause}`) through the ONE terminal path, publishes the agent summary with status
   `:done` (agent-level statuses have no `:paused`; the TASK row becomes `:paused`) and does NOT
   mark the durable run complete, so a paused run stays resumable.
+  `info.checkpoint` IS the persisted `pause_commit`: the same sha the scheduler reads as
+  `worktree_resume_from` and bases a resumed worktree on (the map key is pinned for consumers
+  outside this module).
   A strong force kill / any session stop stops the pause finalizer (`Pause.stop/1`).
 
   ## Resume is APPEND-ONLY
@@ -228,6 +232,7 @@ defmodule EvoGit.Agent.Session do
   require Logger
 
   alias EvoGit.Agent.Result
+  alias EvoGit.Agent.Session.Durable
   alias EvoGit.Agent.Session.Finalize
   alias EvoGit.Agent.Session.Input
   alias EvoGit.Agent.Session.Outcome
@@ -535,6 +540,11 @@ defmodule EvoGit.Agent.Session do
     {:keep_state, start_binding(data)}
   end
 
+  # TEST-ONLY SIMULATION SEAM, not a production message: a real worker reports its per-turn
+  # checkpoint through the SYNCHRONOUS `{:worker_boundary, pid, :checkpoint, state}` call (see
+  # `EvoGit.Agent.Session.Worker.boundary/2`), because it is already blocked on that call. A test
+  # cannot always stand INSIDE the worker task, so it may inject the same checkpoint as an `:info`
+  # message instead; both paths share `current_worker?/2` + `publish_checkpoint/2`.
   def handle_event(:info, {:checkpoint, pid, %State{} = state}, phase, data)
       when phase in [:running, :cancelling] do
     if current_worker?(data, pid) do
@@ -646,7 +656,7 @@ defmodule EvoGit.Agent.Session do
         finalize(%{data | finalizer: nil, result: {:error, {:finalize_crashed, {:down, reason}}}})
 
       # The PAUSE finalizer owns the same "every raise/exit caught" contract, so reaching this arm
-      # means it was KILLED: answer the paused outcome with a nil checkpoint (the resume then falls
+      # means it was KILLED: answer the paused outcome with a nil PAUSE COMMIT (the resume then falls
       # back to the task base) instead of parking in `:finalizing` forever.
       Pause.current?(data.pause_finalizer, pid) ->
         Logger.warning(
@@ -779,7 +789,7 @@ defmodule EvoGit.Agent.Session do
   end
 
   def handle_event({:call, from}, :history, _phase, data) do
-    {:keep_state, data, [{:reply, from, {:ok, messages(data.state)}}]}
+    {:keep_state, data, [{:reply, from, {:ok, Durable.messages(data.state)}}]}
   end
 
   def handle_event({:call, from}, :identity, _phase, data) do
@@ -1363,12 +1373,7 @@ defmodule EvoGit.Agent.Session do
     do: false
 
   defp closes_tool_batch?(%State{} = adopted, %State{} = state),
-    do: transcript_size(state) > transcript_size(adopted)
-
-  defp transcript_size(%State{context: %{messages: messages}}) when is_list(messages),
-    do: length(messages)
-
-  defp transcript_size(_state), do: 0
+    do: Durable.transcript_size(state) > Durable.transcript_size(adopted)
 
   # A worker-held `%State{}` is a COPY: `event_seq`/`watchers` are SESSION-authoritative.
   defp adopt_state(data, %State{} = state) do
@@ -1644,7 +1649,8 @@ defmodule EvoGit.Agent.Session do
   end
 
   # Starts the MONITORED pause finalizer and moves the session into `:finalizing`. The owner never
-  # blocks on the checkpoint/persist/flush work, and the finalizer reports `{:session_paused, ...}`.
+  # blocks on the pause-commit/persist/flush work, and the finalizer reports
+  # `{:session_paused, ...}`.
   defp start_pause_finalizer(data) do
     data = reset_activity(data)
     pause_finalizer = Pause.start(self(), data.state, data.tmpdir)
@@ -1673,12 +1679,13 @@ defmodule EvoGit.Agent.Session do
 
   defp exchange_opts(_data), do: []
 
-  # The paused payload for the `:DOWN` paths that could not run the finalizer. Without a state there
-  # is no identity to report, so the pinned shape is preserved with nils.
-  defp paused_info(%State{} = state, checkpoint), do: Pause.info(state, checkpoint, nil)
+  # The paused payload for the `:DOWN` paths that could not run the finalizer. `pause_commit` is the
+  # run's persisted pause commit (the scheduler's `worktree_resume_from`), stored under the pinned
+  # `checkpoint` key; without a state there is no identity to report, so the shape keeps its nils.
+  defp paused_info(%State{} = state, pause_commit), do: Pause.info(state, pause_commit, nil)
 
-  defp paused_info(_state, checkpoint) do
-    %{agent_id: nil, task_id: nil, checkpoint: checkpoint, branch: nil, reason: :task_pause}
+  defp paused_info(_state, pause_commit) do
+    %{agent_id: nil, task_id: nil, checkpoint: pause_commit, branch: nil, reason: :task_pause}
   end
 
   # Terminal delivery, EXACTLY ONCE (one private function, one caller each for the success,
@@ -1771,8 +1778,9 @@ defmodule EvoGit.Agent.Session do
   end
 
   # A pause is NOT a failure and NOT a completion: the agent-level status stays `:done` (the
-  # agent-level vocabulary has no `:paused`; the TASK row is what becomes `:paused`), and the
-  # checkpoint sha is surfaced so an observer sees where the resume will start.
+  # agent-level vocabulary has no `:paused`; the TASK row is what becomes `:paused`), and the PAUSE
+  # COMMIT sha (the `checkpoint` key of the paused info) is surfaced so an observer sees where the
+  # resume will start.
   defp final_extra(%{result: {:paused, info}}) do
     case Map.get(info, :checkpoint) do
       sha when is_binary(sha) -> [status: :done, current_commit: sha]
@@ -1876,9 +1884,6 @@ defmodule EvoGit.Agent.Session do
   end
 
   defp shutdown_worker(_data), do: :ok
-
-  defp messages(%State{context: %{messages: messages}}) when is_list(messages), do: messages
-  defp messages(_state), do: []
 
   defp agent_id(%{dispatch_ctx: ctx}), do: Keyword.get(ctx, :agent_id)
 

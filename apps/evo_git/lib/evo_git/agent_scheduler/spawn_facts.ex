@@ -16,9 +16,11 @@ defmodule EvoGit.AgentScheduler.SpawnFacts do
   PERSISTED. Adopting an explicit id is only allowed when it is FREE: no live
   `EvoGit.Agent.Session` is registered under it (the AUTHORITY — the unique-name
   registry that makes "one session per agent id" structural) and no
-  NON-terminal `:evogit_agent_summary` row claims it (belt and braces for a run
-  whose session pid is already gone but whose row has not settled). Anything
-  else answers `{:error, {:agent_id_taken, id}}` and nothing is written.
+  LIVE `:evogit_agent_summary` row claims it (belt and braces for a run
+  whose session pid is already gone but whose row has not settled). "Live" is
+  `AgentState.live?/1` — `:running`/`:awaiting_input`/`:cancelling` — so a row
+  that already settled (`nil`, `:done` or `:failed`) does not block admission.
+  Anything else answers `{:error, {:agent_id_taken, id}}` and nothing is written.
 
   ## Spawn facts
 
@@ -30,6 +32,7 @@ defmodule EvoGit.AgentScheduler.SpawnFacts do
   never becomes a `nil` entry.
   """
 
+  alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Worktrees
@@ -66,13 +69,10 @@ defmodule EvoGit.AgentScheduler.SpawnFacts do
     end
   end
 
-  @terminal_agent_statuses [:completed, :failed, :cancelled, :paused]
-
   defp live_summary_row?(id) do
     with tid when tid != :undefined <- :ets.whereis(:evogit_agent_summary),
          [{^id, row}] <- :ets.lookup(:evogit_agent_summary, id) do
-      status = Map.get(row, :status)
-      not is_nil(status) and status not in @terminal_agent_statuses
+      AgentState.live?(Map.get(row, :status))
     else
       _absent -> false
     end

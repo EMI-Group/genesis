@@ -7,18 +7,28 @@ defmodule EvoGit.Agent.Session.Worker do
   `Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, …)` so the session keeps
   answering inspection, input and cancel commands while the exchange runs. The
   worker owns nothing durable: it installs the process context with the SESSION
-  pid as `:evogit_agent_pid` (D7), runs the exchange, and reports the exchange
-  back with exactly two messages:
+  pid as `:evogit_agent_pid` (D7), runs the exchange, and talks to the session in
+  two ways:
 
-    * `{:checkpoint, self(), %EvoGit.Agent.State{}}` — one per turn, so the
-      session can reject stale workers before adopting state or publishing a
-      coalesced summary;
-    * `{:exchange_finished, self(), outcome}` — the terminal outcome value,
-      verbatim: `{:yield, %State{}, text}` (an interactive agent's tool-free
-      reply, already refreshed against the post-fallback worktree HEAD),
-      `{:pause, %State{}}` (a task-level pause honoured at a turn boundary, also
-      refreshed the same way), `{:finish, %State{}, %Result{}}` or
+    * **phase boundaries are SYNCHRONOUS calls**, not messages: `boundary/2`
+      issues `:gen_statem.call(session, {:worker_boundary, self(), phase, state},
+      :infinity)` for each of `:llm`, `:tools` and `:checkpoint`, so the session
+      can serialize a Stop against the start of a tool batch and only then answer
+      `:continue` (or `:stop`, which throws `{:stop_current_turn, state}` here).
+      `:checkpoint` is the per-turn one: the session validates the sender
+      (`current_worker?/2`) before adopting or publishing, so a stale worker can
+      never overwrite a resumed exchange's state. The call REPLIES, so nothing
+      has to be matched out of the mailbox;
+    * **exactly ONE terminal message**: `{:exchange_finished, self(), outcome}`
+      with the outcome value verbatim — `{:yield, %State{}, text}` (an interactive
+      agent's tool-free reply, already refreshed against the post-fallback worktree
+      HEAD), `{:pause, %State{}}` (a task-level pause honoured at a turn boundary,
+      also refreshed the same way), `{:finish, %State{}, %Result{}}` or
       `{:error, reason}`.
+
+  Outside a session worker `boundary/2` is inert (no `:evogit_exchange_owner` in
+  the process dictionary), which is what keeps the standalone
+  `EvoGit.Agent.Exchange`/`Turn` contract usable.
 
   ## Live streaming
 
@@ -37,7 +47,6 @@ defmodule EvoGit.Agent.Session.Worker do
   `{:delta, events}` messages flow from the worker to the session, which batches
   them and broadcasts them on the agent's topic; they are NOT part of the
   exchange contract above and do not arrive while nothing watches.
-
   An EXCEPTION is deliberately NOT caught here: it propagates out of the task,
   becomes an abnormal `:DOWN` at the session, and the session maps it to its
   crash path — the same shape the scheduler's crash/retry handling expects.

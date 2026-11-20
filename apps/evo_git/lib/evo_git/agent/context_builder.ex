@@ -249,6 +249,10 @@ defmodule EvoGit.Agent.ContextBuilder do
 
   defp strip_zone_prefix(_zone), do: nil
 
+  # `/etc/localtime` may not exist or may not be a symlink: `File.read_link/1`
+  # answers `{:error, reason}` for both, so the `else` arm covers it and no
+  # inner rescue is needed — `local_zone_name/0`, the only caller, already
+  # contains any raise.
   defp zoneinfo_link do
     with {:ok, link} <- File.read_link("/etc/localtime"),
          [_prefix, name] <- String.split(link, "zoneinfo/", parts: 2) do
@@ -256,8 +260,6 @@ defmodule EvoGit.Agent.ContextBuilder do
     else
       _unresolvable -> nil
     end
-  rescue
-    _ -> nil
   end
 
   @doc """

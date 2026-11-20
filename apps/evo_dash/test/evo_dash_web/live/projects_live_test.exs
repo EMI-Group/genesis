@@ -668,6 +668,26 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
     wait_assigns(view, fn assigns -> assigns[:notified_task_ids_ready?] == true end)
   end
 
+  # Awaits the ASYNC task launch's ack (see `do_task_submit/4` + the
+  # `handle_info({{:task_started, ...}, result})` continuation): the start call
+  # runs in a supervised task, so until the ack lands `:task_launching` is true
+  # and the flash, the reset form and the pushed `clear_prompt` event do not
+  # exist yet. Polls the assigns (deadline based, through `wait_assigns/2`, no
+  # fixed sleep) and then re-renders so the returned HTML carries the ack's
+  # flash.
+  #
+  # `min_seq` makes a test that submits MORE THAN ONCE await the newer ack only:
+  # pass the `:task_launch_seq` observed BEFORE the submit (the seq is
+  # monotonic, so a superseded launch's ack can never satisfy the wait).
+  def await_task_launch(view, min_seq \\ 0) do
+    wait_assigns(view, fn assigns ->
+      Map.get(assigns, :task_launch_seq, 0) > min_seq and
+        Map.get(assigns, :task_launching, false) == false
+    end)
+
+    render(view)
+  end
+
   # Installs the ProjectsLive async-batch seam, resolved AT SPAWN TIME by
   # `AsyncLoad.maybe_spawn/2`. The whole batch runs inside
   # `EvoDash.SafeCall.run/1`, so a fun that exits/raises sends NO result
@@ -988,6 +1008,23 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
     view
   end
 
+  # Awaits the OFF-PROCESS attachment read started by a pick on `picker_id`
+  # (see `EvoDashWeb.ProjectsLive.AttachFile`): `file_pick` /
+  # `file_pick_manual` only snapshots the base prompt into `:file_pick_bases`
+  # and records `:attach_pending` (`picker_id => base`); the file itself is
+  # read in a supervised task and applied in `handle_info({{:attachment_loaded,
+  # ...}, result})`. Polls the assigns (deadline based, through
+  # `wait_assigns/2`) until that pick is no longer pending AND `effect` (the
+  # read's expected assign/HTML consequence) holds, then re-renders so a
+  # rendered-HTML assertion sees the settled frame.
+  def await_attachment(view, picker_id, effect) do
+    wait_assigns(view, fn assigns ->
+      not Map.has_key?(Map.get(assigns, :attach_pending, %{}), picker_id) and effect.(assigns)
+    end)
+
+    render(view)
+  end
+
   def put_github_seams(overrides) do
     defaults = [
       {:github_runner, fn _node, _path -> {:error, :no_github_upstream} end},
@@ -1067,6 +1104,20 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
     end
 
     poll.(poll)
+  end
+
+  # Bounded wait for a RENDERED flash message, returning the last render.
+  #
+  # Only the ASYNC `task_submit` launch bumps `:task_launch_seq`, so
+  # `await_task_launch/2` would time out on a path that never spawns one: the
+  # unconfigured-project guard refuses the submit BEFORE the spawn, and the
+  # GitHub-issue fix starts its task inside the `{:github_fix_result, ...}`
+  # continuation. Those tests await the effect the server actually produces —
+  # the flash it pushes — instead of a launch seq it never sets.
+  def wait_for_flash(view, kind, text) do
+    selector = "#flash-#{kind}"
+    wait_assigns(view, fn _assigns -> has_element?(view, selector, text) end)
+    render(view)
   end
 
   # Use the real provider-profile TOML boundary, not a forged picker bundle.
@@ -3171,6 +3222,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         |> Phoenix.Component.assign(:current_node_id, id)
         |> Phoenix.Component.assign(:current_node, node())
         |> Phoenix.Component.assign(:remote_status, %{phase: :connected})
+        # The mount-seeded assigns the async continuation reads (a real mounted
+        # socket always carries them): the reconnect params the URL patch is
+        # rebuilt from and the resume target the foreign-repo guard checks.
+        |> Phoenix.Component.assign(:workbench_reconnect_params, %{})
+        |> Phoenix.Component.assign(:task_resume_from, "")
 
       # open_project/2 now returns IMMEDIATELY: the RPC-heavy sequence runs in
       # a spawned task, so the socket only carries the loading flag + closed
@@ -5748,7 +5804,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # launches successfully (start_task returns {:ok, task}); the spawned
       # wrapper then fails fast in EvoGit.Runtime.Evolution at the invalid
       # node path.
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -5757,6 +5813,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
           node_path: "./nonexistent-dir"
         })
 
+      html = await_task_launch(view)
       assert html =~ "task started with ID:"
 
       # The server-side prompt assign is reset to "" after a successful
@@ -5820,8 +5877,18 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       assert has_element?(view, "#task-model-setup")
       assert has_element?(view, "#task-launch-button[disabled]")
 
+      tasks_before = EvoGit.TaskRegistry.list_task_ids()
       render_submit(view, "task_submit", %{"prompt" => "Draft", "mode" => "evolve_simple"})
+      # The unconfigured-project guard refuses the submit BEFORE the async
+      # launch is spawned (`LaunchOptions.apply/2` → `:no_task_model`), so no
+      # `:task_launch_seq` bump ever happens and `await_task_launch/2` would
+      # time out. Await the effect the server does produce: its rendered
+      # refusal — the friendly, actionable line that points at the model
+      # settings, NOT the generic "Failed to start task" wording.
+      wait_for_flash(view, :error, "Configure a model on this server")
       assert has_element?(view, "#flash-error", "Configure a model on this server")
+      # ...and nothing was enqueued: the refusal happens before any task row.
+      assert EvoGit.TaskRegistry.list_task_ids() -- tasks_before == []
     end
 
     test "a real form submit with no hand-built mode param launches (hidden mode field)", %{
@@ -5845,11 +5912,12 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       render_click(view, "task_change", %{"mode" => "evolve_simple"})
       assert assigns(view)[:task_mode] == "evolve_simple"
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{prompt: "build me a thing", node_path: "./nonexistent-dir"})
 
+      html = await_task_launch(view)
       assert html =~ "task started with ID:"
       task_id = cleanup_launched_task(html)
 
@@ -5885,7 +5953,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # rather than spawning an agent (see make_git_repo!/1).
       make_git_repo!(tmp_dir)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -5894,6 +5962,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
           node_path: "./nonexistent-dir"
         })
 
+      html = await_task_launch(view)
       assert html =~ "task started with ID:"
       task = EvoGit.TaskRegistry.get_task(cleanup_launched_task(html))
       assert has_persistent_state_opt?(task)
@@ -5915,7 +5984,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       render_click(view, "toggle_persist_agent_state", %{})
       assert assigns(view)[:persist_agent_state?] == false
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -5924,6 +5993,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
           node_path: "./nonexistent-dir"
         })
 
+      html = await_task_launch(view)
       assert html =~ "task started with ID:"
       task = EvoGit.TaskRegistry.get_task(cleanup_launched_task(html))
       assert has_persistent_state_opt?(task)
@@ -6006,7 +6076,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # (make_git_repo!/1) — see "task_submit clears the prompt".
       make_git_repo!(tmp_dir)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6015,6 +6085,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
           node_path: "./nonexistent-dir"
         })
 
+      html = await_task_launch(view)
       assert html =~ "task started with ID:"
       task_id = cleanup_launched_task(html)
 
@@ -6135,7 +6206,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
 
       # Launch an evolve task with a nonexistent node_path — the task launches
       # successfully but the wrapper fails fast at validation.
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6144,6 +6215,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
           node_path: "./nonexistent-dir"
         })
 
+      html = await_task_launch(view)
       assert html =~ "task started with ID:"
 
       # A successful launch clears the staged attachments.
@@ -6204,7 +6276,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # before any agent dispatch (see "task_submit clears the prompt").
       make_git_repo!(tmp_dir)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6213,6 +6285,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
           node_path: "./nonexistent-dir"
         })
 
+      html = await_task_launch(view)
       assert html =~ "task started with ID:"
       task_id = cleanup_launched_task(html)
       task = EvoGit.TaskRegistry.get_task(task_id)
@@ -6235,7 +6308,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # (make_git_repo!/1) — see "task_submit clears the prompt".
       make_git_repo!(tmp_dir)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6244,6 +6317,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
           node_path: "./nonexistent-dir"
         })
 
+      html = await_task_launch(view)
       assert html =~ "task started with ID:"
       task_id = cleanup_launched_task(html)
       task = EvoGit.TaskRegistry.get_task(task_id)
@@ -6268,7 +6342,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # (make_git_repo!/1) — see "task_submit clears the prompt".
       make_git_repo!(tmp_dir)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6277,6 +6351,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
           node_path: "./nonexistent-dir"
         })
 
+      html = await_task_launch(view)
       assert html =~ "task started with ID:"
       task_id = cleanup_launched_task(html)
       task = EvoGit.TaskRegistry.get_task(task_id)
@@ -6335,7 +6410,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # (make_git_repo!/1) — see "task_submit clears the prompt".
       make_git_repo!(tmp_dir)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6344,6 +6419,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
           node_path: "./nonexistent-dir"
         })
 
+      html = await_task_launch(view)
       assert html =~ "task started with ID:"
       task_id = cleanup_launched_task(html)
       task = EvoGit.TaskRegistry.get_task(task_id)
@@ -6382,7 +6458,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # (make_git_repo!/1) — see "task_submit clears the prompt".
       make_git_repo!(tmp_dir)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6391,6 +6467,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
           node_path: "./nonexistent-dir"
         })
 
+      html = await_task_launch(view)
       assert html =~ "task started with ID:"
       task_id = cleanup_launched_task(html)
       task = EvoGit.TaskRegistry.get_task(task_id)
@@ -6483,7 +6560,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # (make_git_repo!/1) — see "task_submit clears the prompt".
       make_git_repo!(tmp_dir)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6492,6 +6569,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
           node_path: "./nonexistent-dir"
         })
 
+      html = await_task_launch(view)
       assert html =~ "task started with ID:"
       task_id = cleanup_launched_task(html)
       task = EvoGit.TaskRegistry.get_task(task_id)
@@ -6584,7 +6662,10 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
 
         # The markdown fetch is async; the modal closes once the fix task starts.
         wait_until(view, fn a -> a[:github_modal_open] == false end)
-        html = render(view)
+        # The fix task starts inside the `{:github_fix_result, ...}`
+        # continuation (`ProjectsLive.GitHub.do_start_fix_task/3`), which never
+        # bumps `:task_launch_seq` — await the "task started" flash it pushes.
+        html = wait_for_flash(view, :info, "task started with ID:")
         assert html =~ "task started with ID:"
         refute html =~ "github-issues-modal"
 
@@ -6631,7 +6712,9 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
         render_click(view, "select_quality_level", %{"level" => level})
         assert assigns(view)[:quality_level] == level
 
-        html =
+        seq = assigns(view)[:task_launch_seq]
+
+        _html =
           view
           |> element("#task-form")
           |> render_submit(%{
@@ -6640,6 +6723,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
             node_path: "./nonexistent-dir"
           })
 
+        html = await_task_launch(view, seq)
         assert html =~ "task started with ID:"
         task_id = cleanup_launched_task(html)
         task = EvoGit.TaskRegistry.get_task(task_id)
@@ -6665,7 +6749,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       make_git_repo!(tmp_dir)
       await_async_loads(view)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6674,6 +6758,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
           node_path: "./nonexistent-dir"
         })
 
+      html = await_task_launch(view)
       assert html =~ "task started with ID:"
       task_id = cleanup_launched_task(html)
       task = EvoGit.TaskRegistry.get_task(task_id)

@@ -27,8 +27,10 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
   `EvoGit.ToolRuntime.Executor.execute_tool_task/4` runs inside a `Task.async` LINKED to the agent process,
   so an uncontained failure would kill the whole agent. Pinned here:
 
-    * a RAISING tool → `Error: Tool execution crashed: <exception banner>`;
-    * a THROWN value → `Error: Tool execution crashed: throw <value>`;
+    * a RAISING tool → `Error: Tool execution crashed: ** (<Exception>) <message>`
+      followed by its stacktrace;
+    * a THROWN value → `Error: Tool execution crashed: ** (throw) <value>` with a
+      stacktrace, so the failure CLASS is distinguishable from an exception;
     * containment is PER CALL — a sibling call in the SAME batch still runs;
     * the legitimate task-exit family (`:normal`, `:shutdown`, `:kill`,
       `{:shutdown, reason}`) is re-raised by the `catch` clause and is therefore
@@ -377,11 +379,20 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
       assert_receive {:next_turn, %State{} = state}
       assert [tool_message] = Enum.filter(state.context.messages, &(&1.role == :tool))
 
-      # Exactly the exception banner (`Exception.format_banner/2`), not an
-      # `inspect/1`-rendered exit reason.
-      banner = Exception.format_banner(:error, %RuntimeError{message: "boom"})
-      assert message_text(tool_message) == "Error: Tool execution crashed: " <> banner
-      assert message_text(tool_message) =~ "boom"
+      # The tool task carries the failure RAW (`{:tool_crashed, kind, reason,
+      # __STACKTRACE__}`) and the runtime formats it ONCE with
+      # `Exception.format/3`, so the exception CLASS and a real stacktrace
+      # survive — not an `inspect/1`-rendered exit reason and not a banner head
+      # line that could belong to any exception class.
+      text = message_text(tool_message)
+      assert String.starts_with?(text, "Error: Tool execution crashed: ** (RuntimeError) boom")
+      assert text =~ "boom"
+      assert text =~ "tool_runtime/executor.ex"
+
+      # The SAME formatted detail reaches the tracked terminal fact, so the
+      # class + stacktrace are visible to operators and the dashboard too.
+      assert {:crashed, detail} = crashed_terminal_reason(@read_tool)
+      assert detail == String.replace_prefix(text, "Error: Tool execution crashed: ", "")
     end
 
     test "containment is PER CALL — a sibling call in the same batch still executes" do
@@ -413,7 +424,13 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
                  []
                )
 
-      assert message_text(message) == "Error: Tool execution crashed: throw :boom"
+      # A THROW is rendered with its own class (`** (throw) :boom`) plus a
+      # stacktrace, so it is distinguishable from an exception (which carries an
+      # exception module instead).
+      text = message_text(message)
+      assert String.starts_with?(text, "Error: Tool execution crashed: ** (throw) :boom")
+      assert text =~ "tool_runtime/executor.ex"
+      refute text =~ "RuntimeError"
     end
   end
 
@@ -671,6 +688,21 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
   end
 
   defp echo_tool(text), do: fn _args, _repo, _root, _node -> text end
+
+  # The tracked terminal `reason` of the newest `:tool_call` execution this test's
+  # agent recorded for one tool (the ProcessManager roster is the observable
+  # terminal fact, distinct from the model-facing text).
+  defp crashed_terminal_reason(tool) do
+    agent_id = Process.get(:evogit_agent_id)
+
+    agent_id
+    |> then(&EvoGit.ProcessManager.list(agent_id: &1))
+    |> Enum.filter(&(&1.kind == :tool_call and &1.tool == tool))
+    |> case do
+      [execution] -> execution.reason
+      _none_or_ambiguous -> nil
+    end
+  end
 
   defp echo_args_tool(pid) do
     fn args, _repo, _root, _node ->

@@ -57,11 +57,14 @@ defmodule EvoGit.TaskRegistry do
 
   alias EvoGit.TaskRegistry.Cleanup
   alias EvoGit.TaskRegistry.Diagnostics
+  alias EvoGit.TaskRegistry.Heartbeat
   alias EvoGit.TaskRegistry.Lease
   alias EvoGit.TaskRegistry.Pause
   alias EvoGit.TaskRegistry.ReadOffload
+  alias EvoGit.TaskRegistry.Restart
   alias EvoGit.TaskRegistry.RuntimeOpts
   alias EvoGit.TaskRegistry.StoreGuard
+  alias EvoGit.TaskRegistry.StoreRead
   alias EvoGit.TaskRegistry.TaskExecutor
 
   ## Call timeout
@@ -88,6 +91,56 @@ defmodule EvoGit.TaskRegistry do
   # Default grace (minutes) for the stuck-:finalizing watchdog — overridable via
   # the app env :finalizing_watchdog_grace_minutes (see finalizing_watchdog_grace/0).
   @finalizing_watchdog_default_minutes 60
+
+  # The BOUND on `list_tasks/0`, the only unbounded full-table read left on this
+  # facade: it decodes `result`/`logs`/`usage` for every row it returns, and its
+  # only caller (`EvoGit.AgentScheduler.RemoteAPI.list_tasks/0`) has no dashboard
+  # consumer. The newest N rows by `started_at DESC` (the same ordering the
+  # paginated read uses), so a long-lived store can never blow up one RPC reply.
+  @list_tasks_limit 100
+
+  ## Types
+
+  @typedoc """
+  A task status the registry PERSISTS (`EvoGit.Store.Codec.known_statuses/0`):
+  `:pending | :running | :finalizing | :awaiting_input | :cancelling | :pausing
+  | :paused | :completed | :failed | :cancelled`.
+  """
+  @type task_status ::
+          :pending
+          | :running
+          | :finalizing
+          | :awaiting_input
+          | :cancelling
+          | :pausing
+          | :paused
+          | :completed
+          | :failed
+          | :cancelled
+
+  @typedoc """
+  A status AS READ BACK: a known status atom, or `{:unknown, raw}` when the row
+  EXISTS but its status text is outside the whitelist (never "absent").
+  """
+  @type persisted_status :: task_status() | {:unknown, term()}
+
+  @typedoc "The degraded write result every mutating store path answers."
+  @type write_result :: :ok | {:error, :disk_full | :store_unavailable}
+
+  @typedoc "The single-task read degradation (`nil` also covers a store fault)."
+  @type task_read :: TaskInfo.t() | nil
+
+  @typedoc "A paginated slice of `%TaskInfo{}` plus the filtered total."
+  @type paginated_tasks :: {[TaskInfo.t()], non_neg_integer()}
+
+  @typedoc "One lightweight summary page plus the filtered total."
+  @type task_page :: %{rows: [map()], total: non_neg_integer()}
+
+  @typedoc "One page of a task's per-agent archive plus its total row count."
+  @type archive_page :: %{entries: [map()], total: non_neg_integer() | nil}
+
+  @typedoc "The distinct non-nil `project_path` values the store holds."
+  @type unique_paths :: [String.t()]
 
   ## Task status sets
   #
@@ -218,15 +271,51 @@ defmodule EvoGit.TaskRegistry do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
+  @doc """
+  Mints a FRESH task id and starts `task_type` with `opts`, persisting the row
+  `:running` and spawning its wrapper.
+
+  The id is always new, so the cancellation guard can only ever refuse a
+  duplicated/foreign id; admission (`:path`, model selection, `:session_mode`,
+  `:persistent_state`) replies `{:error, reason}` and enqueues nothing.
+
+  Returns `{:ok, %TaskInfo{}}` or `{:error, reason}` (`{:error, :cancelled}`
+  for an id already in an `unstartable_statuses/0` state).
+  """
+  @spec start_task(atom(), keyword()) :: {:ok, TaskInfo.t()} | {:error, term()}
   def start_task(task_type, opts) do
     task_id = TaskExecutor.generate_id()
     GenServer.call(server(), {:start_task, task_id, task_type, opts}, @call_timeout)
   end
 
+  @doc """
+  The task's FULL row (every column decoded, including `result`/`logs`/`usage`),
+  or `nil` — also `nil` when the store read fails.
+
+  This is the heaviest single-row read on the facade: `TaskInfo.opts` and
+  `TaskInfo.result["repos"]` come back STRING-keyed (see `EvoGit.TaskInfo`).
+  Prefer `get_task_lite/1` for a detail view and the narrow
+  `EvoGit.TaskRegistry.StoreRead` reads for a status/decision.
+  """
+  @spec get_task(String.t()) :: task_read()
   def get_task(task_id) do
     GenServer.call(server(), {:get_task, task_id}, @call_timeout)
   end
 
+  @doc """
+  ALL tasks as full `%TaskInfo{}` rows — BOUNDED to the newest
+  `#{@list_tasks_limit}` rows by `started_at DESC`.
+
+  The bound exists because this read decodes the heavy JSON columns
+  (`result`/`logs`/`usage`) of every row it returns and its only caller is the
+  `EvoGit.AgentScheduler.RemoteAPI.list_tasks/0` RPC (no dashboard surface uses
+  it): an unbounded full-table decode would grow with the store forever and ride
+  an `:erpc` reply. For paging/filtering use `list_tasks_paginated/1` or
+  `list_tasks_page/1`.
+
+  Degrades to `[]` when the store read fails.
+  """
+  @spec list_tasks() :: [TaskInfo.t()]
   def list_tasks do
     GenServer.call(server(), :list_tasks, @call_timeout)
   end
@@ -234,9 +323,13 @@ defmodule EvoGit.TaskRegistry do
   @doc """
   Returns a paginated slice of tasks (most-recent-first) with the total count.
 
-  `opts` is a keyword list accepting `:limit` and `:offset` (both forwarded
-  to `EvoGit.Store.safe_select_paginated_tasks/2`). Returns `{tasks, total_count}`.
+  `opts` is a keyword list accepting `:limit`, `:offset` and `:filters` (all
+  forwarded to `EvoGit.Store.safe_select_paginated_tasks/2`). Returns
+  `{[%TaskInfo{}], total_count}` — the requested page plus the FILTERED total,
+  independent of `:limit`/`:offset`. Degrades to `{[], 0}` when the store read
+  fails.
   """
+  @spec list_tasks_paginated(keyword()) :: paginated_tasks()
   def list_tasks_paginated(opts \\ []) do
     GenServer.call(server(), {:list_tasks_paginated, opts}, @call_timeout)
   end
@@ -253,6 +346,7 @@ defmodule EvoGit.TaskRegistry do
 
   Degrades to `%{rows: [], total: 0}` when the store call fails.
   """
+  @spec list_tasks_page(keyword()) :: task_page()
   def list_tasks_page(opts \\ []) do
     GenServer.call(server(), {:list_tasks_page, opts}, @call_timeout)
   end
@@ -265,6 +359,7 @@ defmodule EvoGit.TaskRegistry do
   Delegates to `EvoGit.Store.get_task_lite/2`. Returns `%TaskInfo{}` or `nil`
   (also `nil` when the store call fails).
   """
+  @spec get_task_lite(String.t()) :: task_read()
   def get_task_lite(task_id) do
     GenServer.call(server(), {:get_task_lite, task_id}, @call_timeout)
   end
@@ -305,6 +400,17 @@ defmodule EvoGit.TaskRegistry do
       EvoGit.Store.put_task_archive(store, entry)
     end)
   end
+
+  @doc """
+  The aligned name for `put_task_archive/1`: it writes ONE AGENT's archive row
+  (`{task_id, agent_id}`), which is exactly what its read-side counterpart
+  `get_agent_archive/2` addresses.
+
+  Same contract as `put_task_archive/1` (streaming producer write, runs in the
+  CALLER, idempotent upsert, best-effort).
+  """
+  @spec put_agent_archive(map()) :: :ok | {:error, term()}
+  def put_agent_archive(entry), do: put_task_archive(entry)
 
   @doc """
   Returns ONE page of a task's archived agents plus the task's TOTAL archive
@@ -376,6 +482,8 @@ defmodule EvoGit.TaskRegistry do
 
   For the brutal (no grace period) cancellation, use `force_kill_task/1`.
   """
+  @spec cancel_task(String.t()) ::
+          :ok | {:error, :not_found | :not_running | :disk_full | :store_unavailable}
   def cancel_task(task_id) do
     GenServer.call(server(), {:cancel_task, task_id}, @call_timeout)
   end
@@ -397,6 +505,8 @@ defmodule EvoGit.TaskRegistry do
 
   For the graceful cancellation, use `cancel_task/1`.
   """
+  @spec force_kill_task(String.t()) ::
+          :ok | {:error, :not_found | :not_running | :disk_full | :store_unavailable}
   def force_kill_task(task_id) do
     GenServer.call(server(), {:force_kill_task, task_id}, @call_timeout)
   end
@@ -431,6 +541,7 @@ defmodule EvoGit.TaskRegistry do
   Returns `:ok` on success (including the idempotent case) or `{:error, reason}`.
   The validation/persistence itself lives in `EvoGit.TaskRegistry.Pause`.
   """
+  @spec pause_task(String.t()) :: :ok | {:error, term()}
   def pause_task(task_id) do
     GenServer.call(server(), {:pause_task, task_id}, @call_timeout)
   end
@@ -475,10 +586,20 @@ defmodule EvoGit.TaskRegistry do
 
   Returns `:ok` on success or `{:error, reason}`.
   """
+  @spec resume_task(String.t()) :: :ok | {:error, term()}
   def resume_task(task_id) do
     GenServer.call(server(), {:resume_task, task_id}, @call_timeout)
   end
 
+  @doc """
+  Asynchronously moves `task_id` to `status`, optionally persisting `result` and
+  the `:usage` / `:agent_count` / `:commit_sha` / `:error` opts.
+
+  A CAST: it returns `:ok` immediately. The decision (stale-terminal guard,
+  `:cancelling` force-map, terminal teardown, persist-then-broadcast) is made in
+  `handle_update_status/6`.
+  """
+  @spec update_task_status(String.t(), task_status(), term(), keyword()) :: :ok
   def update_task_status(task_id, status, result \\ nil, opts \\ []) do
     GenServer.cast(server(), {:update_status, task_id, status, result, opts})
   end
@@ -512,10 +633,26 @@ defmodule EvoGit.TaskRegistry do
     )
   end
 
+  @doc """
+  Asynchronously records the TASK-LEVEL review status (one column,
+  `tasks.review_status`; there is no per-repo review state).
+
+  A CAST that returns `:ok` immediately: a missing row is a silent no-op and a
+  failed write is logged. `{:task_updated, task_id, nil, node()}` is broadcast
+  ONLY when the column write actually succeeded — a no-op, a missing row and a
+  failed write are not state changes.
+  """
+  @spec set_review_status(String.t(), atom()) :: :ok
   def set_review_status(task_id, status) do
     GenServer.cast(server(), {:set_review_status, task_id, status})
   end
 
+  @doc """
+  Asynchronously records the task-level review SHAs (`base_sha` / `commit_sha`).
+
+  Same cast/no-op/broadcast contract as `set_review_status/2`.
+  """
+  @spec set_review_metadata(String.t(), String.t() | nil, String.t() | nil) :: :ok
   def set_review_metadata(task_id, base_sha, commit_sha) do
     GenServer.cast(server(), {:set_review_metadata, task_id, base_sha, commit_sha})
   end
@@ -530,7 +667,11 @@ defmodule EvoGit.TaskRegistry do
   `since` is an optional fixed-precision ISO-8601 timestamp string; when
   non-nil, only tasks updated at or after `since` are returned (nil = no time
   filter). The filter is pushed into SQL.
+
+  Degrades to `[]` when the store read fails. There is no ORDER BY and no
+  LIMIT: this is the whole matching set, in whatever order SQLite returns.
   """
+  @spec list_tasks_summary([atom()], String.t() | nil) :: [map()]
   def list_tasks_summary(statuses \\ [], since \\ nil) do
     GenServer.call(server(), {:list_tasks_summary, statuses, since}, @call_timeout)
   end
@@ -543,14 +684,21 @@ defmodule EvoGit.TaskRegistry do
   columns are read, no heavy JSON fields are decoded. `updated_at` is returned
   as the raw stored fixed-precision ISO string (not decoded to a DateTime).
   When `statuses` is non-empty, the status filter is pushed into SQL.
+
+  Degrades to `[]` when the store read fails.
   """
+  @spec list_task_ids([atom()]) :: [map()]
   def list_task_ids(statuses \\ []) do
     GenServer.call(server(), {:list_task_ids, statuses}, @call_timeout)
   end
 
   @doc """
-  Same as list_tasks_summary/2 but filtered to a specific project_path.
+  Same as `list_tasks_summary/2` but filtered to a specific `project_path`
+  (the store-maintained scalar column, not an `opts` decode).
+
+  Degrades to `[]` when the store read fails.
   """
+  @spec list_tasks_summary_by_path(String.t(), [atom()], String.t() | nil) :: [map()]
   def list_tasks_summary_by_path(path, statuses \\ [], since \\ nil) do
     GenServer.call(
       server(),
@@ -564,19 +712,54 @@ defmodule EvoGit.TaskRegistry do
   ISO-8601 timestamp string (`since_iso`). Delegates to
   `EvoGit.Store.select_tasks_changed_since/2`; returns a list of plain maps
   (id, status, updated_at, ...).
+
+  Degrades to `[]` when the store read fails.
   """
+  @spec list_tasks_changed_since(String.t()) :: [map()]
   def list_tasks_changed_since(since_iso) do
     GenServer.call(server(), {:list_tasks_changed_since, since_iso}, @call_timeout)
   end
 
+  @doc """
+  The distinct non-nil `project_path` values the store holds — the dashboard's
+  project list for the task history search.
+
+  RPC-VISIBLE (`EvoGit.AgentScheduler.RemoteAPI.get_unique_paths/0`,
+  `EvoGit.RemoteNode.get_unique_paths/1`) and pinned under that name by tests,
+  so the name stays. `list_unique_paths/0` is the preferred spelling; both are
+  identical and delegate to the same handler. Degrades to `[]` when the store
+  read fails.
+  """
+  @spec get_unique_paths() :: unique_paths()
   def get_unique_paths do
     GenServer.call(server(), :get_unique_paths, @call_timeout)
   end
 
+  @doc """
+  The preferred name for `get_unique_paths/0` — same function, same result.
+  """
+  @spec list_unique_paths() :: unique_paths()
+  def list_unique_paths, do: get_unique_paths()
+
+  @doc """
+  Asynchronously deletes a task row and cascades to its durable agent state.
+
+  A CAST returning `:ok` immediately; `{:task_deleted, task_id, node()}` is
+  broadcast only on the successful delete.
+  """
+  @spec delete_task(String.t()) :: :ok
   def delete_task(task_id) do
     GenServer.cast(server(), {:delete_task, task_id})
   end
 
+  @doc """
+  Deletes every FINISHED task row (the terminal statuses) and broadcasts one
+  `{:task_deleted, task_id, node()}` per row.
+
+  Returns `:ok`, or `{:error, :disk_full | :store_unavailable}` when nothing was
+  deleted.
+  """
+  @spec clear_finished_tasks() :: :ok | {:error, :disk_full | :store_unavailable}
   def clear_finished_tasks do
     GenServer.call(server(), :clear_finished_tasks, @call_timeout)
   end
@@ -658,21 +841,36 @@ defmodule EvoGit.TaskRegistry do
     # Mark such tasks synchronously here (NOT via the async update_task_status/4
     # cast, which would race callers).
     #
-    # TASK PAUSE — a RESUMABLE live row (`:persistent_state` on AND durable agent
-    # state present, `Pause.pause_kind_for_restart/2`) has no wrapper after a
-    # restart, so it becomes a DIRTY PAUSE (`:paused` + `pause_kind: :dirty`,
-    # `finished_at` nil, lease cleared, result/usage untouched) instead of
-    # `:failed`. This arm owns `:running` (which otherwise keeps today's "leave it
-    # to the one-shot :lease_sweep" behaviour) AND `:pausing` (a drain that was
-    # interrupted by the restart) — a NON-resumable row falls through to today's
-    # behaviour in both cases (the sweep maps its expired lease to `:failed`).
-    state =
+    # TASK PAUSE — a RESUMABLE live row (`:persistent_state` on AND a durable
+    # ROOT agent-state record present) has no wrapper after a restart, so it
+    # becomes a DIRTY PAUSE (`:paused` + `pause_kind: :dirty`, `finished_at` nil,
+    # lease cleared, result/usage untouched) instead of `:failed`. This arm owns
+    # `:running` (which otherwise keeps today's "leave it to the one-shot
+    # :lease_sweep" behaviour) AND `:pausing` (a drain that was interrupted by the
+    # restart) — a NON-resumable row falls through to today's behaviour in both
+    # cases (the sweep maps its expired lease to `:failed`).
+    #
+    # The classification is ONE batched pass (`Restart.classify`: one narrow
+    # restart-info read + ONE batched durable-roster read for every candidate
+    # id), not a per-row task read + per-row roster read inside `init/1` — this
+    # runs before the registry answers anything.
+    live_rows =
       safe_store_read(
         "init select_running_lease_info",
         [],
         fn -> EvoGit.Store.select_running_lease_info(task_store) end
       )
-      |> Enum.reduce(state, fn %{id: task_id, status: status}, acc ->
+
+    dirty_ids =
+      task_store
+      |> Restart.classify(
+        for %{id: id, status: status} <- live_rows,
+            status in [:running, :pausing],
+            do: id
+      )
+
+    state =
+      Enum.reduce(live_rows, state, fn %{id: task_id, status: status}, acc ->
         case status do
           :finalizing ->
             message = "Runtime restarted during task finalization"
@@ -714,7 +912,7 @@ defmodule EvoGit.TaskRegistry do
             )
 
           status when status in [:running, :pausing] ->
-            reconcile_paused(acc, task_id, status)
+            reconcile_paused(acc, task_id, status, dirty_ids)
 
           _ ->
             acc
@@ -748,23 +946,25 @@ defmodule EvoGit.TaskRegistry do
     # an id owned by a waiting interactive session (`:awaiting_input`). There is
     # no in-runtime :pending → :running scheduled transition, so this is the
     # only place a cancelled pending task could slip through.
+    # Three-state read: only an ANSWERED status can refuse the start. A fresh
+    # minted id cannot be `:cancelled` (`start_task/2` always allocates one),
+    # so BOTH `:absent` AND `:unavailable` proceed — refusing on a store outage
+    # would strand a task nothing else could ever start. `{:unknown, raw}`
+    # (the row EXISTS, its status text is unreadable) likewise cannot be
+    # PROVEN `:cancelled`, so it proceeds too.
     persisted_status =
-      safe_store_read("start_task get_task_status", nil, fn ->
-        EvoGit.Store.get_task_status(state.task_store, task_id)
-      end)
+      case StoreRead.status(state.task_store, task_id) do
+        {:ok, status} -> status
+        _absent_or_unavailable -> nil
+      end
 
-    # `{:unknown, raw}` — the row EXISTS but its status text is unreadable, so
-    # it is never treated as absent; it also cannot be PROVEN `:cancelled`, so
-    # the guard below deliberately does not fire and the start proceeds. This
-    # handler always allocates a FRESH task id, so refusing here would only
-    # strand a task nothing else could start.
     log_unreadable_status("start_task", task_id, persisted_status)
 
     case persisted_status do
       status when status in @unstartable_statuses ->
         {:reply, {:error, :cancelled}, state}
 
-      _known_or_absent ->
+      _known_absent_or_unavailable ->
         # Admit before spawning or persisting: invalid explicit selections must
         # not enqueue work, and the stored opts must match the admitted selection.
         # `:session_mode` is admitted the same way (non-raising — a raise here
@@ -847,8 +1047,14 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_call(:list_tasks, from, state) do
+    # BOUNDED full-row read: `@list_tasks_limit` newest rows through the
+    # existing paginated read, whose page is ordered `started_at DESC` and whose
+    # heavy JSON columns are decoded for those rows only. The shape stays
+    # `[%TaskInfo{}]` — callers depend on it — only the row COUNT is capped.
     offload(from, state, "list_tasks", [], fn ->
-      EvoGit.Store.safe_select_all_tasks(state.task_store)
+      state.task_store
+      |> EvoGit.Store.safe_select_paginated_tasks(limit: @list_tasks_limit)
+      |> elem(0)
     end)
   end
 
@@ -1249,77 +1455,74 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_cast({:set_review_status, task_id, status}, state) do
-    # Narrow-column existence check: reads only the status column.
-    case safe_store_read("set_review_status get_task_status", nil, fn ->
-           EvoGit.Store.get_task_status(state.task_store, task_id)
-         end) do
-      nil ->
+    # THREE-STATE existence check on the narrow status column (`StoreRead`):
+    #   * `{:ok, _present}` — the row EXISTS, whether its status is a known atom
+    #     or an unreadable `{:unknown, raw}` (review status is independent of the
+    #     task status), so the column is writable;
+    #   * `:absent` — no row: a silent no-op;
+    #   * `:unavailable` — the store could not answer, so the row's existence is
+    #     UNKNOWN and nothing is written (never persist blind).
+    case StoreRead.status(state.task_store, task_id) do
+      {:ok, _present} ->
+        write_review_columns(state, task_id, [review_status: status], op: "set_review_status")
+
+      :absent ->
         :ok
 
-      # A row that EXISTS — a known status atom OR `{:unknown, raw}` (its status
-      # text is unreadable, but the row is there) — is writable. Only a missing
-      # row is the no-op; review status is independent of the task status.
-      present when not is_nil(present) ->
-        case safe_store_write("set_review_status update_task_columns", fn ->
-               EvoGit.Store.update_task_columns(state.task_store, task_id, review_status: status)
-             end) do
-          :ok ->
-            :ok
-
-          {:error, :disk_full} ->
-            # Fire-and-forget review-status write (cast): swallow + log — the
-            # review status stays as-is in the DB until a retry succeeds.
-            Logger.warning(
-              "TaskRegistry: disk full — review status for task #{task_id} not persisted"
-            )
-
-          {:error, :store_unavailable} ->
-            :ok
-        end
+      :unavailable ->
+        :ok
     end
 
-    # Review-status mutations don't change the task status — broadcast nil.
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, task_id, nil, node()})
     {:noreply, state}
   end
 
   @impl true
   def handle_cast({:set_review_metadata, task_id, base_sha, commit_sha}, state) do
-    # Narrow-column existence check: reads only the status column.
-    case safe_store_read("set_review_metadata get_task_status", nil, fn ->
-           EvoGit.Store.get_task_status(state.task_store, task_id)
-         end) do
-      nil ->
+    # Same three-state existence rule as `set_review_status`.
+    case StoreRead.status(state.task_store, task_id) do
+      {:ok, _present} ->
+        write_review_columns(state, task_id, [base_sha: base_sha, commit_sha: commit_sha],
+          op: "set_review_metadata"
+        )
+
+      :absent ->
         :ok
 
-      # Same tri-state rule as `set_review_status`: `{:unknown, raw}` means the
-      # row EXISTS (only its status text is unreadable), so the SHA columns are
-      # written; only a missing row is a no-op.
-      present when not is_nil(present) ->
-        case safe_store_write("set_review_metadata update_task_columns", fn ->
-               EvoGit.Store.update_task_columns(state.task_store, task_id,
-                 base_sha: base_sha,
-                 commit_sha: commit_sha
-               )
-             end) do
-          :ok ->
-            :ok
-
-          {:error, :disk_full} ->
-            # Fire-and-forget review-metadata write (cast): swallow + log — the
-            # review SHAs stay as-is in the DB until a retry succeeds.
-            Logger.warning(
-              "TaskRegistry: disk full — review metadata for task #{task_id} not persisted"
-            )
-
-          {:error, :store_unavailable} ->
-            :ok
-        end
+      :unavailable ->
+        :ok
     end
 
-    # Review-metadata mutations don't change the task status — broadcast nil.
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, task_id, nil, node()})
     {:noreply, state}
+  end
+
+  # The review-column write shared by both review casts. The `{:task_updated,
+  # task_id, nil, node()}` broadcast fires ONLY inside the `:ok` arm: a no-op, a
+  # missing row and a failed write are NOT state changes (the PubSub contract
+  # says "no broadcast on stale/no-op/missing-row updates").
+  defp write_review_columns(state, task_id, columns, opts) do
+    op = Keyword.fetch!(opts, :op)
+
+    case safe_store_write("#{op} update_task_columns", fn ->
+           EvoGit.Store.update_task_columns(state.task_store, task_id, columns)
+         end) do
+      :ok ->
+        # Review mutations don't change the task status — broadcast nil.
+        Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, task_id, nil, node()})
+        :ok
+
+      {:error, :disk_full} ->
+        # Fire-and-forget review write (cast): swallow + log — the column keeps
+        # its previous value until a retry succeeds.
+        Logger.warning(
+          "TaskRegistry: disk full — review data for task #{task_id} not persisted (#{op})"
+        )
+
+        :ok
+
+      {:error, :store_unavailable} ->
+        # StoreGuard already logged the fault — no write happened.
+        :ok
+    end
   end
 
   # Shared implementation for the :update_status cast handlers (5- and 6-tuple
@@ -1332,19 +1535,24 @@ defmodule EvoGit.TaskRegistry do
     commit_sha = Keyword.get(opts, :commit_sha)
     error = Keyword.get(opts, :error)
 
-    # Narrow-column read: only status, opts, finished_at, lease_expires_at are
-    # fetched (no full 19-column task_get decode) — exactly the fields this
-    # handler needs for the stale-guard, preservation, and project_path.
+    # Narrow-column THREE-STATE read via `StoreRead` (never the full 19-column
+    # task_get decode) — exactly the fields this handler needs for the
+    # stale-guard, preservation and project_path. The distinction the old
+    # single-shape read could not make:
+    #   * `:absent`     — the row is GONE: no write, no broadcast;
+    #   * `:unavailable` — the store could not answer: no write either, because
+    #     this handler's decision depends on the CURRENT row (stale-terminal
+    #     guard, `:cancelling` force-map, finished_at/lease preservation) and
+    #     persisting blind could clobber a paused/resumed task's bookkeeping.
     state =
-      case safe_store_read("handle_update_status select_task_update_info", nil, fn ->
-             EvoGit.Store.select_task_update_info(state.task_store, task_id)
-           end) do
-        %{
-          status: task_status,
-          opts: task_opts,
-          finished_at: task_finished_at,
-          lease_expires_at: task_lease_expires_at
-        } ->
+      case StoreRead.update_info(state.task_store, task_id) do
+        {:ok,
+         %{
+           status: task_status,
+           opts: task_opts,
+           finished_at: task_finished_at,
+           lease_expires_at: task_lease_expires_at
+         }} ->
           # Final-result force-mapping for graceful cancellation: a task whose
           # CURRENT stored status is :cancelling that reaches a terminal phase
           # (the wrapper completed/failed during the grace period) must always
@@ -1476,8 +1684,14 @@ defmodule EvoGit.TaskRegistry do
             end
           end
 
-        nil ->
-          # Missing row — no write, no broadcast.
+        :absent ->
+          # The row is genuinely missing — no write, no broadcast.
+          state
+
+        :unavailable ->
+          # Store outage — the row's current state is unknown, so nothing is
+          # written and nothing is broadcast (conservative: never overwrite a
+          # row we cannot read). StoreGuard logged the fault.
           state
       end
 
@@ -1759,43 +1973,50 @@ defmodule EvoGit.TaskRegistry do
   # Path split: `init/1` handles the rows present AT BOOT (there is no wrapper on
   # a fresh BEAM, so no lease check is needed), the sweep handles the rows that
   # become owner-less LATER (`Lease.leaked?/3`: not owned + expired lease).
+  # BOTH paths classify ALL their candidates with ONE `Restart.classify/2` call
+  # and land here only for a `:dirty` verdict — this function is the WRITE half
+  # alone. Targeted columns only, never a full `put_task`.
+  #
   # Returns `:paused` only when the write succeeded — the caller broadcasts the
   # transition exactly once, AFTER the persist.
-  defp orphan_to_dirty_pause(state, task_id) do
-    case Pause.pause_kind_for_restart(state.task_store, task_id) do
-      :dirty ->
-        case safe_store_write("restart dirty pause update_task_columns", fn ->
-               EvoGit.Store.update_task_columns(state.task_store, task_id,
-                 status: :paused,
-                 pause_kind: :dirty,
-                 finished_at: nil,
-                 lease_expires_at: nil
-               )
-             end) do
-          :ok ->
-            :paused
+  defp park_dirty_pause(state, task_id) do
+    case safe_store_write("restart dirty pause update_task_columns", fn ->
+           EvoGit.Store.update_task_columns(state.task_store, task_id,
+             status: :paused,
+             pause_kind: :dirty,
+             finished_at: nil,
+             lease_expires_at: nil
+           )
+         end) do
+      :ok ->
+        :paused
 
-          {:error, :disk_full} ->
-            Logger.warning(
-              "TaskRegistry: disk full — resumable task #{task_id} could not be " <>
-                "persisted as a dirty pause"
-            )
+      {:error, :disk_full} ->
+        Logger.warning(
+          "TaskRegistry: disk full — resumable task #{task_id} could not be " <>
+            "persisted as a dirty pause"
+        )
 
-            :unchanged
+        :unchanged
 
-          {:error, :store_unavailable} ->
-            # StoreGuard already logged it; the row keeps its live status.
-            :unchanged
-        end
-
-      nil ->
+      {:error, :store_unavailable} ->
+        # StoreGuard already logged it; the row keeps its live status.
         :unchanged
     end
   end
 
-  # `init/1` reconciliation arm for a live, wrapper-less row at boot.
-  defp reconcile_paused(state, task_id, status) do
-    case orphan_to_dirty_pause(state, task_id) do
+  # `init/1` reconciliation arm for a live, wrapper-less row at boot. The
+  # resumability verdict was computed ONCE for every boot candidate
+  # (`dirty_ids`), so this only performs the targeted write.
+  defp reconcile_paused(state, task_id, status, dirty_ids) do
+    outcome =
+      if Map.has_key?(dirty_ids, task_id) do
+        park_dirty_pause(state, task_id)
+      else
+        :unchanged
+      end
+
+    case outcome do
       :paused ->
         Logger.info(
           "TaskRegistry: Task #{task_id} (was #{inspect(status)}) reconciled to a DIRTY PAUSE " <>
@@ -2037,12 +2258,15 @@ defmodule EvoGit.TaskRegistry do
     end)
   end
 
-  # Reads the task's currently persisted status (nil when the task is unknown),
-  # used to log failed transitions with the previous status.
+  # Reads the task's currently persisted status (nil when unknown OR when the
+  # store could not answer), used ONLY to log a failed transition's previous
+  # status. A narrow status-column read — never the full 19-column decode this
+  # log-only value used to pay for on every failed wrapper result and every
+  # abnormal `:DOWN`.
   defp prev_status(state, task_id) do
-    case task_get(state, task_id) do
-      %TaskInfo{status: s} -> s
-      nil -> nil
+    case StoreRead.status(state.task_store, task_id) do
+      {:ok, status} -> status
+      _absent_or_unavailable -> nil
     end
   end
 
@@ -2366,48 +2590,23 @@ defmodule EvoGit.TaskRegistry do
   # owner. This is purely renewal — no sweeping happens here. Reschedules itself.
   @impl true
   def handle_info(:heartbeat, state) do
-    now = System.system_time(:second)
-
-    # Renew leases for owned tasks using lightweight queries — avoids full
-    # decode (task_get) + full re-encode (put_task) for every owned task on
-    # every heartbeat. `Lease.lease_renewable?/1` is the ONE renewal
-    # classification: it covers `:running | :pending | :cancelling` (a long
-    # graceful cancel keeps its lease while the wrapper is still alive) AND
-    # `{:unknown, raw}` — a row that EXISTS with status text we cannot read is
-    # renewed, never left to expire, so an unrecognized status spelling can
-    # never make a LIVE task look leaked to the sweep. `nil` (no row) and every
-    # terminal status renew nothing.
-    Enum.each(state.task_refs, fn {task_id, _ref} ->
-      status =
-        safe_store_read("heartbeat get_task_status", nil, fn ->
-          EvoGit.Store.get_task_status(state.task_store, task_id)
-        end)
-
-      if Lease.lease_renewable?(status) do
-        case safe_store_write("heartbeat update_lease_expires_at", fn ->
-               EvoGit.Store.update_lease_expires_at(
-                 state.task_store,
-                 task_id,
-                 now + @lease_duration
-               )
-             end) do
-          :ok ->
-            :ok
-
-          {:error, :disk_full} ->
-            # Fire-and-forget heartbeat renewal: swallow + log. The lease
-            # simply expires on schedule if it cannot be renewed; the sweep
-            # then treats the task as orphaned (correct degradation).
-            Logger.warning(
-              "TaskRegistry: disk full — lease renewal for task #{task_id} not persisted"
-            )
-
-          {:error, :store_unavailable} ->
-            # Same degradation (StoreGuard already logged it).
-            :ok
-        end
-      end
-    end)
+    # ONE batched renewal for every owned task (see
+    # `EvoGit.TaskRegistry.Heartbeat`): one status read + at most one write,
+    # never 2N round trips inside this GenServer. The classification stayed in
+    # `Lease.lease_renewable?/1`, and `@lease_duration` stays HERE — the
+    # heartbeat passes the absolute expiry.
+    #
+    # This is purely renewal — NO sweeping happens here. `:running`,
+    # `:pending`, `:cancelling` (a long graceful cancel keeps its lease while
+    # the wrapper is alive), `:awaiting_input`, `:pausing` and `{:unknown, raw}`
+    # (a row that EXISTS with unreadable status text) are renewed; an absent
+    # row and every terminal status are not.
+    :ok =
+      Heartbeat.renew(
+        state.task_store,
+        Map.keys(state.task_refs),
+        System.system_time(:second) + @lease_duration
+      )
 
     Process.send_after(self(), :heartbeat, @heartbeat_interval)
     {:noreply, state}
@@ -2426,7 +2625,7 @@ defmodule EvoGit.TaskRegistry do
     # decoded, avoiding the full struct decode for every task in the table.
     # We only need to task_get (full decode) for the very few tasks (usually
     # 0-1) that actually need to be marked :failed.
-    {changed, failed_ids, paused_ids} =
+    leaked_rows =
       safe_store_read("lease_sweep select_running_lease_info", [], fn ->
         EvoGit.Store.select_running_lease_info(state.task_store)
       end)
@@ -2446,7 +2645,14 @@ defmodule EvoGit.TaskRegistry do
         # re-derivation.
         Lease.leaked?(status, MapSet.member?(owned_ids, id), lease)
       end)
-      |> Enum.reduce({false, [], []}, fn
+
+    # ONE batched resumability pass for the whole sweep (`Restart.classify`), so
+    # the per-row decision costs a map lookup instead of a task read plus a
+    # durable-roster read per leaked row.
+    dirty_ids = Restart.classify(state.task_store, Enum.map(leaked_rows, & &1.id))
+
+    {changed, failed_ids, paused_ids} =
+      Enum.reduce(leaked_rows, {false, [], []}, fn
         %{id: id, lease_expires_at: lease}, {changed, failed_ids, paused_ids} ->
           if Lease.sched_meta_has_active_agents?(id) do
             # Same VM, agents still active — skip (handled by :recheck_task)
@@ -2458,7 +2664,14 @@ defmodule EvoGit.TaskRegistry do
             # result/usage untouched, and the caller broadcasts `:paused` once
             # after the persist. A NON-resumable row keeps today's
             # `:lease_expired` → `:failed`.
-            case orphan_to_dirty_pause(state, id) do
+            outcome =
+              if Map.has_key?(dirty_ids, id) do
+                park_dirty_pause(state, id)
+              else
+                :unchanged
+              end
+
+            case outcome do
               :paused ->
                 Logger.info(
                   "TaskRegistry: lease-expired task #{id} parked as a DIRTY PAUSE — resumable from durable agent state"
@@ -2520,13 +2733,42 @@ defmodule EvoGit.TaskRegistry do
   #     surprising outcome.
   @impl true
   def handle_info({:recheck_task, task_id}, state) do
-    case task_get(state, task_id) do
-      nil ->
+    # NARROW status read FIRST (one column, no full decode): it settles the
+    # three cheap answers — gone, already resolved, or a store that could not
+    # answer. Only a still-live row pays the full `task_get`, which the
+    # finalizing watchdog and `resolve_recheck_task/3` genuinely need (the task
+    # STRUCT, not just its status).
+    case StoreRead.status(state.task_store, task_id) do
+      :absent ->
         # Task was cleaned up from the store — nothing to do.
         {:noreply, state}
 
-      %TaskInfo{status: status} when status in @terminal_statuses ->
+      :unavailable ->
+        # A periodic watchdog must never DISAPPEAR on a store blip: nothing can
+        # be decided from an outage, so the check is rescheduled.
+        reschedule_recheck(task_id)
+        {:noreply, state}
+
+      {:ok, status} when status in @terminal_statuses ->
         # Task already resolved via another path (e.g. PubSub update) — stop rechecking.
+        {:noreply, state}
+
+      {:ok, _live_or_unknown_status} ->
+        resolve_recheck(state, task_id)
+    end
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  # The full-decode half of the recheck: reached only for a row that is still
+  # live (or whose status text is unreadable, which is never "resolved").
+  defp resolve_recheck(state, task_id) do
+    case task_get(state, task_id) do
+      nil ->
+        # Deleted between the status read and this read — nothing to do.
+        {:noreply, state}
+
+      %TaskInfo{status: status} when status in @terminal_statuses ->
         {:noreply, state}
 
       %TaskInfo{status: :finalizing} = task ->
@@ -2539,7 +2781,7 @@ defmodule EvoGit.TaskRegistry do
       %TaskInfo{} = task ->
         if Lease.sched_meta_has_active_agents?(task_id) do
           # Agents still active — reschedule another check.
-          Process.send_after(self(), {:recheck_task, task_id}, 30_000)
+          reschedule_recheck(task_id)
           {:noreply, state}
         else
           resolve_recheck_task(state, task_id, task)
@@ -2547,8 +2789,10 @@ defmodule EvoGit.TaskRegistry do
     end
   end
 
-  @impl true
-  def handle_info(_msg, state), do: {:noreply, state}
+  defp reschedule_recheck(task_id) do
+    Process.send_after(self(), {:recheck_task, task_id}, 30_000)
+    :ok
+  end
 
   # The task WRAPPER's result message — `Task.Supervisor.async_nolink/4` sends
   # `{ref, result}` to the wrapper's owner (this registry). Maps it to the
@@ -2674,13 +2918,14 @@ defmodule EvoGit.TaskRegistry do
   # drain — the ROOT agent only reports `{:paused, info}` once its children have
   # paused, so this single wrapper result closes the whole task.
   defp persist_paused(state, task_id, _info) do
-    case safe_store_read("paused wrapper result select_task_update_info", nil, fn ->
-           EvoGit.Store.select_task_update_info(state.task_store, task_id)
-         end) do
-      %{status: status} when status in [:pausing, :running] ->
+    # THREE-STATE read via `StoreRead` (never a degraded `nil` that would read as
+    # "no row"): the decision below depends on the CURRENT row, and an outage is
+    # not an answer.
+    case StoreRead.update_info(state.task_store, task_id) do
+      {:ok, %{status: status}} when status in [:pausing, :running] ->
         write_paused(state, task_id)
 
-      %{status: :cancelling} ->
+      {:ok, %{status: :cancelling}} ->
         # A cancel that arrived while the drain was in flight WINS (the pause was
         # abandoned scheduler-side). The wrapper is gone, so resolve the row the
         # way the cancellation model does: the normal status path force-maps a
@@ -2693,13 +2938,13 @@ defmodule EvoGit.TaskRegistry do
         update_task_status_with_caller(task_id, :cancelled, nil, [])
         state
 
-      %{status: :paused} ->
+      {:ok, %{status: :paused}} ->
         # Already parked (a duplicated result, or a restart reconciled the row
         # while the wrapper was still finishing): nothing to persist or
         # broadcast.
         finish_paused_bookkeeping(state, task_id)
 
-      %{status: status} ->
+      {:ok, %{status: status}} ->
         # Terminal / `:awaiting_input` — the pause lost a race; never overwrite a
         # resolved row with `:paused`.
         Logger.info(
@@ -2708,7 +2953,26 @@ defmodule EvoGit.TaskRegistry do
 
         %{state | task_refs: Map.delete(state.task_refs, task_id)}
 
-      nil ->
+      :absent ->
+        # The store answered and the row is GONE — nothing to persist, nothing to
+        # broadcast, so the ref is simply dropped.
+        %{state | task_refs: Map.delete(state.task_refs, task_id)}
+
+      :unavailable ->
+        # The store could NOT answer, so this pause is NOT persisted and is never
+        # reported as if it were. Dropping the ref is the conservative direction:
+        # keeping it would hold a live `task_refs` entry this registry can never
+        # settle (every later store answer stays unknown), while dropping it stops
+        # lease renewal — and the lease sweep is the documented recovery path,
+        # parking a RESUMABLE `:pausing`/`:running` row as a DIRTY pause
+        # (`Lease.leaked?/3` + `Restart.classify/2`) and failing only a
+        # non-resumable one.
+        Logger.warning(
+          "TaskRegistry: task #{task_id} reported a PAUSE but the store was unavailable, " <>
+            "so the paused row was NOT persisted; the wrapper ref is dropped and the " <>
+            "lease sweep will park a resumable row as a DIRTY pause"
+        )
+
         %{state | task_refs: Map.delete(state.task_refs, task_id)}
     end
   end

@@ -1,5 +1,20 @@
 // Opens and dismisses dialogs. Actions inside each dialog remain with its LiveView.
 // Markup/fallback contract: see CONTEXT.md, "DialogModal Integration Contract".
+//
+// The close is TWO-PHASE: `data-dialog-state="closing"` lets assets/css/motion.css
+// animate the top-layer exit (dialog + ::backdrop) while the element is still
+// open, and only then does the immediate teardown call the native close().
+// Server teardown (`destroyed()`) deliberately skips the animation and tears
+// down synchronously — the node is being removed, so a pending exit would leak
+// its timer and leave focus inside a detached tree.
+const DIALOG_STATE_ATTR = "data-dialog-state";
+const DIALOG_OPENING = "opening";
+const DIALOG_OPEN = "open";
+const DIALOG_CLOSING = "closing";
+// Bounded fallback for both phases: a dialog without an animatable box (or one
+// whose animation never fires) must still open/close within a frame or two.
+const DIALOG_STATE_FALLBACK_MS = 200;
+
 const DialogModal = {
   mounted() {
     this._destroyed = false;
@@ -7,6 +22,12 @@ const DialogModal = {
     this._presented = false;
     this._fallback = typeof this.el.showModal !== "function";
     this._opener = document.activeElement;
+    this._closeTimer = null;
+    this._closePanel = null;
+    this._closeEnd = null;
+    this._enterTimer = null;
+    this._enterPanel = null;
+    this._enterEnd = null;
     // Native close events are queued: an old close can arrive after a reopen.
     this._onClose = () => { if (!this.el.open) this._dismiss(); };
     this._onCancel = event => {
@@ -53,8 +74,10 @@ const DialogModal = {
     for (const [name, listener] of this._listeners()) this.el.removeEventListener(name, listener);
     if (this._openRef !== undefined) this.removeHandleEvent(this._openRef);
     // Remove listeners BEFORE closing: server teardown must not report dismissal.
+    // Synchronous on purpose — never leave a closing dialog or focus inside a node
+    // the server is about to replace.
     const restore = this._ownsFocus();
-    this._hide();
+    this._teardown();
     this._restoreFocus(restore);
   },
 
@@ -94,6 +117,9 @@ const DialogModal = {
     const first = !this._presented;
     const previous = document.activeElement;
     const wasOpen = this.el.open;
+    // A genuine (re)open supersedes a pending exit, whose timer must never fire
+    // on the freshly reopened dialog.
+    if (!wasOpen) this._clearClose();
     const target = this._reviewTarget();
     const generatedTitleId = `${this.el.id}-review-title`;
     if (target !== this.el && this.el.getAttribute("aria-labelledby") === generatedTitleId && !target.id) target.id = generatedTitleId;
@@ -130,14 +156,114 @@ const DialogModal = {
         this.el.setAttribute("tabindex", "-1");
         this._focus(this.el);
       }
+      this._enter();
     }
+  },
+
+  // Reduced motion is decided in ONE place (hooks/disclosure_motion.js). This
+  // module cannot statically import it: dialog_modal.test.cjs runs this source
+  // through node:vm as a CLASSIC script, where an `import` is a syntax error.
+  // The hook module therefore publishes the helper on globalThis (documented
+  // there); an absent bridge — that test, or a host without matchMedia — skips
+  // the animation and completes in the same task.
+  _motion() {
+    const motion = globalThis.genesisMotion;
+    return motion && typeof motion.prefersReducedMotion === "function" ? motion : null;
+  },
+
+  _skipAnimation() {
+    const motion = this._motion();
+    return !motion || motion.prefersReducedMotion() === true;
+  },
+
+  _panel() {
+    return this.el.querySelector?.(".modal-box") || null;
+  },
+
+  _state(value) {
+    if (value === null) this.el.removeAttribute(DIALOG_STATE_ATTR);
+    else this.el.setAttribute(DIALOG_STATE_ATTR, value);
+  },
+
+  _clearEnter() {
+    if (this._enterTimer !== null) {
+      clearTimeout(this._enterTimer);
+      this._enterTimer = null;
+    }
+    if (this._enterPanel && this._enterEnd) this._enterPanel.removeEventListener("animationend", this._enterEnd);
+    this._enterPanel = null;
+    this._enterEnd = null;
+  },
+
+  _clearClose() {
+    if (this._closeTimer !== null) {
+      clearTimeout(this._closeTimer);
+      this._closeTimer = null;
+    }
+    if (this._closePanel && this._closeEnd) this._closePanel.removeEventListener("animationend", this._closeEnd);
+    this._closePanel = null;
+    this._closeEnd = null;
+    if (this.el.getAttribute(DIALOG_STATE_ATTR) === DIALOG_CLOSING) this._state(null);
+  },
+
+  // Entry phase: "opening" while the CSS entry keyframes run, "open" once they
+  // settle. Nothing here may block the dialog's usability — focus is already
+  // placed by the caller.
+  _enter() {
+    this._clearEnter();
+    const panel = this._panel();
+    if (!panel || this._skipAnimation()) {
+      this._state(DIALOG_OPEN);
+      return;
+    }
+    this._state(DIALOG_OPENING);
+    this._enterPanel = panel;
+    this._enterEnd = event => {
+      if (!event || event.target !== panel) return; // A child animation must not settle it.
+      this._clearEnter();
+      this._state(DIALOG_OPEN);
+    };
+    panel.addEventListener("animationend", this._enterEnd);
+    this._enterTimer = setTimeout(() => {
+      this._clearEnter();
+      this._state(DIALOG_OPEN);
+    }, DIALOG_STATE_FALLBACK_MS);
   },
 
   _ownsFocus() {
     return this.el.contains(document.activeElement) || document.activeElement === document.body;
   },
 
+  // Exit phase: keep the dialog open (and in the top layer) for one animated
+  // exit, then tear it down. Without an animatable panel, under reduced motion,
+  // or while a close is already running, this completes in the same task.
   _hide() {
+    if (this._closeTimer !== null || this._closePanel !== null) {
+      this._teardown();
+      return;
+    }
+    const panel = this._panel();
+    if (!panel || this._skipAnimation()) {
+      this._teardown();
+      return;
+    }
+    this._clearEnter(); // A still-running entry must not outlive the exit.
+    this._state(DIALOG_CLOSING);
+    this._closePanel = panel;
+    this._closeEnd = event => {
+      if (!event || event.target !== panel) return; // ::backdrop / child animations.
+      this._teardown();
+    };
+    panel.addEventListener("animationend", this._closeEnd);
+    this._closeTimer = setTimeout(() => this._teardown(), DIALOG_STATE_FALLBACK_MS);
+  },
+
+  // The immediate teardown, shared by the animated close, the no-animation path
+  // and server teardown. Idempotent and always synchronous.
+  _teardown() {
+    this._clearClose();
+    this._clearEnter();
+    this._state(null);
     if (this.el.open && typeof this.el.close === "function") {
       try {
         this.el.close();

@@ -154,15 +154,11 @@ defmodule EvoGit.Agent.Session.PersistenceTest do
     end
   end
 
-  # Seeds ONE run's durable record exactly as the session hot path would: the
-  # first checkpoint of a run is always a full `:rewrite`.
+  # Seeds ONE run's durable record exactly as the session start path does: the
+  # start snapshot is the run's one full-field write (whole transcript plus every
+  # identity/run fact); later turns checkpoint volatile scalars only.
   defp seed!(task_id, agent_id, messages, overrides) do
-    :ok =
-      Persistence.checkpoint(
-        run_state(task_id, agent_id, []),
-        run_state(task_id, agent_id, messages, overrides)
-      )
-
+    :ok = Persistence.initial_snapshot(run_state(task_id, agent_id, messages, overrides))
     AgentState.flush()
     :ok
   end
@@ -990,7 +986,7 @@ defmodule EvoGit.Agent.Session.PersistenceTest do
 
       assert built.resume_info.restore_agent_state == true
       assert built.resume_info.resume_kind == nil
-      assert EvoGit.Agent.Resume.crash_retry?(built)
+      assert EvoGit.Agent.Resume.restored_run?(built)
       assert EvoGit.Agent.Resume.resume_kind(built) == nil
     end
 
@@ -1009,7 +1005,7 @@ defmodule EvoGit.Agent.Session.PersistenceTest do
                )
 
       assert built.resume_info == nil
-      refute EvoGit.Agent.Resume.crash_retry?(built)
+      refute EvoGit.Agent.Resume.restored_run?(built)
     end
 
     test "a malformed resume_kind value is dropped rather than acted on" do

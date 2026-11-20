@@ -37,7 +37,7 @@ defmodule EvoGit.Agent.Resume do
      `:tool` message per unanswered call, in the assistant's call order, built
      with the same `EvoGit.Agent.ToolDispatch.assemble_tool_result/3` and
      turn-tagged exactly like a real result. The content is class-specific and
-     honest (`EvoGit.Agent.Resume.ToolBatch`); without it the next provider call
+     honest (`EvoGit.Agent.Resume.ImpactText`); without it the next provider call
      rejects the unpaired `tool_call_id` (HTTP 400 → `EvoGit.Agent.LlmError`
      fail-fast → a `:failed` task).
      A `:subagent` call is the ONE class whose real answer may still arrive: the
@@ -79,9 +79,9 @@ defmodule EvoGit.Agent.Resume do
   require Logger
 
   alias EvoGit.Agent.ContextBuilder
+  alias EvoGit.Agent.Resume.ImpactText
   alias EvoGit.Agent.Resume.Notice
   alias EvoGit.Agent.Resume.Reattach
-  alias EvoGit.Agent.Resume.ToolBatch, as: Impact
   alias EvoGit.Agent.State
   alias EvoGit.Agent.ToolBatch
   alias EvoGit.Agent.ToolDispatch
@@ -127,7 +127,7 @@ defmodule EvoGit.Agent.Resume do
   @spec apply(State.t(), keyword()) :: State.t()
   def apply(%State{} = state, opts) when is_list(opts) do
     cond do
-      not crash_retry?(state) ->
+      not restored_run?(state) ->
         state
 
       clean_pause?(state) and clean_pause_intact?(state) ->
@@ -173,19 +173,21 @@ defmodule EvoGit.Agent.Resume do
   def resume_kind(_state), do: nil
 
   @doc """
-  True when this state is a RESTORED RUN: the durable restore was requested by
-  the dispatch ctx AND persistent state is enabled for the task.
+  True when this state is a RESTORED RUN: this run was restored from durable
+  state — a CRASH RETRY **or** a task-level PAUSE RESUME (clean or dirty), which
+  is why it is no longer named `crash_retry?/1`. The durable restore was
+  requested by the dispatch ctx AND persistent state is enabled for the task.
 
-  Both a crash retry and a task-level pause resume answer `true` — the resume
-  KIND (`resume_kind/1`) decides whether anything is repaired or only narrated.
+  The resume KIND (`resume_kind/1`) decides whether anything is repaired or only
+  narrated.
   A `resume_info` map that is absent/malformed, a `restore_agent_state` that is
   not `true`, or `persistent_state: false` all answer `false`.
   """
-  @spec crash_retry?(State.t()) :: boolean()
-  def crash_retry?(%State{persistent_state: true, resume_info: %{} = info}),
+  @spec restored_run?(State.t()) :: boolean()
+  def restored_run?(%State{persistent_state: true, resume_info: %{} = info}),
     do: Map.get(info, :restore_agent_state) == true
 
-  def crash_retry?(_state), do: false
+  def restored_run?(_state), do: false
 
   @doc """
   Clears the in-flight marker. `nil` is already clear, so this is a plain (and
@@ -276,7 +278,7 @@ defmodule EvoGit.Agent.Resume do
   end
 
   defp synthetic_result({index, call, class}, reattach) do
-    text = Map.get(reattach.texts, index) || Impact.impact(class, call)
+    text = Map.get(reattach.texts, index) || ImpactText.impact(class, call)
     ToolDispatch.assemble_tool_result(call_id(call), call_name(call), text)
   end
 

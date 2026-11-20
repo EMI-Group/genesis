@@ -341,11 +341,11 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
       assert length(own_messages) == 2
 
       # Seed a DIVERGENT transcript into the SAME row, from the test process
-      # (which resolves the same pinned server the session uses).
-      Persistence.checkpoint(
-        divergent_state(agent_id, task_id),
-        divergent_state(agent_id, task_id)
-      )
+      # (which resolves the same pinned server the session uses). This uses the
+      # run's START write, so the row it leaves behind is a complete,
+      # production-shaped record (identity and run facts included) rather than a
+      # scalar-only delta on top of nothing.
+      Persistence.initial_snapshot(divergent_state(agent_id, task_id))
 
       AgentState.flush()
 

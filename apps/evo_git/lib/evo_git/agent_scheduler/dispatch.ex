@@ -570,7 +570,9 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   If `model_id` is nil or empty, uses the default profile from `state.model_profiles`.
   If the requested `model_id` is not found in the profiles, falls back to the default.
 
-  Returns `{model_id, model_spec, generation_params}`.
+  Returns `{pool_id, model_spec, generation_params}`, where the first element is
+  a resource POOL id (the provider/account id in canonical configurations, the
+  legacy profile id otherwise), not a concrete model identifier.
   """
   @spec resolve_model_for_agent(State.t(), String.t() | nil) ::
           {String.t(), ReqLLM.model_input(), keyword()}
@@ -578,7 +580,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     case resolve_model_profile(state, model_id) do
       nil ->
         # No profiles configured at all — use state's backward-compat values
-        {State.default_model_id(state), state.llm_model, state.llm_generation_params}
+        {State.default_pool_id(state), state.llm_model, state.llm_generation_params}
 
       profile ->
         resolved_id = Map.get(profile, :id, "default")

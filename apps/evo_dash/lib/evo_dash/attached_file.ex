@@ -70,17 +70,61 @@ defmodule EvoDash.AttachedFile do
   (`:enoent`, `:eacces`, ...) for plain files (propagated from `File.read/1`),
   or one of the shapes documented in the moduledoc (`{:invalid, reason}` or
   `{:empty, reason}`).
+  The path is stat-ed BEFORE any read: a non-regular file is refused with
+  `:not_a_regular_file` and a file — or extracted text — over
+  `@max_attachment_bytes` with `{:file_too_large, byte_size}`, so a huge
+  attachment is never pulled into memory.
   """
   def read(path) do
-    case path |> Path.extname() |> String.downcase() do
-      ".docx" -> read_docx(path)
-      ".pdf" -> read_pdf(path)
-      # TRAP: this catch-all treats ANY unknown extension as plain text, so
-      # the UI must gate by dropdown kind — binary image/audio files must
-      # never reach read/1 (they go through read_kind/2 instead).
-      _ -> read_text(path)
+    # Size gate BEFORE any read: the picker paths below (plain text, .pdf,
+    # .docx) have no caller-side cap, so an arbitrarily large log/PDF would
+    # otherwise be pulled into memory (and, for .docx, unzipped) and could
+    # OOM the VM. `File.stat/1` is cheap and reports the same POSIX errors
+    # `File.read/1` would.
+    with :ok <- ensure_readable_size(path) do
+      case path |> Path.extname() |> String.downcase() do
+        ".docx" -> read_docx(path)
+        ".pdf" -> read_pdf(path)
+        # TRAP: this catch-all treats ANY unknown extension as plain text, so
+        # the UI must gate by dropdown kind — binary image/audio files must
+        # never reach read/1 (they go through read_kind/2 instead).
+        _ -> read_text(path)
+      end
+    end
+    |> cap_extracted_text()
+  end
+
+  # Stat gate for the picker read paths: only a regular file at or under the
+  # per-file cap may be read (`read_uploaded/2` performs its own equivalent
+  # gate before dispatch).
+  defp ensure_readable_size(path) do
+    case File.stat(path) do
+      {:ok, %{type: :regular, size: size}} when size <= @max_attachment_bytes ->
+        :ok
+
+      {:ok, %{type: :regular, size: size}} ->
+        {:error, {:file_too_large, size}}
+
+      {:ok, _stat} ->
+        {:error, :not_a_regular_file}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
+
+  # Extracted text can balloon well past the source file (PDF/DOCX expansion),
+  # so the same byte cap applies to the converted result — LLM-bound context
+  # must stay bounded no matter what the container looked like.
+  defp cap_extracted_text({:ok, text}) when is_binary(text) do
+    if byte_size(text) > @max_attachment_bytes do
+      {:error, {:file_too_large, byte_size(text)}}
+    else
+      {:ok, text}
+    end
+  end
+
+  defp cap_extracted_text(other), do: other
 
   @text_extensions ~w(.txt .md .markdown .csv .tsv .json .jsonl .yaml .yml .toml .xml .log .ini .conf .ex .exs .js .jsx .ts .tsx .html .htm .css .scss .py .rb .sh .sql .go .rs .java .c .h .cpp .hpp .swift .kt .vue .svelte)
 
@@ -155,6 +199,9 @@ defmodule EvoDash.AttachedFile do
 
       :enoent ->
         "File not found: #{path}"
+
+      :not_a_regular_file ->
+        "Not a regular file: #{path}"
 
       :enotdir ->
         "File not found: #{path}"

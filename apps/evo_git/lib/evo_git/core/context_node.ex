@@ -19,7 +19,9 @@ defmodule EvoGit.Core.ContextNode do
   repository root is mounted in the VCT, and `nil` otherwise. It is INTERNAL
   metadata: `path` stays the byte-identical in-repo relative `"./…"` string and
   is never derived from `vct_path`. The VCT read is total, so a missing VCT
-  server or an unmounted repository simply yields `nil`.
+  server or an unmounted repository simply yields `nil`. A single node reads its
+  own path (`load/2,3`), while a whole chain is resolved by ONE batched read
+  (`hierarchy_nodes/2,3`).
   """
   require Logger
 
@@ -123,9 +125,11 @@ defmodule EvoGit.Core.ContextNode do
   Retrieves the full hierarchy of ContextNodes from the project root down to the given relative path.
   `relative_path` must be relative to the root of the repository.
   `repo_path` must be the absolute path to the repository root.
-  Nodes that do not exist in the filesystem are excluded from the result list.
+  The chain is purely SYNTACTIC: nodes that do not exist in the filesystem are still returned (existence is decided at READ time by `build_context/2`).
+  `vct_path` for the WHOLE chain comes from ONE batched `EvoGit.VCT.vct_paths_for/2` read, never one VCT call per level.
+  A missing, dead or unmounted VCT degrades only `vct_path` to `nil`; the nodes themselves are always returned.
   """
-  @spec hierarchy_nodes(String.t(), String.t()) :: {:ok, [t()]} | {:error, term()}
+  @spec hierarchy_nodes(String.t(), String.t()) :: {:ok, [t()]} | {:error, :invalid_path}
   def hierarchy_nodes(relative_path, repo_path) do
     hierarchy_nodes(relative_path, repo_path, "primary")
   end
@@ -133,24 +137,33 @@ defmodule EvoGit.Core.ContextNode do
   @doc """
   Retrieves the full hierarchy of ContextNodes from the project root down to the given relative path,
   with an explicit `repo_id` for multi-repo support.
+  Order and node fields are identical to `hierarchy_nodes/2`, and the chain's `vct_path`s come from the same ONE batched VCT read.
   """
-  @spec hierarchy_nodes(String.t(), String.t(), String.t()) :: {:ok, [t()]} | {:error, term()}
+  @spec hierarchy_nodes(String.t(), String.t(), String.t()) ::
+          {:ok, [t()]} | {:error, :invalid_path}
   def hierarchy_nodes(relative_path, repo_path, repo_id)
       when is_binary(relative_path) and is_binary(repo_path) and is_binary(repo_id) do
     if Path.type(relative_path) == :relative and not String.starts_with?(relative_path, "..") do
-      paths =
-        if relative_path in [".", "./"] do
-          ["./"]
-        else
-          normalized = normalize_relpath(relative_path)
+      paths = hierarchy_paths(relative_path)
 
-          # Path.split("./foo/bar") = [".", "foo", "bar"]
-          [_dot | parts] = Path.split(normalized)
-          # Build ["./", "./foo", "./foo/bar"]
-          ["./" | Enum.scan(parts, "./", fn part, acc -> Path.join(acc, part) end)]
-        end
+      # ONE VCT call for the WHOLE chain (never one per level): `vct_paths_for/2`
+      # answers one entry per input path IN INPUT ORDER and degrades to `nil`s
+      # when no server answers, so only `vct_path` can be lost here.
+      vct_paths = EvoGit.VCT.vct_paths_for(repo_path, paths)
 
-      nodes = Enum.map(paths, &load(&1, repo_path, repo_id))
+      nodes =
+        paths
+        |> Enum.with_index()
+        |> Enum.map(fn {path, index} ->
+          # `vct_path_at/2` pads a short/odd result with `nil`, so the node list
+          # is always exactly `length(paths)` long.
+          %__MODULE__{
+            path: path,
+            repo: repo_path,
+            vct_path: vct_path_at(vct_paths, index),
+            repo_id: repo_id
+          }
+        end)
 
       {:ok, nodes}
     else
@@ -161,6 +174,26 @@ defmodule EvoGit.Core.ContextNode do
   def hierarchy_nodes(_relative_path, _repo_path, _repo_id) do
     {:error, :invalid_path}
   end
+
+  # Builds the "./", "./foo", "./foo/bar" chain for a relative node path.
+  defp hierarchy_paths(relative_path) do
+    if relative_path in [".", "./"] do
+      ["./"]
+    else
+      normalized = normalize_relpath(relative_path)
+
+      # Path.split("./foo/bar") = [".", "foo", "bar"]
+      [_dot | parts] = Path.split(normalized)
+      # Build ["./", "./foo", "./foo/bar"]
+      ["./" | Enum.scan(parts, "./", fn part, acc -> Path.join(acc, part) end)]
+    end
+  end
+
+  # Defensive read of the batched VCT result: an index past the end (or a
+  # non-list answer) yields `nil` instead of raising, so a degraded VCT never
+  # costs a node.
+  defp vct_path_at(vct_paths, index) when is_list(vct_paths), do: Enum.at(vct_paths, index)
+  defp vct_path_at(_vct_paths, _index), do: nil
 
   @doc """
   Builds the string context representation for the AI by traversing the context tree.
@@ -177,7 +210,7 @@ defmodule EvoGit.Core.ContextNode do
   `CONTEXT.md` is absent or blank (after front-matter stripping) are skipped, so
   no empty fenced code block is rendered.
   """
-  @spec build_context(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
+  @spec build_context(String.t(), String.t()) :: {:ok, String.t()} | {:error, :invalid_path}
   def build_context(relative_path, repo_path) do
     case hierarchy_nodes(relative_path, repo_path) do
       {:ok, nodes} ->

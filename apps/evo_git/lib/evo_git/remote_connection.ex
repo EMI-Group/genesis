@@ -207,6 +207,8 @@ defmodule EvoGit.RemoteConnection do
   # Default per-command timeout (30s). SCP gets a longer timeout.
   @cmd_timeout_ms 30_000
   @scp_timeout_ms 120_000
+  # Command excerpt length in the retry log line.
+  @log_command_max_chars 120
 
   # Backoff before the single retry of an IDEMPOTENT remote command that failed
   # with ssh's OWN transport exit code 255 (see `run_ssh_command_retry/4`).
@@ -1116,19 +1118,24 @@ defmodule EvoGit.RemoteConnection do
       # :generating_cookie stage — the cookie is generated right after the
       # stage broadcast so the resolved value reaches the launch steps below.
       state = set_stage(state, target, :generating_cookie)
-      cookie = ensure_cookie!()
 
-      # NixOS on-the-fly patching (Linux only; skipped when distribution is
-      # already enabled for this target or the remote is not NixOS). Broadcasts
-      # :patching_binaries only when the patch actually runs.
-      case maybe_patch_nixos(state, target, ssh_target, os, launcher_path) do
-        {:ok, state} ->
-          case maybe_start_daemon(ssh_target, launcher_path, target, cookie, state) do
-            :ok ->
-              EvoGit.RemoteConnections.touch(target.id)
-              completed = %{state | phase: :disconnected, bootstrap_stage: nil}
-              broadcast_status(target, completed)
-              {:ok, completed}
+      case ensure_cookie() do
+        {:ok, cookie} ->
+          # NixOS on-the-fly patching (Linux only; skipped when distribution is
+          # already enabled for this target or the remote is not NixOS). Broadcasts
+          # :patching_binaries only when the patch actually runs.
+          case maybe_patch_nixos(state, target, ssh_target, os, launcher_path) do
+            {:ok, state} ->
+              case maybe_start_daemon(ssh_target, launcher_path, target, cookie, state) do
+                :ok ->
+                  EvoGit.RemoteConnections.touch(target.id)
+                  completed = %{state | phase: :disconnected, bootstrap_stage: nil}
+                  broadcast_status(target, completed)
+                  {:ok, completed}
+
+                {:error, reason} ->
+                  {:error, reason, error_state(state, target, reason)}
+              end
 
             {:error, reason} ->
               {:error, reason, error_state(state, target, reason)}
@@ -1299,11 +1306,24 @@ defmodule EvoGit.RemoteConnection do
       if File.exists?(path) do
         remote_file = Path.join(remote_config_dir, Path.basename(path))
 
-        if remote_file_exists?(ssh_target, remote_file) do
-          # The remote already has this file; don't overwrite.
-          :ok
-        else
-          copy_config_file(ssh_target, path, remote_file)
+        case remote_file_present?(ssh_target, remote_file) do
+          {:ok, true} ->
+            # The remote already has this file; don't overwrite.
+            :ok
+
+          {:ok, false} ->
+            copy_config_file(ssh_target, path, remote_file)
+
+          {:error, reason} ->
+            # We could not determine whether the remote has the file. Copying
+            # blind would clobber it, so skip and say so; the config copy is
+            # best-effort and never fails the bootstrap.
+            Logger.warning(
+              "RemoteConnection: could not check for existing remote file " <>
+                "#{remote_file} (#{format_reason(reason)}); NOT overwriting it"
+            )
+
+            :ok
         end
       end
     end
@@ -1325,16 +1345,32 @@ defmodule EvoGit.RemoteConnection do
     Path.join(["$HOME", ".config", "genesis"])
   end
 
-  # Checks whether a file exists on the remote host. The path is
+  # Probes whether a file exists on the remote host. The path is
   # double-quoted so a space in it (macOS) cannot word-split the probe.
-  defp remote_file_exists?(ssh_target, remote_file) do
+  #
+  # THREE-STATE on purpose: `{:ok, false}` (the remote answered "no") is the
+  # only answer that licenses an upload. An ssh transport failure, timeout or
+  # unparsable reply is `{:error, reason}` — the caller must NOT copy, because
+  # "we could not find out" is not "the remote has nothing".
+  @spec remote_file_present?(String.t(), String.t()) :: {:ok, boolean()} | {:error, term()}
+  defp remote_file_present?(ssh_target, remote_file) do
     case run_ssh_command_retry(
            ssh_target,
            "test -f \"#{remote_file}\" && echo yes || echo no",
            @cmd_timeout_ms
          ) do
-      {:ok, output, 0} -> String.trim(output) == "yes"
-      _ -> false
+      {:ok, output, 0} ->
+        case String.trim(output) do
+          "yes" -> {:ok, true}
+          "no" -> {:ok, false}
+          other -> {:error, {:unexpected_output, other}}
+        end
+
+      {:ok, output, status} ->
+        {:error, {:exit_status, status, output_tail(output)}}
+
+      :timeout ->
+        {:error, :timeout}
     end
   end
 
@@ -2043,7 +2079,7 @@ defmodule EvoGit.RemoteConnection do
       {:ok, output, 255} ->
         Logger.warning(
           "RemoteConnection: ssh #{ssh_target} exited 255 (transport error) running " <>
-            "#{truncate_command(remote_cmd)}#{tail_suffix(output)} — retrying once"
+            "#{EvoGit.Util.Strings.truncate(remote_cmd, @log_command_max_chars, "…")}#{tail_suffix(output)} — retrying once"
         )
 
         backoff = Keyword.get(opts, :backoff_ms, remote_ssh_retry_backoff_ms())
@@ -2059,11 +2095,6 @@ defmodule EvoGit.RemoteConnection do
 
   defp remote_ssh_retry_backoff_ms do
     Application.get_env(:evo_git, :remote_ssh_retry_backoff_ms, @remote_ssh_retry_backoff_ms)
-  end
-
-  # Shortens a remote command for a log line (NixOS/staging commands are long).
-  defp truncate_command(command) when is_binary(command) do
-    if String.length(command) > 120, do: String.slice(command, 0, 120) <> "…", else: command
   end
 
   # ": <tail>" for a non-blank output excerpt, "" otherwise.
@@ -2228,35 +2259,41 @@ defmodule EvoGit.RemoteConnection do
   # 2. Checks `get_in(config, [:node, :cookie])` — if non-nil and non-empty, return it
   # 3. If nil/empty: generates a secure cookie, merges it into the resolved config,
   #    and persists via `EvoGit.Config.save_user_config/1`
-  # 4. Raises `RuntimeError` if save fails — bootstrap must NOT proceed without a persisted cookie
-  defp ensure_cookie! do
+  # 4. A failed save is returned as `{:error, {:cookie_persist_failed, reason}}` —
+  #    bootstrap must NOT proceed without a persisted cookie, and the failure
+  #    travels the ordinary `{:error, reason, error_state}` path (phase `:error` +
+  #    broadcast + `last_error`) instead of crashing the GenServer mid-call.
+  @spec ensure_cookie() :: {:ok, String.t()} | {:error, term()}
+  defp ensure_cookie do
     config = EvoGit.Config.resolve()
 
     case get_in(config, [:node, :cookie]) do
       nil ->
-        generate_and_persist_cookie!(config)
+        generate_and_persist_cookie(config)
 
       "" ->
-        generate_and_persist_cookie!(config)
+        generate_and_persist_cookie(config)
 
       cookie when is_binary(cookie) ->
-        cookie
+        {:ok, cookie}
+
+      other ->
+        {:error, {:invalid_cookie, other}}
     end
   end
 
-  defp generate_and_persist_cookie!(config) do
+  @spec generate_and_persist_cookie(map()) :: {:ok, String.t()} | {:error, term()}
+  defp generate_and_persist_cookie(config) do
     new_cookie = generate_secure_cookie()
     updated = put_in(config, [:node, :cookie], new_cookie)
 
     case EvoGit.Config.save_user_config(updated) do
       :ok ->
         Logger.info("Generated and persisted new secure distribution cookie")
-        new_cookie
+        {:ok, new_cookie}
 
       {:error, reason} ->
-        raise RuntimeError,
-              "Failed to persist generated distribution cookie: #{inspect(reason)}. " <>
-                "Bootstrap cannot proceed without a persisted cookie."
+        {:error, {:cookie_persist_failed, reason}}
     end
   end
 

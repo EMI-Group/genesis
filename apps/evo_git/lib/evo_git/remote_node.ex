@@ -9,8 +9,8 @@ defmodule EvoGit.RemoteNode.Defnode do
   #
   # Only functions whose remote branch is EXACTLY that identity-unwrap
   # pattern are migrated through this macro; per-function RPC failure
-  # fallbacks (`[]`/`%{}`/`nil`/`false`/bool-guards/`{:error, :rpc_failed}`)
-  # stay hand-written. The macro invocation mirrors the underlying local
+  # fallbacks (`[]`/`%{}`/`nil`/`false`/bool-guards) stay hand-written. The
+  # macro invocation mirrors the underlying local
   # call — e.g. `defnode EvoGit.AgentScheduler.RemoteAPI.cancel_task(task_id)`
   # — so the generated wrapper's name/args are always in lockstep with the
   # delegated module function. Default args (`arg \\ value`) are kept in the
@@ -67,6 +67,26 @@ defmodule EvoGit.RemoteNode do
   require EvoGit.RemoteNode.Defnode
   import EvoGit.RemoteNode.Defnode
 
+  @typedoc """
+  A BEAM node reference: `node()` for this node, the remote node's atom for a
+  cross-node RPC target.
+  """
+  @type node_ref :: node()
+
+  @typedoc """
+  A cross-node transport/RPC failure: the `{kind, reason}` that `call_remote/4`
+  normalizes out of `:erpc.call/5` (node down, timeout, or a remote function
+  that raised/exited/threw).
+  """
+  @type rpc_error :: {kind :: atom(), reason :: term()}
+
+  @typedoc """
+  An error reason answered by a wrapper here: the node's own reason (an atom
+  such as `:not_found`, or a tuple such as `{:daemon_running, details}`) or an
+  `rpc_error()`.
+  """
+  @type error_reason :: atom() | rpc_error() | tuple() | map()
+
   @doc """
   Evaluates `apply(module, function, args)` on the given node, returning
   `{:ok, result}` on success or `{:error, reason}` on any failure.
@@ -84,10 +104,10 @@ defmodule EvoGit.RemoteNode do
   bare result on success, but *raises/throws* on every failure mode: an erpc
   failure (node down, timeout) raises `{erpc, reason}`, and a remote-function
   failure re-raises the original exception/exit/throw. All of these are
-  normalized into `{:error, reason}` here.
+  normalized into `{:error, {kind, reason}}` here.
   """
-  @spec call_remote(node(), module(), atom(), [term()]) ::
-          {:ok, term()} | {:error, term()}
+  @spec call_remote(node_ref(), module(), atom(), [term()]) ::
+          {:ok, term()} | {:error, rpc_error() | term()}
   def call_remote(node, module, function, args) do
     if node == node() do
       # Local node — call directly. Do NOT catch errors; let local bugs
@@ -121,6 +141,15 @@ defmodule EvoGit.RemoteNode do
     Application.get_env(:evo_git, :remote_rpc_timeout, @default_rpc_timeout)
   end
 
+  # Folds the underlying API reply into this module's error contract: an API
+  # `{:error, reason}` (an ended agent, an already-resolved approval) is
+  # returned AS an error instead of being buried inside `{:ok, _}`, while a
+  # plain success value keeps this module's historical `{:ok, value}` shape —
+  # so the existing successful-path callers are unchanged.
+  defp unwrap_api_reply({:ok, _} = ok), do: ok
+  defp unwrap_api_reply({:error, _} = error), do: error
+  defp unwrap_api_reply(other), do: {:ok, other}
+
   @doc """
   Lists agent summaries for the given node.
 
@@ -128,7 +157,7 @@ defmodule EvoGit.RemoteNode do
   directly. On a remote node, routes the call through `:erpc` via
   `call_remote/4`. Returns `[]` if the remote call fails.
   """
-  @spec list_agents(node()) :: [map()]
+  @spec list_agents(node_ref()) :: [map()]
   def list_agents(node) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.list_agents()
@@ -151,7 +180,7 @@ defmodule EvoGit.RemoteNode do
   Returns `{:ok, samples}` on success or `{:error, reason}` on failure
   (including RPC failure).
   """
-  @spec get_recent_system_samples(node()) :: {:ok, term()} | {:error, term()}
+  @spec get_recent_system_samples(node_ref()) :: {:ok, term()} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.get_recent_system_samples())
 
   @doc """
@@ -162,7 +191,7 @@ defmodule EvoGit.RemoteNode do
   node, routes the call through `:erpc` via `call_remote/4`. Returns `[]` if
   the remote call fails.
   """
-  @spec get_agent_history(node(), pos_integer()) :: [map()]
+  @spec get_agent_history(node_ref(), pos_integer()) :: [map()]
   def get_agent_history(node, agent_id) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.get_agent_history(agent_id)
@@ -184,7 +213,7 @@ defmodule EvoGit.RemoteNode do
   directly. On a remote node, routes the call through `:erpc` via
   `call_remote/4`. Returns `nil` if the remote call fails.
   """
-  @spec get_agent_state(node(), pos_integer()) :: map() | nil
+  @spec get_agent_state(node_ref(), pos_integer()) :: map() | nil
   def get_agent_state(node, agent_id) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.get_agent_state(agent_id)
@@ -206,7 +235,7 @@ defmodule EvoGit.RemoteNode do
   GenServer call on the local scheduler). On a remote node, routes the call
   through `:erpc` via `call_remote/4`. Returns `%{}` if the remote call fails.
   """
-  @spec get_config(node()) :: map()
+  @spec get_config(node_ref()) :: map()
   def get_config(node) do
     if node == node() do
       EvoGit.AgentScheduler.get_config()
@@ -229,7 +258,7 @@ defmodule EvoGit.RemoteNode do
   Returns `:ok` on success or `{:error, reason}` on failure (including RPC
   failures such as node down or timeout).
   """
-  @spec reload_config(node()) :: :ok | {:error, term()}
+  @spec reload_config(node_ref()) :: :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.reload_config())
 
   @doc """
@@ -241,7 +270,7 @@ defmodule EvoGit.RemoteNode do
   Returns `:ok` on success or `{:error, reason}` on failure (including RPC
   failures such as node down or timeout).
   """
-  @spec save_user_config(node(), map()) :: :ok | {:error, term()}
+  @spec save_user_config(node_ref(), map()) :: :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.save_user_config(config))
 
   @doc """
@@ -253,7 +282,7 @@ defmodule EvoGit.RemoteNode do
   Returns `:ok` on success or `{:error, reason}` on failure (including RPC
   failures such as node down or timeout).
   """
-  @spec save_credentials(node(), map()) :: :ok | {:error, term()}
+  @spec save_credentials(node_ref(), map()) :: :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.save_credentials(creds))
 
   @doc """
@@ -263,7 +292,7 @@ defmodule EvoGit.RemoteNode do
   remote node, routes the call through `:erpc` via `call_remote/4`. Returns a
   safe degraded status map if the remote call fails.
   """
-  @spec get_config_status(node()) :: map()
+  @spec get_config_status(node_ref()) :: map()
   def get_config_status(node) do
     if node == node() do
       EvoGit.Config.config_status()
@@ -283,7 +312,7 @@ defmodule EvoGit.RemoteNode do
   remote node, routes the call through `:erpc` via `call_remote/4`. Returns
   `false` if the remote call fails.
   """
-  @spec paused?(node()) :: boolean()
+  @spec paused?(node_ref()) :: boolean()
   def paused?(node) do
     if node == node() do
       EvoGit.AgentScheduler.paused?()
@@ -303,7 +332,7 @@ defmodule EvoGit.RemoteNode do
   remote node, routes the call through `:erpc` via `call_remote/4`. Returns the
   result tuple `{:ok, _} | {:error, _}` directly.
   """
-  @spec llm_test(node(), term(), term()) :: {:ok, term()} | {:error, term()}
+  @spec llm_test(node_ref(), term(), term()) :: {:ok, term()} | {:error, error_reason()}
   defnode(EvoGit.SystemCheck.llm_test(model, gen_opts))
 
   @doc """
@@ -320,15 +349,23 @@ defmodule EvoGit.RemoteNode do
   node, routes the call through `:erpc` via `call_remote/4`.
 
   Returns `{:ok, result}` on success or `{:error, reason}` on failure (including
-  RPC failures such as node down or timeout).
+  RPC failures such as node down or timeout). A failure reported by the remote
+  API itself (e.g. `{:error, :not_found}` for an ended agent) is therefore
+  returned as `{:error, reason}` — it is never nested inside `{:ok, _}`.
   """
-  @spec send_agent_message(node(), pos_integer(), String.t() | map()) ::
-          {:ok, term()} | {:error, term()}
+  @spec send_agent_message(node_ref(), pos_integer(), String.t() | map()) ::
+          {:ok, term()} | {:error, error_reason()}
   def send_agent_message(node, agent_id, message) do
     if node == node() do
-      {:ok, EvoGit.AgentScheduler.RemoteAPI.send_agent_message(agent_id, message)}
+      unwrap_api_reply(EvoGit.AgentScheduler.RemoteAPI.send_agent_message(agent_id, message))
     else
-      call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :send_agent_message, [agent_id, message])
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :send_agent_message, [
+             agent_id,
+             message
+           ]) do
+        {:ok, result} -> unwrap_api_reply(result)
+        {:error, _reason} = error -> error
+      end
     end
   end
 
@@ -354,8 +391,8 @@ defmodule EvoGit.RemoteNode do
   `{:error, {:start_session_failed, reason}}`, or the RPC failure reason
   (`{:error, {kind, reason}}`) when the transport fails.
   """
-  @spec start_session(node(), EvoGit.AgentSpec.t() | keyword()) ::
-          {:ok, pos_integer()} | {:error, term()}
+  @spec start_session(node_ref(), EvoGit.AgentSpec.t() | keyword()) ::
+          {:ok, pos_integer()} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.start_session(spec_or_opts))
 
   @doc """
@@ -370,11 +407,11 @@ defmodule EvoGit.RemoteNode do
   RPC failure reason (`{:error, {kind, reason}}`).
   """
   @spec send_session_message(
-          node(),
+          node_ref(),
           pos_integer() | pid(),
           String.t() | EvoGit.Attachments.message(),
           :queue | :interrupt
-        ) :: :ok | {:error, term()}
+        ) :: :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.send_session_message(target, message, policy \\ :queue))
 
   @doc """
@@ -387,7 +424,7 @@ defmodule EvoGit.RemoteNode do
   Returns `:ok`, the session's own `{:error, {:session, reason}}` term, or the
   RPC failure reason (`{:error, {kind, reason}}`).
   """
-  @spec close_session(node(), pos_integer() | pid(), term()) :: :ok | {:error, term()}
+  @spec close_session(node_ref(), pos_integer() | pid(), term()) :: :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.close_session(target, reason \\ :normal))
 
   @doc """
@@ -408,8 +445,8 @@ defmodule EvoGit.RemoteNode do
   `EvoGit.AgentScheduler.RemoteAPI`), while the cross-node form is for short
   waits and observation.
   """
-  @spec await_close(node(), pos_integer(), timeout()) ::
-          {:ok, EvoGit.Agent.Result.t()} | {:error, term()}
+  @spec await_close(node_ref(), pos_integer(), timeout()) ::
+          {:ok, EvoGit.Agent.Result.t()} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.await_close(agent_id, timeout \\ 30_000))
 
   @doc """
@@ -420,7 +457,7 @@ defmodule EvoGit.RemoteNode do
   `call_remote/4`. Returns `[]` when the remote call fails or answers something
   other than a list, mirroring the other list wrappers here.
   """
-  @spec list_awaiting_input(node()) :: [map()]
+  @spec list_awaiting_input(node_ref()) :: [map()]
   def list_awaiting_input(node) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.list_awaiting_input()
@@ -469,9 +506,9 @@ defmodule EvoGit.RemoteNode do
   failure. Any failure undoes the local subscription, so a refused watch leaves no
   residue.
   """
-  @spec watch_agent(node(), pos_integer() | String.t()) ::
+  @spec watch_agent(node_ref(), pos_integer() | String.t()) ::
           {:ok, EvoGit.Agent.Stream.Snapshot.t(), non_neg_integer()}
-          | {:error, {atom(), term()}}
+          | {:error, rpc_error()}
   def watch_agent(node, agent_id) do
     case EvoGit.Agent.Stream.subscribe(agent_id) do
       :ok ->
@@ -501,7 +538,7 @@ defmodule EvoGit.RemoteNode do
   (an unknown/gone session or an RPC failure); that error is informational, since the caller has
   already stopped receiving deltas.
   """
-  @spec unwatch_agent(node(), pos_integer() | String.t()) :: :ok | {:error, {atom(), term()}}
+  @spec unwatch_agent(node_ref(), pos_integer() | String.t()) :: :ok | {:error, rpc_error()}
   def unwatch_agent(node, agent_id) do
     result = unregister_watcher_on(node, agent_id)
     EvoGit.Agent.Stream.unsubscribe(agent_id)
@@ -521,9 +558,9 @@ defmodule EvoGit.RemoteNode do
   Returns the FLAT `{:ok, %EvoGit.Agent.Stream.Snapshot{}, seq}` (a heavy read: the
   snapshot carries the FULL transcript) or `{:error, {kind, reason}}`.
   """
-  @spec watch_snapshot(node(), pos_integer() | String.t()) ::
+  @spec watch_snapshot(node_ref(), pos_integer() | String.t()) ::
           {:ok, EvoGit.Agent.Stream.Snapshot.t(), non_neg_integer()}
-          | {:error, {atom(), term()}}
+          | {:error, rpc_error()}
   def watch_snapshot(node, agent_id) do
     reply =
       if node == node() do
@@ -603,15 +640,24 @@ defmodule EvoGit.RemoteNode do
   `:approve` or `:deny`.
 
   Returns `{:ok, result}` on success or `{:error, reason}` on failure
-  (including RPC failures such as node down or timeout).
+  (including RPC failures such as node down or timeout). A failure reported by
+  the remote API itself (e.g. `{:error, :not_found}` for an unknown or
+  already-resolved request) is therefore returned as `{:error, reason}` — it is
+  never nested inside `{:ok, _}`.
   """
-  @spec respond_approval(node(), String.t(), :approve | :deny) ::
-          {:ok, term()} | {:error, term()}
+  @spec respond_approval(node_ref(), String.t(), :approve | :deny) ::
+          {:ok, term()} | {:error, error_reason()}
   def respond_approval(node, request_id, decision) do
     if node == node() do
-      {:ok, EvoGit.AgentScheduler.RemoteAPI.respond_approval(request_id, decision)}
+      unwrap_api_reply(EvoGit.AgentScheduler.RemoteAPI.respond_approval(request_id, decision))
     else
-      call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :respond_approval, [request_id, decision])
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :respond_approval, [
+             request_id,
+             decision
+           ]) do
+        {:ok, result} -> unwrap_api_reply(result)
+        {:error, _reason} = error -> error
+      end
     end
   end
 
@@ -622,7 +668,7 @@ defmodule EvoGit.RemoteNode do
   On a remote node, routes the call through `:erpc` via `call_remote/4`. Returns
   `[]` if the remote call fails.
   """
-  @spec list_tasks(node()) :: [EvoGit.TaskInfo.t()]
+  @spec list_tasks(node_ref()) :: [EvoGit.TaskInfo.t()]
   def list_tasks(node) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.list_tasks()
@@ -643,7 +689,7 @@ defmodule EvoGit.RemoteNode do
   node, routes the call through `:erpc` via `call_remote/4`. Returns `{[], 0}`
   if the remote call fails.
   """
-  @spec list_tasks_paginated(node(), keyword()) ::
+  @spec list_tasks_paginated(node_ref(), keyword()) ::
           {[EvoGit.TaskInfo.t()], non_neg_integer()}
   def list_tasks_paginated(node, opts \\ []) do
     if node == node() do
@@ -672,7 +718,7 @@ defmodule EvoGit.RemoteNode do
   Returns `%{rows: [map()], total: non_neg_integer}`; `%{rows: [], total: 0}`
   when the remote call fails.
   """
-  @spec list_tasks_page(node(), keyword()) :: %{rows: [map()], total: non_neg_integer()}
+  @spec list_tasks_page(node_ref(), keyword()) :: %{rows: [map()], total: non_neg_integer()}
   def list_tasks_page(node, opts \\ []) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.select_tasks_page(opts)
@@ -692,7 +738,7 @@ defmodule EvoGit.RemoteNode do
   directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
   Returns `[]` if the remote call fails.
   """
-  @spec get_unique_paths(node()) :: [String.t()]
+  @spec get_unique_paths(node_ref()) :: [String.t()]
   def get_unique_paths(node) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.get_unique_paths()
@@ -714,7 +760,7 @@ defmodule EvoGit.RemoteNode do
 
   `statuses` is a list of status ATOMS; `[]` (default) means all statuses.
   """
-  @spec list_tasks_summary(node(), [atom()]) :: [map()]
+  @spec list_tasks_summary(node_ref(), [atom()]) :: [map()]
   def list_tasks_summary(node, statuses \\ []) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.list_tasks_summary(statuses)
@@ -737,7 +783,7 @@ defmodule EvoGit.RemoteNode do
   `statuses` is a list of status ATOMS; `[]` (default) means all statuses. The
   returned maps have `id`, `status` (atom), and `updated_at` (raw ISO string).
   """
-  @spec list_task_ids(node(), [atom()]) :: [map()]
+  @spec list_task_ids(node_ref(), [atom()]) :: [map()]
   def list_task_ids(node, statuses \\ []) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.list_task_ids(statuses)
@@ -753,7 +799,7 @@ defmodule EvoGit.RemoteNode do
   @doc """
   Returns lightweight task summaries filtered to a specific project_path on the given node.
   """
-  @spec list_tasks_summary_by_path(node(), String.t(), [atom()]) :: [map()]
+  @spec list_tasks_summary_by_path(node_ref(), String.t(), [atom()]) :: [map()]
   def list_tasks_summary_by_path(node, path, statuses \\ []) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.list_tasks_summary_by_path(path, statuses)
@@ -779,7 +825,7 @@ defmodule EvoGit.RemoteNode do
   `since_iso` is a fixed-precision ISO-8601 string; the returned summary-shaped
   maps include an `updated_at` key.
   """
-  @spec list_tasks_changed_since(node(), String.t()) :: [map()]
+  @spec list_tasks_changed_since(node_ref(), String.t()) :: [map()]
   def list_tasks_changed_since(node, since_iso) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.list_tasks_changed_since(since_iso)
@@ -806,7 +852,7 @@ defmodule EvoGit.RemoteNode do
   Returns `:ok` on success or `{:error, reason}` on failure (including RPC
   failures such as node down or timeout).
   """
-  @spec cancel_task(node(), String.t()) :: :ok | {:error, term()}
+  @spec cancel_task(node_ref(), String.t()) :: :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.cancel_task(task_id))
 
   @doc """
@@ -821,7 +867,7 @@ defmodule EvoGit.RemoteNode do
   Returns `:ok` on success or `{:error, reason}` on failure (including RPC
   failures such as node down or timeout).
   """
-  @spec force_kill_task(node(), String.t()) :: :ok | {:error, term()}
+  @spec force_kill_task(node_ref(), String.t()) :: :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.force_kill_task(task_id))
 
   @doc """
@@ -834,7 +880,7 @@ defmodule EvoGit.RemoteNode do
   Returns `:ok` on success or `{:error, reason}` on failure (including RPC
   failures such as node down or timeout).
   """
-  @spec pause_task(node(), String.t()) :: :ok | {:error, term()}
+  @spec pause_task(node_ref(), String.t()) :: :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.pause_task(task_id))
 
   @doc """
@@ -846,7 +892,7 @@ defmodule EvoGit.RemoteNode do
   Returns `:ok` on success or `{:error, reason}` on failure (including RPC
   failures such as node down or timeout).
   """
-  @spec resume_task(node(), String.t()) :: :ok | {:error, term()}
+  @spec resume_task(node_ref(), String.t()) :: :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.resume_task(task_id))
 
   @doc """
@@ -858,7 +904,7 @@ defmodule EvoGit.RemoteNode do
   Returns `:ok` on success or `{:error, reason}` on failure (including RPC
   failures such as node down or timeout).
   """
-  @spec delete_task(node(), String.t()) :: :ok | {:error, term()}
+  @spec delete_task(node_ref(), String.t()) :: :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.delete_task(task_id))
 
   @doc """
@@ -869,7 +915,7 @@ defmodule EvoGit.RemoteNode do
   `call_remote/4`. Returns `nil` if the remote call fails (or if the task
   does not exist).
   """
-  @spec get_task(node(), String.t()) :: EvoGit.TaskInfo.t() | nil
+  @spec get_task(node_ref(), String.t()) :: EvoGit.TaskInfo.t() | nil
   def get_task(node, task_id) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.get_task(task_id)
@@ -891,7 +937,7 @@ defmodule EvoGit.RemoteNode do
 
   Returns `%TaskInfo{}` or `nil` (absent task, or a failed remote call).
   """
-  @spec get_task_lite(node(), String.t()) :: EvoGit.TaskInfo.t() | nil
+  @spec get_task_lite(node_ref(), String.t()) :: EvoGit.TaskInfo.t() | nil
   def get_task_lite(node, task_id) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.get_task_lite(task_id)
@@ -917,7 +963,7 @@ defmodule EvoGit.RemoteNode do
   Returns `%{entries: [map()], total: non_neg_integer}`; degraded to
   `%{entries: [], total: 0}` when the remote call fails.
   """
-  @spec list_task_archives(node(), String.t(), keyword()) ::
+  @spec list_task_archives(node_ref(), String.t(), keyword()) ::
           %{entries: [map()], total: non_neg_integer() | nil}
   def list_task_archives(node, task_id, opts \\ []) do
     if node == node() do
@@ -951,7 +997,7 @@ defmodule EvoGit.RemoteNode do
   Returns a STRING-KEYED `map()`, or `nil` (no such archived agent, or a failed
   remote call).
   """
-  @spec get_agent_archive(node(), String.t(), integer()) :: map() | nil
+  @spec get_agent_archive(node_ref(), String.t(), integer()) :: map() | nil
   def get_agent_archive(node, task_id, agent_id) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.get_agent_archive(task_id, agent_id)
@@ -977,7 +1023,7 @@ defmodule EvoGit.RemoteNode do
   Returns `:ok` on success or `{:error, reason}` on failure (including RPC
   failures such as node down or timeout).
   """
-  @spec set_review_status(node(), String.t(), atom()) :: :ok | {:error, term()}
+  @spec set_review_status(node_ref(), String.t(), atom()) :: :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.set_review_status(task_id, status))
 
   @doc """
@@ -990,8 +1036,8 @@ defmodule EvoGit.RemoteNode do
   Returns `:ok` on success or `{:error, reason}` on failure (including RPC
   failures such as node down or timeout).
   """
-  @spec set_review_metadata(node(), String.t(), String.t(), String.t()) ::
-          :ok | {:error, term()}
+  @spec set_review_metadata(node_ref(), String.t(), String.t(), String.t()) ::
+          :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.set_review_metadata(task_id, base_sha, commit_sha))
 
   @doc """
@@ -1003,7 +1049,7 @@ defmodule EvoGit.RemoteNode do
   Returns `:ok` on success or `{:error, reason}` on failure (including RPC
   failures such as node down or timeout).
   """
-  @spec clear_finished_tasks(node()) :: :ok | {:error, term()}
+  @spec clear_finished_tasks(node_ref()) :: :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.clear_finished_tasks())
 
   @doc """
@@ -1019,8 +1065,8 @@ defmodule EvoGit.RemoteNode do
   `{:error, {tag, output}}` if not. On RPC failure, returns
   `{:error, {kind, reason}}`.
   """
-  @spec get_file_content(node(), String.t(), String.t(), String.t()) ::
-          {:ok, String.t()} | {:error, term()}
+  @spec get_file_content(node_ref(), String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.get_file_content(repo_path, commit_sha, file_path))
 
   @doc """
@@ -1034,8 +1080,8 @@ defmodule EvoGit.RemoteNode do
   Returns `{:ok, [%EvoGit.Review.CommitInfo{}]}` or `{:error, reason}`. On
   RPC failure, returns `{:error, {kind, reason}}`.
   """
-  @spec list_commits(node(), String.t(), String.t()) ::
-          {:ok, [EvoGit.Review.CommitInfo.t()]} | {:error, term()}
+  @spec list_commits(node_ref(), String.t(), String.t()) ::
+          {:ok, [EvoGit.Review.CommitInfo.t()]} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.list_commits(repo_path, branch_name))
 
   @doc """
@@ -1051,8 +1097,8 @@ defmodule EvoGit.RemoteNode do
   list (`:limit`). Returns `{:ok, %{commits: [commit], refs: %{sha => [ref]}}}`
   or `{:error, {kind, reason}}` on RPC failure.
   """
-  @spec list_commit_graph(node(), String.t(), [{String.t(), String.t()}], keyword()) ::
-          {:ok, map()} | {:error, term()}
+  @spec list_commit_graph(node_ref(), String.t(), [{String.t(), String.t()}], keyword()) ::
+          {:ok, map()} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.list_commit_graph(repo_path, ranges, opts))
 
   @doc """
@@ -1074,8 +1120,8 @@ defmodule EvoGit.RemoteNode do
   verbatim through the local and `:erpc` paths) or
   `{:error, {kind, reason}}` on RPC failure.
   """
-  @spec list_task_commit_graph(node(), String.t(), String.t(), [String.t() | nil], keyword()) ::
-          {:ok, map()} | {:error, term()}
+  @spec list_task_commit_graph(node_ref(), String.t(), String.t(), [String.t() | nil], keyword()) ::
+          {:ok, map()} | {:error, error_reason()}
   defnode(
     EvoGit.AgentScheduler.RemoteAPI.list_task_commit_graph(task_id, repo_path, live_tips, opts)
   )
@@ -1093,7 +1139,8 @@ defmodule EvoGit.RemoteNode do
   Returns `{:ok, review_data_map}` or an error tuple. On RPC failure, returns
   `{:error, {kind, reason}}`.
   """
-  @spec load_review_data(node(), String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  @spec load_review_data(node_ref(), String.t(), String.t()) ::
+          {:ok, map()} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.load_review_data(repo_path, branch_name))
 
   @doc """
@@ -1109,7 +1156,8 @@ defmodule EvoGit.RemoteNode do
   Returns `{:ok, review_data_map}` or an error tuple. On RPC failure, returns
   `{:error, {kind, reason}}`.
   """
-  @spec load_review_metadata(node(), String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  @spec load_review_metadata(node_ref(), String.t(), String.t()) ::
+          {:ok, map()} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.load_review_metadata(repo_path, branch_name))
 
   @doc """
@@ -1124,7 +1172,7 @@ defmodule EvoGit.RemoteNode do
   Returns the diff result from `EvoGit.Review` verbatim. On RPC failure,
   returns `{:error, {kind, reason}}`.
   """
-  @spec load_file_diff(node(), String.t(), String.t(), String.t(), String.t()) :: term()
+  @spec load_file_diff(node_ref(), String.t(), String.t(), String.t(), String.t()) :: term()
   defnode(
     EvoGit.AgentScheduler.RemoteAPI.load_file_diff(repo_path, base_sha, commit_sha, file_path)
   )
@@ -1143,7 +1191,7 @@ defmodule EvoGit.RemoteNode do
   result from `EvoGit.Review` verbatim. On RPC failure, returns
   `{:error, {kind, reason}}`.
   """
-  @spec load_file_diff(node(), String.t(), String.t(), String.t(), String.t(), keyword()) ::
+  @spec load_file_diff(node_ref(), String.t(), String.t(), String.t(), String.t(), keyword()) ::
           term()
   defnode(
     EvoGit.AgentScheduler.RemoteAPI.load_file_diff(
@@ -1168,7 +1216,7 @@ defmodule EvoGit.RemoteNode do
   Returns the result from `EvoGit.Review` verbatim. On RPC failure, returns
   `{:error, {kind, reason}}`.
   """
-  @spec load_review_metadata_from_shas(node(), String.t(), String.t(), String.t()) :: term()
+  @spec load_review_metadata_from_shas(node_ref(), String.t(), String.t(), String.t()) :: term()
   defnode(
     EvoGit.AgentScheduler.RemoteAPI.load_review_metadata_from_shas(
       repo_path,
@@ -1190,7 +1238,7 @@ defmodule EvoGit.RemoteNode do
   Returns the result from `EvoGit.Review` verbatim. On RPC failure, returns
   `{:error, {kind, reason}}`.
   """
-  @spec list_commits_from_shas(node(), String.t(), String.t(), String.t()) :: term()
+  @spec list_commits_from_shas(node_ref(), String.t(), String.t(), String.t()) :: term()
   defnode(EvoGit.AgentScheduler.RemoteAPI.list_commits_from_shas(repo_path, base_sha, commit_sha))
 
   @doc """
@@ -1205,7 +1253,7 @@ defmodule EvoGit.RemoteNode do
   Returns the result from `EvoGit.Review` verbatim. On RPC failure, returns
   `{:error, {kind, reason}}`.
   """
-  @spec load_commit_files(node(), String.t(), String.t()) :: term()
+  @spec load_commit_files(node_ref(), String.t(), String.t()) :: term()
   defnode(EvoGit.AgentScheduler.RemoteAPI.load_commit_files(repo_path, commit_sha))
 
   @doc """
@@ -1220,7 +1268,7 @@ defmodule EvoGit.RemoteNode do
   Returns the result from `EvoGit.Review` verbatim. On RPC failure, returns
   `{:error, {kind, reason}}`.
   """
-  @spec load_commit_file_diff(node(), String.t(), String.t(), String.t()) :: term()
+  @spec load_commit_file_diff(node_ref(), String.t(), String.t(), String.t()) :: term()
   defnode(EvoGit.AgentScheduler.RemoteAPI.load_commit_file_diff(repo_path, commit_sha, file_path))
 
   @doc """
@@ -1236,8 +1284,8 @@ defmodule EvoGit.RemoteNode do
   or `{:error, reason}` on failure. On RPC failure, returns
   `{:error, {kind, reason}}`.
   """
-  @spec merge_branch(node(), String.t(), String.t()) ::
-          {:ok, String.t()} | {:conflict, term()} | {:error, term()}
+  @spec merge_branch(node_ref(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:conflict, term()} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.merge_branch(repo_path, branch_name))
 
   @doc """
@@ -1252,8 +1300,8 @@ defmodule EvoGit.RemoteNode do
   or `{:error, reason}` on failure. On RPC failure, returns
   `{:error, {kind, reason}}`.
   """
-  @spec merge_branch(node(), String.t(), String.t(), String.t()) ::
-          {:ok, String.t()} | {:conflict, term()} | {:error, term()}
+  @spec merge_branch(node_ref(), String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:conflict, term()} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.merge_branch(repo_path, branch_name, target_branch))
 
   @doc """
@@ -1270,8 +1318,8 @@ defmodule EvoGit.RemoteNode do
   `{:error, reason}` on failure. On RPC failure, returns
   `{:error, {kind, reason}}`.
   """
-  @spec check_merge(node(), String.t(), String.t(), String.t()) ::
-          {:ok, :clean} | {:ok, {:conflict, term()}} | {:error, term()}
+  @spec check_merge(node_ref(), String.t(), String.t(), String.t()) ::
+          {:ok, :clean} | {:ok, {:conflict, term()}} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.check_merge(repo_path, branch_or_sha, target_branch))
 
   @doc """
@@ -1287,7 +1335,8 @@ defmodule EvoGit.RemoteNode do
   → first local branch) or `{:error, :no_branch_found}`. On RPC failure,
   returns `{:error, {kind, reason}}`.
   """
-  @spec default_merge_target(node(), String.t()) :: {:ok, String.t()} | {:error, term()}
+  @spec default_merge_target(node_ref(), String.t()) ::
+          {:ok, String.t()} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.default_merge_target(repo_path))
 
   @doc """
@@ -1301,7 +1350,7 @@ defmodule EvoGit.RemoteNode do
   Returns `{:ok, [String.t()]}` or `{:error, {tag, output}}`. On RPC failure,
   returns `{:error, {kind, reason}}`.
   """
-  @spec list_branches(node(), String.t()) :: {:ok, [String.t()]} | {:error, term()}
+  @spec list_branches(node_ref(), String.t()) :: {:ok, [String.t()]} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.list_branches(repo_path))
 
   @doc """
@@ -1315,7 +1364,7 @@ defmodule EvoGit.RemoteNode do
   Returns the result from `EvoGit.Review` verbatim. On RPC failure, returns
   `{:error, {kind, reason}}`.
   """
-  @spec reject_branch(node(), String.t(), String.t()) :: term()
+  @spec reject_branch(node_ref(), String.t(), String.t()) :: term()
   defnode(EvoGit.AgentScheduler.RemoteAPI.reject_branch(repo_path, branch_name))
 
   @doc """
@@ -1330,7 +1379,7 @@ defmodule EvoGit.RemoteNode do
   Returns the result from `EvoGit.Review` verbatim. On RPC failure, returns
   `{:error, {kind, reason}}`.
   """
-  @spec create_github_pr(node(), String.t(), String.t(), String.t(), String.t()) :: term()
+  @spec create_github_pr(node_ref(), String.t(), String.t(), String.t(), String.t()) :: term()
   defnode(
     EvoGit.AgentScheduler.RemoteAPI.create_github_pr(repo_path, branch_name, objective, result)
   )
@@ -1346,7 +1395,7 @@ defmodule EvoGit.RemoteNode do
   Returns the result from `EvoGit.Adapters.GitHub` verbatim. On RPC failure,
   returns `{:error, {kind, reason}}`.
   """
-  @spec github_upstream(node(), String.t()) :: term()
+  @spec github_upstream(node_ref(), String.t()) :: term()
   defnode(EvoGit.AgentScheduler.RemoteAPI.github_upstream(repo_path))
 
   @doc """
@@ -1360,7 +1409,8 @@ defmodule EvoGit.RemoteNode do
   Returns the result from `EvoGit.Adapters.GitHub` verbatim. On RPC failure,
   returns `{:error, {kind, reason}}`.
   """
-  @spec list_github_issues(node(), String.t(), keyword()) :: {:ok, [map()]} | {:error, term()}
+  @spec list_github_issues(node_ref(), String.t(), keyword()) ::
+          {:ok, [map()]} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.list_github_issues(repo_path, opts \\ []))
 
   @doc """
@@ -1376,8 +1426,8 @@ defmodule EvoGit.RemoteNode do
   Returns the result from `EvoGit.Adapters.GitHub` verbatim. On RPC failure,
   returns `{:error, {kind, reason}}`.
   """
-  @spec github_issue_markdown(node(), String.t(), integer() | String.t()) ::
-          {:ok, String.t()} | {:error, term()}
+  @spec github_issue_markdown(node_ref(), String.t(), integer() | String.t()) ::
+          {:ok, String.t()} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.github_issue_markdown(repo_path, number))
 
   @doc """
@@ -1388,10 +1438,23 @@ defmodule EvoGit.RemoteNode do
   node, routes the call through `:erpc` via `call_remote/4` so the review
   operation runs inside the remote VM against the remote filesystem.
 
-  Returns a boolean. On RPC failure, returns `{:error, {kind, reason}}`.
+  Returns `true` only when the node answers `true`; a transport failure or any
+  other answer is `false`, so a dead node can never read as an existing branch.
   """
-  @spec branch_exists?(node(), String.t(), String.t()) :: boolean() | {:error, term()}
-  defnode(EvoGit.AgentScheduler.RemoteAPI.branch_exists?(repo_path, branch_name))
+  @spec branch_exists?(node_ref(), String.t(), String.t()) :: boolean()
+  def branch_exists?(node, repo_path, branch_name) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.branch_exists?(repo_path, branch_name) == true
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :branch_exists?, [
+             repo_path,
+             branch_name
+           ]) do
+        {:ok, true} -> true
+        _ -> false
+      end
+    end
+  end
 
   @doc """
   Lists the Virtual Context Tree project mounts of the given node, newest first.
@@ -1400,7 +1463,7 @@ defmodule EvoGit.RemoteNode do
   Returns `[%EvoGit.VCT.Mount{}]`, degrading to `[]` when the remote call fails
   or returns something else.
   """
-  @spec projects(node()) :: [EvoGit.VCT.Mount.t()]
+  @spec projects(node_ref()) :: [EvoGit.VCT.Mount.t()]
   def projects(node) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.projects()
@@ -1420,8 +1483,8 @@ defmodule EvoGit.RemoteNode do
   Returns `{:ok, %EvoGit.VCT.Mount{}}` or `{:error, reason}`; a failed RPC
   returns `{:error, {kind, reason}}` so the caller can report it.
   """
-  @spec mount_project(node(), String.t(), String.t() | nil) ::
-          {:ok, EvoGit.VCT.Mount.t()} | {:error, term()}
+  @spec mount_project(node_ref(), String.t(), String.t() | nil) ::
+          {:ok, EvoGit.VCT.Mount.t()} | {:error, error_reason()}
   def mount_project(node, path, name) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.mount_project(path, name)
@@ -1441,7 +1504,7 @@ defmodule EvoGit.RemoteNode do
   Returns `:ok`, `{:error, :not_found}`, `{:error, :invalid_point}` or a failed
   RPC's `{:error, {kind, reason}}`.
   """
-  @spec forget_project(node(), term()) :: :ok | {:error, term()}
+  @spec forget_project(node_ref(), term()) :: :ok | {:error, error_reason()}
   def forget_project(node, key) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.forget_project(key)
@@ -1463,7 +1526,7 @@ defmodule EvoGit.RemoteNode do
   Returns `[%EvoGit.VCT.Mount{}]`, degrading to `[]` when the remote call fails
   or returns something else.
   """
-  @spec workspaces(node()) :: [EvoGit.VCT.Mount.t()]
+  @spec workspaces(node_ref()) :: [EvoGit.VCT.Mount.t()]
   def workspaces(node) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.workspaces()
@@ -1484,8 +1547,8 @@ defmodule EvoGit.RemoteNode do
   Returns `{:ok, %EvoGit.VCT.Mount{}}` or `{:error, reason}`; a failed RPC
   returns `{:error, {kind, reason}}` so the caller can report it.
   """
-  @spec create_workspace(node(), term(), term(), keyword()) ::
-          {:ok, EvoGit.VCT.Mount.t()} | {:error, term()}
+  @spec create_workspace(node_ref(), term(), term(), keyword()) ::
+          {:ok, EvoGit.VCT.Mount.t()} | {:error, error_reason()}
   def create_workspace(node, name, members, opts) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.create_workspace(name, members, opts)
@@ -1511,10 +1574,9 @@ defmodule EvoGit.RemoteNode do
   [...]}}`, `{:error, :not_found | :not_a_workspace | :invalid_point}`, or a
   failed RPC's `{:error, {kind, reason}}`.
   """
-  @spec workspace_members(node(), term()) ::
+  @spec workspace_members(node_ref(), term()) ::
           {:ok, EvoGit.VCT.workspace_resolution()}
-          | {:error, :not_found | :not_a_workspace | :invalid_point}
-          | {:error, term()}
+          | {:error, :not_found | :not_a_workspace | :invalid_point | error_reason()}
   def workspace_members(node, point_or_name) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.workspace_members(point_or_name)
@@ -1538,7 +1600,7 @@ defmodule EvoGit.RemoteNode do
   Returns `[%EvoGit.VCT.Mount{}]`, degrading to `[]` when the remote call fails
   or returns something else.
   """
-  @spec workspaces_for(node(), term()) :: [EvoGit.VCT.Mount.t()]
+  @spec workspaces_for(node_ref(), term()) :: [EvoGit.VCT.Mount.t()]
   def workspaces_for(node, project) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.workspaces_for(project)
@@ -1563,7 +1625,7 @@ defmodule EvoGit.RemoteNode do
   script_status: status}}` on success or `{:error, reason}` on failure
   (including RPC failures such as node down or timeout).
   """
-  @spec list_custom_agents(node()) :: {:ok, map()} | {:error, term()}
+  @spec list_custom_agents(node_ref()) :: {:ok, map()} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.list_custom_agents())
 
   @doc """
@@ -1577,7 +1639,7 @@ defmodule EvoGit.RemoteNode do
   (validation errors from `EvoGit.CustomAgents.save/1`, or RPC failures such
   as node down or timeout).
   """
-  @spec save_custom_agent(node(), map()) :: {:ok, map()} | {:error, atom() | term()}
+  @spec save_custom_agent(node_ref(), map()) :: {:ok, map()} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.save_custom_agent(def))
 
   @doc """
@@ -1590,7 +1652,7 @@ defmodule EvoGit.RemoteNode do
   Returns `:ok` on success or `{:error, reason}` on failure (`:not_found` when
   no agent has that id, or RPC failures such as node down or timeout).
   """
-  @spec delete_custom_agent(node(), String.t()) :: :ok | {:error, :not_found | term()}
+  @spec delete_custom_agent(node_ref(), String.t()) :: :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.delete_custom_agent(id))
 
   @doc """
@@ -1604,7 +1666,7 @@ defmodule EvoGit.RemoteNode do
   Returns `:ok` on success or `{:error, reason}` on failure (including RPC
   failures such as node down or timeout).
   """
-  @spec save_model_selection_script(node(), String.t()) :: :ok | {:error, term()}
+  @spec save_model_selection_script(node_ref(), String.t()) :: :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.save_model_selection_script(script))
 
   @doc """
@@ -1617,7 +1679,7 @@ defmodule EvoGit.RemoteNode do
   Returns `:ok` on success or `{:error, reason}` on failure (including RPC
   failures such as node down or timeout).
   """
-  @spec reload_custom_agents(node()) :: :ok | {:error, term()}
+  @spec reload_custom_agents(node_ref()) :: :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.reload_custom_agents())
 
   @doc """
@@ -1641,12 +1703,12 @@ defmodule EvoGit.RemoteNode do
   raise). The status map is `%{ok: [%{name, file, module, read_only?: boolean}],
   errors: [%{file, reason}]}`.
   """
-  @spec custom_tools_status(node()) ::
+  @spec custom_tools_status(node_ref()) ::
           %{
             ok: [%{name: String.t(), file: String.t(), module: module(), read_only?: boolean()}],
             errors: [%{file: String.t(), reason: String.t()}]
           }
-          | {:error, term()}
+          | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.custom_tools_status())
 
   @doc """
@@ -1657,7 +1719,7 @@ defmodule EvoGit.RemoteNode do
   remote daemon resolves paths against its own filesystem. Returns `[]` if
   the remote call fails.
   """
-  @spec list_path_suggestions(node(), String.t() | nil) :: [String.t()]
+  @spec list_path_suggestions(node_ref(), String.t() | nil) :: [String.t()]
   def list_path_suggestions(node, value) do
     if node == node() do
       EvoGit.PathSuggestions.suggest(value)
@@ -1677,7 +1739,7 @@ defmodule EvoGit.RemoteNode do
   the call through `:erpc` via `call_remote/4` so the check runs on the
   remote daemon's filesystem. Returns `false` if the remote call fails.
   """
-  @spec dir?(node(), String.t()) :: boolean()
+  @spec dir?(node_ref(), String.t()) :: boolean()
   def dir?(node, path) do
     if node == node() do
       File.dir?(path)
@@ -1699,7 +1761,8 @@ defmodule EvoGit.RemoteNode do
   Returns `{:ok, %EvoGit.TaskInfo{}}` on success or `{:error, reason}` on failure
   (including RPC failures such as node down or timeout).
   """
-  @spec start_task(node(), atom(), keyword()) :: {:ok, EvoGit.TaskInfo.t()} | {:error, term()}
+  @spec start_task(node_ref(), atom(), keyword()) ::
+          {:ok, EvoGit.TaskInfo.t()} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.start_task(task_type, opts))
 
   @doc """
@@ -1709,7 +1772,7 @@ defmodule EvoGit.RemoteNode do
   directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
   Returns `false` if the remote call fails.
   """
-  @spec file_exists?(node(), String.t()) :: boolean()
+  @spec file_exists?(node_ref(), String.t()) :: boolean()
   def file_exists?(node, path) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.file_exists?(path)
@@ -1727,16 +1790,17 @@ defmodule EvoGit.RemoteNode do
 
   On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.ls/1` directly.
   On a remote node, routes the call through `:erpc` via `call_remote/4`.
-  Returns `{:error, :rpc_failed}` if the remote call fails.
+  Returns the RPC failure reason `{:error, {kind, reason}}` when the transport
+  fails.
   """
-  @spec ls(node(), String.t()) :: {:ok, [String.t()]} | {:error, atom()}
+  @spec ls(node_ref(), String.t()) :: {:ok, [String.t()]} | {:error, error_reason()}
   def ls(node, path) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.ls(path)
     else
       case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :ls, [path]) do
         {:ok, result} -> result
-        {:error, _reason} -> {:error, :rpc_failed}
+        {:error, reason} -> {:error, reason}
       end
     end
   end
@@ -1748,7 +1812,7 @@ defmodule EvoGit.RemoteNode do
   directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
   Returns `nil` if the remote call fails or the config file does not exist.
   """
-  @spec read_project_config(node(), String.t()) :: map() | nil
+  @spec read_project_config(node_ref(), String.t()) :: map() | nil
   def read_project_config(node, path) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.read_project_config(path)
@@ -1772,7 +1836,7 @@ defmodule EvoGit.RemoteNode do
   Returns `[]` when the remote call fails (or answers something other than a
   list), mirroring the other list wrappers here.
   """
-  @spec list_processes(node(), keyword()) :: [EvoGit.ProcessManager.Execution.t()]
+  @spec list_processes(node_ref(), keyword()) :: [EvoGit.ProcessManager.Execution.t()]
   def list_processes(node, opts \\ []) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.list_processes(opts)
@@ -1795,8 +1859,8 @@ defmodule EvoGit.RemoteNode do
   Returns `{:ok, %EvoGit.ProcessManager.Execution{}}`, `{:error, :not_found}`,
   `{:error, :process_manager_unavailable}` or the RPC failure reason.
   """
-  @spec get_process(node(), String.t()) ::
-          {:ok, EvoGit.ProcessManager.Execution.t()} | {:error, term()}
+  @spec get_process(node_ref(), String.t()) ::
+          {:ok, EvoGit.ProcessManager.Execution.t()} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.get_process(id))
 
   @doc """
@@ -1810,8 +1874,8 @@ defmodule EvoGit.RemoteNode do
   `{:error, :not_running}`, `{:error, :process_manager_unavailable}`, …) or the
   RPC failure reason.
   """
-  @spec process_stats(node(), String.t()) ::
-          {:ok, EvoGit.ProcessManager.Stats.t()} | {:error, term()}
+  @spec process_stats(node_ref(), String.t()) ::
+          {:ok, EvoGit.ProcessManager.Stats.t()} | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.process_stats(id))
 
   @doc """
@@ -1828,11 +1892,11 @@ defmodule EvoGit.RemoteNode do
   `{:error, {:unknown_action, action}}` or the RPC failure reason.
   """
   @spec process_control(
-          node(),
+          node_ref(),
           String.t(),
           EvoGit.AgentScheduler.RemoteAPI.process_control_action(),
           term()
-        ) :: :ok | {:error, term()}
+        ) :: :ok | {:error, error_reason()}
   defnode(EvoGit.AgentScheduler.RemoteAPI.process_control(id, action, reason))
 
   # Safe degraded config-status map returned when a remote config-status RPC

@@ -42,11 +42,25 @@ defmodule EvoGit.Agent.Session.Persistence do
   shorter/different list) is a `:rewrite` of the full list.
 
   An UNCHANGED transcript with an advanced scalar (a tool-only turn's `turn`/`usage`/
-  `current_commit`) is still an `:append`, with an EMPTY tail: the store then performs
-  the scalar UPSERT alone (unchanged `message_count` and `chunk_count`, no chunk row).
+  `current_commit`) writes NO transcript at all: it goes to
+  `EvoGit.AgentState.update_volatile/4`, the store's constant-shape `UPDATE` of the
+  mutable per-turn columns (unchanged `message_count` and `chunk_count`, no chunk
+  row). The ONE exception is a boundary that also ANCHORED a new commit:
+  `anchor_ref` is not a volatile column, so it rides one `checkpoint/4` with an
+  EMPTY tail instead (still no chunk row).
   A boundary that changed NOTHING AT ALL — same transcript, same volatile scalars, a
   matching baseline — writes nothing and runs no anchor task, so a duplicate
   checkpoint cannot cost a full state projection.
+
+  ## One full-field write per run, volatile-only after it
+
+  The identity and run facts (`depth`, `parent_id`, `objective`, `branch`,
+  `base_commit`, `redispatch`, …) never change after a run starts, so they are
+  written ONCE by `initial_snapshot/1` and the resync repair; a per-turn write
+  supplies the VOLATILE projection only, built from the store's own
+  `EvoGit.AgentState.Record.volatile_field_specs/0`, so the two lists cannot
+  drift. `pause_commit` and `result` are never supplied here: they belong to
+  `EvoGit.AgentState.put_pause_commit/4` and `mark_done/5`.
 
   ## The restored transcript is authoritative
 
@@ -77,9 +91,10 @@ defmodule EvoGit.Agent.Session.Persistence do
   ## The row lifecycle of ONE run
 
   `initial_snapshot/1` writes the row the moment the run starts (one `:rewrite`
-  of the whole transcript plus every scalar, `status: "running"`), so "one
+  of the whole transcript plus EVERY scalar, `status: "running"`), so "one
   durable row per RUNNING agent" is true from the first instant and a resumed
-  run RE-OPENS a previously `done` row. `checkpoint/2` keeps it current, and
+  run RE-OPENS a previously `done` row. `checkpoint/2` keeps it current,
+  `resync/1` re-writes it wholesale after a store-reported gap, and
   `complete/2` owns the terminal decision: `mark_done/5` with the finished
   run's result, then a ROOT deletes its own row (nothing consumes a root's
   result) while a CHILD keeps its `done` row until the parent's batch-clearing
@@ -88,6 +103,7 @@ defmodule EvoGit.Agent.Session.Persistence do
 
   require Logger
 
+  alias EvoGit.Agent.Session.Durable
   alias EvoGit.Agent.State
   alias EvoGit.Agent.ToolBatch
   alias EvoGit.Agent.Usage
@@ -97,51 +113,20 @@ defmodule EvoGit.Agent.Session.Persistence do
 
   @baseline_key :evogit_agent_state_baseline
 
-  # The scalar fields persisted per checkpoint: a SMALL projection of the state,
-  # never the whole struct. These are exactly the columns
-  # `EvoGit.AgentState.Record` knows how to write.
-  @field_keys [
-    :agent_module,
-    :depth,
-    :parent_id,
-    :node_path,
-    :repo_id,
-    :repo_less,
-    :repo_root,
-    :custom_agent_id,
-    :mode,
-    :archive,
-    :objective,
-    :model_spec,
-    :provider_profile_id,
-    :model_id,
-    :model_id_locked,
-    :prompt_cache_key,
-    :llm_model,
-    :llm_context_window,
-    :turn,
-    :usage,
-    :total_tokens,
-    :compression_count,
-    :current_commit,
-    :pending_inputs,
-    :phase,
-    :pending_tool_batch,
-    # The run's LIVE-ness. A checkpoint always writes `"running"` (a run that is
-    # checkpointing IS running, which is what re-opens a `done` row when a
-    # resumed run starts over), and `EvoGit.AgentState.mark_done/5` — reached
-    # through `complete/2` — owns the terminal value.
-    :status,
-    # DURABLE RUN FACTS: stable for the run and persisted so a resume can
-    # rebuild the worktree base, the branch, the spawn position, the agent spec
-    # and the git anchor (`nil` encodes to NULL, i.e. "unknown/absent").
-    :spawn_turn,
-    :spawn_index,
-    :branch,
-    :base_commit,
-    :anchor_ref,
-    :redispatch
-  ]
+  # The scalar fields a FULL-field write supplies: the store's whole
+  # `{field_key, column, type}` spec list MINUS the two columns that have their
+  # own writers — `pause_commit` (`EvoGit.AgentState.put_pause_commit/4`) and
+  # `result` (`EvoGit.AgentState.mark_done/5`). Deriving them from the store keeps
+  # this projection from drifting from the column list, and the exclusion is
+  # load-bearing: `Record.encode_fields/1` writes every key it is GIVEN (`nil`
+  # included), so supplying either here would CLOBBER the other writer's value.
+  #
+  # Only `initial_snapshot/1` (which establishes the run's identity and run
+  # facts) and `resync/1` (which may have to RE-CREATE a lost row) supply this
+  # list; a per-turn write supplies `volatile_fields/1`.
+  @field_keys Record.field_specs()
+              |> Enum.map(fn {key, _column, _type} -> key end)
+              |> Enum.reject(&(&1 in [:pause_commit, :result]))
 
   # The conversation fields `restore/3` may take from the stored record, with the
   # shape each one must have. These rows are ALWAYS overwritten: they are the
@@ -240,21 +225,22 @@ defmodule EvoGit.Agent.Session.Persistence do
     else
       case identity(state) do
         {:ok, task_id, agent_id} ->
-          messages = messages(state)
+          messages = Durable.messages(state)
 
           Logger.debug(fn ->
             "Agent #{agent_id}: writing the initial durable snapshot " <>
               "(#{length(messages)} messages)"
           end)
 
-          cast(
+          # The ONE full-field write of the run: identity, run facts and the
+          # whole transcript, plus an already-known `anchor_ref`.
+          put_checkpoint(
             task_id,
             agent_id,
             :rewrite,
             nil,
             messages,
-            state,
-            anchor_fields(state, nil, task_id, agent_id)
+            fields(state, anchor_fields(state, nil, task_id, agent_id))
           )
 
           # The baseline is what makes the NEXT checkpoint an append of the tail
@@ -285,7 +271,7 @@ defmodule EvoGit.Agent.Session.Persistence do
   @spec restore(State.t(), String.t() | nil, integer() | nil) ::
           State.t() | {:error, atom()}
   def restore(%State{} = fresh_state, task_id, agent_id) do
-    if valid_identity?(task_id, agent_id) do
+    if Durable.valid_identity?(task_id, agent_id) do
       case AgentState.load(task_id, agent_id) do
         {:ok, %Record{} = record} -> restore_record(fresh_state, record)
         {:error, reason} -> {:error, reason}
@@ -312,13 +298,23 @@ defmodule EvoGit.Agent.Session.Persistence do
     else
       case identity(state) do
         {:ok, task_id, agent_id} ->
+          messages = Durable.messages(state)
+
           Logger.debug(fn ->
             "Agent #{agent_id}: durable state resync requested; rewriting the full transcript " <>
-              "(#{length(messages(state))} messages)"
+              "(#{length(messages)} messages)"
           end)
 
-          messages = messages(state)
-          cast(task_id, agent_id, :rewrite, nil, messages, state)
+          # The FULL field projection, exceptionally, rather than the volatile
+          # one a per-turn boundary writes: a resync is ALSO what the store
+          # reports when it finds NO row (a checkpoint dropped by the backlog or
+          # payload cap can be the run's very FIRST one), and `checkpoint/4`
+          # UPSERTs. A volatile-only upsert would then re-create an
+          # IDENTITY-LESS row that every later resume must refuse with
+          # `:identity_mismatch`, i.e. the repair would silently destroy the
+          # run's resumability. The extra encode happens on the expensive
+          # repair path only, never on the turn path.
+          put_checkpoint(task_id, agent_id, :rewrite, nil, messages, fields(state, %{}))
           put_baseline(task_id, agent_id, length(messages))
           :ok
 
@@ -406,9 +402,9 @@ defmodule EvoGit.Agent.Session.Persistence do
   ## Classification + cast
 
   defp persist(%State{} = old_state, %State{} = new_state, task_id, agent_id) do
-    old_messages = messages(old_state)
-    new_messages = messages(new_state)
-    # The counts are the classification's whole input and BOTH branches need the new
+    old_messages = Durable.messages(old_state)
+    new_messages = Durable.messages(new_state)
+    # The counts are the classification's whole input and EVERY branch needs the new
     # one, so they are computed ONCE per boundary (the old code called `length/1`
     # up to four times, each call a full walk of a transcript that grows every turn).
     old_count = length(old_messages)
@@ -431,17 +427,65 @@ defmodule EvoGit.Agent.Session.Persistence do
              task_id,
              agent_id
            ) do
+        # The transcript did NOT move (an equal list with a matching baseline and
+        # compression count): only the volatile scalars did.
+        {:append, base_seq, []} ->
+          write_volatile_boundary(task_id, agent_id, base_seq, new_count, new_state, anchor)
+
         {:append, base_seq, tail} ->
-          cast(task_id, agent_id, :append, base_seq, tail, new_state, anchor)
+          write_checkpoint(task_id, agent_id, :append, base_seq, tail, new_state, anchor)
           put_baseline(task_id, agent_id, new_count)
           :ok
 
         {:rewrite, _nil, full} ->
-          cast(task_id, agent_id, :rewrite, nil, full, new_state, anchor)
+          write_checkpoint(task_id, agent_id, :rewrite, nil, full, new_state, anchor)
           put_baseline(task_id, agent_id, new_count)
           :ok
       end
     end
+  end
+
+  # The scalar-only boundary: the conversation the store already holds is
+  # unchanged, so nothing has to be re-sent. `EvoGit.AgentState.update_volatile/4`
+  # is ONE constant-shape `UPDATE` of the mutable per-turn columns — no chunk
+  # write, no full-field upsert, and nothing for the store to re-encode.
+  #
+  # The ONE reason to prefer a checkpoint here is a NEW `anchor_ref`: it is a
+  # durable RUN FACT written by the git side, NOT a volatile column, so
+  # `update_volatile/4` cannot carry it (and `checkpoint/4`'s `fields` write only
+  # touches supplied keys, so an omitted `anchor_ref` would leave the stored ref
+  # alone — but the ref would then be LOST for a row that has none yet). An
+  # empty-tail `:append` persists the scalar set AND the ref with no chunk row.
+  defp write_volatile_boundary(task_id, agent_id, base_seq, count, %State{} = state, anchor) do
+    if anchor == %{} do
+      AgentState.update_volatile(task_id, agent_id, volatile_fields(state))
+    else
+      put_checkpoint(
+        task_id,
+        agent_id,
+        :append,
+        base_seq,
+        [],
+        Map.merge(volatile_fields(state), anchor)
+      )
+    end
+
+    put_baseline(task_id, agent_id, count)
+    :ok
+  end
+
+  # A per-turn write of the VOLATILE projection plus whatever the git side just
+  # established. Identity and run facts are NOT re-supplied: `initial_snapshot/1`
+  # wrote them once and they cannot change after a run starts.
+  defp write_checkpoint(task_id, agent_id, kind, base_seq, messages, %State{} = state, anchor) do
+    put_checkpoint(
+      task_id,
+      agent_id,
+      kind,
+      base_seq,
+      messages,
+      Map.merge(volatile_fields(state), anchor)
+    )
   end
 
   # The no-op boundary: the SAME transcript list (`==` short-circuits on a shared
@@ -451,7 +495,7 @@ defmodule EvoGit.Agent.Session.Persistence do
   defp unchanged?(old_state, new_state, old_messages, new_messages, count, task_id, agent_id) do
     get_baseline(task_id, agent_id) == count and
       old_messages == new_messages and
-      scalar_projection(old_state) == scalar_projection(new_state)
+      volatile_fields(old_state) == volatile_fields(new_state)
   end
 
   ## Git anchoring
@@ -541,12 +585,15 @@ defmodule EvoGit.Agent.Session.Persistence do
 
   defp prefix?(_old_messages, _new_messages), do: false
 
-  defp cast(task_id, agent_id, kind, base_seq, messages, %State{} = state, extra_fields \\ %{}) do
+  # ONE cast: `fields` is already the exact map the store should write (the
+  # caller decides whether that is the volatile projection, the full one, or the
+  # volatile one plus a fresh `anchor_ref`).
+  defp put_checkpoint(task_id, agent_id, kind, base_seq, messages, fields) do
     AgentState.checkpoint(task_id, agent_id, %{
       kind: kind,
       base_seq: base_seq,
       messages: messages,
-      fields: fields(state, extra_fields),
+      fields: fields,
       owner: self()
     })
   end
@@ -560,32 +607,28 @@ defmodule EvoGit.Agent.Session.Persistence do
     :ok
   end
 
-  ## Messages
-
-  defp messages(%State{context: %ReqLLM.Context{messages: messages}}) when is_list(messages),
-    do: messages
-
-  defp messages(_state), do: []
-
   ## Fields
 
-  # The VOLATILE half of `@field_keys` — exactly the scalars a turn boundary can
-  # advance. The other keys are the run's stable identity/facts, so comparing this
-  # projection with `==` answers "did this boundary learn anything new?" without
-  # building the 34-key map a write needs.
-  @volatile_fields [
-    :turn,
-    :usage,
-    :total_tokens,
-    :compression_count,
-    :current_commit,
-    :pending_inputs,
-    :phase,
-    :pending_tool_batch
-  ]
+  # The VOLATILE projection: exactly the scalar columns a turn boundary can
+  # advance, built from the STORE's own list (`EvoGit.AgentState.Record`) so the
+  # producer can never drift from the column set `update_volatile/4` writes.
+  #
+  # It answers two questions at once: compared with `==` it is "did this boundary
+  # learn anything new?" (without building the 34-key map a full write needs), and
+  # supplied whole it IS the `update_volatile/4` payload — which has REPLACE
+  # semantics, so EVERY key must be present, never a subset.
+  defp volatile_fields(%State{} = state) do
+    Map.new(Record.volatile_field_specs(), fn {key, _column, _type} ->
+      {key, field_value(key, state)}
+    end)
+  end
 
-  defp scalar_projection(%State{} = state), do: Map.take(state, @volatile_fields)
-
+  # The FULL projection, for the two writes that create/re-open a row
+  # (`initial_snapshot/1`, `resync/1`): every stable identity/run fact plus the
+  # volatile half. `pause_commit` and `result` are deliberately NOT in
+  # `@field_keys` — they have their own writes (`put_pause_commit/4`,
+  # `mark_done/5`) and re-encoding them here would clobber a later value.
+  #
   # `extra_fields` are the facts THIS checkpoint establishes beyond the state
   # projection (currently only `anchor_ref`, which the session has just written
   # to git); they are merged over the projection, so an absent key can never
@@ -593,11 +636,6 @@ defmodule EvoGit.Agent.Session.Persistence do
   defp fields(%State{} = state, extra_fields) when is_map(extra_fields) do
     @field_keys
     |> Map.new(fn key -> {key, field_value(key, state)} end)
-    # `anchor_ref` is derived GIT-side, never carried on the struct: a `nil`
-    # projection means "this checkpoint knows nothing new about it", so it is
-    # omitted instead of erasing the ref an EARLIER checkpoint recorded (only
-    # `extra_fields` ever supplies it, and that merge wins either way).
-    |> Map.reject(fn {key, value} -> key == :anchor_ref and is_nil(value) end)
     |> Map.merge(extra_fields)
   end
 
@@ -698,14 +736,10 @@ defmodule EvoGit.Agent.Session.Persistence do
   ## Identity
 
   defp identity(%State{task_id: task_id, agent_id: agent_id}) do
-    if valid_identity?(task_id, agent_id) do
+    if Durable.valid_identity?(task_id, agent_id) do
       {:ok, task_id, agent_id}
     else
       :skip
     end
-  end
-
-  defp valid_identity?(task_id, agent_id) do
-    is_binary(task_id) and String.trim(task_id) != "" and is_integer(agent_id)
   end
 end

@@ -47,9 +47,6 @@ defmodule EvoGit.RemoteConnections do
     "last_connected" => :last_connected
   }
 
-  @non_alnum_re ~r/[^a-z0-9]+/
-  @trim_underscore_re ~r/(?:^_+|_+$)/
-
   @type t :: map()
 
   # --- Public API ---
@@ -224,7 +221,7 @@ defmodule EvoGit.RemoteConnections do
     name = Map.get(conn, :name) || ssh_target
 
     %{
-      id: Map.get(conn, :id) || slugify(name),
+      id: Map.get(conn, :id) || EvoGit.Util.Strings.slugify(name),
       name: name,
       ssh_target: ssh_target,
       local_binary_path: Map.get(conn, :local_binary_path),
@@ -241,14 +238,6 @@ defmodule EvoGit.RemoteConnections do
       nil -> default
       value -> value
     end
-  end
-
-  defp slugify(str) do
-    str
-    |> String.downcase()
-    |> String.replace(@non_alnum_re, "_")
-    |> String.replace(@trim_underscore_re, "")
-    |> String.slice(0, 40)
   end
 
   # Converts a string-keyed connection map (as decoded from TOML) into an

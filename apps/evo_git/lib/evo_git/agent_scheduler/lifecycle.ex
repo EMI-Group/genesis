@@ -550,15 +550,16 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   @doc """
   Injects the foreign repo commits map into a successful `%EvoGit.Agent.Result{}`
   tuple. Non-success results pass through unchanged.
-
-  Uses `Map.put/3` (NOT struct update) because the `foreign_repo_commits` field
-  is being introduced in parallel by the agent stream — it may not exist on the
-  struct yet; `Map.put` is behaviorally identical once the field lands.
   """
+  @spec inject_foreign_repo_commits(
+          {:ok, EvoGit.Agent.Result.t()} | term(),
+          %{optional(String.t()) => String.t()}
+        ) :: {:ok, EvoGit.Agent.Result.t()} | term()
   def inject_foreign_repo_commits({:ok, %EvoGit.Agent.Result{} = res}, commits)
       when is_map(commits) do
-    {:ok, Map.put(res, :foreign_repo_commits, commits)}
+    {:ok, %{res | foreign_repo_commits: commits}}
   end
 
+  @spec inject_foreign_repo_commits(term(), term()) :: term()
   def inject_foreign_repo_commits(result, _commits), do: result
 end

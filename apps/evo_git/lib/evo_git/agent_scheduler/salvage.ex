@@ -27,7 +27,9 @@ defmodule EvoGit.AgentScheduler.Salvage do
   `timeout_ms/0` (app env `:worktree_salvage_timeout_ms`, default `15_000`,
   non-positive/invalid values falling back to the default) before killing it
   and answering `{:error, :timeout}`. A raise/throw/exit inside the worker is
-  answered `{:error, {:crashed, reason}}`.
+  NOT caught there: the worker dies, the caller's existing `:DOWN` arm answers
+  `{:error, {:crashed, reason}}`, and `reason` carries the real crash term
+  (an exception WITH its stacktrace) instead of a swallowed message.
 
   ## The retention ref is a small durable anchor, not an archive
 
@@ -78,9 +80,7 @@ defmodule EvoGit.AgentScheduler.Salvage do
     tag = make_ref()
 
     {pid, mref} =
-      spawn_monitor(fn ->
-        send(parent, {tag, safe_do_salvage(worktree_path, repo_root, opts)})
-      end)
+      spawn_monitor(fn -> send(parent, {tag, do_salvage(worktree_path, repo_root, opts)}) end)
 
     receive do
       {^tag, result} ->
@@ -147,16 +147,6 @@ defmodule EvoGit.AgentScheduler.Salvage do
   end
 
   # --- Internals (run inside the bounded worker) ---
-
-  # Converts any raise/throw/exit into an error tuple so the worker always
-  # reports through the same channel.
-  defp safe_do_salvage(worktree_path, repo_root, opts) do
-    do_salvage(worktree_path, repo_root, opts)
-  rescue
-    error -> {:error, {:crashed, Exception.message(error)}}
-  catch
-    kind, reason -> {:error, {:crashed, {kind, reason}}}
-  end
 
   defp do_salvage(worktree_path, repo_root, opts) do
     base_sha = Keyword.get(opts, :base_sha)

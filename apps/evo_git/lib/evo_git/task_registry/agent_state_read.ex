@@ -9,7 +9,9 @@ defmodule EvoGit.TaskRegistry.AgentStateRead do
 
     * `EvoGit.TaskRegistry` — pause/restart classification
       (`EvoGit.TaskRegistry.Pause.dirty_pausable?/1`,
-      `pause_kind_for_restart/1,2`) and resume admission, which resolves the
+      `pause_kind_for_restart/1,2`, and the batched
+      `EvoGit.TaskRegistry.Restart.classify/2` through `roster_many/2`) and
+      resume admission, which resolves the
       ROOT row through `roster/2` and hands the whole resume record — its
       persisted `agent_id`, `current_commit`, `branch`, `anchor_ref` and
       `pause_commit` — to the scheduler;
@@ -38,6 +40,7 @@ defmodule EvoGit.TaskRegistry.AgentStateRead do
   | Function | Degraded value | Consequence |
   |---|---|---|
   | `roster/2` | `[]` | resume/pause refuses with `:not_resumable` |
+  | `roster_many/2` | `[]` | the batched restart classification parks no task (`:failed` via the sweep) |
   | `pause_commit/3` | `nil` | the worktree falls back to the task base |
   | `max_agent_id/1` | `0` | the scheduler seeds `next_agent_id` with `1` |
 
@@ -70,6 +73,23 @@ defmodule EvoGit.TaskRegistry.AgentStateRead do
   @spec roster(EvoGit.AgentState.task_id(), keyword()) :: [EvoGit.AgentState.Record.t()]
   def roster(task_id, opts \\ []) do
     read(&EvoGit.AgentState.roster(task_id, store: &1), [], opts)
+  end
+
+  @doc """
+  The LEAN durable rosters of MANY tasks in ONE bounded read
+  (`EvoGit.AgentState.roster_many/2`, ordered `task_id ASC, depth ASC,
+  agent_id ASC`), or `[]` — including when the read cannot be answered within
+  its budget.
+
+  Same containment as `roster/2`: the store is resolved in the CALLER, the
+  read runs in ONE `Task.Supervisor.async_nolink` child under the same budget,
+  and any expiry/crash/absent supervisor degrades to `[]`. The batched caller
+  is the restart classification (`EvoGit.TaskRegistry.Restart`), where `[]`
+  parks NO task — the sweep then fails the row exactly as before.
+  """
+  @spec roster_many([EvoGit.AgentState.task_id()], keyword()) :: [EvoGit.AgentState.Record.t()]
+  def roster_many(task_ids, opts \\ []) when is_list(task_ids) do
+    read(&EvoGit.AgentState.roster_many(task_ids, store: &1), [], opts)
   end
 
   @doc """

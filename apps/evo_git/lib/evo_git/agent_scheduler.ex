@@ -1408,9 +1408,16 @@ defmodule EvoGit.AgentScheduler do
     if state.paused do
       {:reply, {:error, :scheduler_paused}, state}
     else
-      {:ok, parent} = Store.get_sched_meta(parent_id)
+      # The SchedMeta row is only a best-effort mirror written/deleted by other
+      # processes, so a mid-spawn reap is normal: answer `:not_found` instead of
+      # raising a MatchError inside the shared scheduler GenServer.
+      case Store.get_sched_meta(parent_id) do
+        {:ok, parent} ->
+          Subagents.spawn_validated_subagents(parent_id, parent, specs, from, state)
 
-      Subagents.spawn_validated_subagents(parent_id, parent, specs, from, state)
+        :error ->
+          {:reply, {:error, :not_found}, state}
+      end
     end
   end
 

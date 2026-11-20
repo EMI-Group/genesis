@@ -17,18 +17,20 @@ defmodule EvoDashWeb.ProjectsLive do
     Assigns,
     ProjectFlow,
     RemoteView,
-    AttachFile,
+    Attachments,
     GitHub,
     AsyncLoad,
-    LaunchOptions,
     ModelSelectionScope,
-    Notifications
+    Notifications,
+    TaskSubmit,
+    Commands,
+    Palette,
+    Workspace,
+    ForeignRepos
   }
 
   alias EvoDashWeb.ThemeColor
   alias EvoDashWeb.LLMSelection
-  alias EvoGit.Core.ForeignRepo
-  alias EvoGit.Platform
   alias EvoDash.NodeContext
   alias EvoGit.ProjectConfig
 
@@ -41,15 +43,11 @@ defmodule EvoDashWeb.ProjectsLive do
   #
   # Image/audio picker ids follow the same literal-duplication contract — they
   # pair with the @attach_picker_id_image / @attach_picker_id_audio literals in
-  # the AttachFile support module (its handle_binary_attach_result/3 pushes on
+  # the AttachFile support module (its start_binary_read/4 pushes the result on
   # the kind's picker channel), which is edited in parallel.
   @attach_picker_id "objective_file"
   @attach_picker_id_image "objective_file_image"
   @attach_picker_id_audio "objective_file_audio"
-
-  # Keep in sync with EvoGit.Attachments in :evo_git (the authoritative validation)
-  @max_attachments 4
-  @max_attachment_bytes 15 * 1024 * 1024
 
   # Speed ↔ quality segmented control values (STRING, mirrors :mode). The
   # default "balanced" is the untouched/absent case — see do_task_submit/4.
@@ -389,7 +387,7 @@ defmodule EvoDashWeb.ProjectsLive do
   @impl true
   def mount(_params, _session, socket) do
     title =
-      if socket.assigns[:live_action] == :system_dashboard,
+      if socket.assigns.live_action == :system_dashboard,
         do: gettext("System Dashboard"),
         else: gettext("Projects")
 
@@ -476,6 +474,11 @@ defmodule EvoDashWeb.ProjectsLive do
           foreign_repo_path_suggestions: [],
           show_project_settings: false,
           project_config: nil,
+          # Mtime of the active project's genesis.toml captured WITH
+          # `project_config`: the task-broadcast debounce compares it against a
+          # cheap File.stat before deciding to re-parse (never re-parses
+          # unchanged settings). nil = not read yet / no file.
+          project_config_mtime: nil,
           worktree_script: nil,
           commands: %{},
           foreign_repos: [],
@@ -522,6 +525,15 @@ defmodule EvoDashWeb.ProjectsLive do
           workspace_create_seq: 0,
           # Monotonic stale-guard for the async clear-history batch.
           clear_history_seq: 0,
+          # Monotonic stale-guards + in-flight markers for the two async
+          # foreground operations the page no longer blocks on: a
+          # project-configured command (`run_command`, up to 30 s) and the
+          # task launch itself. Both results land as messages guarded by these
+          # seqs.
+          command_seq: 0,
+          command_running: nil,
+          task_launch_seq: 0,
+          task_launching: false,
           # True when this handle_params run has no `?project=` and is on the
           # local node — the async load continuation then auto-activates the
           # newest-opened project (replaces the old synchronous mount seed).
@@ -529,11 +541,22 @@ defmodule EvoDashWeb.ProjectsLive do
           # Resume foreign-repos restore in flight for this task id (guards
           # task_submit until the restore lands).
           foreign_repos_restoring_from: nil,
+          # Guards the genesis.toml reload of an AsyncLoad batch against a
+          # resume-restored task foreign-repo list (see
+          # maybe_flag_resume_foreign_repos/1).
+          resume_foreign_repos_guard: false,
           # Prompt snapshot per attach-file picker id, taken when the native
           # file dialog opens (see handle_event("file_pick")) so the picked
           # file's text can be appended even if the user keeps typing while
           # the dialog is open.
           file_pick_bases: %{},
+          # Attach-file reads in flight: `picker_id => base prompt` for every
+          # pick whose file read is still running off-process (see
+          # start_text_attach/3 + start_binary_attach/4). Doubles as the guard
+          # the `{{:attachment_loaded, ...}}` handler keys on: a result whose
+          # picker id is no longer pending was superseded by a newer pick (or
+          # cleared by a node switch) and is dropped, never applied.
+          attach_pending: %{},
           # Server-side-only in-memory staging of RAW attachment binaries
           # (image/audio). Never persisted (StatePersistence keeps a fixed key
           # list) and never restored across remounts/refresh/resume (a
@@ -630,6 +653,9 @@ defmodule EvoDashWeb.ProjectsLive do
       if node_context_changed? do
         socket
         |> assign(:file_pick_bases, %{})
+        # An in-flight attach read belongs to the previous node, so its result
+        # must not be applied here once it lands.
+        |> assign(:attach_pending, %{})
         # Staged raw attachment binaries are per-node client state too — drop
         # them alongside the other state on node switches (raw "data" bytes
         # must never leak across node contexts).
@@ -711,7 +737,7 @@ defmodule EvoDashWeb.ProjectsLive do
           not ModelSelectionScope.pending_remote?(socket.assigns) and
             not EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) and
             is_binary(project_path) and project_path != "" and
-              project_path != socket.assigns[:active_project_path] ->
+              project_path != socket.assigns.active_project_path ->
             case ProjectFlow.normalize_remote_project_path(
                    socket.assigns[:current_node],
                    project_path
@@ -854,13 +880,7 @@ defmodule EvoDashWeb.ProjectsLive do
 
   @impl true
   def handle_event("palette_mode", %{"mode" => mode_str}, socket) do
-    mode =
-      case mode_str do
-        "open_path" -> :open_path
-        "new_project" -> :new_project
-        "new_workspace" -> :new_workspace
-        _ -> :menu
-      end
+    mode = Palette.mode_atom(mode_str)
 
     socket =
       socket
@@ -902,7 +922,7 @@ defmodule EvoDashWeb.ProjectsLive do
   @impl true
   def handle_event("toggle_workspace", %{"point" => point}, socket)
       when is_binary(point) and point != "" do
-    expanded = (socket.assigns[:expanded_workspaces] || []) |> toggle_member(point)
+    expanded = socket.assigns.expanded_workspaces |> Workspace.toggle_member(point)
     {:noreply, assign(socket, :expanded_workspaces, expanded)}
   end
 
@@ -914,7 +934,7 @@ defmodule EvoDashWeb.ProjectsLive do
   @impl true
   def handle_event("toggle_workspace_member", %{"point" => point}, socket)
       when is_binary(point) and point != "" do
-    members = (socket.assigns[:new_workspace_members] || []) |> toggle_member(point)
+    members = socket.assigns.new_workspace_members |> Workspace.toggle_member(point)
     {:noreply, assign(socket, :new_workspace_members, members)}
   end
 
@@ -928,11 +948,16 @@ defmodule EvoDashWeb.ProjectsLive do
   @impl true
   def handle_event("create_workspace", %{"name" => name} = params, socket) do
     node = socket.assigns[:current_node] || node()
-    seq = (socket.assigns[:workspace_create_seq] || 0) + 1
+    seq = socket.assigns.workspace_create_seq + 1
     parent = self()
 
-    members = workspace_member_refs(socket)
-    description = workspace_description_param(params)
+    members =
+      Workspace.member_refs(
+        socket.assigns.new_workspace_members,
+        socket.assigns.projects
+      )
+
+    description = Workspace.description_param(params)
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
       result =
@@ -953,7 +978,7 @@ defmodule EvoDashWeb.ProjectsLive do
 
   @impl true
   def handle_event("palette_keydown", %{"key" => key}, socket) do
-    socket = handle_palette_key(socket, key, socket.assigns.palette_mode)
+    socket = Palette.handle_key(socket, key, socket.assigns.palette_mode)
     {:noreply, socket}
   end
 
@@ -996,7 +1021,7 @@ defmodule EvoDashWeb.ProjectsLive do
     node = socket.assigns[:current_node] || node()
     node_id = socket.assigns[:current_node_id]
     remote? = socket.assigns.remote? == true
-    seq = (socket.assigns[:projects_seq] || 0) + 1
+    seq = socket.assigns.projects_seq + 1
     parent = self()
 
     socket =
@@ -1005,7 +1030,7 @@ defmodule EvoDashWeb.ProjectsLive do
       |> assign(:palette_selected_index, 0)
       |> assign(
         :projects,
-        Enum.reject(socket.assigns[:projects] || [], fn entry ->
+        Enum.reject(socket.assigns.projects, fn entry ->
           (Map.get(entry, :point) || entry.path) == point
         end)
       )
@@ -1060,12 +1085,12 @@ defmodule EvoDashWeb.ProjectsLive do
     # default to the first custom agent so the visible select always matches
     # what will be submitted (the form hides the "Auto (recommended)"
     # option in this mode).
-    selected_agent_id = socket.assigns[:selected_agent_id]
+    selected_agent_id = socket.assigns.selected_agent_id
 
     agent_id =
       if mode == "custom_agent" and
            not (is_binary(selected_agent_id) and String.trim(selected_agent_id) != "") do
-        case socket.assigns[:custom_agents] do
+        case socket.assigns.custom_agents do
           [first | _] -> Map.get(first, :id) || Map.get(first, "id")
           [] -> selected_agent_id
         end
@@ -1287,7 +1312,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     ProjectFlow.spawn_remote_project_activation(
                       socket,
                       expanded,
-                      socket.assigns[:task_resume_from]
+                      socket.assigns.task_resume_from
                     )
 
                   {:error, _reason} ->
@@ -1320,12 +1345,12 @@ defmodule EvoDashWeb.ProjectsLive do
 
   @impl true
   def handle_event("task_submit", %{"prompt" => prompt, "mode" => combined_mode} = params, socket) do
-    path = socket.assigns[:active_project_path]
-    selected_agent_id = socket.assigns[:selected_agent_id]
+    path = socket.assigns.active_project_path
+    selected_agent_id = socket.assigns.selected_agent_id
     # Resume foreign-repo restore still in flight (async, see
     # start_foreign_repos_restore/2) — the opts would carry an incomplete
     # foreign_repos list, so refuse to launch and let the user retry.
-    restoring_from = socket.assigns[:foreign_repos_restoring_from]
+    restoring_from = socket.assigns.foreign_repos_restoring_from
 
     cond do
       # A pending remote target still resolves current_node locally. Never
@@ -1342,7 +1367,7 @@ defmodule EvoDashWeb.ProjectsLive do
         {:noreply,
          put_flash(socket, :error, gettext("No project selected. Please open a project first."))}
 
-      not is_nil(restoring_from) and restoring_from == socket.assigns[:task_resume_from] ->
+      not is_nil(restoring_from) and restoring_from == socket.assigns.task_resume_from ->
         {:noreply,
          put_flash(
            socket,
@@ -1413,7 +1438,7 @@ defmodule EvoDashWeb.ProjectsLive do
   # post-clear scan and flips readiness back on.
   @impl true
   def handle_event("clear_task_history", _params, socket) do
-    seq = (socket.assigns[:clear_history_seq] || 0) + 1
+    seq = socket.assigns.clear_history_seq + 1
     node = socket.assigns[:current_node] || node()
     parent = self()
 
@@ -1478,6 +1503,10 @@ defmodule EvoDashWeb.ProjectsLive do
     {:noreply,
      socket
      |> assign(:show_project_settings, new_show)
+     # OPENING the panel always shows CURRENT settings: a fresh genesis.toml
+     # read (and mtime) at this moment, so a hand-edited file is picked up
+     # without waiting for the next task broadcast. Collapsing is a pure toggle.
+     |> then(fn s -> if new_show, do: refresh_project_config(s, true), else: s end)
      # When expanding, switch the config dropdown to the Project Settings tab
      # so its content is visible. (Backwards-compatible entry point for tests
      # and any external callers of the toggle_project_settings event.)
@@ -1507,7 +1536,7 @@ defmodule EvoDashWeb.ProjectsLive do
         {:noreply, put_flash(socket, :error, gettext("Repo ID cannot be empty."))}
 
       true ->
-        case validate_foreign_repo_input(socket, path, base_sha) do
+        case ForeignRepos.validate_input(socket.assigns, path, base_sha) do
           {:error, message} ->
             {:noreply, put_flash(socket, :error, message)}
 
@@ -1532,9 +1561,9 @@ defmodule EvoDashWeb.ProjectsLive do
               # the raw trimmed path via ProjectFlow.build_foreign_repo/4; local
               # contexts keep `ForeignRepo.new/3`'s exact expansion semantics —
               # except UNC/WSL roots on a non-Windows node, which bypass the
-              # expansion and are stored verbatim (build_foreign_repo_for_node/4).
+              # expansion and are stored verbatim (ForeignRepos.build_for_node/4).
               remote_context? =
-                socket.assigns[:remote?] or socket.assigns[:current_node] != node()
+                socket.assigns.remote? or socket.assigns[:current_node] != node()
 
               node = if remote_context?, do: socket.assigns[:current_node], else: node()
 
@@ -1548,12 +1577,10 @@ defmodule EvoDashWeb.ProjectsLive do
                   if is_binary(base_sha), do: Keyword.put(o, :base_sha, base_sha), else: o
                 end)
 
-              repo = build_foreign_repo_for_node(node, repo_id, path, opts)
+              repo = ForeignRepos.build_for_node(node, repo_id, path, opts)
 
               updated_repos =
-                Enum.sort_by([repo | current_repos], fn r ->
-                  {if(ForeignRepo.primary?(r.id), do: 0, else: 1), r.id}
-                end)
+                ForeignRepos.sort_by_primary([repo | current_repos])
 
               {:noreply,
                socket
@@ -1637,7 +1664,7 @@ defmodule EvoDashWeb.ProjectsLive do
     current_repos = socket.assigns.foreign_repos
 
     if Enum.any?(current_repos, &(&1.id == repo_id)) do
-      case validate_foreign_repo_input(socket, path, base_sha) do
+      case ForeignRepos.validate_input(socket.assigns, path, base_sha) do
         {:error, message} ->
           # Stay in edit mode on validation failure — keep the form + assigns
           # so the user can fix the value without re-opening the editor.
@@ -1649,9 +1676,9 @@ defmodule EvoDashWeb.ProjectsLive do
           # verbatim, never Path.expand-ed against the dashboard's OS), local
           # contexts keep ForeignRepo.new/3's exact expansion semantics —
           # except UNC/WSL roots on a non-Windows node, which bypass the
-          # expansion and are stored verbatim (build_foreign_repo_for_node/4).
+          # expansion and are stored verbatim (ForeignRepos.build_for_node/4).
           remote_context? =
-            socket.assigns[:remote?] or socket.assigns[:current_node] != node()
+            socket.assigns.remote? or socket.assigns[:current_node] != node()
 
           node = if remote_context?, do: socket.assigns[:current_node], else: node()
 
@@ -1665,14 +1692,12 @@ defmodule EvoDashWeb.ProjectsLive do
               if is_binary(base_sha), do: Keyword.put(o, :base_sha, base_sha), else: o
             end)
 
-          repo = build_foreign_repo_for_node(node, repo_id, path, opts)
+          repo = ForeignRepos.build_for_node(node, repo_id, path, opts)
 
           updated_repos =
             current_repos
             |> Enum.map(fn r -> if r.id == repo_id, do: repo, else: r end)
-            |> Enum.sort_by(fn r ->
-              {if(ForeignRepo.primary?(r.id), do: 0, else: 1), r.id}
-            end)
+            |> ForeignRepos.sort_by_primary()
 
           {:noreply,
            socket
@@ -1782,8 +1807,9 @@ defmodule EvoDashWeb.ProjectsLive do
 
     # The pick flow itself is kind-agnostic — the kind is implied by the
     # picker id when the directory_picker_result arrives (the text clause
-    # routes to handle_attach_result, image/audio to the binary flow) — so
-    # the key is read only to tolerate its presence.
+    # starts a text read, image/audio a binary read; see the
+    # directory_picker_result handlers below) — so the key is read only to
+    # tolerate its presence.
     _kind = Map.get(params, "kind", "text")
 
     if socket.assigns.current_node == node() do
@@ -1798,7 +1824,7 @@ defmodule EvoDashWeb.ProjectsLive do
             # The dialog runs asynchronously; the result arrives later via
             # {:directory_picker_result, picker_id, result}. NEVER block the
             # LiveView on the modal dialog.
-            bases = Map.put(socket.assigns.file_pick_bases || %{}, picker_id, prompt || "")
+            bases = Map.put(socket.assigns.file_pick_bases, picker_id, prompt || "")
             {:noreply, assign(socket, :file_pick_bases, bases)}
 
           {:error, :unavailable} ->
@@ -1818,58 +1844,10 @@ defmodule EvoDashWeb.ProjectsLive do
     # Manual path fallback for the attach-file "+" button: the FilePicker JS
     # hook reveals an inline path input when the native picker is unavailable
     # (headless server, remote node, picker disabled) and submits the typed
-    # path here. Runs the SAME attachment pipeline as the native picker result
-    # (AttachFile.handle_attach_result/2); the submitted textarea value is
-    # snapshotted into file_pick_bases, exactly like "file_pick" does for the
-    # native flow, so base-prompt semantics are identical.
-    picker_id = Map.get(params, "picker_id", @attach_picker_id)
-    path = Map.get(params, "path")
-    prompt = Map.get(params, "prompt")
-    prompt = if is_binary(prompt), do: prompt, else: ""
-
-    # Kind ("text" | "image" | "audio") selects the attachment pipeline in the
-    # `true` branch below; absent in legacy callers/tests → text. The two
-    # path-validation branches above apply to ALL kinds.
-    kind = Map.get(params, "kind", "text")
-
-    cond do
-      not is_binary(path) or path == "" ->
-        # zh_CN: 手动输入为空 → "请输入文件路径。"
-        reason = gettext("Please enter a file path.")
-        {:noreply, push_manual_attach_error(socket, picker_id, reason)}
-
-      not File.regular?(path) ->
-        # zh_CN: 输入的路径不是可读文件 → "文件不存在：%{path}"
-        reason = gettext("File not found: %{path}", path: path)
-        {:noreply, push_manual_attach_error(socket, picker_id, reason)}
-
-      true ->
-        bases = Map.put(socket.assigns.file_pick_bases || %{}, picker_id, prompt)
-
-        socket =
-          socket
-          |> assign(:file_pick_bases, bases)
-
-        socket =
-          case kind do
-            # Image/audio files route to the binary staging flow: raw bytes are
-            # staged in-memory (base64 encoding happens only at submit); the
-            # helper puts a friendly error flash + pushes %{error: true} on the
-            # kind's picker channel when the read fails.
-            "image" ->
-              AttachFile.handle_binary_attach_result(socket, path, kind)
-
-            "audio" ->
-              AttachFile.handle_binary_attach_result(socket, path, kind)
-
-            # Text (and any unknown kind, defaulting to text): the original
-            # byte-identical text pipeline.
-            _ ->
-              AttachFile.handle_attach_result(socket, path)
-          end
-
-        {:noreply, socket}
-    end
+    # path here. The body — path validation, base-prompt snapshot and the
+    # off-process read — lives in `EvoDashWeb.ProjectsLive.Attachments.manual/2`;
+    # this clause head stays here so the page's event surface is unchanged.
+    {:noreply, Attachments.manual(socket, params)}
   end
 
   @impl true
@@ -1886,7 +1864,7 @@ defmodule EvoDashWeb.ProjectsLive do
         _ -> nil
       end
 
-    staged = socket.assigns[:staged_attachments] || []
+    staged = socket.assigns.staged_attachments
 
     socket =
       if is_integer(i) and i < length(staged) do
@@ -1903,84 +1881,59 @@ defmodule EvoDashWeb.ProjectsLive do
     {:noreply, socket}
   end
 
+  # Project-config-defined shell commands can run for up to 30 s (see
+  # Commands.run/2), so the System.cmd must NOT run in this process: it
+  # would freeze every other event, render and heartbeat on the tab for the
+  # whole command. The work moves into a supervised task under
+  # EvoDash.TaskSupervisor and the outcome arrives as
+  # `{{:command_result, seq, project_root, node, command}, result}` (doubly
+  # nested: `EvoDash.SafeCall.start/3` sends `{tag, result}`). The monotonic
+  # `:command_seq` is the stale-guard — only the newest run may touch the
+  # assigns/flash.
+  #
+  # NOTE: the Configure dialog's command buttons are rendered by
+  # `EvoDashWeb.ProjectComponents` (outside this module), so the in-flight
+  # feedback the page itself can give is the `:command_running` assign plus the
+  # "Running …" info flash — not a disabled button.
   @impl true
   def handle_event("run_command", %{"command" => command}, socket) do
     commands = socket.assigns.commands
     project_root = socket.assigns.active_project_path
+    node = socket.assigns[:current_node] || node()
 
-    case Map.get(commands, command) do
+    case Commands.lookup(commands, command) do
       nil ->
         {:noreply,
          put_flash(socket, :error, gettext("Command not found: %{command}", command: command))}
 
       cmd_string ->
-        # Justified try/rescue: System.cmd runs arbitrary project-config-defined shell commands.
-        # A failing command should show a user-friendly error, not crash the LiveView.
-        try do
-          {output, exit_code} =
-            case :os.type() do
-              {:win32, _} ->
-                System.cmd("powershell", ["-Command", cmd_string],
-                  cd: project_root,
-                  stderr_to_stdout: true,
-                  timeout: 30_000
-                )
+        seq = socket.assigns.command_seq + 1
 
-              _ ->
-                System.cmd("bash", ["-c", cmd_string],
-                  cd: project_root,
-                  stderr_to_stdout: true,
-                  timeout: 30_000
-                )
-            end
+        case EvoDash.SafeCall.start(
+               self(),
+               {:command_result, seq, project_root, node, command},
+               fn -> Commands.run(cmd_string, project_root) end
+             ) do
+          {:ok, _pid} ->
+            {:noreply,
+             socket
+             |> assign(:command_seq, seq)
+             |> assign(:command_running, command)
+             |> put_flash(:info, gettext("Running '%{command}'…", command: command))}
 
-          if exit_code == 0 do
-            flash_type = :info
-
-            msg =
-              gettext("Command '%{command}' completed:\n%{output}",
-                command: command,
-                output: truncate_output(output)
-              )
-
-            {:noreply, put_flash(socket, flash_type, msg)}
-          else
-            msg =
-              gettext("Command '%{command}' failed (exit %{code}):\n%{output}",
-                command: command,
-                code: exit_code,
-                output: truncate_output(output)
-              )
-
-            {:noreply, put_flash(socket, :error, msg)}
-          end
-        rescue
-          e ->
-            msg =
-              gettext("Error running '%{command}': %{error}",
-                command: command,
-                error: Exception.message(e)
-              )
-
-            {:noreply, put_flash(socket, :error, msg)}
+          {:error, _reason} ->
+            # The task never started, so no result will arrive: do NOT set the
+            # running assign, and flash a retry-able error (the button still
+            # works, nothing is left wedged).
+            {:noreply,
+             put_flash(
+               socket,
+               :error,
+               gettext("Could not run '%{command}'. Please try again.", command: command)
+             )}
         end
     end
   end
-
-  # Validation failure in the manual attach flow: error flash (native flow
-  # parity) + `%{error: true, reason: ...}` push — the FilePicker hook shows
-  # the reason inline next to the path input and keeps it open.
-  defp push_manual_attach_error(socket, picker_id, reason) do
-    socket
-    |> put_flash(:error, reason)
-    |> push_event("picker_result:#{picker_id}", %{error: true, reason: reason})
-  end
-
-  defp truncate_output(output) when byte_size(output) > 2000 do
-    String.slice(output, 0, 2000) <> "..."
-  end
-
-  defp truncate_output(output), do: String.trim(output)
 
   # Selecting an open project's empty workspace only needs its registered path.
   # Task configuration is loaded when the user enters the task composer.
@@ -2039,30 +1992,41 @@ defmodule EvoDashWeb.ProjectsLive do
   # Results from the async directory picker (EvoDash.DirectoryPicker sends
   # these to the LiveView pid passed to pick/2).
   #
-  # Attach-file flow: read the picked file with EvoDash.AttachedFile and append
-  # its content to the objective. The textarea is phx-update="ignore" (the
-  # DOM is authoritative), so the new value must reach the client via
-  # push_event — the FilePicker JS hook writes it into the textarea. Shared
-  # pipeline with the manual path fallback (file_pick_manual) lives in
-  # EvoDashWeb.ProjectsLive.AttachFile.
+  # Attach-file flow: the picked file is read OFF-PROCESS (a large PDF/image
+  # would freeze the tab) and its content is appended to the objective. These
+  # three clauses keep the exact picker-id guards (nothing is re-tagged or
+  # reordered) and delegate to the attachment pipeline — the `:attach_pending`
+  # guard, the prompt snapshot and the read start — in
+  # `EvoDashWeb.ProjectsLive.Attachments` (the kind is implied by the id).
   @impl true
   def handle_info({:directory_picker_result, @attach_picker_id, {:ok, path}}, socket) do
-    {:noreply, AttachFile.handle_attach_result(socket, path)}
+    {:noreply, Attachments.start_pick(socket, @attach_picker_id, path)}
   end
 
-  # Image/audio picker results route to the binary attach flow. These picker
+  # Image/audio picker results route to the binary staging flow. These picker
   # ids are the literal counterparts of the @attach_picker_id_image /
-  # @attach_picker_id_audio attrs in the AttachFile support module (its
-  # handle_binary_attach_result/3 pushes the result on the same id's channel),
-  # kept as literals in both modules under parallel compilation.
+  # @attach_picker_id_audio attrs in the Attachments support module (which push
+  # the result on the same id's channel), kept as literals in both modules
+  # under parallel compilation.
   @impl true
   def handle_info({:directory_picker_result, @attach_picker_id_image, {:ok, path}}, socket) do
-    {:noreply, AttachFile.handle_binary_attach_result(socket, path, "image")}
+    {:noreply, Attachments.start_pick(socket, @attach_picker_id_image, path)}
   end
 
   @impl true
   def handle_info({:directory_picker_result, @attach_picker_id_audio, {:ok, path}}, socket) do
-    {:noreply, AttachFile.handle_binary_attach_result(socket, path, "audio")}
+    {:noreply, Attachments.start_pick(socket, @attach_picker_id_audio, path)}
+  end
+
+  # The ONE result message of an off-process attachment read: a plain send/2
+  # from the supervised task (EvoDashWeb.ProjectsLive.AttachFile), hence the
+  # doubly nested tag. `Attachments.loaded/5` owns the `:attach_pending` guard
+  # (a result whose pick is no longer pending — superseded, or discarded by a
+  # node switch — is dropped) and applies the base prompt snapshotted when
+  # that pick started.
+  @impl true
+  def handle_info({{:attachment_loaded, picker_id, path, kind}, result}, socket) do
+    {:noreply, Attachments.loaded(socket, picker_id, path, kind, result)}
   end
 
   @impl true
@@ -2140,24 +2104,23 @@ defmodule EvoDashWeb.ProjectsLive do
   # lists in pending/error remote contexts).
   @impl true
   def handle_info(:node_aware_reload_tasks, socket) do
-    # Refresh project settings if shown (foreign repos are in-memory, not re-read)
+    # Refresh project settings if shown — but only when genesis.toml actually
+    # changed on disk. This debounce fires on the trailing edge of EVERY task
+    # broadcast (continuously while a task runs), so re-parsing TOML here would
+    # be pure churn: the task debounce alone never reloads unchanged settings.
+    # The foreign-repo list is in-memory and is not re-read at all.
     socket =
-      if socket.assigns.show_project_settings and socket.assigns.active_project_path do
-        {project_config, worktree_script, commands} =
-          Project.load_project_config(socket.assigns.active_project_path)
-
-        socket
-        |> assign(:project_config, project_config)
-        |> assign(:worktree_script, worktree_script)
-        |> assign(:commands, commands)
+      if Map.get(socket.assigns, :show_project_settings, false) and
+           Map.get(socket.assigns, :active_project_path) do
+        refresh_project_config(socket)
       else
         socket
       end
 
     socket =
       if socket.assigns[:current_node_id] == nil and
-           socket.assigns[:notified_task_ids_ready?] == true do
-        seq = (socket.assigns[:task_notifications_seq] || 0) + 1
+           socket.assigns.notified_task_ids_ready? == true do
+        seq = socket.assigns.task_notifications_seq + 1
 
         Notifications.spawn_scan(
           self(),
@@ -2182,7 +2145,7 @@ defmodule EvoDashWeb.ProjectsLive do
   # result leaves the state untouched — the next debounced reload retries.
   @impl true
   def handle_info({:task_notifications, seq, node, result}, socket) do
-    if seq != socket.assigns[:task_notifications_seq] or
+    if seq != socket.assigns.task_notifications_seq or
          node != (socket.assigns[:current_node] || node()) or
          socket.assigns[:current_node_id] != nil do
       {:noreply, socket}
@@ -2216,7 +2179,7 @@ defmodule EvoDashWeb.ProjectsLive do
   # readiness is restored so detection resumes.
   @impl true
   def handle_info({:task_history_cleared, seq, node, result}, socket) do
-    if seq != socket.assigns[:clear_history_seq] or
+    if seq != socket.assigns.clear_history_seq or
          node != (socket.assigns[:current_node] || node()) do
       {:noreply, socket}
     else
@@ -2247,7 +2210,7 @@ defmodule EvoDashWeb.ProjectsLive do
   # context; an error leaves the current list alone.
   @impl true
   def handle_info({:projects_loaded, seq, node_id, node, result}, socket) do
-    if seq != socket.assigns[:projects_seq] or
+    if seq != socket.assigns.projects_seq or
          node_id != socket.assigns[:current_node_id] or
          node != (socket.assigns[:current_node] || node()) do
       {:noreply, socket}
@@ -2268,14 +2231,14 @@ defmodule EvoDashWeb.ProjectsLive do
   # list (the next VCT broadcast retries) and never crashes the page.
   @impl true
   def handle_info({:workspaces_loaded, seq, node, result}, socket) do
-    if seq != socket.assigns[:workspaces_seq] or
+    if seq != socket.assigns.workspaces_seq or
          node != (socket.assigns[:current_node] || node()) do
       {:noreply, socket}
     else
       case result do
         {:ok, workspaces} when is_list(workspaces) ->
-          expanded = socket.assigns[:expanded_workspaces] || []
-          known = workspace_points(workspaces)
+          expanded = socket.assigns.expanded_workspaces
+          known = Workspace.points(workspaces)
 
           {:noreply,
            socket
@@ -2298,7 +2261,7 @@ defmodule EvoDashWeb.ProjectsLive do
   # so only a NEWER create may invalidate it.
   @impl true
   def handle_info({:workspace_created, seq, node, result}, socket) do
-    if seq != socket.assigns[:workspace_create_seq] or
+    if seq != socket.assigns.workspace_create_seq or
          node != (socket.assigns[:current_node] || node()) do
       {:noreply, socket}
     else
@@ -2310,10 +2273,10 @@ defmodule EvoDashWeb.ProjectsLive do
           expanded =
             case point do
               point when is_binary(point) ->
-                [point | List.delete(socket.assigns[:expanded_workspaces] || [], point)]
+                [point | List.delete(socket.assigns.expanded_workspaces, point)]
 
               _ ->
-                socket.assigns[:expanded_workspaces] || []
+                socket.assigns.expanded_workspaces
             end
 
           socket =
@@ -2327,7 +2290,7 @@ defmodule EvoDashWeb.ProjectsLive do
           {:noreply, socket}
 
         {:error, reason} ->
-          {:noreply, put_flash(socket, :error, workspace_error_message(reason))}
+          {:noreply, put_flash(socket, :error, Workspace.error_message(reason))}
 
         _ ->
           {:noreply, socket}
@@ -2341,7 +2304,7 @@ defmodule EvoDashWeb.ProjectsLive do
   # the authoritative list and flashes.
   @impl true
   def handle_info({:projects_forgotten, seq, node, result}, socket) do
-    if seq != socket.assigns[:projects_seq] or
+    if seq != socket.assigns.projects_seq or
          node != (socket.assigns[:current_node] || node()) do
       {:noreply, socket}
     else
@@ -2382,7 +2345,7 @@ defmodule EvoDashWeb.ProjectsLive do
   @impl true
   def handle_info({:foreign_repos_restored, task_id, node, result}, socket) do
     if not is_nil(socket.assigns[:current_node_id]) or
-         task_id != socket.assigns[:task_resume_from] or
+         task_id != socket.assigns.task_resume_from or
          node != node() or node != (socket.assigns[:current_node] || node()) do
       {:noreply, socket}
     else
@@ -2431,6 +2394,145 @@ defmodule EvoDashWeb.ProjectsLive do
     # The Process dict memoization set up in mount/3 primes the OS file
     # cache so this deferred read is fast.
     {:noreply, assign(socket, :config_status, config_status())}
+  end
+
+  # Continuation of the ASYNC project command run (see the "run_command" event
+  # clause). Stale-guarded on the monotonic `:command_seq`, the project root the
+  # command was started for, and the node: a superseding run, a project switch
+  # or a node switch drops the result (the task's own output never lands on a
+  # different project/view).
+  @impl true
+  def handle_info({{:command_result, seq, project_root, node, command}, result}, socket) do
+    if seq != socket.assigns.command_seq or
+         project_root != socket.assigns.active_project_path or
+         node != (socket.assigns[:current_node] || node()) do
+      {:noreply, socket}
+    else
+      socket = assign(socket, :command_running, nil)
+
+      case result do
+        {:ok, {:ok, output, 0}} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :info,
+             gettext("Command '%{command}' completed:\n%{output}",
+               command: command,
+               output: Commands.truncate_output(output)
+             )
+           )}
+
+        {:ok, {:ok, output, exit_code}} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Command '%{command}' failed (exit %{code}):\n%{output}",
+               command: command,
+               code: exit_code,
+               output: Commands.truncate_output(output)
+             )
+           )}
+
+        {:ok, {:error, error}} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Error running '%{command}': %{error}",
+               command: command,
+               error: to_string(error)
+             )
+           )}
+
+        # The guarded call itself exited/raised inside the task (the OS work is
+        # already rescued in Commands.run/2, so this is the SafeCall
+        # boundary): report it as the same user-facing error.
+        {:error, reason} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Error running '%{command}': %{error}",
+               command: command,
+               error: inspect(reason)
+             )
+           )}
+      end
+    end
+  end
+
+  # Continuation of the ASYNC task launch (see do_task_submit/4): the start
+  # call runs in a supervised task, so THIS is where the prompt, the staged
+  # attachments and the printed form are finally cleared — never before the
+  # ack, which is what keeps a failed launch retry-able. Stale-guarded on the
+  # monotonic `:task_launch_seq`: a superseded launch's result must never clear
+  # the form of a newer submission.
+  #
+  # The message is DOUBLY nested — `EvoDash.SafeCall.start/3` sends
+  # `{tag, result}` for the tag `{:task_started, seq, task_type}` — so `result`
+  # is the SafeCall envelope: `{:ok, {:ok, task}}` on success,
+  # `{:ok, {:error, reason}}` for a refused start, and a bare `{:error, reason}`
+  # when the guarded call itself exited/raised inside the task.
+  @impl true
+  def handle_info({{:task_started, seq, task_type}, result}, socket) do
+    if seq != socket.assigns.task_launch_seq do
+      {:noreply, socket}
+    else
+      socket = assign(socket, :task_launching, false)
+
+      case result do
+        {:ok, {:ok, task}} ->
+          {:noreply,
+           socket
+           |> put_flash(
+             :info,
+             gettext("%{type} task started with ID: %{id}",
+               type: String.capitalize(to_string(task_type)),
+               id: task.id
+             )
+           )
+           |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
+           # The prompt is intentionally cleared after a successful launch.
+           # assign_form_defaults/1 resets @task_prompt to "" (so the server
+           # re-seeds data-layout="compact"), and the "clear_prompt" push_event
+           # empties the visible textarea — which morphdom skips under
+           # phx-update="ignore" — and removes the persisted draft, so neither
+           # the DOM nor a reload can resurrect the submitted prompt.
+           |> Assigns.assign_form_defaults()
+           # Staged binary attachments must survive mode changes but NOT a
+           # successful launch — cleared here (after assign_form_defaults,
+           # which keeps a fixed key list and has no knowledge of staging)
+           # rather than inside assign_form_defaults/1.
+           |> assign(:staged_attachments, [])
+           |> StatePersistence.maybe_persist_state()
+           |> push_event("clear_prompt", %{})}
+
+        {:ok, {:error, :no_task_model}} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Configure a model on this server before launching a task.")
+           )}
+
+        {:ok, {:error, reason}} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Failed to start task: %{reason}", reason: inspect(reason))
+           )}
+
+        {:error, reason} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Failed to start task: %{reason}", reason: inspect(reason))
+           )}
+      end
+    end
   end
 
   # --- GitHub Issues async results ---
@@ -2498,7 +2600,7 @@ defmodule EvoDashWeb.ProjectsLive do
   # different path, so results from obsolete spawns are dropped here. On
   # success the assigns the sync flow applied today are restored (the palette
   # already closed at spawn), the GitHub state is reset when the project
-  # changed (same semantics as the old sync activate_remote_palette_project —
+  # changed (same semantics as the old sync Palette.activate_remote_project/2 —
   # `project_changed?` is computed from the PRE-apply socket), and the URL is
   # patched so handle_params re-runs in the same remote context. On
   # `{:error, :not_a_directory}` the loading flag clears and the error flash
@@ -2514,13 +2616,13 @@ defmodule EvoDashWeb.ProjectsLive do
       node != socket.assigns[:current_node] ->
         {:noreply, socket}
 
-      path != socket.assigns[:remote_project_loading] ->
+      path != socket.assigns.remote_project_loading ->
         {:noreply, socket}
 
       true ->
         case result do
           {:ok, results} ->
-            project_changed? = socket.assigns[:active_project_path] != path
+            project_changed? = Map.get(socket.assigns, :active_project_path) != path
 
             socket =
               socket
@@ -2532,6 +2634,7 @@ defmodule EvoDashWeb.ProjectsLive do
               |> assign(:task_mode_info, results.task_mode_info)
               |> use_git_task_mode()
               |> assign(:project_config, results.project_config)
+              |> assign(:project_config_mtime, Project.project_config_mtime(path))
               |> assign(:worktree_script, results.worktree_script)
               |> assign(:commands, results.commands)
               |> assign(:foreign_repos, results.foreign_repos)
@@ -2540,7 +2643,7 @@ defmodule EvoDashWeb.ProjectsLive do
               |> maybe_reset_github_state(project_changed?)
               |> GitHub.maybe_check()
 
-            params = socket.assigns[:workbench_reconnect_params] || %{}
+            params = socket.assigns.workbench_reconnect_params
 
             if (params["wb_home"] == "1" or git_task_draft?(params)) and params["project"] == path do
               # The project link already updated the URL. Load node data
@@ -2577,7 +2680,7 @@ defmodule EvoDashWeb.ProjectsLive do
   # resume) set nothing — their genesis.toml values are identical anyway, so
   # the follow-up AsyncLoad refresh stays exactly as before.
   defp maybe_flag_resume_foreign_repos(socket) do
-    if is_binary(socket.assigns[:task_resume_from]) and socket.assigns[:task_resume_from] != "" do
+    if is_binary(socket.assigns.task_resume_from) and socket.assigns.task_resume_from != "" do
       assign(socket, :resume_foreign_repos_guard, true)
     else
       socket
@@ -2605,15 +2708,15 @@ defmodule EvoDashWeb.ProjectsLive do
   end
 
   defp maybe_auto_activate_project(socket) do
-    if socket.assigns[:auto_activate_candidate?] == true and
+    if socket.assigns.auto_activate_candidate? == true and
          is_nil(socket.assigns[:current_node_id]) and
-         is_nil(socket.assigns[:active_project]) do
-      case List.first(socket.assigns[:projects]) do
+         is_nil(socket.assigns.active_project) do
+      case List.first(socket.assigns.projects) do
         %{path: project_path} when is_binary(project_path) ->
           if File.dir?(project_path) do
             activated = activate_project(socket, project_path)
 
-            if socket.assigns[:workbench_open_requested],
+            if socket.assigns.workbench_open_requested,
               do: open_project_palette(activated),
               else: activated
           else
@@ -2658,7 +2761,7 @@ defmodule EvoDashWeb.ProjectsLive do
                # Only `opts` is read here, so the lite read (no archive blob) suffices.
                case TaskRegistry.get_task_lite(task_id) do
                  nil -> []
-                 task -> convert_task_foreign_repos(task.opts[:foreign_repos])
+                 task -> ForeignRepos.from_task_opts(task.opts[:foreign_repos])
                end
              end)
 
@@ -2669,222 +2772,6 @@ defmodule EvoDashWeb.ProjectsLive do
       {:ok, _pid} -> assign(socket, :foreign_repos_restoring_from, task_id)
       {:error, _reason} -> socket
     end
-  end
-
-  defp convert_task_foreign_repos(nil), do: []
-  defp convert_task_foreign_repos([]), do: []
-
-  defp convert_task_foreign_repos(repos) when is_list(repos) do
-    repos
-    |> Enum.map(fn
-      %ForeignRepo{} = repo ->
-        repo
-
-      repo when is_map(repo) ->
-        id = Map.get(repo, "id") || Map.get(repo, :id) || "primary"
-        root = Map.get(repo, "root") || Map.get(repo, "path") || Map.get(repo, :root)
-        desc = Map.get(repo, "description") || Map.get(repo, :description)
-
-        # Read-write foreign repos: thread `writable` and `base_sha`
-        # through the guarded constructor (which for non-UNC inputs
-        # is `ForeignRepo.new/3` — it coerces/validates them: only
-        # literal true is writable, blank base_sha → nil). The UNC
-        # guard keeps `//wsl.localhost/...` / `\\server\share\...`
-        # roots verbatim on non-Windows nodes — `ForeignRepo.new/3`'s
-        # `Path.expand` would collapse/cwd-join them (see
-        # `foreign_repo_new_guarded/3`).
-        # Tolerant writable check for string-keyed persisted shapes.
-        writable = Map.get(repo, "writable", Map.get(repo, :writable, false))
-
-        base_sha = Map.get(repo, "base_sha") || Map.get(repo, :base_sha)
-
-        opts =
-          if(is_binary(desc) and desc != "",
-            do: [description: desc],
-            else: []
-          )
-          |> Keyword.put(:writable, writable == true or writable == "true")
-          |> then(fn o ->
-            if is_binary(base_sha) and base_sha != "",
-              do: Keyword.put(o, :base_sha, base_sha),
-              else: o
-          end)
-
-        foreign_repo_new_guarded(id, root, opts)
-
-      _ ->
-        nil
-    end)
-    |> Enum.reject(&is_nil/1)
-    |> Enum.sort_by(fn repo ->
-      {if(ForeignRepo.primary?(repo.id), do: 0, else: 1), repo.id}
-    end)
-  end
-
-  defp convert_task_foreign_repos(_other), do: []
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Command Palette keyboard navigation helpers
-  # ───────────────────────────────────────────────────────────────────────────
-
-  # In :open_path and :new_project modes, Escape is handled by the client-side
-  # phx-key binding on the input (which sends palette_keydown with key="Escape").
-  # Non-menu modes are no-ops here (the input's own Escape binding closes it
-  # via the palette_keydown → Escape clause below which matches any mode).
-  defp handle_palette_key(socket, "Escape", _mode) do
-    socket
-    |> assign(:project_palette_open, false)
-    |> assign(:palette_mode, :menu)
-    |> assign(:palette_search, "")
-    |> assign(:palette_selected_index, 0)
-  end
-
-  defp handle_palette_key(socket, "ArrowDown", :menu) do
-    max_index = palette_item_count(socket) - 1
-    new_index = min(socket.assigns.palette_selected_index + 1, max_index)
-    assign(socket, :palette_selected_index, max(new_index, 0))
-  end
-
-  defp handle_palette_key(socket, "ArrowUp", :menu) do
-    new_index = socket.assigns.palette_selected_index - 1
-    assign(socket, :palette_selected_index, max(new_index, 0))
-  end
-
-  defp handle_palette_key(socket, "Enter", :menu) do
-    filtered =
-      EvoDashWeb.ProjectComponents.filter_projects(
-        socket.assigns.projects,
-        socket.assigns.palette_search
-      )
-
-    action_base = length(filtered)
-    index = socket.assigns.palette_selected_index
-
-    # The workspace action sits AFTER the existing actions: locally
-    # Open by Path (+0), Create New Project (+1), New Workspace (+2); on a
-    # remote node Create New Project is hidden, so New Workspace is +1.
-    new_workspace_index = action_base + if socket.assigns[:current_node_id] != nil, do: 1, else: 2
-
-    cond do
-      index < action_base and index < length(filtered) ->
-        # Activate the selected project via push_patch (node-aware:
-        # remote contexts validate/register on the remote node and carry the
-        # `&node=` param so the node context survives the patch)
-        project = Enum.at(filtered, index)
-
-        # Never `Path.expand` against the VM cwd: registry projects are absolute-path
-        # filtered at assignment, but a stale/relative entry would cwd-join
-        # on Windows (Tauri install dir). A relative selection just doesn't
-        # open — same UX as a failed open, without the cwd join.
-        case ProjectFlow.normalize_project_path(project.path) do
-          {:ok, expanded} ->
-            if socket.assigns[:current_node_id] != nil do
-              activate_remote_palette_project(socket, expanded)
-            else
-              if File.dir?(expanded) do
-                # Exit-safe write: a registry `GenServer.call` can time
-                # out/exit and must never crash the page. The projects list
-                # itself is reloaded by the AsyncLoad batch the push_patch
-                # below spawns, so no synchronous re-read is needed here.
-                SafeCall.run(fn ->
-                  NodeContext.mount_project(node(), expanded, Path.basename(expanded))
-                end)
-
-                socket
-                |> assign(:project_palette_open, false)
-                |> assign(:palette_mode, :menu)
-                |> push_patch(to: "/projects?project=#{URI.encode(expanded)}")
-              else
-                socket
-                |> assign(:project_palette_open, false)
-                |> put_flash(
-                  :error,
-                  gettext("Directory does not exist: %{path}", path: project.path)
-                )
-              end
-            end
-
-          {:error, _reason} ->
-            socket
-            |> assign(:project_palette_open, false)
-            |> put_flash(:error, gettext("Directory does not exist: %{path}", path: project.path))
-        end
-
-      index == action_base ->
-        socket
-        |> assign(:palette_mode, :open_path)
-        |> assign(
-          :path_suggestions,
-          Project.path_suggestions(
-            socket.assigns.current_node,
-            "",
-            socket.assigns.projects
-          )
-        )
-
-      index == new_workspace_index ->
-        # A workspace is pure VCT metadata (no OS path), so this entry point is
-        # available on LOCAL and REMOTE nodes alike. Entering the form always
-        # starts from an empty member selection.
-        socket
-        |> assign(:palette_mode, :new_workspace)
-        |> assign(:new_workspace_members, [])
-
-      index == action_base + 1 ->
-        # Unreachable when remote (remote indices land on the workspace action
-        # above and palette_item_count clamps at it)
-        assign(socket, :palette_mode, :new_project)
-
-      true ->
-        socket
-    end
-  end
-
-  defp handle_palette_key(socket, _key, _mode), do: socket
-
-  # Remote palette selection — ASYNC. The synchronous part is only the gate
-  # guard; the RPC-heavy sequence (remote dir? validation, project mount +
-  # list reload, config/mode/foreign-repo loading) runs OUTSIDE the
-  # LiveView process via ProjectFlow.spawn_remote_project_activation/2 so the
-  # UI never blocks on the 6-7 cross-node round-trips per palette Enter. The
-  # palette closes immediately at spawn; the result arrives as a
-  # `{:async_remote_project, node, path, result}` message handled by
-  # handle_info/2, which stale-guards it, applies the assigns, resets the
-  # GitHub state when the project changed, and push_patches the `&node=` URL
-  # so handle_params re-runs in the same remote context.
-  defp activate_remote_palette_project(socket, expanded) do
-    # Gate guard (defense in depth): while the selected remote target is
-    # pending/failed, `@current_node` is still the LOCAL BEAM node — validating
-    # or registering the path here would leak into the local filesystem and
-    # the local VCT project registry. Close the palette and surface an error.
-    if EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) do
-      socket
-      |> assign(:project_palette_open, false)
-      |> assign(:palette_mode, :menu)
-      |> put_flash(
-        :error,
-        gettext(
-          "Cannot open project: remote node %{name} is not connected. Retry the connection first.",
-          name: socket.assigns[:current_node_name] || "remote"
-        )
-      )
-    else
-      ProjectFlow.spawn_remote_project_activation(socket, expanded)
-    end
-  end
-
-  # Counts the total number of items in the palette menu list:
-  # filtered projects + the actions. Locally that is Open by Path, Create New
-  # Project AND New Workspace; in remote contexts Create New Project is hidden,
-  # so it is filtered + 2 there (keeps ArrowDown clamping in sync with the DOM).
-  defp palette_item_count(socket) do
-    filtered =
-      EvoDashWeb.ProjectComponents.filter_projects(
-        socket.assigns.projects,
-        socket.assigns.palette_search
-      )
-
-    length(filtered) + if socket.assigns[:current_node_id] != nil, do: 2, else: 3
   end
 
   # ---------------------------------------------------------------------------
@@ -2902,8 +2789,8 @@ defmodule EvoDashWeb.ProjectsLive do
     node = socket.assigns[:current_node] || node()
     node_id = socket.assigns[:current_node_id]
     remote? = socket.assigns.remote? == true
-    projects_seq = (socket.assigns[:projects_seq] || 0) + 1
-    workspaces_seq = (socket.assigns[:workspaces_seq] || 0) + 1
+    projects_seq = socket.assigns.projects_seq + 1
+    workspaces_seq = socket.assigns.workspaces_seq + 1
     parent = self()
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
@@ -2919,249 +2806,12 @@ defmodule EvoDashWeb.ProjectsLive do
     |> assign(:workspaces_seq, workspaces_seq)
   end
 
-  # The ordered member refs submitted with a new workspace: every chosen POINT
-  # resolves to the currently loaded project mount, so the stored ref carries
-  # that mount's OS path as this node knows it. A project that vanished from
-  # the registry since it was picked is skipped instead of being stored as a
-  # dangling ref.
-  defp workspace_member_refs(socket) do
-    projects = socket.assigns[:projects] || []
-
-    (socket.assigns[:new_workspace_members] || [])
-    |> Enum.flat_map(fn point ->
-      case Enum.find(projects, &(Map.get(&1, :point) == point)) do
-        %{} = project -> [%{"point" => point, "path" => Map.get(project, :path)}]
-        _ -> []
-      end
-    end)
-  end
-
-  defp workspace_description_param(params) do
-    case Map.get(params, "description") do
-      description when is_binary(description) -> description
-      _ -> ""
-    end
-  end
-
-  # Toggles `value` in an ordered list, APPENDING on add so the click order of
-  # the New Workspace member picker is preserved (the workspace stores it).
-  defp toggle_member(list, value) do
-    if value in list, do: List.delete(list, value), else: list ++ [value]
-  end
-
-  defp workspace_points(workspaces) do
-    workspaces
-    |> Enum.map(fn
-      %{workspace: %{point: point}} -> point
-      %{point: point} -> point
-      _ -> nil
-    end)
-    |> Enum.filter(&is_binary/1)
-  end
-
-  defp workspace_error_message(:invalid_name),
-    do: gettext("Workspace name is required.")
-
-  defp workspace_error_message({:member_is_workspace, ref}),
-    do:
-      gettext("A workspace cannot contain another workspace: %{ref}",
-        ref: workspace_ref_text(ref)
-      )
-
-  defp workspace_error_message({:invalid_member, ref}),
-    do: gettext("Invalid workspace member: %{ref}", ref: workspace_ref_text(ref))
-
-  defp workspace_error_message(:invalid_members),
-    do: gettext("The workspace members are invalid.")
-
-  defp workspace_error_message(:vct_unavailable),
-    do: gettext("The workspace registry is unavailable. Please try again.")
-
-  defp workspace_error_message(reason),
-    do: gettext("Could not save the workspace: %{reason}", reason: workspace_ref_text(reason))
-
-  defp workspace_ref_text(ref) when is_binary(ref), do: ref
-
-  defp workspace_ref_text(ref) when is_map(ref) do
-    point = Map.get(ref, "point") || Map.get(ref, :point)
-    path = Map.get(ref, "path") || Map.get(ref, :path)
-
-    cond do
-      is_binary(point) -> point
-      is_binary(path) -> path
-      true -> inspect(ref)
-    end
-  end
-
-  defp workspace_ref_text(ref), do: inspect(ref)
-
-  # The add-foreign-repo form is reachable in remote mode (RemoteView renders
-  # it via `show_add_foreign_repo`), so its path must be validated for the
-  # node being viewed: a POSIX path on a remote Linux daemon is wrongly
-  # rejected by the local-only `Platform.absolute_path?/1` on a Windows
-  # dashboard (`Path.type/1` → `:volumerelative`), and vice versa. In a
-  # remote context the shared node-aware predicate is used; local contexts
-  # keep the local semantics. Both branches ACCEPT Windows UNC / WSL roots —
-  # `//wsl.localhost/Ubuntu-22.04/...`, `\\server\share\...` and drive
-  # letters — via `EvoGit.Platform.absolute_path?/1` (UNC `//`-forms match
-  # `Path.type/1` → `:absolute`; `\\`-forms match its Windows-absolute
-  # regex). STORAGE follows the same node split (see the `add_foreign_repo`
-  # handler): remote contexts build RAW structs via
-  # `ProjectFlow.build_foreign_repo/4` — the root is stored verbatim with NO
-  # local `Path.expand` (`ForeignRepo.new/3` would mangle remote
-  # POSIX/Windows paths against the dashboard's OS); local contexts keep
-  # `ForeignRepo.new/3`'s `Path.expand` semantics unchanged — EXCEPT UNC/WSL
-  # roots on a non-Windows node, which bypass the expansion and are stored
-  # verbatim (see `build_foreign_repo_for_node/4` below).
-  defp foreign_repo_path_absolute?(socket, path) do
-    if socket.assigns[:remote?] or socket.assigns[:current_node] != node() do
-      ProjectFlow.absolute_path_for_node?(socket.assigns[:current_node], path)
-    else
-      Platform.absolute_path?(path)
-    end
-  end
-
-  # ── UNC/WSL foreign-repo storage guard ─────────────────────────────────
-  # `EvoGit.Core.ForeignRepo.new/3` `Path.expand`s its root internally. On a
-  # WINDOWS node that is safe for UNC roots — Elixir's `Path.expand` preserves
-  # a `//`-prefixed UNC root and normalizes the `\\server\share` form to
-  # `//server/share`. On a NON-Windows node it corrupts them:
-  # `Path.expand("//wsl.localhost/x")` collapses the prefix to
-  # `/wsl.localhost/x`, and `Path.expand("\\server\share\x")` is cwd-joined
-  # against the dashboard's working directory. UNC/WSL roots must therefore
-  # NEVER pass through `ForeignRepo.new/3` on a non-Windows node — they are
-  # stored verbatim (forward-slash-normalized, trailing separators trimmed)
-  # with the same returned struct shape.
-  defp unc_prefixed?(path) when is_binary(path) do
-    String.starts_with?(path, "//") or String.starts_with?(path, "\\\\")
-  end
-
-  defp normalize_unc_root(path) do
-    normalized =
-      path
-      |> EvoGit.Platform.normalize_separators()
-      |> EvoGit.Platform.trim_trailing_separators()
-
-    if normalized == "", do: "//", else: normalized
-  end
-
-  # `ForeignRepo.new/3` with the UNC-expansion guard: UNC/WSL roots on a
-  # non-Windows node bypass the internal `Path.expand/1` (which would mangle
-  # the `//`/`\\` prefix against the local OS) and build the same struct shape
-  # with the verbatim root; every other input keeps `ForeignRepo.new/3`'s
-  # exact expansion and `writable`/`base_sha` coercion semantics.
-  defp foreign_repo_new_guarded(id, root, opts) do
-    if unc_prefixed?(root) and not Platform.windows?() do
-      %ForeignRepo{
-        id: id,
-        root: normalize_unc_root(root),
-        description: Keyword.get(opts, :description),
-        writable: Keyword.get(opts, :writable, false),
-        base_sha: Keyword.get(opts, :base_sha)
-      }
-    else
-      ForeignRepo.new(id, root, opts)
-    end
-  end
-
-  # Node-aware `%ForeignRepo{}` construction with the UNC guard: local nodes
-  # go through `foreign_repo_new_guarded/3` (== `ForeignRepo.new/3` except UNC
-  # roots are never `Path.expand`ed against the local OS); remote nodes keep
-  # `ProjectFlow.build_foreign_repo/4`'s verbatim raw-struct behavior.
-  defp build_foreign_repo_for_node(node, repo_id, path, opts) do
-    if node == nil or node == node() do
-      foreign_repo_new_guarded(repo_id, path, opts)
-    else
-      ProjectFlow.build_foreign_repo(node, repo_id, path, opts)
-    end
-  end
-
-  # Validates a foreign-repo path + optional base_sha for the node being
-  # viewed. Returns `:ok` or `{:error, flash_message}`. Shared by the
-  # `add_foreign_repo` and `save_foreign_repo` handlers so both entry points
-  # enforce IDENTICAL rules (real checks, never crashes — cond/case only, no
-  # try/rescue):
-  #
-  #   - path non-blank + absolute (the existing checks)
-  #   - existence: local → `File.dir?/1`; remote → `NodeContext.dir?/2`
-  #   - git-ness:  local → core `EvoGit.Adapters.Git.rev_parse/1` (NEVER shell
-  #     out); remote → `NodeContext.list_branches/2`
-  #   - base_sha resolvability (when non-nil): local → `rev_parse(path, sha)`;
-  #     REMOTE base_sha check deliberately SKIPPED — NodeContext exposes no
-  #     ref-resolution wrapper (verified), and the core's up-front
-  #     task-start validation (`Runtime.Helpers.load_foreign_repos/2`) still
-  #     raises ArgumentError for a bad remote base_sha, failing the task
-  #     before any agent spawns (see projects_live/CONTEXT.md).
-  defp validate_foreign_repo_input(socket, path, base_sha) do
-    remote_context? =
-      socket.assigns[:remote?] or socket.assigns[:current_node] != node()
-
-    node = if remote_context?, do: socket.assigns[:current_node], else: node()
-
-    cond do
-      path == "" ->
-        {:error, gettext("Path cannot be empty.")}
-
-      not foreign_repo_path_absolute?(socket, path) ->
-        {:error, gettext("Path must be absolute.")}
-
-      not foreign_repo_path_exists?(node, remote_context?, path) ->
-        {:error, gettext("Foreign repo path does not exist: %{path}", path: path)}
-
-      not foreign_repo_is_git_repo?(node, remote_context?, path) ->
-        {:error, gettext("Path is not a git repository: %{path}", path: path)}
-
-      is_binary(base_sha) and base_sha != "" and remote_context? ->
-        # Remote base_sha check skipped by design (see function doc). The
-        # core's task-start ArgumentError still catches bad values.
-        :ok
-
-      is_binary(base_sha) and base_sha != "" ->
-        case EvoGit.Adapters.Git.rev_parse(path, base_sha) do
-          {:ok, _} ->
-            :ok
-
-          _ ->
-            {:error,
-             gettext("Base commit %{base_sha} not found in repository: %{path}",
-               base_sha: base_sha,
-               path: path
-             )}
-        end
-
-      true ->
-        :ok
-    end
-  end
-
-  # Both remote probes below run through `EvoDash.SafeCall`: they are cross-node
-  # RPCs whose target can be dead/unreachable, and an exited call would
-  # otherwise crash the LiveView. A failure reads as "not a directory" /
-  # "not a git repository" so the caller renders its normal VALIDATION error
-  # instead of the page dying.
-  defp foreign_repo_path_exists?(node, true, path) do
-    SafeCall.run(fn -> NodeContext.dir?(node, path) end, false)
-  end
-
-  defp foreign_repo_path_exists?(_node, false, path), do: File.dir?(path)
-
-  defp foreign_repo_is_git_repo?(node, true, path) do
-    case SafeCall.run(fn -> NodeContext.list_branches(node, path) end, {:error, :unavailable}) do
-      {:ok, _} -> true
-      _ -> false
-    end
-  end
-
-  defp foreign_repo_is_git_repo?(_node, false, path) do
-    match?({:ok, _}, EvoGit.Adapters.Git.rev_parse(path))
-  end
-
   # Builds the dashboard URL for a project path. In a remote context the
   # `&node=` param is appended so the node context survives the push_patch —
   # NOTE: deliberately NOT `EvoDashWeb.Helpers.with_node_param/2`, which
   # appends with `?` and would corrupt the existing `?project=` query.
   defp project_url(socket, path) do
-    params = socket.assigns[:workbench_reconnect_params] || %{}
+    params = socket.assigns.workbench_reconnect_params
 
     query =
       [project: path] ++
@@ -3187,7 +2837,7 @@ defmodule EvoDashWeb.ProjectsLive do
   defp git_task_draft?(_), do: false
 
   defp use_git_task_mode(socket) do
-    if git_task_draft?(socket.assigns[:workbench_reconnect_params]) do
+    if git_task_draft?(socket.assigns.workbench_reconnect_params) do
       assign(socket,
         task_mode: "evolve_simple",
         task_mode_info: mode_info_message("evolve_simple")
@@ -3199,7 +2849,7 @@ defmodule EvoDashWeb.ProjectsLive do
 
   defp activate_project(socket, path) do
     name = Path.basename(path)
-    is_project_change = socket.assigns[:active_project_path] != path
+    is_project_change = socket.assigns.active_project_path != path
 
     # Only auto-detect mode when switching to a different project.
     # Preserve the user's manual mode selection on re-navigation/reconnect.
@@ -3208,8 +2858,8 @@ defmodule EvoDashWeb.ProjectsLive do
         detected = Project.detect_mode(path)
         {detected, mode_info_message(detected)}
       else
-        current_mode = socket.assigns[:task_mode]
-        {current_mode, socket.assigns[:task_mode_info]}
+        current_mode = socket.assigns.task_mode
+        {current_mode, socket.assigns.task_mode_info}
       end
 
     # Load project settings eagerly — read genesis.toml once and thread
@@ -3226,7 +2876,7 @@ defmodule EvoDashWeb.ProjectsLive do
       active_project: %{
         path: path,
         name: name,
-        point: ProjectFlow.mount_point_for(socket.assigns[:projects] || [], path)
+        point: ProjectFlow.mount_point_for(socket.assigns.projects, path)
       },
       active_project_path: path,
       task_mode: mode,
@@ -3237,6 +2887,7 @@ defmodule EvoDashWeb.ProjectsLive do
       palette_selected_index: 0,
       show_project_settings: false,
       project_config: project_config,
+      project_config_mtime: Project.project_config_mtime(path),
       worktree_script: worktree_script,
       commands: commands,
       foreign_repos: foreign_repos,
@@ -3246,6 +2897,37 @@ defmodule EvoDashWeb.ProjectsLive do
     # `is_project_change` is computed from the PRE-assign socket above.
     |> maybe_reset_github_state(is_project_change)
     |> GitHub.maybe_check()
+  end
+
+  # Re-reads the active project's genesis.toml (config + worktree script +
+  # commands) and stores the file's mtime beside it.
+  #
+  # `force?` bypasses the change check (the explicit project-settings OPEN must
+  # always show current settings). Otherwise the file is re-parsed ONLY when its
+  # mtime differs from the one captured with the config: the
+  # `:node_aware_reload_tasks` debounce fires on the trailing edge of EVERY task
+  # broadcast — continuously while a task runs — and `File.stat/1` is cheap
+  # where a TOML parse is not.
+  #
+  # A REMOTE project's genesis.toml lives on the other host, so a local read
+  # would clobber the RPC-loaded config with nil; that config arrives with the
+  # activation / AsyncLoad result instead, and this helper leaves it alone.
+  defp refresh_project_config(socket, force? \\ false) do
+    path = Map.get(socket.assigns, :active_project_path)
+    mtime = Project.project_config_mtime(path)
+
+    if is_binary(path) and not Map.get(socket.assigns, :remote?, false) and
+         (force? or mtime != Map.get(socket.assigns, :project_config_mtime)) do
+      {project_config, worktree_script, commands} = Project.load_project_config(path)
+
+      socket
+      |> assign(:project_config, project_config)
+      |> assign(:project_config_mtime, mtime)
+      |> assign(:worktree_script, worktree_script)
+      |> assign(:commands, commands)
+    else
+      socket
+    end
   end
 
   # Resets the GitHub issue integration state when the active project path
@@ -3269,7 +2951,7 @@ defmodule EvoDashWeb.ProjectsLive do
   defp change_model_selection(socket, transition) do
     case ModelSelectionScope.bundle(socket.assigns) do
       {:ok, bundle} ->
-        case transition.(bundle, socket.assigns[:selected_model_spec]) do
+        case transition.(bundle, socket.assigns.selected_model_spec) do
           {:ok, spec} ->
             {:noreply,
              socket
@@ -3290,190 +2972,101 @@ defmodule EvoDashWeb.ProjectsLive do
   # Called by handle_event("task_submit") AFTER its guards (project open +
   # custom mode has a selected agent). Lives down here with the other
   # private helpers so the handle_event/3 clauses stay grouped.
+  #
+  # The option building itself is PURE and lives in
+  # EvoDashWeb.ProjectsLive.TaskSubmit: the UI combined-mode → core mode
+  # mapping, the message/objective, build system, node path, starting commit,
+  # foreign repos, archive, resume-from, the staged-attachment re-check and the
+  # base64 `:attachments` opt, ending in the shared LaunchOptions
+  # model/agent/quality/persistent-state policy. This function only wires it
+  # up: the attachment-cap refusal, the async launch and the flashes.
   defp do_task_submit(prompt, combined_mode, params, socket) do
-    path = socket.assigns[:active_project_path]
+    path = socket.assigns.active_project_path
+    {task_type, mode} = TaskSubmit.mode(combined_mode)
 
-    {task_type, mode} =
-      case combined_mode do
-        "genesis_new" -> {:genesis, "new"}
-        "genesis_existing" -> {:genesis, "existing"}
-        "evolve_simple" -> {:evolve, "simple"}
-        # Custom Agent mode is evolve-family: an :evolve task with the
-        # selected custom agent as the root agent (the core contract's mode
-        # string is "custom" — distinct from the UI's combined-mode string).
-        "custom_agent" -> {:evolve, "custom"}
-        _ -> {:evolve, "simple"}
-      end
+    case TaskSubmit.build_opts(prompt, task_type, mode, path, params, socket.assigns) do
+      {:ok, opts} ->
+        # The launch itself is a store/RPC write (a `GenServer.call` locally,
+        # an `:erpc` round-trip remotely) that can take seconds, so it runs in
+        # a supervised task and the page stays responsive. The outcome arrives
+        # as `{{:task_started, seq, task_type}, result}` where `result` keeps
+        # `start_task`'s documented `{:ok, task} | {:error, reason}` shape:
+        # `EvoDash.SafeCall.run/1` turns a dead, busy or timed-out target into
+        # an ERROR VALUE instead of an EXIT that would take the page down, and
+        # SafeCall.start/3 wraps it as `{tag, result}`.
+        #
+        # The prompt, the staged attachments and the form are deliberately NOT
+        # cleared here: the ack owns that, so a launch that fails still leaves
+        # a retry-able form (a "Failed to start task" flash must never arrive
+        # with an emptied textarea).
+        remote? = socket.assigns.remote?
+        current_node = socket.assigns.current_node
+        seq = socket.assigns.task_launch_seq + 1
 
-    node_path = params["node_path"]
-    archive = params["archive"] == "true"
-
-    opts = [path: path, mode: mode]
-
-    opts =
-      if task_type == :genesis do
-        Keyword.put(opts, :prompt, String.trim(prompt))
-      else
-        Keyword.put(opts, :objective, String.trim(prompt))
-      end
-
-    build_system_param = params["build_system"]
-
-    opts =
-      if task_type == :genesis and is_binary(build_system_param) and
-           String.trim(build_system_param) != "" do
-        Keyword.put(opts, :build_system, String.to_existing_atom(build_system_param))
-      else
-        opts
-      end
-
-    opts =
-      if task_type == :evolve and is_binary(node_path) and String.trim(node_path) != "" do
-        Keyword.put(opts, :node_path, String.trim(node_path))
-      else
-        opts
-      end
-
-    starting_commit = params["starting_commit"]
-
-    opts =
-      if task_type == :evolve and is_binary(starting_commit) and
-           String.trim(starting_commit) != "" do
-        Keyword.put(opts, :starting_commit, String.trim(starting_commit))
-      else
-        opts
-      end
-
-    # Include foreign repos from project settings for this task
-    foreign_repos = socket.assigns[:foreign_repos] || []
-
-    opts =
-      if foreign_repos != [], do: Keyword.put(opts, :foreign_repos, foreign_repos), else: opts
-
-    opts = if archive, do: Keyword.put(opts, :archive, true), else: opts
-
-    resume_from = params["resume_from"]
-
-    opts =
-      if task_type == :evolve and is_binary(resume_from) and String.trim(resume_from) != "" do
-        Keyword.put(opts, :resume_from, String.trim(resume_from))
-      else
-        opts
-      end
-
-    # Staged binary attachments (image/audio) → the `:attachments` task opt.
-    # Raw bytes are staged in-memory only; the task-opts layer must carry
-    # BASE64 (the core Store.Codec Jason-encodes opts — raw non-UTF-8 binaries
-    # would abort the encode and silently drop the key). Leave opts untouched
-    # when nothing is staged (byte-identical old behavior).
-    staged = socket.assigns[:staged_attachments] || []
-
-    # Belt-and-braces cap re-check (staging already enforces the caps, so this
-    # should be unreachable): refuse to start — WITHOUT clearing the staged
-    # state — so the user can trim attachments and retry.
-    over_cap? =
-      length(staged) > @max_attachments or
-        Enum.any?(staged, fn entry ->
-          is_map(entry) and is_binary(entry["data"]) and
-            byte_size(entry["data"]) > @max_attachment_bytes
-        end)
-
-    if over_cap? do
-      # zh_CN: 附件超过数量/大小上限，任务未启动，已暂存的附件保留，用户可删除后重试。
-      {:noreply,
-       put_flash(
-         socket,
-         :error,
-         gettext(
-           "Too many attachments or an attachment is too large — remove some and try again."
-         )
-       )}
-    else
-      opts =
-        if staged != [] do
-          attachments =
-            Enum.map(staged, fn entry ->
-              # Entries are built by the staging flow with all four keys;
-              # Map.get defaults keep this defensive against odd shapes.
-              %{
-                "type" => Map.get(entry, "type", "image"),
-                "name" => Map.get(entry, "name", ""),
-                "media_type" => Map.get(entry, "media_type", "application/octet-stream"),
-                "data" => Base.encode64(Map.get(entry, "data", ""))
-              }
-            end)
-
-          Keyword.put(opts, :attachments, attachments)
-        else
-          opts
-        end
-
-      # Exit-safe launch: the store/RPC call is a `GenServer.call` (local) or an
-      # `:erpc` round-trip (remote) whose target can be dead, busy, or slower
-      # than the call timeout — either EXITS this LiveView. `SafeCall.run/1`
-      # turns that into `{:error, reason}`, which lands on the existing
-      # "Failed to start task" flash (the prompt is NOT cleared in that case).
-      # The wrapper is FLATTENED so the result keeps `start_task`'s documented
-      # `{:ok, task} | {:error, reason}` shape.
-      # Validate model/agent/quality through the same launch boundary as GitHub
-      # fixes. A stale or unavailable picker fails before either start_task call.
-      start_result =
-        with {:ok, opts} <- LaunchOptions.apply(opts, socket.assigns) do
-          case SafeCall.run(fn ->
-                 if socket.assigns.remote? do
-                   NodeContext.start_task(socket.assigns.current_node, task_type, opts)
+        case SafeCall.start(self(), {:task_started, seq, task_type}, fn ->
+               SafeCall.run(fn ->
+                 if remote? do
+                   NodeContext.start_task(current_node, task_type, opts)
                  else
                    TaskRegistry.start_task(task_type, opts)
                  end
-               end) do
-            {:ok, start_result} -> start_result
-            {:error, reason} -> {:error, reason}
-          end
+               end)
+               |> case do
+                 {:ok, start_result} -> start_result
+                 {:error, reason} -> {:error, reason}
+               end
+             end) do
+          {:ok, _pid} ->
+            {:noreply,
+             socket
+             |> assign(:task_launch_seq, seq)
+             |> assign(:task_launching, true)}
+
+          {:error, reason} ->
+            # The task never started, so no ack will arrive: clear the marker
+            # and report the failure exactly like a refused launch.
+            {:noreply,
+             socket
+             |> assign(:task_launching, false)
+             |> put_flash(
+               :error,
+               gettext("Failed to start task: %{reason}", reason: inspect(reason))
+             )}
         end
 
-      case start_result do
-        {:ok, task} ->
-          {:noreply,
-           socket
-           |> put_flash(
-             :info,
-             gettext("%{type} task started with ID: %{id}",
-               type: String.capitalize(to_string(task_type)),
-               id: task.id
-             )
+      # The staged attachments are deliberately left in place (nothing is
+      # cleared) so the user can trim them and retry.
+      # zh_CN: 附件超过数量/大小上限，任务未启动，已暂存的附件保留，用户可删除后重试。
+      {:error, :attachments_over_cap} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext(
+             "Too many attachments or an attachment is too large — remove some and try again."
            )
-           |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
-           # The prompt is intentionally cleared after a successful launch.
-           # assign_form_defaults/1 resets @task_prompt to "" (so the server
-           # re-seeds data-layout="compact"), and the "clear_prompt" push_event
-           # empties the visible textarea — which morphdom skips under
-           # phx-update="ignore" — and removes the persisted draft, so neither
-           # the DOM nor a reload can resurrect the submitted prompt.
-           |> Assigns.assign_form_defaults()
-           # Staged binary attachments must survive mode changes but NOT a
-           # successful launch — cleared here (after assign_form_defaults,
-           # which keeps a fixed key list and has no knowledge of staging)
-           # rather than inside assign_form_defaults/1.
-           |> assign(:staged_attachments, [])
-           |> StatePersistence.maybe_persist_state()
-           |> push_event("clear_prompt", %{})}
+         )}
 
-        {:error, :no_task_model} ->
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             gettext("Configure a model on this server before launching a task.")
-           )}
+      # No model configured: the pre-spawn guard refuses the launch, so no ack
+      # will ever arrive. Render the SAME friendly, actionable line the async
+      # ack uses for `:no_task_model`, so both routes agree byte-for-byte
+      # instead of falling into the generic "Failed to start task" wording.
+      # zh_CN: 服务器尚未配置模型，任务未启动，提示用户先去配置模型。
+      {:error, :no_task_model} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Configure a model on this server before launching a task.")
+         )}
 
-        {:error, reason} ->
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             gettext("Failed to start task: %{reason}", reason: inspect(reason))
-           )}
-      end
+      {:error, reason} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Failed to start task: %{reason}", reason: inspect(reason))
+         )}
     end
   end
 end

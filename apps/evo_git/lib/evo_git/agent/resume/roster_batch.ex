@@ -4,8 +4,9 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
   scheduler.
 
   A parent's subagent batch lives on its `%SchedMeta{}` row, i.e. in ETS: a BEAM
-  (or scheduler) restart wipes it, so `EvoGit.AgentScheduler.reattach_sub_agents/3`
-  refuses with `{:error, :no_pending_batch}` and every interrupted slot used to
+  (or scheduler) restart wipes it, so
+  `EvoGit.AgentScheduler.reattach_sub_agents/2,3` refuses with
+  `{:error, :no_pending_batch}` and every interrupted slot used to
   degrade to `{:error, :subagent_result_lost}` — even when the children's durable
   rows and anchored commits were sitting in `agent_state.sqlite` all along.
 
@@ -31,9 +32,10 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
   This runs in the AGENT WORKER process (the resumed parent's exchange worker),
   never in the scheduler: the durable read is a plain `EvoGit.AgentState.roster/2`
   call (bounded and total inside `EvoGit.AgentState`), and the file/context work
-  of rebuilding a spec stays off the shared GenServer. `plan/4` is TOTAL — any
-  failure answers `{:error, reason}` and the caller degrades to the honest
-  fallback text.
+  of rebuilding a spec stays off the shared GenServer. `plan/4` answers
+  `{:error, reason}` for any RAISE and degrades the caller to the honest
+  fallback text; an EXIT or THROW is left alone and reaches the scheduler's
+  crash-retry, because it is infrastructure rather than a plan verdict.
 
   ## Why the resume opts, not a pause kind
 
@@ -86,6 +88,30 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
           entries: [entry()]
         }
 
+  @typedoc """
+  Every decline `plan/4` can answer.
+
+  All of them are self-contained facts about the plan request — a state without
+  durable identity, a turn/count the caller could not have meant, a durable read
+  that refused, or a raise while rebuilding a spec. An EXIT is deliberately not
+  in this list: it is infrastructure, never a plan verdict, so it propagates to
+  the scheduler's crash-retry instead of being laundered into a "we checked, the
+  child is gone" answer.
+
+  An injected `:roster_fun`'s own `{:error, reason}` term is passed through
+  UNCHANGED (that `reason` belongs to the reader, not to this module), so an
+  unrecognized term means the roster read failed.
+  """
+  @type error ::
+          :invalid_state
+          | :persistent_state_disabled
+          | :no_expected_slots
+          | :unknown_spawn_turn
+          | :no_task_id
+          | {:invalid_roster, term()}
+          | {:invalid_roster_fun, term()}
+          | {:plan_failed, String.t()}
+
   @doc """
   Builds the rebuild plan for the dangling batch of `state`.
 
@@ -101,10 +127,11 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
 
   Total: `{:error, reason}` for a state without durable identity, an unknown
   turn, an empty batch, a refused/unavailable store or any raise while
-  rebuilding a spec.
+  rebuilding a spec. An EXIT or THROW is NOT a failure verdict and is not
+  rescued — it belongs to the caller's crash-retry.
   """
   @spec plan(State.t(), term(), non_neg_integer(), keyword()) ::
-          {:ok, plan()} | {:error, term()}
+          {:ok, plan()} | {:error, error()}
   def plan(state, turn, expected, opts \\ [])
 
   def plan(%State{} = state, turn, expected, opts) when is_list(opts) do
@@ -113,8 +140,6 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
     rescue
       error ->
         {:error, {:plan_failed, Exception.message(error)}}
-    catch
-      kind, reason -> {:error, {:plan_failed, inspect({kind, reason})}}
     end
   end
 

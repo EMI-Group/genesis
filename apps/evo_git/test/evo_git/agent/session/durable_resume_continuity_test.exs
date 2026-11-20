@@ -123,7 +123,11 @@ defmodule EvoGit.Agent.Session.DurableResumeContinuityTest do
       task_id = unique_task_id()
       agent_id = unique_agent_id()
 
-      # The run's FIRST transcript (a completed tool batch + its answer)…
+      # The run's FIRST transcript (a completed tool batch + its answer), built
+      # the way the session start path builds it: the START snapshot is the run's
+      # one full-field write, so every identity/run fact — the objective, the
+      # prompt-cache key, the branch and the base commit — is on the row from the
+      # first instant and is never re-supplied by a later turn boundary.
       first = Enum.take(transcript(), 5)
 
       initial =
@@ -140,7 +144,11 @@ defmodule EvoGit.Agent.Session.DurableResumeContinuityTest do
             cache_creation_tokens: 0
           },
           total_tokens: 1_000,
-          compression_count: 0
+          compression_count: 0,
+          objective: @persisted_objective,
+          prompt_cache_key: "persisted-cache-key",
+          branch: "evogit-agent-persisted",
+          base_commit: "persisted-base"
         )
 
       assert :ok = Persistence.initial_snapshot(initial)
@@ -158,18 +166,15 @@ defmodule EvoGit.Agent.Session.DurableResumeContinuityTest do
         cache_creation_tokens: 0
       }
 
+      # The turn boundary advances only the VOLATILE scalars.
       final =
         run_state(task_id, agent_id, transcript(),
           turn: 3,
           usage: usage,
           total_tokens: 4_200,
           compression_count: 2,
-          objective: @persisted_objective,
-          prompt_cache_key: "persisted-cache-key",
           current_commit: "abc123",
-          pending_inputs: [%{"text" => "queued follow-up", "attachments" => []}],
-          branch: "evogit-agent-persisted",
-          base_commit: "persisted-base"
+          pending_inputs: [%{"text" => "queued follow-up", "attachments" => []}]
         )
 
       assert :ok = Persistence.checkpoint(initial, final)
@@ -345,7 +350,7 @@ defmodule EvoGit.Agent.Session.DurableResumeContinuityTest do
       assert length(built.context.messages) == 2
       assert built.turn == 0
       assert built.objective == @fresh_objective
-      assert Resume.crash_retry?(built) == false
+      assert Resume.restored_run?(built) == false
 
       # (d) A state that LOOKS like an interrupted run is still untouched.
       calls = [
@@ -424,7 +429,7 @@ defmodule EvoGit.Agent.Session.DurableResumeContinuityTest do
     ]
   end
 
-  defp run_state(task_id, agent_id, messages, overrides \\ []) do
+  defp run_state(task_id, agent_id, messages, overrides) do
     defaults = [
       agent_id: agent_id,
       agent_module: StubAgent,
@@ -442,13 +447,11 @@ defmodule EvoGit.Agent.Session.DurableResumeContinuityTest do
   defp baseline(task_id, agent_id),
     do: Process.get({:evogit_agent_state_baseline, task_id, agent_id})
 
-  # Seeds ONE run's durable record through the production writer path.
+  # Seeds ONE run's durable record through the production writer path: the start
+  # snapshot is the run's one full-field write (identity, every run fact and the
+  # whole transcript); later turns checkpoint volatile scalars only.
   defp seed!(task_id, agent_id, messages, overrides) do
-    assert :ok =
-             Persistence.checkpoint(
-               run_state(task_id, agent_id, []),
-               run_state(task_id, agent_id, messages, overrides)
-             )
+    assert :ok = Persistence.initial_snapshot(run_state(task_id, agent_id, messages, overrides))
 
     AgentState.flush()
     :ok

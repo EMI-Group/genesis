@@ -1,0 +1,160 @@
+/* === Motion foundation (motion.css) ===
+   ONE shared motion vocabulary every later dashboard package opts into with a
+   single attribute or class — no per-component hand-written JS or keyframes.
+
+   HARD INVARIANTS (do not break these):
+   * Motion is OPACITY and TRANSFORM only. The single exception is the bounded
+     `grid-template-rows: 0fr -> 1fr` disclosure helper (.motion-collapse-grid).
+   * NEVER animate `height`/`width` on the transcript scrollers (#chat-messages,
+     .agent-history-scroll, .cg-scroll), the Assistant composer or the sidebar.
+   * NEVER add `scroll-behavior: smooth` to #chat-messages, .agent-history-scroll,
+     .cg-scroll or #workbench-history — those scrollers must stay instant.
+   * A native <details> snaps open/shut; the helper in section 3 smooths it.
+
+   Loaded from app.css's @import block, immediately after ./workbench.css. CSS
+   requires @import before every other rule, so "last import" is the correct
+   reading of "loaded last"; the reduced-motion backstop at the END of this file
+   uses !important, so its cascade position is moot anyway. */
+
+/* 1. Tokens — the ONLY timing/easing vocabulary a package should reference. */
+:root {
+  --motion-fast: 120ms;
+  --motion-base: 170ms;
+  --motion-slow: 220ms;
+  --motion-ease-out: cubic-bezier(.16, 1, .3, 1);
+  --motion-ease-in: cubic-bezier(.4, 0, 1, 1);
+}
+
+/* 2. Keyframes — opacity + transform only. */
+@keyframes motion-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes motion-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes motion-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* Deliberately opacity-only: a collapse that animates height/width reflows the
+   whole page on every frame. Containment is the grid helper's job (section 5). */
+@keyframes motion-collapse {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 3. <details> disclosure helper — one class, no markup change.
+   The [open] rule smooths the OPEN with zero JS; the state rule lets the
+   DisclosureMotion hook defer `open` removal for the exit (it sets
+   data-disclosure-state="closing", then removes `open` when the animation
+   ends). Without it a native <details> snaps open AND shut instantly. */
+details.motion-disclosure[open] > :not(summary) {
+  animation: motion-slide-in var(--motion-fast) var(--motion-ease-out) both;
+}
+details.motion-disclosure[data-disclosure-state="closing"] > :not(summary) {
+  animation: motion-fade-out var(--motion-fast) var(--motion-ease-in) both;
+}
+
+/* 4. State-driven panels — class="motion-panel" + data-motion-state.
+   `both` fill holds the closing frame until the hook removes the node, so a
+   later package never needs per-component keyframes. The class-only variants
+   are escape hatches for markup that cannot carry the data attribute. */
+.motion-panel[data-motion-state="opening"],
+.motion-panel-open {
+  animation: motion-fade-in var(--motion-base) var(--motion-ease-out) both;
+}
+.motion-panel[data-motion-state="closing"],
+.motion-panel-close {
+  animation: motion-fade-out var(--motion-fast) var(--motion-ease-in) both;
+}
+.motion-panel.motion-panel-slide[data-motion-state="opening"],
+.motion-panel-slide.motion-panel-open {
+  animation-name: motion-slide-in;
+}
+
+/* 5. The ONLY layout animation allowed — for a panel that stays MOUNTED (so it
+   cannot use :if). One wrapper's grid rows collapse; never a raw height. */
+.motion-collapse-grid {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--motion-base) var(--motion-ease-out);
+}
+.motion-collapse-grid[data-motion-open="true"] {
+  grid-template-rows: 1fr;
+}
+.motion-collapse-grid > * {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 6. LiveView :if-removal helpers for JS.hide(transition: {...}) — the palette
+   recipe. Exact markup (one attribute, no JS of our own):
+   phx-remove={JS.hide(transition: {"motion-exit-lift", "motion-exit-visible", "motion-exit-hidden"})}
+   Use motion-exit-fade (plus the same visible/hidden pair) for a pure fade. */
+.motion-exit-fade { transition: opacity var(--motion-fast) var(--motion-ease-in); }
+.motion-exit-lift { transition: opacity var(--motion-fast) var(--motion-ease-in), transform var(--motion-fast) var(--motion-ease-in); }
+.motion-exit-visible { opacity: 1; transform: none; }
+.motion-exit-hidden { opacity: 0; transform: translateY(-4px); }
+
+/* 7. Project palette exit. Today project_components.ex mounts the backdrop and
+   overlay behind `if @palette_open`, so they vanish with no exit frame.
+   Preferred fix: recipe (a) in section 6 (phx-remove). A hook-driven path may
+   instead set data-palette-state="closing" on #project-omnibox for one frame:
+   the keyframe lives in app.css next to palette-fade-in. */
+[data-palette-state="closing"] .project-palette-backdrop {
+  animation: palette-fade-out var(--motion-fast) var(--motion-ease-in) both;
+}
+[data-palette-state="closing"] .project-palette-overlay {
+  animation: palette-fade-out var(--motion-fast) var(--motion-ease-in) both;
+}
+
+/* 8. Workbench windows (dialog.workbench-window, styled in workbench.css).
+   The [open] rule fires on showModal(); the state rule only applies while the
+   dialog is still open — workbench.js defers close() for the exit. */
+dialog.workbench-window[open] {
+  animation: motion-slide-in var(--motion-base) var(--motion-ease-out) both;
+}
+dialog.workbench-window[open]::backdrop {
+  animation: motion-fade-in var(--motion-base) var(--motion-ease-out) both;
+}
+dialog.workbench-window[data-window-state="closing"] {
+  animation: motion-fade-out var(--motion-fast) var(--motion-ease-in) both;
+}
+dialog.workbench-window[data-window-state="closing"]::backdrop {
+  animation: motion-fade-out var(--motion-fast) var(--motion-ease-in) both;
+}
+
+/* 9. Native modal (DaisyUI dialog.modal) exit only — its ENTER is owned by
+   daisyUI/markup. dialog_modal.js sets data-dialog-state="opening|open|closing"
+   and defers close(); a raw native close() would drop the top-layer element
+   instantly, which is why no modal could animate out before this. */
+dialog.modal[data-dialog-state="closing"] {
+  animation: motion-fade-out var(--motion-fast) var(--motion-ease-in) both;
+}
+dialog.modal[data-dialog-state="closing"]::backdrop {
+  animation: motion-fade-out var(--motion-fast) var(--motion-ease-in) both;
+}
+
+/* 10. GLOBAL REDUCED-MOTION BACKSTOP — must stay the LAST rule in this file.
+   Closes every remaining reduced-motion hole at once: palette-fade-in/
+   slide-down, .node-switch-fade, .task-card-active, .file-manual-input-wrap,
+   the 0.35s .input-* transitions, animate-ping/animate-pulse and
+   `html { scroll-behavior: smooth }`. Per-component guards elsewhere become
+   redundant, not wrong — keep them. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
