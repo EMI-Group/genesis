@@ -179,6 +179,8 @@ Status entries contain `state`/`expires`/`account_id`/`login_instructions`/`oaut
 Credential verdict and managed-path calls run on the viewed node; login instructions are static and renderer fallback may use the configured path.
 A profile's verdict renders in its OWN credential-status block, while the page-level core "Missing Configuration" banner describes the WHOLE config and may still name a vendor login command (e.g. `claude setup-token`) when another account's credential is unusable, so guidance assertions are scoped to one profile's block, never page-wide.
 That banner is NOT fixture-driven: it renders only while `EvoGit.Config.config_status/0` is not `ok?`, and its api_key check reads ReqLLM's BEAM-global key store, so a root `mix test` (both umbrella apps in one VM, `:evo_git`'s helper installs `:req_llm, :openai_api_key`) renders no banner and no test may pin it.
+Its detail lines come from `EvoDashWeb.ConfigIssues.lines/1` — the SAME lines the layouts banner renders — covering core `warnings` plus one line per schema `validation_error` formatted `joined.key_path: message`, so a validation-error-only status is explained instead of rendering a bare title.
+Its trailing call-to-action is model-specific only when `:llm_model` is in `missing` (`EvoDashWeb.ConfigIssues.model_unconfigured?/1`), otherwise it is the model-neutral "Fix the settings listed above…" sentence.
 `start/2` sends FLAT `{:settings_auth_status_loaded, node, seq, statuses}`; the parent checks node AND `auth_status_seq` after node-data loads, saves or explicit refresh, never polls.
 Two remote calls per OAuth account are not deduplicated and unexpected errors degrade the map through the outer SafeCall.
 ## Custom Agents, Tools and Peak Helpers

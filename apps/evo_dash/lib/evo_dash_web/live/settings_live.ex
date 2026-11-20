@@ -99,15 +99,21 @@ defmodule EvoDashWeb.SettingsLive do
                   {gettext("Missing Configuration")}
                 </h3>
                 <ul class="space-y-1.5 mb-3">
-                  <%= for warning <- @config_status.warnings do %>
+                  <%= for line <- EvoDashWeb.ConfigIssues.lines(@config_status) do %>
                     <li class="text-sm font-medium text-warning/80 flex items-start gap-2">
                       <.icon name="hero-chevron-right" class="size-4 mt-0.5 shrink-0 opacity-70" />
-                      <span>{warning}</span>
+                      <span>{line}</span>
                     </li>
                   <% end %>
                 </ul>
                 <p class="text-sm font-semibold text-base-content/80">
-                  {gettext("Configure your LLM model in the LLM category to resolve these issues.")}
+                  <%= if EvoDashWeb.ConfigIssues.model_unconfigured?(@config_status) do %>
+                    {gettext("Configure your LLM model in the LLM category to resolve these issues.")}
+                  <% else %>
+                    <%!-- zh_CN: "the settings listed above" 指上方列出的配置项（含 schema 校验错误），
+                      不一定只是缺失值，也可能只是取值无效（例如时区/并发数）。 --%>
+                    {gettext("Fix the settings listed above to resolve these issues.")}
+                  <% end %>
                 </p>
               </div>
             </div>

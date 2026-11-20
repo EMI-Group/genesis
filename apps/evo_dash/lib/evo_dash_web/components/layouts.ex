@@ -408,8 +408,8 @@ defmodule EvoDashWeb.Layouts do
               <div class="flex-1 min-w-0">
                 <p class="font-semibold text-sm">{gettext("Missing Configuration")}</p>
                 <ul class="mt-1 space-y-0.5">
-                  <%= for warning <- @config_status.warnings do %>
-                    <li class="text-xs break-words">{warning}</li>
+                  <%= for line <- EvoDashWeb.ConfigIssues.lines(@config_status) do %>
+                    <li class="text-xs break-words">{line}</li>
                   <% end %>
                 </ul>
                 <.link
