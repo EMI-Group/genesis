@@ -3190,6 +3190,19 @@ defmodule EvoDashWeb.ProjectsLive do
            )
          )}
 
+      # No model configured: the pre-spawn guard refuses the launch, so no ack
+      # will ever arrive. Render the SAME friendly, actionable line the async
+      # ack uses for `:no_task_model`, so both routes agree byte-for-byte
+      # instead of falling into the generic "Failed to start task" wording.
+      # zh_CN: 服务器尚未配置模型，任务未启动，提示用户先去配置模型。
+      {:error, :no_task_model} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Configure a model on this server before launching a task.")
+         )}
+
       {:error, reason} ->
         {:noreply,
          put_flash(
