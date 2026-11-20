@@ -2,9 +2,9 @@
 
 ## Intent
 
-Shared, production-free support modules for the EvoDash suite: the connection case template, the async-load flush helper, the two directory-picker fakes, the Store/TaskRegistry isolation helper, and the per-process config-dir seam.
+Shared, production-free support modules for the EvoDash suite: the connection case template, the async-load flush helper, the two directory-picker fakes, the Store/TaskRegistry isolation helper, the per-process config-dir seam, and the hermetic ChatGPT sign-in stub.
 Compiled only in `:test` via `elixirc_paths(:test) = ["lib", "test/support"]` (`apps/evo_dash/mix.exs`).
-Six compiled `.ex` modules carry setup, helpers and fakes only — never test logic or assertions.
+Seven compiled `.ex` modules carry setup, helpers and fakes only — never test logic or assertions.
 The directory also holds ONE test script, `config_dir_test.exs`, which is NOT compiled (only `*.ex` is) but loaded by ExUnit like any other suite; it lives here because it is the proof module for this directory's config-dir seam.
 
 ## Routing Table
@@ -74,6 +74,13 @@ Proof + usage contract, all three levels asserted empirically in `config_dir_tes
 `EvoDash.Test.ConfigDirMountedTest` owns the positive mounted proof (1 sync test) because async `ProjectsLiveTest` replaces the BEAM-global `:evo_dash, :projects_async_load_runner` with a gated/empty picker fixture that bypasses the real config load.
 The mounted proof asserts that no foreign batch runner is installed, checks the view's `$callers` chain, waits with a bounded poll for the real Projects `model_selection_ready?`, checks its sole canonical provider and selected spec, and verifies Settings' isolated config path and rendered provider action.
 The shared fixture helper is defined before the async module, creates a unique config directory per test and never changes process-wide state; config-directory isolation itself remains async-safe.
+
+### `EvoDash.Test.ChatGPTLoginStub` (`chatgpt_login_stub.ex`)
+
+Hermetic per-test stand-in for `EvoDash.ChatGPTLogin`, installed through `EvoDashWeb.LLMSetup.ChatGPTSignIn.login_module/0`'s CALL-TIME `$callers` seam (`:chatgpt_login_module`) plus the per-test Agent pid under `:chatgpt_stub_pid`.
+`install!/1(begin: {...}, statuses: [...])` starts the Agent in the CALLING process's dictionary and shrinks the poll to 5 ms; `begin/2`, `status/1` and `cancel/1` resolve the Agent through `$callers` too, because the boundary calls from `Task.async`/poll tasks, never only from the view.
+Every call notifies the test pid (`{:chatgpt_stub, :begin, account}` / `:status` / `:cancel`) and a cancelled flow always answers `:pending`, so no loopback listener, network or BEAM-global state is involved.
+Used by `live/settings_live/provider_wizard_test.exs` (wizard surface) and the generalized-sign-in suites `chatgpt_sign_in_state_test.exs` / `chatgpt_sign_in_surfaces_test.exs` (detail + status surfaces).
 
 ### Migrated-sqlite template
 
