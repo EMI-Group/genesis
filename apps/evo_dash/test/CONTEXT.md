@@ -63,6 +63,7 @@ Bounded polls run at a 1–2 ms cadence (`@wait_poll_ms 2`, `@poll_ms 1`); a fix
 Never shorten a window that IS the detection mechanism; positive assertions keep generous second-scale timeouts so real breakage still fails loudly.
 `assigns/1` is a synchronous `:sys.get_state(view.pid, 30_000)` round-trip and Erlang guarantees per-sender ordering, so `send(view.pid, msg)` followed by any `assigns/1` read is already synchronized.
 Always pass that explicit timeout: `:sys.get_state/1`'s 5 s default exits the test whenever the LiveView is starved on this shared host.
+The same applies to `Phoenix.LiveViewTest.render_async/2`, whose 5 s sibling is its 100 ms DEFAULT: pass the file's async budget (`render_async(view, async_wait_budget())` in `projects_live_test.exs`), because a fixed 100 ms is a load assumption, not a correctness bound — the call still raises when the deadline really elapses.
 Async-load deadlines and poll budgets are module attributes sized at 30 s (`@async_wait_budget_ms`, `@assigns_timeout_ms`, `@runner_start_timeout`, `@settle_timeout_ms`) for the same reason — the waits stay bounded and assertions keep their full strength, so real breakage still fails loudly.
 Debounce-sensitive waits poll the page's own pending flag or reuse the file-local `wait_until/2` / `flush_*_load/2` helper.
 Per-suite wait contracts: `live/CONTEXT.md`, `live_hooks/CONTEXT.md`, `evo_dash/CONTEXT.md`.
