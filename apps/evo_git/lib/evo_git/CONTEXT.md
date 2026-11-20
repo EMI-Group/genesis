@@ -157,7 +157,7 @@ The vendored inventory, per-platform CI/Nix staging and the "adding a new binary
 
 ## Windows-Only Runtime Hazards (audit index)
 
-Latently Windows-broken code (the Windows branch is unreachable on Linux/macOS dev+CI, `Platform.windows?()` gates) — each item is a raise/degradation, not a compile error.
+Latently Windows-broken code (`Platform.windows?()`-gated, so unreachable on Linux/macOS dev+CI) — each item is a raise/degradation, not a compile error.
 
 - **`Port.open` `{:env, ...}` requires CHARLISTS** while `System.cmd/3` normalizes binaries — the ONE raw-port env site is `Sandbox.None`'s Windows clause.
 - **`Port.info(port, :os_pid)` returns `{:os_pid, pid}` and `Port.close/1` RAISES on a closed port** — `Sandbox.Helpers.wait_for_os_pid/2` unwraps and timeouts close via idempotent `Helpers.close_port/1`, so `taskkill /T /F` and bwrap's group kill fire.
