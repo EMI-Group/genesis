@@ -92,10 +92,10 @@ defmodule EvoGit.ProcessManager.Registry do
 
   ## Totality
 
-  Every handler is total: an unknown id is `{:ok, :ok}`, a re-`finish` is a
-  no-op, a probe failure (or a non-map stats answer) is data. A crashing
-  GenServer would lose the whole node's execution view, so nothing here raises
-  on bad input.
+  Every handler is total: an unknown id answers `{:error, :not_found}` for the
+  reads and `:ok` for the idempotent writes, a re-`finish` is a no-op, a probe
+  failure (or a non-map stats answer) is data. A crashing GenServer would lose
+  the whole node's execution view, so nothing here raises on bad input.
 
   ## Unavailable vs wedged
 
