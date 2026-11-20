@@ -94,6 +94,7 @@ defmodule EvoDashWeb.ProjectsLive do
       </EvoDashWeb.Layouts.app>
     <% else %>
       <% selecting_workbench_project? = get_in(@workbench_reconnect_params, ["wb_home"]) == "1" %>
+      <% draft_scope = StatePersistence.draft_scope(assigns) %>
       <% workbench_project =
         if selecting_workbench_project?,
           do:
@@ -140,6 +141,7 @@ defmodule EvoDashWeb.ProjectsLive do
           data-workbench-compose={to_string(!@workbench_idle?)}
           data-project={workbench_project}
           data-task-draft-project={@workbench_reconnect_params["project"]}
+          data-task-draft-scope={draft_scope}
           data-task-mode={@task_mode}
           data-node-id={@current_node_id || "local"}
           class="flex flex-col min-h-full"

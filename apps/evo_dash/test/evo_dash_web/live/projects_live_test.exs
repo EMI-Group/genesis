@@ -1406,6 +1406,144 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
   end
 
+  # The task-form draft identity is `{node, EvoDashWeb.DraftScope.token(...)}`:
+  # the project's VCT point when mounted, the raw OS path otherwise. The
+  # `StatePersistence` JS hook reads it from `data-task-draft-scope`;
+  # `data-task-draft-project` stays the LEGACY path identity it adopts an
+  # old path-keyed draft from.
+  describe "task form draft scope" do
+    test "renders the VCT point as the draft scope for a mounted project", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      project = Path.join(tmp_dir, "draft-scope-point-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(project)
+      mount = seed_project(project, Path.basename(project))
+      {:ok, view, _html} = live(conn, ~p"/projects?project=#{URI.encode(project)}")
+      wait_assigns(view, &(&1[:active_project_path] == project))
+      # The point lookup is pure over the ASYNC-loaded mount list, so wait for
+      # that batch instead of assuming the first frame already carries it.
+      wait_for_projects(view, [project])
+      assert is_binary(mount.point)
+      assert String.starts_with?(mount.point, "vct:///projects/")
+      html = render(view)
+      assert html =~ ~s(data-task-draft-scope="#{mount.point}")
+      # The legacy path identity is untouched (the hook still adopts the
+      # path-keyed entry through it).
+      assert html =~ ~s(data-task-draft-project="#{project}")
+    end
+
+    test "falls back to the raw OS path when the project has no mount", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      project = Path.join(tmp_dir, "draft-scope-bare-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(project)
+      {:ok, view, _html} = live(conn, ~p"/projects?project=#{URI.encode(project)}")
+      wait_assigns(view, &(&1[:active_project_path] == project))
+      await_async_loads(view)
+      html = render(view)
+      assert html =~ ~s(data-task-draft-scope="#{project}")
+      assert html =~ ~s(data-task-draft-project="#{project}")
+    end
+
+    # The render attribute and the persisted payload come from ONE computation,
+    # so the browser can never store a draft under a scope the DOM disagrees
+    # with. Only a VCT POINT is stamped server-side (a raw-path scope is the
+    # payload's own `project` identity, which the hook stamps on its writes).
+    test "persist_state carries the point as its scope token", %{conn: conn, tmp_dir: tmp_dir} do
+      project = Path.join(tmp_dir, "draft-persist-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(project)
+      point = seed_project(project, Path.basename(project)).point
+      {:ok, view, _html} = live(conn, ~p"/projects?project=#{URI.encode(project)}")
+      wait_assigns(view, &(&1[:active_project_path] == project))
+      wait_for_projects(view, [project])
+
+      render_click(view, "select_quality_level", %{"level" => "fast"})
+
+      assert_push_event(view, "persist_state", %{
+        project: ^project,
+        scope_token: ^point,
+        node: "local"
+      })
+    end
+
+    # Point-wins separation, asserted at the helper boundary: the core keeps ONE
+    # mount row per OS path (`EvoGit.VCT.mount/2` re-points instead of adding a
+    # second row), so two points over one path cannot be seeded in the registry.
+    test "different points scope the same OS path separately" do
+      project =
+        Path.join(System.tmp_dir!(), "draft-scope-pure-#{System.unique_integer([:positive])}")
+
+      assigns = %{workbench_reconnect_params: %{"project" => project}, projects: []}
+
+      one =
+        EvoDashWeb.ProjectsLive.StatePersistence.draft_scope(%{
+          assigns
+          | projects: [%{path: project, point: "vct:///projects/one"}]
+        })
+
+      two =
+        EvoDashWeb.ProjectsLive.StatePersistence.draft_scope(%{
+          assigns
+          | projects: [%{path: project, point: "vct:///projects/two"}]
+        })
+
+      assert one == "vct:///projects/one"
+      assert two == "vct:///projects/two"
+      assert one != two
+      # Unmounted, the same path is its own token — never a point.
+      assert EvoDashWeb.ProjectsLive.StatePersistence.draft_scope(assigns) == project
+      # The active project's own point wins over the mount list …
+      assert EvoDashWeb.ProjectsLive.StatePersistence.draft_scope(
+               Map.put(assigns, :active_project, %{
+                 path: project,
+                 point: "vct:///projects/active"
+               })
+               |> Map.put(:projects, [%{path: project, point: "vct:///projects/stale"}])
+             ) == "vct:///projects/active"
+
+      # … and a page with no project at all has no scope at all.
+      assert is_nil(
+               EvoDashWeb.ProjectsLive.StatePersistence.draft_scope(%{
+                 workbench_reconnect_params: %{},
+                 projects: []
+               })
+             )
+    end
+
+    # A draft persisted under the OLD raw-path key is pushed back with `project`
+    # and no `scope_token`; the restore handler must keep accepting it, and must
+    # not choke on a scoped payload either.
+    test "restore_state accepts a path-keyed payload without a scope token", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      project = Path.join(tmp_dir, "draft-restore-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(project)
+      mount = seed_project(project, Path.basename(project))
+      {:ok, view, _html} = live(conn, ~p"/projects?project=#{URI.encode(project)}")
+      wait_assigns(view, &(&1[:active_project_path] == project))
+
+      render_hook(view, "restore_state", %{
+        "project" => project,
+        "task_prompt" => "legacy path-keyed draft"
+      })
+
+      assert assigns(view)[:task_prompt] == "legacy path-keyed draft"
+
+      # A scope-stamped payload of the same project restores identically — the
+      # handler gates on node + project, never on the token.
+      render_hook(view, "restore_state", %{
+        "project" => project,
+        "scope_token" => mount.point,
+        "task_prompt" => "scoped draft"
+      })
+
+      assert assigns(view)[:task_prompt] == "scoped draft"
+    end
+  end
+
   describe "opening invalid directory" do
     setup do
       for project <- EvoGit.VCT.projects() do
@@ -1860,7 +1998,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       refute html =~ ~s(id="palette-search-input")
       assert html =~ Path.basename(project_a)
       assert html =~ project_a
-      refute html =~ mount.point
+      # The point appears ONLY as the draft-scope data attribute (its one
+      # legitimate rendering), never as element text.
+      refute html =~ ~r{>\s*#{Regex.escape(mount.point)}\s*<}
+      assert html =~ ~s(data-task-draft-scope="#{mount.point}")
     end
 
     test "palette_menu renders a per-entry forget button wired to the VCT point", %{
@@ -2602,6 +2743,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # The connecting gate renders — no local form/project data leaks through
       assert html =~ ~s(data-node-id="#{id}")
+      # The draft scope was cleared with the project, so the browser hook falls
+      # back to its un-scoped key instead of adopting another node's draft.
+      refute html =~ "data-task-draft-scope"
       assert html =~ ~s(class="loading loading-spinner loading-lg text-info")
       assert html =~ "Connecting to Test Target"
       refute html =~ ~s(id="prompt")
