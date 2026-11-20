@@ -39,23 +39,31 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   never raises. `persist/1` is the persist-direction entry point that wraps
   `build/1` + `EvoDash.ChatHistory.put_state/2`.
 
-  ## Settle-aware throttling (`persist/2`)
+  ## Signature-gated write coalescing (`persist/2`)
 
   The delta stream delivers a batch roughly every 75 ms, and every
   `EvoDash.ChatHistory.put_state/2` copies the whole transcript + thought
-  process through a GenServer call. `persist/2` therefore COALESCES streaming
-  writes: while the state is mid-stream (an OPEN `streaming: true` assistant
-  bubble is the mid-stream marker) a write is skipped when the previous write
-  for the SAME chat happened less than `@throttle_ms` ago.
+  process through a GenServer call.
 
-  SETTLED states always write — a state with no open streaming bubble is a
-  turn / finish / yield / attach / send / adopt / new-chat boundary, so every
-  authoritative snapshot is persisted. `force: true` always writes too, for
-  call sites that must write regardless. At most ~1 s of streamed text can be
-  lost if a tab closes mid-turn.
+  `persist/2` therefore gates writes on a SIGNATURE of the AUTHORITATIVE parts
+  of the state (`signature/1`): `chat_status`, `chat_task_status`,
+  `chat_task_id`, `chat_agent_id`, `session_id`, `session_mode`, `chat_node`,
+  `chat_draft`, `agent_message_count`, the selection fields, the number of
+  queued echoes, and the transcript's length plus each entry's
+  `{id, role, streaming, tool_status}` metadata.
 
-  The last-write marker is a PROCESS-DICTIONARY entry
-  (`{__MODULE__, :last_write, chat_id}`): `persist/2` only ever runs in the
+  Growth of streamed CONTENT — an entry's `text`/`html`, its `:reasoning` and
+  the thought-process buffer — is deliberately outside the signature, because
+  that is exactly what changes on every batch.
+
+  A CHANGED signature writes IMMEDIATELY, so no lifecycle or structural change
+  ever waits; `force: true` writes unconditionally; and an UNCHANGED signature
+  (pure streamed-text growth) still writes once `@throttle_ms` has elapsed, so
+  a long turn's text is at most ~1 s stale.
+
+  The last signature and last-write stamp are PROCESS-DICTIONARY entries
+  (`{__MODULE__, :last_signature, chat_id}` /
+  `{__MODULE__, :last_write, chat_id}`): `persist/2` only ever runs in the
   owning LiveView process, so this needs no GenServer, ETS table or global
   state, and it dies with that process — a remounted tab is a fresh process
   and writes immediately, and a chat switch is a different key.
@@ -81,9 +89,32 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   @session_modes [:interactive, :one_shot]
   @max_queued_echoes 20
 
-  # Minimum gap between two MID-STREAM writes of the same chat (see the
-  # moduledoc). Settled states and `force: true` bypass it entirely.
+  # Minimum gap between two writes of the same chat whose authoritative
+  # SIGNATURE did not change (pure streamed-text growth). A signature change and
+  # `force: true` bypass it entirely.
   @throttle_ms 1000
+
+  # Authoritative state fields: everything whose change must reach
+  # `EvoDash.ChatHistory` immediately. Streamed CONTENT (entry text/html, an
+  # entry's `:reasoning`, `thought_process`) is deliberately absent — it is what
+  # grows on every ~75 ms delta batch.
+  @signature_fields [
+    :chat_status,
+    :chat_task_status,
+    :chat_task_id,
+    :chat_agent_id,
+    :session_id,
+    :session_mode,
+    :chat_node,
+    :chat_draft,
+    :agent_message_count,
+    :selected_model_id,
+    :model_spec,
+    :model_selection_scope,
+    :model_selection_error,
+    :workbench_draft_key,
+    :assistant_conversation_id
+  ]
 
   @doc """
   Builds the persisted state map from the LiveView's assigns.
@@ -120,9 +151,10 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   Persists conversation state. Unsaved browser and workbench drafts keep their
   edits in the temporary draft store until a message or a task starts a conversation.
 
-  Streaming writes are coalesced to at most one per `#{@throttle_ms}` ms per
-  chat; a SETTLED state (no open `streaming: true` transcript entry) and any
-  call with `force: true` write unconditionally. Returns the socket unchanged.
+  Writes are gated on the AUTHORITATIVE-state signature: a lifecycle or
+  structural change writes immediately, `force: true` always writes, and pure
+  streamed-text growth is coalesced to at most one write per `#{@throttle_ms}` ms
+  per chat. Returns the socket unchanged.
   """
   @spec persist(Phoenix.LiveView.Socket.t(), keyword()) :: Phoenix.LiveView.Socket.t()
   def persist(socket, opts \\ []) do
@@ -159,15 +191,18 @@ defmodule EvoDashWeb.HomeLive.ChatState do
 
   def edited(socket), do: Phoenix.Component.assign(socket, :draft_edited?, true)
 
-  # Settle-aware write gate: always write a settled state or an explicit
-  # `force: true`, otherwise coalesce streaming writes to one per
-  # `@throttle_ms` per chat. Total — a missing marker means "never written",
-  # which writes immediately.
+  # Signature-gated write gate: a CHANGED authoritative signature and an
+  # explicit `force: true` write immediately; an UNCHANGED signature — pure
+  # streamed-text growth — still writes once per `@throttle_ms`. Total: a
+  # missing marker means "never written", whose `:no_signature` sentinel differs
+  # from every real signature, so the first write always happens.
   defp write_state?(chat_id, state, opts) do
+    signature = signature(state)
+
     cond do
-      force?(opts) -> mark_write(chat_id)
-      not mid_stream?(state) -> mark_write(chat_id)
-      throttle_elapsed?(chat_id) -> mark_write(chat_id)
+      force?(opts) -> mark_write(chat_id, signature)
+      signature != last_signature(chat_id) -> mark_write(chat_id, signature)
+      throttle_elapsed?(chat_id) -> mark_write(chat_id, signature)
       true -> false
     end
   end
@@ -178,20 +213,43 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   defp force?(opts) when is_list(opts), do: Keyword.get(opts, :force, false) == true
   defp force?(_opts), do: false
 
-  # The ONLY mid-stream marker is an OPEN streaming transcript bubble: it exists
-  # exactly between a text chunk and the turn/finish/yield boundary that closes
-  # it, which is what makes "no streaming entry" mean "settled".
-  defp mid_stream?(state) when is_map(state) do
-    case Map.get(state, :transcript) do
-      entries when is_list(entries) -> Enum.any?(entries, &streaming_entry?/1)
-      _entries -> false
+  # The signature covers everything AUTHORITATIVE and excludes streamed content:
+  # a lifecycle/structural change must reach the store at once, while text
+  # growth is coalesced. Total — a garbage state or entry still yields a stable
+  # term rather than raising.
+  defp signature(state) when is_map(state) do
+    {Map.take(state, @signature_fields), echo_signature(state), transcript_signature(state)}
+  end
+
+  defp signature(_state), do: :invalid_state
+
+  defp echo_signature(state) do
+    case Map.get(state, :queued_echoes) do
+      echoes when is_list(echoes) -> length(echoes)
+      _echoes -> :no_echoes
     end
   end
 
-  defp mid_stream?(_state), do: false
+  # Transcript growth is authoritative only in its SHAPE: an appended entry, a
+  # streaming → finalized flip or a tool status change. The entry's
+  # text/html/reasoning grow on every delta batch and are excluded.
+  defp transcript_signature(state) do
+    case Map.get(state, :transcript) do
+      entries when is_list(entries) -> {length(entries), Enum.map(entries, &entry_signature/1)}
+      _entries -> :no_transcript
+    end
+  end
 
-  defp streaming_entry?(%{streaming: true}), do: true
-  defp streaming_entry?(_entry), do: false
+  defp entry_signature(entry) when is_map(entry) do
+    {Map.get(entry, :id), Map.get(entry, :role), Map.get(entry, :streaming) == true,
+     Map.get(entry, :tool_status)}
+  end
+
+  defp entry_signature(_entry), do: :invalid_entry
+
+  defp last_signature(chat_id) do
+    Process.get({__MODULE__, :last_signature, chat_id}, :no_signature)
+  end
 
   defp throttle_elapsed?(chat_id) do
     case Process.get({__MODULE__, :last_write, chat_id}) do
@@ -200,8 +258,9 @@ defmodule EvoDashWeb.HomeLive.ChatState do
     end
   end
 
-  defp mark_write(chat_id) do
+  defp mark_write(chat_id, signature) do
     Process.put({__MODULE__, :last_write, chat_id}, System.monotonic_time(:millisecond))
+    Process.put({__MODULE__, :last_signature, chat_id}, signature)
     true
   end
 
