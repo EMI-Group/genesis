@@ -82,6 +82,15 @@ defmodule EvoDash.Application do
       # update phase/versions/error state and broadcasts transitions on
       # EvoGit.PubSub's "updates" topic.
       EvoDash.UpdateStatus,
+      # Sign in with ChatGPT: ONE loopback login implementation shared by the
+      # terminal CLI (`EvoDash.ChatGPTCLI`) and the dashboard. The
+      # DynamicSupervisor owns the short-lived `:temporary` flow processes (each
+      # binds its own 127.0.0.1 callback listener and stops it on every exit
+      # path); the facade owns the flow registry, the one-flow-per-account rule
+      # and the bounded retention of terminal results. Both start BEFORE the
+      # endpoint so a settings sign-in can begin without racing a page mount.
+      {DynamicSupervisor, strategy: :one_for_one, name: EvoDash.ChatGPTLogin.Supervisor},
+      EvoDash.ChatGPTLogin,
       # One instance per host: the `genesis_server` release serves the Phoenix
       # dashboard over HTTP (loopback by default) and has Erlang distribution
       # enabled/disabled at runtime on that same BEAM (`EvoGit.DaemonControl`,
