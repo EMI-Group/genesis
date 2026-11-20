@@ -243,6 +243,14 @@ Async `home_live/approval_workflow_review_test.exs` and `home_live/execution_ind
 The mounted stale-scope regression pins fail-closed browser review with `ApprovalWorkflow.dialog_index/3`, including a stale notification whose exact pending ID is reused by a new chat, and missing or malformed scopes.
 This test node contains no production fix for that source issue.
 
+## Known Issues
+
+- `system_live_test.exs` ("a legacy sample without llm_slots leaves the selection nil and never wedges the charts", async `EvoDashWeb.SystemLiveTest`) intermittently fails in a full `mix test apps/evo_dash/test` run at `refute html =~ "alpha"` (~line 1120): the refute covers the WHOLE page, and every page's shared sidebar renders `EvoDashWeb.WorkbenchComponent` (`mode: :projects`) from the BEAM-global `EvoGit.VCT` mount table, so a concurrently running async suite that mounts a project literally named `project-alpha` (`projects_live_test.exs` → "entering open_path mode seeds the datalist with project paths" via `seed_project/2`, plus `projects_live/workspaces_test.exs`'s `unique("alpha")` names) paints `project-alpha` into `#workbench-projects` and the refute fails; the captured page HTML shows the only `alpha` occurrences inside that sidebar list (`data-workbench-project-name="project-alpha"`, `<span ...>project-alpha</span>`), while `chart_samples == [legacy]` and `selected_llm_model == nil` are both correct at the failure.
+- The same page-wide refute also sees the sidebar's Active Tasks rows, which come from the run-wide `EvoGit.Store`/`EvoGit.TaskRegistry` for every suite, so any concurrently created task whose objective or path contains "alpha" would fail it the same way.
+- Failure rate measured on this host: 3 occurrences across 16 full-suite runs (seeds 844184 and 206760; 206760 failed once and passed on an identical re-run, so it is a concurrency/timing race, not pure seed ordering), and 0 occurrences across 32 seed variants of the file alone and 16 more seed variants under 16 CPU burners.
+- A file-only run never reproduces it, and neither does `mix test <system_live_test.exs> <projects_live_test.exs> --seed <flaky seed>` — the full async cohort (the project-mounting modules included) is required.
+- New chart assertions should scope to the chart card (or to the `chart_samples`/`selected_llm_model` assigns) instead of a whole-page `refute html =~`; `refute html =~ "select_llm_model"` and `refute html =~ ~s(<select name="model")` stay safe only because no layout surface uses those exact strings (the sidebar's history filters are `name="project"`/`"query"`/`"status"`).
+
 ## Notes for Agents — running these suites
 
 Use `mix test apps/evo_dash/test` (or an explicit file path).
