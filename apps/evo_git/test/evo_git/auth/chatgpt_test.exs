@@ -94,10 +94,10 @@ defmodule EvoGit.Auth.ChatGPTTest do
     owner = self()
 
     Req.default_options(
-      Keyword.put(current, :plug, fn conn ->
-        assert conn.host == "auth.openai.com"
-        assert conn.request_path == "/api/accounts/oauth/token"
-        {:ok, form, conn} = Plug.Conn.read_body(conn)
+      Keyword.put(current, :adapter, fn request ->
+        assert request.url.host == "auth.openai.com"
+        assert request.url.path == "/api/accounts/oauth/token"
+        form = IO.iodata_to_binary(request.body)
 
         assert %{
                  "client_id" => "oaiapp_test-work",
@@ -108,11 +108,15 @@ defmodule EvoGit.Auth.ChatGPTTest do
 
         send(owner, :refreshed)
 
-        Req.Test.json(conn, %{
-          "access_token" => "rotated-access",
-          "refresh_token" => "rotated-refresh",
-          "expires_in" => 3600
-        })
+        {request,
+         Req.Response.new(
+           status: 200,
+           body: %{
+             "access_token" => "rotated-access",
+             "refresh_token" => "rotated-refresh",
+             "expires_in" => 3600
+           }
+         )}
       end)
     )
 
@@ -145,12 +149,16 @@ defmodule EvoGit.Auth.ChatGPTTest do
     owner = self()
 
     Req.default_options(
-      Keyword.put(current, :plug, fn conn ->
+      Keyword.put(current, :adapter, fn request ->
         send(owner, {:refresh_started, self()})
 
         receive do
           :finish_refresh ->
-            Req.Test.json(conn, %{"access_token" => "new-access", "expires_in" => 3600})
+            {request,
+             Req.Response.new(
+               status: 200,
+               body: %{"access_token" => "new-access", "expires_in" => 3600}
+             )}
         end
       end)
     )
