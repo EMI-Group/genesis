@@ -2,8 +2,9 @@
 
 ## Intent
 
-`agents_live.ex` is the LiveView ONLY: `mount/3`, `handle_params/3`, one-expression `handle_info`/`handle_event` routers, `terminate/2` and the private template delegates (`selected_inspector_agent/1`, `inspector_scope/1`, `inspector_message_marker/2`, `commit_bg_class/1`, `shorten_sha/1`) that `agents_live.html.heex` calls as bare local functions.
+`agents_live.ex` is the LiveView ONLY: `mount/3`, `handle_params/3`, one-expression `handle_info`/`handle_event` routers and `terminate/2` — no template helpers, no presentation logic.
 Every state transition those routers delegate to lives in a module in this directory, and the template renders only what those modules computed.
+`agents_live.html.heex` is a THIN COMPOSITION (~50 lines): the `Layouts.app` shell, the remote-connection gate, the `.agents-page-layout` wrapper and three function-component calls — `TreePanel.tree_panel/1` (left column), `DetailPanel.detail_panel/1` (right column) and `Modals.modals/1` (the three modals).
 
 ## API Surface
 
