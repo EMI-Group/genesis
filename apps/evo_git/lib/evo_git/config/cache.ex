@@ -40,7 +40,7 @@ defmodule EvoGit.Config.Cache do
           resolved: map(),
           validation_errors: [EvoGit.Config.Schema.ValidationError.t()],
           generation: pos_integer(),
-          fingerprint: term()
+          fingerprint: non_neg_integer()
         }
 
   @doc """

@@ -143,7 +143,7 @@ defmodule EvoGit.Config do
 
   require Logger
 
-  alias EvoGit.Config.{Normalization, Settings}
+  alias EvoGit.Config.{Keys, Normalization, Settings}
 
   import Normalization,
     only: [
@@ -164,6 +164,12 @@ defmodule EvoGit.Config do
   # module's literal table, which is loaded before any user TOML is atomized.
   @model_profile_extra_keys [:context_window]
 
+  @typedoc """
+  Any value the config surface can hold: section maps, lists (model inventories,
+  writable paths), atoms (normalized enums, booleans, `nil`) and scalars.
+  """
+  @type config_value :: map() | [config_value()] | atom() | String.t() | number()
+
   # --- Public API ---
 
   @doc false
@@ -183,6 +189,7 @@ defmodule EvoGit.Config do
   def __strip_flat_llm_fields__(config), do: strip_flat_llm_fields(config)
 
   @doc false
+  @spec __stringify_keys__(term()) :: term()
   def __stringify_keys__(config), do: stringify_keys(config)
 
   @doc false
@@ -208,17 +215,31 @@ defmodule EvoGit.Config do
   @spec list_settings() :: [EvoGit.Config.Schema.schema_map()]
   def list_settings, do: Settings.list_settings()
 
-  @doc "Returns the snapshot's defaults plus persisted configuration, not scheduler overrides."
+  @doc """
+  Returns the snapshot's defaults plus persisted configuration, not scheduler overrides.
+
+  The same value as `resolve/0` — one implementation, two readings: `resolve`
+  answers "what does a runtime reader see", `show` answers "what is configured".
+  Neither includes live scheduler runtime overrides.
+  """
   @spec show() :: map()
-  def show, do: Settings.show()
+  def show, do: resolve()
 
   @doc """
   Returns a snapshot value at an atom, dotted string or nonempty atom/string
   list path (including section paths), without creating atoms.
+
   Missing paths return `{:error, {:unknown_setting, path}}`; malformed paths
   return `{:error, :invalid_path}`.
+
+  Compare `resolve/1`: for a MISSING path `resolve/1` answers the schema default
+  (possibly `nil`), while `show/1` — the operator/settings read — answers an
+  explicit `{:error, {:unknown_setting, path}}` so a typo is visible instead of
+  silently reading a default. A path that exists and holds `nil` returns `nil`
+  from both.
   """
-  @spec show(atom() | String.t() | [atom() | String.t()]) :: term()
+  @spec show(atom() | String.t() | [atom() | String.t()]) ::
+          config_value() | {:error, :invalid_path | {:unknown_setting, [String.t()]}}
   def show(path), do: Settings.show(path)
 
   @doc """
@@ -246,7 +267,7 @@ defmodule EvoGit.Config do
   # Deliberately does NOT call `resolve/0,1` (that would recurse through the
   # cache). ReqLLM credential side effects run here — on a build only, never on
   # a cache hit.
-  @spec build_snapshot(String.t()) :: map()
+  @spec build_snapshot(String.t()) :: EvoGit.Config.Cache.snapshot()
   def build_snapshot(dir) when is_binary(dir) do
     config_path = Path.join(dir, @config_filename)
     credentials_path = Path.join(dir, @credentials_filename)
@@ -344,8 +365,12 @@ defmodule EvoGit.Config do
 
       Config.resolve([:llm, :model])
       #=> "zai:glm-5" (or nil if not configured)
+
+  A MISSING path answers the schema default (which is `nil` for a key with no
+  default) and never an error — unlike `show/1`, which is the operator read and
+  reports `{:error, {:unknown_setting, path}}` so a typo is visible.
   """
-  @spec resolve(atom() | [atom()]) :: term()
+  @spec resolve(atom() | [atom()]) :: config_value()
   def resolve(key) when is_atom(key) do
     Map.get(resolve(), key) || Map.get(EvoGit.Config.Schema.defaults(), key)
   end
@@ -398,7 +423,8 @@ defmodule EvoGit.Config do
 
   Creates the config directory if it doesn't exist.
   Atom keys are automatically converted to strings for TOML serialization.
-  Validates the config against the schema before writing.
+  Validates the config against the schema before writing; a valid map is then
+  persisted by `persist_user_config/1`.
 
   A save raises `EvoGit.Config.Watcher`'s config-changed event, which runs the
   same reload as a watched file event and falls back to a guarded reload when
@@ -412,25 +438,38 @@ defmodule EvoGit.Config do
   def save_user_config(config) when is_map(config) do
     # Validate before writing
     case EvoGit.Config.Schema.validate(config) do
-      {:error, errors} ->
-        {:error, errors}
+      {:error, errors} -> {:error, errors}
+      {:ok, _valid} -> persist_user_config(config)
+    end
+  end
 
-      {:ok, _valid} ->
-        path = config_path()
-        dir = config_dir()
+  # The persistence half of `save_user_config/1`, WITHOUT validation: the map is
+  # assumed to be valid already. `EvoGit.Config.Settings.update/1` calls this
+  # after its own single `Schema.validate/1` pass over the normalized
+  # (atom-keyed) candidate, so a settings save validates once instead of twice —
+  # the second pass over the raw string-keyed candidate was inert anyway, because
+  # `Schema.validate/1` walks atom-keyed schema paths only.
+  #
+  # Callers that have NOT validated must use `save_user_config/1`. The error
+  # shapes are the persistence ones: `{:error, toml_encode_error}` or a
+  # filesystem error term.
+  @doc false
+  @spec persist_user_config(map()) :: :ok | {:error, term()}
+  def persist_user_config(config) when is_map(config) do
+    path = config_path()
+    dir = config_dir()
 
-        with :ok <- File.mkdir_p(dir),
-             config = strip_flat_llm_fields(config),
-             string_config = stringify_keys(config),
-             {:ok, toml} <- TomlElixir.encode(string_config),
-             :ok <- File.write(path, toml) do
-          # Synchronous refresh so the caller (and the settings page via
-          # `RemoteAPI.save_user_config/1`) sees the new values immediately:
-          # the watcher's config-changed event runs the same reload as a file
-          # event, falling back to a guarded reload when no watcher runs.
-          EvoGit.Config.Watcher.notify_change(dir)
-          :ok
-        end
+    with :ok <- File.mkdir_p(dir),
+         config = strip_flat_llm_fields(config),
+         string_config = stringify_keys(config),
+         {:ok, toml} <- TomlElixir.encode(string_config),
+         :ok <- File.write(path, toml) do
+      # Synchronous refresh so the caller (and the settings page via
+      # `RemoteAPI.save_user_config/1`) sees the new values immediately:
+      # the watcher's config-changed event runs the same reload as a file
+      # event, falling back to a guarded reload when no watcher runs.
+      EvoGit.Config.Watcher.notify_change(dir)
+      :ok
     end
   end
 
@@ -478,34 +517,12 @@ defmodule EvoGit.Config do
     end
   end
 
-  defp stringify_keys(map) when is_map(map) do
-    Map.new(map, fn
-      {key, value} when is_atom(key) -> {Atom.to_string(key), stringify_keys(value)}
-      {key, value} -> {key, stringify_keys(value)}
-    end)
-    |> Enum.reject(fn {_k, v} -> v == nil end)
-    |> Map.new()
-  end
-
-  defp stringify_keys(list) when is_list(list) do
-    Enum.map(list, &stringify_keys/1)
-  end
-
-  defp stringify_keys(nil), do: nil
-
-  defp stringify_keys({provider, opts}) when is_atom(provider) and is_list(opts) do
-    stringify_model_tuple({provider, opts})
-  end
-
-  defp stringify_keys(value), do: value
-
-  # Convert an LLMDB-compatible model tuple back to a map for TOML serialization.
-  # {:provider, [id: "x", base_url: "..."]} → %{"provider" => "provider", "id" => "x", ...}
-  defp stringify_model_tuple({provider, opts}) when is_atom(provider) and is_list(opts) do
-    Enum.reduce(opts, %{"provider" => Atom.to_string(provider)}, fn {key, value}, acc ->
-      key_str = if is_atom(key), do: Atom.to_string(key), else: key
-      Map.put(acc, key_str, stringify_keys(value))
-    end)
+  # TOML serialization: string keys, `nil` map entries dropped (TOML has no
+  # null) and an LLMDB model tuple rendered as its map form
+  # (`{:provider, [id: "x"]}` → `%{"provider" => "provider", "id" => "x"}`).
+  # Delegates to the ONE shared transform, `EvoGit.Config.Keys.stringify/2`.
+  defp stringify_keys(value) do
+    Keys.stringify(value, drop_nils: true, model_tuples: true)
   end
 
   @doc """
@@ -773,6 +790,7 @@ defmodule EvoGit.Config do
   `_api_key`. Returns `nil` if the credential key does not end with a
   recognized suffix.
   """
+  @spec credential_key_to_reqllm_key(String.t()) :: atom() | nil
   def credential_key_to_reqllm_key(credential_key) when is_binary(credential_key) do
     # Derive from credential key name: strip _API_KEY or _api_key suffix, downcase,
     # append _api_key. The config file is a trusted source, so String.to_atom/1
@@ -792,8 +810,11 @@ defmodule EvoGit.Config do
   Saves credential key-value pairs to the credentials TOML file.
 
   Takes a map of `%{"ENV_VAR_NAME" => "api_key_value"}` (string keys).
-  Deep merges the new credentials into any existing ones (new values override)
-  and writes the merged map to `credentials.toml`.
+  Merges the new credentials into any existing ones per key — a SHALLOW merge:
+  `credentials.toml` is a flat `ENV_VAR_NAME = "value"` table, so there is no
+  nesting to merge, a new value replaces the existing one on the SAME key, and
+  unknown existing keys are preserved unchanged. Passing `nil`/`""` for a key
+  writes that empty value rather than deleting the key.
 
   Creates the credentials file if it doesn't exist yet.
 
@@ -842,14 +863,12 @@ defmodule EvoGit.Config do
     end
   end
 
-  defp stringify_credential_keys(map) when is_map(map) do
-    Map.new(map, fn
-      {key, value} when is_atom(key) -> {Atom.to_string(key), value}
-      {key, value} -> {key, value}
-    end)
-  end
+  # `credentials.toml` is a FLAT `ENV_VAR_NAME = "value"` table, so the shared
+  # transform's recursion never descends past the one key level.
+  defp stringify_credential_keys(map), do: Keys.stringify(map)
 
   @doc false
+  @spec ensure_trailing_newline(String.t()) :: {:ok, String.t()}
   def ensure_trailing_newline(content) when is_binary(content) do
     {:ok, String.trim_trailing(content) <> "\n"}
   end
