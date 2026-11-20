@@ -11,10 +11,13 @@ Domain layer for the EvoDash Phoenix application. Contains the OTP `Application`
 - `./chatgpt_login.ex` + `./chatgpt_login/` → `EvoDash.ChatGPTLogin` (facade) + `EvoDash.ChatGPTLogin.Flow` / `EvoDash.ChatGPTLogin.Callback` — the ONE Sign in with ChatGPT loopback sign-in implementation shared by the dashboard wizard and the CLI
 - `./chatgpt_cli.ex` → `EvoDash.ChatGPTCLI` — `genesis chatgpt …` terminal client driven by `EvoDash.ChatGPTLogin` (owns no PKCE/state/callback/exchange/persist logic and starts no listener)
 - `./node_context.ex` → `EvoDash.NodeContext` — SSH remote-development thin client
+- `./project_directories.ex` → `EvoDash.ProjectDirectories` — node-aware project folder browser and mount helper (`browse/2`, `mount/5`) behind the workbench project window
+- `./project_git.ex` → `EvoDash.ProjectGit` — git status/branch/commit/diff reads and branch switching for a mounted project on its owning node (`head/2`, `snapshot/2`, `switch_branch/3`, `starting_commit/2`, `commits/4`, `commit_diff/3`, `diff/3`)
 - `./directory_picker.ex` + `./directory_picker/wx.ex` → `EvoDash.DirectoryPicker` (+ `EvoDash.DirectoryPicker.Wx` seam)
 - `./update_status.ex` → `EvoDash.UpdateStatus` — Tauri auto-update state hub
 - `./active_tasks.ex` → `EvoDash.ActiveTasks` — ETS-backed per-node-context last-known-state cache for the sidebar "Active Tasks" list (pure module over a boot-created named table, no process)
 - `./accent_cache.ex` → `EvoDash.AccentCache` — ETS-backed per-node last-known accent cache for the shell-wide config accent (pure module over a boot-created named table, no process)
+- `./workbench_sidebar_cache.ex` → `EvoDash.WorkbenchSidebarCache` — per-browser-transport last-known sidebar cache (`get/2`, `put/3`, keyed by the socket's `transport_pid`) so a `push_navigate` seeds the destination sidebar before it refetches
 - `./desktop_lifetime.ex` → `EvoDash.DesktopLifetime` — desktop Tauri-shell lifetime watcher (TCP pipe)
 - `./attached_file.ex` → `EvoDash.AttachedFile` — attached-objective-file reader (.txt/.md/.docx/.pdf)
 - `./markdown_render.ex` → `EvoDash.MarkdownRender` — MDEx markdown → safe HTML
@@ -22,6 +25,7 @@ Domain layer for the EvoDash Phoenix application. Contains the OTP `Application`
 - `./safe_call.ex` → `EvoDash.SafeCall` — exit/exception-safe synchronous and supervised asynchronous call boundary; wrappers preserve nested backend success/error envelopes.
 - `./source_status.ex` → `EvoDash.SourceStatus` — shared guarded wrapper over the optionally-present `EvoGit.SelfReflectiveSource` core backend (status/clone/update/available? with a tri-state `{:unavailable, reason}` degradation)
 - `./connection_diagnostics.ex` → `EvoDash.ConnectionDiagnostics` — attaches a `:telemetry` handler that copies each HTTP connection's peer address onto that connection process's `Logger.metadata`
+- `./mcp/` → `EvoDash.MCP.Server` (stateless JSON-RPC tools endpoint), `EvoDash.MCP.Tools` (transport adapter over `EvoGit.TaskControl.Tools`), `EvoDash.MCP.Auth` (loopback host/origin + `<config_dir>/mcp-token` checks) and `EvoDash.MCP.Links` (browser-link enrichment)
 
 ## API Surface
 
@@ -152,6 +156,21 @@ The local guard catches exits and missing modules only, so a local responder exc
 Runtime wrappers are synchronous forwards rather than asynchronous operations or authorization boundaries, and data wrappers such as `list_agents/1`, `get_agent_history/2`, `paused?/1` and task lists document empty/false fallbacks that can conflate unavailable with genuinely empty state.
 `get_resolved_config/1` and `get_recent_system_samples/1` preserve explicit success/error envelopes and are preferable when a diagnostic consumer must distinguish unavailable from empty.
 
+### `EvoDash.ProjectDirectories` (`project_directories.ex`)
+
+Node-aware project folder browser and mount helper behind the workbench project window's Browse/Create actions; every filesystem, `Path` and `Enum` step runs on the selected node through `EvoGit.RemoteNode.call_remote/4`, including that node's own `Path` implementation.
+`browse(target, requested)` accepts `:home` (resolved through the node's `System.user_home/0`) or an absolute path and answers `{:ok, %{path:, parent:, entries: [%{name:, path:}]}}` — directories only, case-insensitive name order, `parent` nil at the filesystem root — or an error (`:absolute_path_required`, `:directory_unavailable`, or the node's own atom reason).
+`mount(target, node_id, "open", directory, _)` registers an existing directory; `mount(target, node_id, "create", directory, name)` validates the name (`ProjectsLive.Project.validate_project_name/1` plus a `.`/`..`/NUL/`:` rejection), creates the directory on the node, then registers it.
+Both mount modes answer `{:ok, %{node_id:, path:}}` and register through `EvoDash.NodeContext.mount_project/3` (a VCT project mount on the node's own registry), so a non-directory frame or a failed mount collapses to `:mount_failed`; the `"create"` mode can additionally answer `:invalid_name` or a directory-creation error.
+
+### `EvoDash.ProjectGit` (`project_git.ex`)
+
+Git reads and branch actions for an ALREADY-MOUNTED project, each executed on its owning node through `EvoGit.Adapters.Git.run/2` (`NodeContext.call_remote/4`) with `core.fsmonitor=false`.
+`snapshot/2` verifies the path is one of the node's VCT project mounts and a work tree, then answers `{:ok, %{branch:, commit:, upstream:, ahead:, behind:, changes:, root:, branches:, subject:}}` from `git status --porcelain=v2 -z --branch` plus `for-each-ref`; `head/2` answers the short symbolic branch ref.
+`switch_branch/3` takes a `%{kind: :local | :remote, name: name}` map, `starting_commit/2` resolves a `%{ref: ref}` to a commit SHA, `commits/4` pages 30 commit rows (`%{sha:, short:, subject:, author:, date:}` plus `more?:`), and `commit_diff/3` / `diff/3` answer `{:ok, %{text:, clipped?:}}` with the diff capped at 256 KiB.
+Errors are values: `:project_unavailable` (not a mount of that node), `:not_a_repository`, `:node_unavailable`, plus git's own `{:error, {code, detail}}`.
+The sidebar panel that consumes this is the separate `EvoDashWeb.ProjectGit` component, not this module.
+
 ### `EvoDash.DirectoryPicker` (`directory_picker.ex`)
 
 GenServer serializing native directory/file-dialog usage (the dashboard's Browse buttons and the objective editor's attach-file button). "Native first, wx fallback" on all platforms:
@@ -181,6 +200,13 @@ Pure ETS-helper module (no process, no `use GenServer`) over a boot-created name
 
 Pure ETS-helper module (no process, no `use GenServer`) over a boot-created named public `:set` table `:evo_dash_accent_cache` (created by `EvoDash.Application.start/2` via the same idempotent `ensure_ets_table/2`, owned by the long-lived application process so it survives child-process restarts and lives for the whole `mix test` run). Holds the last-known shell-wide config accent per node context so a LiveView viewing a node paints ONLY that node's accent from the very first render (dead render, connected mount, cross-LiveView navigation, node switches) — no interim local/default color — the accent-flash fix for REMOTE nodes whose accent differs from the local one (a remote accent is only knowable via async RPC, which must never run on the render path). Keyed by the connection-target id ALONE (`nil` = local, target-id string = remote/pending) — deliberately NOT `{node_id, node}` like the ActiveTasks hub: the accent is a per-target CONFIG value, so the same target id must hit the same entry across the pending→connected flip of the BEAM node atom (a target's accent does not change when its connection completes; ActiveTasks keys by node because task data genuinely originates from a node). API: `get(node_id)` → `{:ok, accent} | :empty` (per-key `:ets.lookup`; `:empty` when never written or the table does not exist), `put(node_id, accent)` (`:ets.insert`, overwrite-on-reinsert; writers pass a normalized accent name), `reset/0` (`:ets.delete_all_objects` — test hygiene). Each single-object op is atomic; every function is `:ets.whereis`-guarded and degrades gracefully (`:empty` / no-op) before the app boots. Passive cache: written ONLY on the non-stale apply of a SUCCESSFUL async fetch — stale/dropped results and failed fetches never write, so a known warm value is never regressed. Consumers: `EvoDashWeb.LiveHooks.Appearance` — `on_mount/4` + every `handle_params/3` resolution seed `@accent_color` synchronously from `get/1` for the resolved node context (warm remote/pending visits and cross-page navigations paint correctly on the first paint), and `handle_accent_result/3` writes via `put/2` after every non-stale successful remote fetch (one fetch serves all later page loads).
 
+### `EvoDash.WorkbenchSidebarCache` (`workbench_sidebar_cache.ex`)
+
+GenServer owning a named public ETS table (`EvoDash.WorkbenchSidebarCache`) of last-known sidebar payloads keyed per BROWSER TRANSPORT: `put/3` and `get/2` take a `%Phoenix.LiveView.Socket{}` and key entries by its `transport_pid`.
+The point is `push_navigate`: the destination LiveView is new while the WebSocket transport survives, so it can seed the sidebar from the previous page's data and then refresh from the node.
+The first `put/3` for a pid wins `:ets.insert_new` on `{pid, :owner}` and casts `:monitor_transport`; the `:DOWN` handler deletes every entry for that pid, so entries never outlive their transport.
+Both calls are total (a non-socket argument or a missing table degrades to `nil` / `:ok`), and the consumers are `EvoDashWeb.LiveHooks.NodeAware` (`:remote_context`) and `EvoDashWeb.WorkbenchComponent` (`:project_registry`).
+
 ### `EvoDash.DesktopLifetime` (`desktop_lifetime.ex`)
 
 Desktop-mode Tauri-shell lifetime watcher (TCP pipe): the Rust shell binds a `TcpListener` on `127.0.0.1:0`, holds one connection per backend instance, and passes the port via `EVOGIT_LIFETIME_PORT`; the shell never writes on the pipe. When the shell dies the OS closes the socket, `:gen_tcp.recv/3` errors, and the watcher logs a warning and stops the VM (`System.stop(0)`), freeing the port. Appended by `EvoDash.Application.children/0` only when BOTH `EVOGIT_DESKTOP=1` and `EVOGIT_LIFETIME_PORT` are set; `init/1` self-disables when the port var is missing/empty/invalid. Lives in the frontend app by design and is inert outside desktop mode: the headless `genesis_server` release never sets the gating env vars. Test seams: `:parent_stop_fun` (app env, read at `init/1`), `:connect_retries` / `:connect_retry_delay` and `:recv_retries` / `:recv_retry_delay` / `:recv_fun` (`start_link` opts ONLY — `EvoDash.Application` starts the child with `[]`, so the production budgets are not tunable via config). **Production budget arithmetic** (constants at `desktop_lifetime.ex:62-67`): connect runs up to 5 attempts, each a `:gen_tcp.connect` with a 1000 ms timeout followed by a 200 ms sleep on failure → worst case ≈ 5 × 1200 ms ≈ 6 s; recv runs 3 retries × 200 ms. Because the shell binds its listener (and the OS backlog queues connects) BEFORE spawning the backend, the connect succeeds via backlog in milliseconds on every normal launch, so this budget only matters if the shell's accept thread is dead.
@@ -208,6 +234,14 @@ The public handler `handle_connection_start/4` reads `metadata[:remote_address]`
 Because `:telemetry.execute/3` runs handlers INLINE in the calling (connection) process, the metadata rides every later log line of that connection; it deliberately does NOT suppress or downgrade Bandit's protocol-error logging.
 Homed here (rather than extending `EvoDashWeb.Telemetry`) because it is a small, self-contained runtime-diagnostics concern wired from `EvoDash.Application.start/2`, not a metrics poller.
 Note: the default logger formatter only prints metadata keys listed in `config/config.exs`'s `config :logger, :default_formatter, metadata:` — the `remote_ip` / `remote_port` keys must be added there to actually appear in log output.
+
+### MCP endpoint (`mcp/`)
+
+`EvoDash.MCP.Server` is the stateless MCP JSON-RPC tools endpoint (accepted protocol versions `2025-11-25` and `2025-06-18`, exposed by `versions/0`): `handle/1` answers `initialize`, `ping`, `tools/list` and `tools/call`, treats an `id`-less `notifications/*` method as `:accepted`, and returns JSON-RPC errors for everything else.
+`EvoDash.MCP.Tools.list/0` delegates to the shared `EvoGit.TaskControl.Tools` catalog, and `call/2` adapts its answer into an MCP tool result (`%{content:, structuredContent:, isError:}`) with `EvoDash.MCP.Links.enrich/1` applied, or `{:invalid, message}` for invalid arguments.
+`EvoDash.MCP.Auth.authorize/1` is the local-only gate: a loopback `remote_ip`, an allowed `Host` (`localhost`/`127.0.0.1`/`::1`), a valid `Origin`, then a `Bearer` token compared with `Plug.Crypto.secure_compare/2` against `<config_dir>/mcp-token` (missing or malformed token → 503) — proxy headers are never trusted.
+`EvoDash.MCP.Links.enrich/1` builds the dashboard/agents/review browser URLs from the configured `EvoDashWeb.Endpoint.url()` (never request headers), adds a task link when the payload carries an `:id` or `:task_id`, and recurses into a `:tasks` list.
+The HTTP surface (`POST /mcp`) is `EvoDashWeb.Plugs.MCP`, mounted before the browser JSON parser; see `lib/evo_dash_web/CONTEXT.md`.
 
 ### `EvoDash.AttachedFile` (`attached_file.ex`)
 
