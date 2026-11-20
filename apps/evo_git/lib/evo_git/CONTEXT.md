@@ -143,10 +143,10 @@ Applied at `Platform.shell_args/1`'s PowerShell clause (shell tool + `Worktrees.
 
 ## Executable Resolution (`EvoGit.Executable`)
 
-`resolve/1` is system-first, bundled-fallback: a name on PATH returns UNCHANGED; only when absent is `priv/vendor/<platform>/` considered (regular file only); otherwise the ORIGINAL name returns — never a nonexistent absolute path.
-Pure `@doc false` helpers: `candidates/3` (Windows `git` → `<vendor>/mingit/cmd/git.exe`, other Windows → `<vendor>/<name>.exe`, elsewhere → `<vendor>/<name>`) and `bundled_path/3` (first EXISTING candidate else `nil`). A bundled bash is never resolved.
-`resolve_vendor_dir/0` = `<app_dir>/priv/vendor/<platform>` via `Application.app_dir(:evo_git, …)`, `:code.priv_dir/1` ONLY as fallback; NO env var/app env/config override. `vendor_platform/0` (`macos-<arch>` / `windows-x64` / `linux-<arch>`) and `arch_string/0` (else `unknown`) make an unsupported platform degrade silently to PATH (visible only as `SystemCheck.check_tool/1`'s `ErlangError :enoent`).
-**Vendored**: `rg` everywhere; `git` only for the LINUX desktop AND Linux server jobs (Windows = MinGit; macOS bundles `rg` only); `SystemCheck.check_tool/1` covers exactly `git` + `rg`. Platform strings are duplicated OUTSIDE Elixir (`genesis.nix` `vendorPlatform`/`postInstall`, `.github/workflows/build-desktop.yml` matrix `vendor_platform`/`rg_target` incl. `build-linux-server`, `nix/bundle-vendor.sh`); no native build toolchain exists (`mix bump.version` only rewrites `Cargo.*` text). Tests: `test/evo_git/executable_test.exs`.
+`resolve/1` is system-first, bundled-fallback: a name on PATH returns UNCHANGED; only when absent is `priv/vendor/<platform>/` considered (regular file only); otherwise the ORIGINAL name returns — never a nonexistent absolute path, and a bundled bash is never resolved.
+Pure `@doc false` helpers: `candidates/3` (Windows `git` → `<vendor>/mingit/cmd/git.exe`, other Windows → `<vendor>/<name>.exe`, elsewhere → `<vendor>/<name>`) and `bundled_path/3` (first EXISTING candidate else `nil`).
+`resolve_vendor_dir/0` = `Application.app_dir(:evo_git, …)/priv/vendor/<platform>` with `:code.priv_dir/1` ONLY as fallback and NO env/app-env/config override; `vendor_platform/0` (`macos-<arch>` / `windows-x64` / `linux-<arch>`) and `arch_string/0` (else `unknown`) make an unsupported platform degrade silently to PATH (visible only as `SystemCheck.check_tool/1`'s `ErlangError :enoent`).
+The vendored inventory, per-platform CI/Nix staging and the "adding a new binary" checklist live in root `../CONTEXT.md` § Platform-Specific Native Binaries; `SystemCheck.check_tool/1` covers exactly `git` + `rg`. Tests: `test/evo_git/executable_test.exs`.
 
 ## Known Issues
 
