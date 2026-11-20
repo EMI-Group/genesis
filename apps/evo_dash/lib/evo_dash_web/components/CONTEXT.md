@@ -123,6 +123,20 @@ Below `lg` the main content uses `pt-16` to clear the fixed navigation toggle; d
 The bottom-right configuration notice lists its detail lines through `EvoDashWeb.ConfigIssues.lines/1` (core `warnings` plus one line per schema `validation_error`), keeps the model-neutral "Configure now →" link, and never blames the LLM model.
 Shell navigation, branding, toggles, core default buttons, tabs, accordion summaries and notice close buttons use theme-token focus-visible outlines; core notices use one subtle ring, wrapping text and a translated Close label, default core buttons use `rounded-lg` and form labels `text-base-content/70`.
 
+### Shell motion (disclosures, transitions, palette, flash)
+
+Motion in this subtree composes the shared `assets/css/motion.css` foundation (`--motion-*` tokens, `motion-fade-*`/`motion-exit-*` keyframes, global reduced-motion backstop) — no new durations or easings are invented locally.
+The sidebar's Tools and Conversations disclosures are `details.motion-disclosure` + `phx-hook="DisclosureMotion"`, so open AND close animate; each carries a stable `id` (`workbench-tools`, `workbench-conversations`) because LiveView refuses `phx-hook` without one.
+Their `<summary>`s keep the `.workbench-row` layout and add a `group` class plus a trailing `hero-chevron-right` caret that rotates via `group-open:rotate-90` with `duration-[var(--motion-base)] ease-[var(--motion-ease-out)]` — the caret is a Tailwind utility, not a `motion.css` rule, so it needs no extra CSS.
+Carets stay visible in the collapsed `w-16` rail by design: `SidebarCollapse` hides only `.sidebar-label` spans, and the summary's own arithmetic (`.5rem .75rem` padding + 14 px icon + `.45rem` gap + 14 px caret ≈ 59 px) still fits the 64 px rail.
+Page-to-page navigation is a cross-document view transition enabled by `<meta name="view-transition" content="same-origin">` in `layouts/root.html.heex` (LiveView 1.2 has NO `phx-view-transition` attribute — sidebar links are full navigations, so the meta is the working mechanism), with custom timing in the not-yet-present `assets/css/view_transitions.css`.
+`#main-content` keeps `phx-hook="NodeSwitchFade"`; per-patch view transitions belong to `LiveSocket`'s `dom.onDocumentPatch` in `assets/js/app.js`, not to markup.
+Theme switching routes through the feature-detected `transitionTheme/1` helper in `root.html.heex`'s inline script (`document.startViewTransition(() => setTheme(theme))`, skipped under `prefers-reduced-motion`); only `phx:set-theme` and the cross-tab `storage` handler use it — the initial `applyTheme` and the OS `prefers-color-scheme` re-resolve stay direct so first paint never shows a transition.
+The project palette fades out instead of snapping: the overlay (`id="project-palette"`) and its backdrop both carry `phx-remove={JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})}`, which LiveView runs before detaching — no hook needed.
+Palette mode bodies are re-keyed as `<div id={"palette-body-" <> to_string(@palette_mode)} class="wizard-step-enter flex min-h-0 flex-1 flex-col">`, so menu → open-path → new-project → new-workspace enters with the shared entrance animation instead of a hard swap; the wrapper keeps `display:flex; flex-direction:column` so `.project-palette-list`'s `flex-1 overflow-y-auto` still scrolls.
+Flash toasts carry `animate-toast-enter` on the toast card (the matching `animate-toast-exit` remains unused because `AutoClearFlash` lives in `assets/js/app.js`).
+`CoreComponents.show/2` and `hide/2` transition `opacity,transform` — never `transition-all`.
+
 ### Task Form — Single-Card Two-Layout Design (`task_form_components.ex`)
 
 The launch panel is ONE card (`.input-card`) containing the objective textarea AND the bottom toolbar (`.input-controls`) as its last element, in normal flow (never `position: fixed`).
@@ -203,6 +217,17 @@ The project-settings foreign-repo editor implements the multi-repo read-write UI
 - **Overlay paint**: the legacy `--b1/--b2/--b3` DaisyUI namespace does not exist in the vendored DaisyUI 5 themes, so overlay rules in `app.css` use `color-mix(...)` / `var(--color-base-*)`, and `.dashboard-topbar` carries NO `backdrop-filter` (one would create a containing block trapping the fixed backdrop/overlay to the topbar strip).
 - **Latent focus bug (open, benign)**: the `FocusInput` hook re-focuses on `updated()` only when the element HAS class `focus-on-update` (inverted intent) and no markup adds it; benign while morphdom preserves focus.
 - **Regression guard**: `project_components_test.exs` pins the search input's `phx-keydown`, the overlay's `phx-click-away` (+ the backdrop's `phx-click`), and trigger rendering.
+
+### Shell motion — remaining gaps outside this node
+
+These are the pieces of the shell-motion work that live outside `./` and are therefore still missing:
+- `assets/css/view_transitions.css` does not exist yet, so `<meta name="view-transition" content="same-origin">` currently runs with the browser-default root cross-fade; it must be created with `::view-transition-old(page)`/`new(page)` (120 ms out / 160 ms in off the `--motion-*` tokens), a `#main-content { view-transition-name: page }` and a `#dashboard-root { view-transition-name: project-swap }` rule, REDUCED-MOTION overrides, and an `@import` from `app.css` placed LAST so it wins over the base layers.
+- Per-patch subtree swaps need `LiveSocket`'s `dom.onDocumentPatch` in `assets/js/app.js` (LiveView 1.2 exposes no markup attribute); `#main-content` keeps `phx-hook="NodeSwitchFade"` until then.
+- `AutoClearFlash` (`assets/js/app.js`) still removes toasts without the shipped `animate-toast-exit` transition.
+- `WorkbenchActiveTasks.format_elapsed/1` (elapsed-seconds string) and `live/home_live/assistant_message.ex`'s private `format_duration/1` (milliseconds) are near-duplicates; `EvoDashWeb.Helpers.format_duration/1` has not been added yet and neither call site delegates.
+- `EvoDashWeb.Helpers.config_status_badge/1` and its private `format_config_item/1` have no caller and are still present.
+- `live/projects_live/async_load.ex` still resolves workspace members with `NodeContext.workspace_members/2` per workspace (1 + W calls, each an `:erpc.call` when remote) instead of the batched `EvoGit.VCT.workspace_entries/1,2`; the palette's precomputed member `count` consumes whatever list the page hands it, so switching the loader needs no markup change.
+- The Tools/Conversations carets are hidden with nothing at the collapsed `w-16` rail; they fit by ~5 px, so an optional `#sidebar[data-sidebar-collapsed="true"] .workbench-tools > summary > .hero-chevron-right { display: none }` belongs in `assets/css/workbench.css`.
 
 ### Sidebar must stay `overflow-visible` — SSH node-selector dropdown clipping
 
