@@ -1259,14 +1259,33 @@ defmodule EvoDashWeb.ProjectsLiveTest do
                "New conversation"
              )
 
-      assert has_element?(view, "#workbench-history-search-toggle[aria-expanded=false]")
-      assert has_element?(view, "#workbench-history-query[hidden]")
+      # The right panel is CLOSED in the server-rendered markup: the open/close
+      # animation is JS+CSS only, so the initial DOM is the closed state and its
+      # filters are real server-rendered controls (no collapsed search toggle).
+      assert has_element?(view, "#workbench-history-toggle[aria-expanded=false]")
+      assert has_element?(view, "#workbench-history[hidden][data-panel-state=closed]")
+      assert has_element?(view, "#workbench-history-search[name=query]")
+      refute has_element?(view, "#workbench-history-search[hidden]")
+      refute has_element?(view, "#workbench-history-query[hidden]")
+
+      # The project filter DEFAULTS to the project being viewed, and the scope
+      # label is server-rendered from the resolved project registry entry.
+      assert has_element?(
+               view,
+               "#workbench-history-project-filter option[selected][value='#{tmp_dir}']"
+             )
+
+      assert has_element?(view, "#workbench-history-project", "Workbench project")
 
       assert has_element?(
                view,
                "#workbench-idle [data-workbench-idle-window]:not([hidden])",
                "No window selected"
              )
+
+      # The panel's first read is asynchronous — the empty flag only exists once
+      # a completed load returned no rows, so await it instead of racing it.
+      render_async(view, async_wait_budget())
 
       assert has_element?(view, "#workbench-history-content[data-workbench-history-empty=true]")
       refute has_element?(view, "#task-form")
