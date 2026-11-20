@@ -12,6 +12,12 @@ defmodule EvoGit.Store.Operations.SafetyTest do
       `Logger.warning`'d
     * `size/1` = SUM of both tables' ROW COUNTS (COUNT(*) semantics — corrupt
       rows count too; never PRAGMA byte math)
+    * a whole-set LOAD failure (a cell whose physical type mismatches the raw
+      twin's declared type, which raises inside `Repo.all/1` before any
+      per-row boundary) falls back to CHUNKED re-reads: the good rows keep
+      their insertion order, the poisoned rows are skipped with exactly one
+      warning each, and the fallback never costs one query per row for a whole
+      poisoned database
     * `TaskInfo.ref` is always `nil` (runtime-only), `status || :pending`
 
   Every test boots its OWN unnamed dynamic `EvoGit.Repo` instance
@@ -35,6 +41,13 @@ defmodule EvoGit.Store.Operations.SafetyTest do
   alias EvoGit.Store.Schemas.TaskRow
   alias EvoGit.Store.Schemas.TaskRowRaw
   alias EvoGit.TestSupport.StoreTemplate
+  alias Xqlite
+  alias XqliteNIF
+
+  # `@id_chunk_size` in `EvoGit.Store.Operations.Safety` — the batch width of
+  # the load-failure fallback. Duplicated here so the 133-row fixture can prove
+  # its poisoned rows really straddle two chunks.
+  @chunk_size 100
 
   # ONE schema-complete template per module; each test copies it and boots its
   # OWN database file from the copy.
@@ -67,6 +80,11 @@ defmodule EvoGit.Store.Operations.SafetyTest do
     # test body). Boot then only has to run the probe-guarded no-op migrations.
     Process.get(:store_template_copy).(path)
 
+    # The path, not just the pid: the load-failure suite below injects
+    # wrong-typed cells (a TEXT value in an INTEGER column) with raw SQL on a
+    # side connection, which the typed schema can never produce.
+    Process.put(:store_sqlite_path, path)
+
     {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)
 
@@ -86,10 +104,9 @@ defmodule EvoGit.Store.Operations.SafetyTest do
 
   defp with_repo(pid, fun), do: RepoScope.with_repo(pid, fun)
 
-  # Seeds one GOOD task row through the TYPED schema — `insert_all` dumps
-  # values through the schema's Ecto types (thin Codec delegation), i.e. the
-  # canonical wire format. Returns the id.
-  defp insert_task!(pid, overrides) do
+  # One GOOD task row (typed/dumped wire values) — the shape `insert_task!/2`
+  # and the bulk seeder below share.
+  defp task_row(overrides) do
     defaults = [
       id: "task_#{System.unique_integer([:positive, :monotonic])}",
       type: :evolve,
@@ -112,10 +129,50 @@ defmodule EvoGit.Store.Operations.SafetyTest do
       updated_at: "2024-01-02T03:04:05.678Z"
     ]
 
-    row = Keyword.merge(defaults, overrides)
+    Keyword.merge(defaults, overrides)
+  end
+
+  # Seeds one GOOD task row through the TYPED schema — `insert_all` dumps
+  # values through the schema's Ecto types (thin Codec delegation), i.e. the
+  # canonical wire format. Returns the id.
+  defp insert_task!(pid, overrides) do
+    row = task_row(overrides)
 
     {1, nil} = with_repo(pid, fn -> Repo.insert_all(TaskRow, [row]) end)
     Keyword.fetch!(row, :id)
+  end
+
+  # Seeds `count` GOOD rows in ONE statement (insertion order = the returned
+  # id order), so the chunked-fallback case does not pay one write per row.
+  defp insert_tasks!(pid, count) do
+    rows =
+      Enum.map(1..count, fn n ->
+        task_row(id: "row_" <> String.pad_leading(Integer.to_string(n), 3, "0"))
+      end)
+
+    {^count, nil} = with_repo(pid, fn -> Repo.insert_all(TaskRow, rows) end)
+    Enum.map(rows, &Keyword.fetch!(&1, :id))
+  end
+
+  # Overwrites one column on the named rows with the given RAW text through a
+  # side `Xqlite` connection — the typed schema can never produce a value whose
+  # physical type mismatches the raw twin's declared field type.
+  defp overwrite_raw!(ids, column, raw_text) when is_list(ids) do
+    path = Process.get(:store_sqlite_path)
+    {:ok, conn} = Xqlite.open(path)
+
+    try do
+      Enum.each(ids, fn id ->
+        {:ok, _} =
+          XqliteNIF.execute(
+            conn,
+            "UPDATE tasks SET #{column} = ?1 WHERE id = ?2",
+            [raw_text, id]
+          )
+      end)
+    after
+      :ok = XqliteNIF.close(conn)
+    end
   end
 
   # Seeds one task row with ARBITRARY raw column text (bypassing the typed
@@ -225,6 +282,64 @@ defmodule EvoGit.Store.Operations.SafetyTest do
       second = insert_task!(pid, id: "row_b")
 
       assert ids(Safety.safe_select_all_tasks(pid)) == [first, second]
+    end
+  end
+
+  # ── safe_select_all_tasks/1 — chunked load-failure fallback ───────────────
+
+  describe "safe_select_all_tasks/1 chunked fallback (load-failure class)" do
+    test "133 rows with 3 wrong-typed cells spread over both id chunks → 130 rows, order preserved, one skip warning each" do
+      pid = start_repo!(:tasks_chunked)
+
+      all_ids = insert_tasks!(pid, 133)
+
+      # A TEXT value in the INTEGER `agent_count` column: Ecto's struct loader
+      # RAISES inside `Repo.all/1` for the WHOLE set, before any per-row
+      # boundary can see the row — the load-failure class that triggers the
+      # chunked re-read (`@id_chunk_size` = 100, so the id list splits into
+      # 100 + 33). Positions 25 and 75 poison the FIRST chunk (which therefore
+      # also takes the per-row narrowing path while keeping its other 98 rows)
+      # and position 110 poisons the SECOND — both chunks are exercised for
+      # real, not just the one that happens to hold a bad row.
+      poisoned = [Enum.at(all_ids, 24), Enum.at(all_ids, 74), Enum.at(all_ids, 110)]
+      overwrite_raw!(poisoned, "agent_count", "poisoned")
+
+      # Guard the fixture: the "spread across chunks" claim above is what makes
+      # this test exercise chunking, so it must hold for the real chunk size.
+      first_chunk = Enum.take(all_ids, @chunk_size)
+      assert length(all_ids) > @chunk_size
+      assert Enum.at(all_ids, 24) in first_chunk
+      assert Enum.at(all_ids, 74) in first_chunk
+      refute Enum.at(all_ids, 110) in first_chunk
+
+      {tasks, logs} = with_log(fn -> Safety.safe_select_all_tasks(pid) end)
+
+      good_ids = all_ids -- poisoned
+
+      # Every good row survives — 133 seeded, 3 poisoned, 130 returned — in the
+      # insertion order the id list delivered (`order_by_ids/2` restores it per
+      # chunk, and the chunk flat_map keeps chunk order).
+      assert length(tasks) == 130
+      assert ids(tasks) == good_ids
+      assert Enum.all?(tasks, &match?(%EvoGit.TaskInfo{}, &1))
+      assert Enum.all?(tasks, &(&1.agent_count == 1))
+
+      # The failed whole-set load is announced ONCE, then the fallback is named.
+      assert logs =~ "Store: batch row load failed for tasks"
+      assert logs =~ "falling back to chunked re-reads"
+
+      # Exactly ONE skip warning per poisoned row — never one per chunk, and
+      # never a duplicate from the batch + per-row paths.
+      skip_lines =
+        logs
+        |> String.split("\n")
+        |> Enum.filter(&(&1 =~ "Store: skipping undecodable row in tasks"))
+
+      assert length(skip_lines) == 3
+
+      for id <- poisoned do
+        assert Enum.count(skip_lines, &String.contains?(&1, "(id: #{inspect(id)})")) == 1
+      end
     end
   end
 
