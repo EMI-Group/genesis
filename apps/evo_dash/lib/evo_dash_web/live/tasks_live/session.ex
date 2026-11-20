@@ -23,6 +23,10 @@ defmodule EvoDashWeb.TasksLive.Session do
 
   attr(:task_id, :any, required: true)
   attr(:session_agent_id, :any, default: nil)
+  # The close is an ASYNC mutation (the LiveView spawns it off-process), so the
+  # confirm button is disabled and shows a spinner while the request is in
+  # flight — a duplicate submit is also guarded server-side.
+  attr(:busy, :boolean, default: false)
 
   def confirm_close_session_modal(assigns) do
     ~H"""
@@ -67,8 +71,10 @@ defmodule EvoDashWeb.TasksLive.Session do
             type="button"
             class="btn rounded-md px-6 gap-2 bg-violet-600 text-white hover:bg-violet-700"
             phx-click="confirm_close_session"
+            disabled={@busy}
           >
-            <.icon name="hero-check" class="size-4.5" />
+            <span :if={@busy} class="loading loading-spinner loading-xs"></span>
+            <.icon :if={!@busy} name="hero-check" class="size-4.5" />
             {gettext("Close Session")}
           </button>
         </div>

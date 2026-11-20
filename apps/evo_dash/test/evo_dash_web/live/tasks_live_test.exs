@@ -1587,7 +1587,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       render_click(view, "open_cancel_modal", %{"task_id" => id})
       render_click(view, "confirm_cancel_task", %{})
 
-      assert EvoGit.Store.get_task(EvoGit.Store, id).status == :cancelled
+      # ASYNC: the cancel mutation runs OFF-PROCESS (EvoDash.SafeCall), so the
+      # store row settles after the click returns — await it rather than reading
+      # the click's HTML.
+      wait_until(fn -> EvoGit.Store.get_task(EvoGit.Store, id).status == :cancelled end)
 
       # Drains the mount page load AND the debounce armed by the cancellation's
       # own {:task_updated, ...} broadcast (see flush_tasks_load/2).
@@ -1602,7 +1605,8 @@ defmodule EvoDashWeb.TasksLiveTest do
       render_click(view, "open_cancel_modal", %{"task_id" => id})
       render_click(view, "confirm_cancel_task", %{})
 
-      assert EvoGit.Store.get_task(EvoGit.Store, id).status == :cancelling
+      # ASYNC: the cancel mutation runs OFF-PROCESS — await the store transition.
+      wait_until(fn -> EvoGit.Store.get_task(EvoGit.Store, id).status == :cancelling end)
 
       # Drains the mount page load AND the debounce armed by the cancellation's
       # own {:task_updated, ...} broadcast (see flush_tasks_load/2).
@@ -1615,9 +1619,16 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
 
       render_click(view, "open_cancel_modal", %{"task_id" => id})
-      html = render_click(view, "confirm_cancel_task", %{})
+      render_click(view, "confirm_cancel_task", %{})
 
-      assert html =~ "Failed to cancel task"
+      # ASYNC: the error flash arrives with `{{:cancel_result, id}, result}`
+      # AFTER the click returns — await the pushed flash instead of reading the
+      # click's HTML.
+      wait_until(fn -> render(view) =~ "Failed to cancel task" end)
+
+      # The settled result also clears the confirmation assign, so a failed
+      # cancel never leaves the page stuck behind an open dialog.
+      refute render(view) =~ "Cancel Task?"
 
       # Drain the mount's async page load so no offloaded store read is in
       # flight when this suite's isolated Store is torn down.
@@ -1714,13 +1725,14 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
 
       render_click(view, "open_force_kill_modal", %{"task_id" => id})
-      html = render_click(view, "confirm_force_kill_task", %{})
+      render_click(view, "confirm_force_kill_task", %{})
 
-      # NEW wording ("Failed to force kill task: %{reason}") — a sibling lib
-      # change not yet merged into this worktree. This single assertion may fail
-      # locally until that change lands; it must NOT be weakened to the old
-      # shared msgid ("Failed to cancel task: ...").
-      assert html =~ "Failed to force kill task"
+      # ASYNC: the force-kill mutation runs OFF-PROCESS, so its error flash
+      # arrives with `{{:force_kill_result, id}, result}` AFTER the click
+      # returns — await the pushed flash. The msgid is deliberately its own
+      # "Failed to force kill task: ..." (never the shared
+      # "Failed to cancel task: ..." wording).
+      wait_until(fn -> render(view) =~ "Failed to force kill task" end)
 
       # Drains the mount page load AND any debounce armed by the handler's
       # broadcast (see flush_tasks_load/2).
@@ -1748,10 +1760,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       render_click(view, "open_force_kill_modal", %{"task_id" => id})
       render_click(view, "confirm_force_kill_task", %{})
 
-      # Backend contract: force kill ⇒ :failed with result nil. The evo_git
-      # persistence change lands in a parallel workstream, so this assertion
-      # may fail until then — do NOT revert it.
-      assert EvoGit.Store.get_task(EvoGit.Store, id).status == :failed
+      # Backend contract: force kill ⇒ :failed with result nil. ASYNC: the kill
+      # runs OFF-PROCESS, so await the settled store row (and the wrapper's
+      # death) instead of sampling them right after the click.
+      wait_until(fn -> EvoGit.Store.get_task(EvoGit.Store, id).status == :failed end)
       refute Process.alive?(wrapper)
 
       # Drains the mount page load AND the debounce armed by the force-kill's
@@ -3018,11 +3030,11 @@ defmodule EvoDashWeb.TasksLiveTest do
     render(view)
   end
 
-  # The server-side session-kind filter is applied by `TasksLive.PageLoad` (the
-  # core SQL WHERE builder has no `session_mode` predicate, so the loader scans
-  # pages and paginates the MATCHING rows), which means BOTH the rendered rows
-  # AND the reported total must move with the filter — the total is observable
-  # through the result count and, for multiple pages, pagination.
+  # The session-kind filter is a SERVER-SIDE SQL predicate pushed into
+  # `TasksLive.PageLoad` (the store's WHERE builder has a `session_mode`
+  # predicate), so BOTH the rendered rows AND the reported total move with the
+  # filter — the total is observable through the result count and, for multiple
+  # pages, pagination. Nothing is scanned or re-paginated in the LiveView.
   describe "session_mode filter (server-side)" do
     test "interactive / oneshot / all move the rows AND the total", %{conn: conn} do
       insert_session_fixture!("oneshot", "one-shot alpha")
