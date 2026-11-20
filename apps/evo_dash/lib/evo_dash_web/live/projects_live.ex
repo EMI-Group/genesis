@@ -522,6 +522,15 @@ defmodule EvoDashWeb.ProjectsLive do
           workspace_create_seq: 0,
           # Monotonic stale-guard for the async clear-history batch.
           clear_history_seq: 0,
+          # Monotonic stale-guards + in-flight markers for the two async
+          # foreground operations the page no longer blocks on: a
+          # project-configured command (`run_command`, up to 30 s) and the
+          # task launch itself. Both results land as messages guarded by these
+          # seqs.
+          command_seq: 0,
+          command_running: nil,
+          task_launch_seq: 0,
+          task_launching: false,
           # True when this handle_params run has no `?project=` and is on the
           # local node — the async load continuation then auto-activates the
           # newest-opened project (replaces the old synchronous mount seed).
@@ -1903,10 +1912,25 @@ defmodule EvoDashWeb.ProjectsLive do
     {:noreply, socket}
   end
 
+  # Project-config-defined shell commands can run for up to 30 s (see
+  # run_project_command/2), so the System.cmd must NOT run in this process: it
+  # would freeze every other event, render and heartbeat on the tab for the
+  # whole command. The work moves into a supervised task under
+  # EvoDash.TaskSupervisor and the outcome arrives as
+  # `{{:command_result, seq, project_root, node, command}, result}` (doubly
+  # nested: `EvoDash.SafeCall.start/3` sends `{tag, result}`). The monotonic
+  # `:command_seq` is the stale-guard — only the newest run may touch the
+  # assigns/flash.
+  #
+  # NOTE: the Configure dialog's command buttons are rendered by
+  # `EvoDashWeb.ProjectComponents` (outside this module), so the in-flight
+  # feedback the page itself can give is the `:command_running` assign plus the
+  # "Running …" info flash — not a disabled button.
   @impl true
   def handle_event("run_command", %{"command" => command}, socket) do
     commands = socket.assigns.commands
     project_root = socket.assigns.active_project_path
+    node = socket.assigns[:current_node] || node()
 
     case Map.get(commands, command) do
       nil ->
@@ -1914,56 +1938,63 @@ defmodule EvoDashWeb.ProjectsLive do
          put_flash(socket, :error, gettext("Command not found: %{command}", command: command))}
 
       cmd_string ->
-        # Justified try/rescue: System.cmd runs arbitrary project-config-defined shell commands.
-        # A failing command should show a user-friendly error, not crash the LiveView.
-        try do
-          {output, exit_code} =
-            case :os.type() do
-              {:win32, _} ->
-                System.cmd("powershell", ["-Command", cmd_string],
-                  cd: project_root,
-                  stderr_to_stdout: true,
-                  timeout: 30_000
-                )
+        seq = Map.get(socket.assigns, :command_seq, 0) + 1
 
-              _ ->
-                System.cmd("bash", ["-c", cmd_string],
-                  cd: project_root,
-                  stderr_to_stdout: true,
-                  timeout: 30_000
-                )
-            end
+        case EvoDash.SafeCall.start(
+               self(),
+               {:command_result, seq, project_root, node, command},
+               fn -> run_project_command(cmd_string, project_root) end
+             ) do
+          {:ok, _pid} ->
+            {:noreply,
+             socket
+             |> assign(:command_seq, seq)
+             |> assign(:command_running, command)
+             |> put_flash(:info, gettext("Running '%{command}'…", command: command))}
 
-          if exit_code == 0 do
-            flash_type = :info
-
-            msg =
-              gettext("Command '%{command}' completed:\n%{output}",
-                command: command,
-                output: truncate_output(output)
-              )
-
-            {:noreply, put_flash(socket, flash_type, msg)}
-          else
-            msg =
-              gettext("Command '%{command}' failed (exit %{code}):\n%{output}",
-                command: command,
-                code: exit_code,
-                output: truncate_output(output)
-              )
-
-            {:noreply, put_flash(socket, :error, msg)}
-          end
-        rescue
-          e ->
-            msg =
-              gettext("Error running '%{command}': %{error}",
-                command: command,
-                error: Exception.message(e)
-              )
-
-            {:noreply, put_flash(socket, :error, msg)}
+          {:error, _reason} ->
+            # The task never started, so no result will arrive: do NOT set the
+            # running assign, and flash a retry-able error (the button still
+            # works, nothing is left wedged).
+            {:noreply,
+             put_flash(
+               socket,
+               :error,
+               gettext("Could not run '%{command}'. Please try again.", command: command)
+             )}
         end
+    end
+  end
+
+  # The command's OS-branch System.cmd, moved out of the LiveView process (see
+  # the "run_command" event clause). Same options as before: the project root as
+  # cwd, stderr merged into stdout, and a 30 s timeout. Returns
+  # `{:ok, output, exit_code}`; an exception becomes `{:error, message}` so the
+  # continuation can render the user-facing error instead of crashing.
+  defp run_project_command(cmd_string, project_root) do
+    # Justified try/rescue: System.cmd runs arbitrary project-config-defined shell commands.
+    # A failing command should show a user-friendly error, not crash the LiveView.
+    try do
+      {output, exit_code} =
+        case :os.type() do
+          {:win32, _} ->
+            System.cmd("powershell", ["-Command", cmd_string],
+              cd: project_root,
+              stderr_to_stdout: true,
+              timeout: 30_000
+            )
+
+          _ ->
+            System.cmd("bash", ["-c", cmd_string],
+              cd: project_root,
+              stderr_to_stdout: true,
+              timeout: 30_000
+            )
+        end
+
+      {:ok, output, exit_code}
+    rescue
+      e -> {:error, Exception.message(e)}
     end
   end
 
@@ -2431,6 +2462,145 @@ defmodule EvoDashWeb.ProjectsLive do
     # The Process dict memoization set up in mount/3 primes the OS file
     # cache so this deferred read is fast.
     {:noreply, assign(socket, :config_status, config_status())}
+  end
+
+  # Continuation of the ASYNC project command run (see the "run_command" event
+  # clause). Stale-guarded on the monotonic `:command_seq`, the project root the
+  # command was started for, and the node: a superseding run, a project switch
+  # or a node switch drops the result (the task's own output never lands on a
+  # different project/view).
+  @impl true
+  def handle_info({{:command_result, seq, project_root, node, command}, result}, socket) do
+    if seq != Map.get(socket.assigns, :command_seq, 0) or
+         project_root != socket.assigns[:active_project_path] or
+         node != (socket.assigns[:current_node] || node()) do
+      {:noreply, socket}
+    else
+      socket = assign(socket, :command_running, nil)
+
+      case result do
+        {:ok, {:ok, output, 0}} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :info,
+             gettext("Command '%{command}' completed:\n%{output}",
+               command: command,
+               output: truncate_output(output)
+             )
+           )}
+
+        {:ok, {:ok, output, exit_code}} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Command '%{command}' failed (exit %{code}):\n%{output}",
+               command: command,
+               code: exit_code,
+               output: truncate_output(output)
+             )
+           )}
+
+        {:ok, {:error, error}} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Error running '%{command}': %{error}",
+               command: command,
+               error: to_string(error)
+             )
+           )}
+
+        # The guarded call itself exited/raised inside the task (the OS work is
+        # already rescued in run_project_command/2, so this is the SafeCall
+        # boundary): report it as the same user-facing error.
+        {:error, reason} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Error running '%{command}': %{error}",
+               command: command,
+               error: inspect(reason)
+             )
+           )}
+      end
+    end
+  end
+
+  # Continuation of the ASYNC task launch (see do_task_submit/4): the start
+  # call runs in a supervised task, so THIS is where the prompt, the staged
+  # attachments and the printed form are finally cleared — never before the
+  # ack, which is what keeps a failed launch retry-able. Stale-guarded on the
+  # monotonic `:task_launch_seq`: a superseded launch's result must never clear
+  # the form of a newer submission.
+  #
+  # The message is DOUBLY nested — `EvoDash.SafeCall.start/3` sends
+  # `{tag, result}` for the tag `{:task_started, seq, task_type}` — so `result`
+  # is the SafeCall envelope: `{:ok, {:ok, task}}` on success,
+  # `{:ok, {:error, reason}}` for a refused start, and a bare `{:error, reason}`
+  # when the guarded call itself exited/raised inside the task.
+  @impl true
+  def handle_info({{:task_started, seq, task_type}, result}, socket) do
+    if seq != Map.get(socket.assigns, :task_launch_seq, 0) do
+      {:noreply, socket}
+    else
+      socket = assign(socket, :task_launching, false)
+
+      case result do
+        {:ok, {:ok, task}} ->
+          {:noreply,
+           socket
+           |> put_flash(
+             :info,
+             gettext("%{type} task started with ID: %{id}",
+               type: String.capitalize(to_string(task_type)),
+               id: task.id
+             )
+           )
+           |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
+           # The prompt is intentionally cleared after a successful launch.
+           # assign_form_defaults/1 resets @task_prompt to "" (so the server
+           # re-seeds data-layout="compact"), and the "clear_prompt" push_event
+           # empties the visible textarea — which morphdom skips under
+           # phx-update="ignore" — and removes the persisted draft, so neither
+           # the DOM nor a reload can resurrect the submitted prompt.
+           |> Assigns.assign_form_defaults()
+           # Staged binary attachments must survive mode changes but NOT a
+           # successful launch — cleared here (after assign_form_defaults,
+           # which keeps a fixed key list and has no knowledge of staging)
+           # rather than inside assign_form_defaults/1.
+           |> assign(:staged_attachments, [])
+           |> StatePersistence.maybe_persist_state()
+           |> push_event("clear_prompt", %{})}
+
+        {:ok, {:error, :no_task_model}} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Configure a model on this server before launching a task.")
+           )}
+
+        {:ok, {:error, reason}} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Failed to start task: %{reason}", reason: inspect(reason))
+           )}
+
+        {:error, reason} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Failed to start task: %{reason}", reason: inspect(reason))
+           )}
+      end
+    end
   end
 
   # --- GitHub Issues async results ---
@@ -3408,63 +3578,59 @@ defmodule EvoDashWeb.ProjectsLive do
           opts
         end
 
-      # Exit-safe launch: the store/RPC call is a `GenServer.call` (local) or an
-      # `:erpc` round-trip (remote) whose target can be dead, busy, or slower
-      # than the call timeout — either EXITS this LiveView. `SafeCall.run/1`
-      # turns that into `{:error, reason}`, which lands on the existing
-      # "Failed to start task" flash (the prompt is NOT cleared in that case).
-      # The wrapper is FLATTENED so the result keeps `start_task`'s documented
-      # `{:ok, task} | {:error, reason}` shape.
       # Validate model/agent/quality through the same launch boundary as GitHub
-      # fixes. A stale or unavailable picker fails before either start_task call.
-      start_result =
-        with {:ok, opts} <- LaunchOptions.apply(opts, socket.assigns) do
-          case SafeCall.run(fn ->
-                 if socket.assigns.remote? do
-                   NodeContext.start_task(socket.assigns.current_node, task_type, opts)
-                 else
-                   TaskRegistry.start_task(task_type, opts)
+      # fixes. A stale or unavailable picker fails BEFORE either start_task
+      # call — synchronously — so an invalid selection flashes without touching
+      # the form.
+      case LaunchOptions.apply(opts, socket.assigns) do
+        {:ok, opts} ->
+          # The launch itself is a store/RPC write (a `GenServer.call` locally,
+          # an `:erpc` round-trip remotely) that can take seconds, so it runs in
+          # a supervised task and the page stays responsive. The outcome arrives
+          # as `{{:task_started, seq, task_type}, result}` where `result` keeps
+          # `start_task`'s documented `{:ok, task} | {:error, reason}` shape:
+          # `EvoDash.SafeCall.run/1` turns a dead, busy or timed-out target into
+          # an ERROR VALUE instead of an EXIT that would take the page down, and
+          # SafeCall.start/3 wraps it as `{tag, result}`.
+          #
+          # The prompt, the staged attachments and the form are deliberately NOT
+          # cleared here: the ack owns that, so a launch that fails still leaves
+          # a retry-able form (a "Failed to start task" flash must never arrive
+          # with an emptied textarea).
+          remote? = socket.assigns.remote?
+          current_node = socket.assigns.current_node
+          seq = Map.get(socket.assigns, :task_launch_seq, 0) + 1
+
+          case SafeCall.start(self(), {:task_started, seq, task_type}, fn ->
+                 SafeCall.run(fn ->
+                   if remote? do
+                     NodeContext.start_task(current_node, task_type, opts)
+                   else
+                     TaskRegistry.start_task(task_type, opts)
+                   end
+                 end)
+                 |> case do
+                   {:ok, start_result} -> start_result
+                   {:error, reason} -> {:error, reason}
                  end
                end) do
-            {:ok, start_result} -> start_result
-            {:error, reason} -> {:error, reason}
+            {:ok, _pid} ->
+              {:noreply,
+               socket
+               |> assign(:task_launch_seq, seq)
+               |> assign(:task_launching, true)}
+
+            {:error, reason} ->
+              # The task never started, so no ack will arrive: clear the marker
+              # and report the failure exactly like a refused launch.
+              {:noreply,
+               socket
+               |> assign(:task_launching, false)
+               |> put_flash(
+                 :error,
+                 gettext("Failed to start task: %{reason}", reason: inspect(reason))
+               )}
           end
-        end
-
-      case start_result do
-        {:ok, task} ->
-          {:noreply,
-           socket
-           |> put_flash(
-             :info,
-             gettext("%{type} task started with ID: %{id}",
-               type: String.capitalize(to_string(task_type)),
-               id: task.id
-             )
-           )
-           |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
-           # The prompt is intentionally cleared after a successful launch.
-           # assign_form_defaults/1 resets @task_prompt to "" (so the server
-           # re-seeds data-layout="compact"), and the "clear_prompt" push_event
-           # empties the visible textarea — which morphdom skips under
-           # phx-update="ignore" — and removes the persisted draft, so neither
-           # the DOM nor a reload can resurrect the submitted prompt.
-           |> Assigns.assign_form_defaults()
-           # Staged binary attachments must survive mode changes but NOT a
-           # successful launch — cleared here (after assign_form_defaults,
-           # which keeps a fixed key list and has no knowledge of staging)
-           # rather than inside assign_form_defaults/1.
-           |> assign(:staged_attachments, [])
-           |> StatePersistence.maybe_persist_state()
-           |> push_event("clear_prompt", %{})}
-
-        {:error, :no_task_model} ->
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             gettext("Configure a model on this server before launching a task.")
-           )}
 
         {:error, reason} ->
           {:noreply,
