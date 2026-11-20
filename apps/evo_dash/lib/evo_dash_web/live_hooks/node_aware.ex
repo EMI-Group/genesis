@@ -807,11 +807,20 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   `"remote_connections"` broadcasts keep `@connection_statuses` fresh afterwards
   (no polling).
   """
-  def assign_node(socket, params) do
+  def assign_node(socket, params, opts \\ []) do
     node_param = params["node"]
+    preserve_unresolved? = Keyword.get(opts, :preserve_unresolved?, false)
 
     socket =
       case resolve_node_context(node_param) do
+        :local
+        when preserve_unresolved? and is_binary(node_param) and node_param not in ["", "local"] ->
+          socket
+          |> assign(:current_node, node())
+          |> assign(:current_node_name, node_param)
+          |> assign(:current_node_id, node_param)
+          |> assign(:remote_status, %{phase: :error, error: :not_found})
+
         :local ->
           socket
           |> assign(:current_node, node())

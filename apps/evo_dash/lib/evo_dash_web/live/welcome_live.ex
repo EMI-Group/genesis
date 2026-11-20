@@ -525,6 +525,9 @@ defmodule EvoDashWeb.WelcomeLive do
                     draft={@draft}
                     search_query={@search_query}
                     chatgpt={@chatgpt?}
+                    api_key_only={@auth_modes == ["api_key"]}
+                    key_placeholder={@key_placeholder}
+                    key_present={@key_present?}
                   />
                 <% :reasoning_schedule -> %>
                   <Steps.step_reasoning_schedule_body

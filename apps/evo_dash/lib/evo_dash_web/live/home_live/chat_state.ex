@@ -92,8 +92,8 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   end
 
   @doc """
-  Persists conversation state. Unsaved workbench tabs keep their edits in the
-  temporary draft store until a message or a task starts a conversation.
+  Persists conversation state. Unsaved browser and workbench drafts keep their
+  edits in the temporary draft store until a message or a task starts a conversation.
   """
   @spec persist(Phoenix.LiveView.Socket.t(), keyword()) :: Phoenix.LiveView.Socket.t()
   def persist(socket, opts \\ []) do
@@ -126,6 +126,10 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   def edited(socket), do: Phoenix.Component.assign(socket, :draft_edited?, true)
 
   def draft_key(%{workbench_draft_key: key}) when not is_nil(key), do: {:workbench, key}
+
+  def draft_key(%{assistant_client_id: id, current_session_id: nil} = assigns)
+      when is_binary(id),
+      do: {:assistant, id, EvoDashWeb.HomeLive.Workspace.scope(assigns)}
 
   def draft_key(_), do: nil
 

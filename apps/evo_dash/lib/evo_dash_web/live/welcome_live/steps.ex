@@ -90,33 +90,48 @@ defmodule EvoDashWeb.WelcomeLive.Steps do
             </p>
             <pre class="mt-2 whitespace-pre-wrap rounded-lg border border-base-300 bg-base-200/50 p-3 text-xs text-base-content/80">{@login_instructions}</pre>
           <% true -> %>
-            <form
-              id="wizard-auth-key-form"
-              phx-change="wizard_api_key"
-              phx-submit="noop"
-              class="space-y-2"
-            >
-              <label class="text-xs font-medium" for="wizard-api-key">
-                {gettext("API key")}
-              </label>
-              <input
-                id="wizard-api-key"
-                type="password"
-                name="api_key"
-                autocomplete="off"
-                class="input input-sm w-full"
-                placeholder={@key_placeholder}
-              />
-              <p :if={key_in_draft?(@draft)} class="text-xs text-base-content/60">
-                {gettext("A key is set for this session — type to replace it")}
-              </p>
-              <p :if={@key_present} class="text-xs text-base-content/60">
-                {gettext("A key is already stored for this provider.")}
-              </p>
-            </form>
+            <.api_key_form
+              draft={@draft}
+              key_placeholder={@key_placeholder}
+              key_present={@key_present}
+            />
         <% end %>
       </:auth_detail>
     </ProviderWizard.step_auth>
+    """
+  end
+
+  attr(:draft, :map, required: true)
+  attr(:key_placeholder, :string, default: nil)
+  attr(:key_present, :boolean, default: false)
+
+  defp api_key_form(assigns) do
+    assigns = assign(assigns, :form, to_form(%{}))
+
+    ~H"""
+    <.form
+      for={@form}
+      id="wizard-auth-key-form"
+      phx-change="wizard_api_key"
+      phx-submit="noop"
+      class="space-y-2"
+    >
+      <.input
+        field={@form[:api_key]}
+        id="wizard-api-key"
+        type="password"
+        label={gettext("API key")}
+        autocomplete="off"
+        class="input input-sm w-full"
+        placeholder={@key_placeholder}
+      />
+      <p :if={key_in_draft?(@draft)} class="text-xs text-base-content/60">
+        {gettext("A key is set for this session — type to replace it")}
+      </p>
+      <p :if={@key_present} class="text-xs text-base-content/60">
+        {gettext("A key is already stored for this provider.")}
+      </p>
+    </.form>
     """
   end
 
@@ -137,9 +152,19 @@ defmodule EvoDashWeb.WelcomeLive.Steps do
   attr(:search_query, :any, default: "")
   attr(:chatgpt, :boolean, default: false)
 
+  attr(:api_key_only, :boolean, default: false)
+  attr(:key_placeholder, :string, default: nil)
+  attr(:key_present, :boolean, default: false)
+
   def step_model_body(assigns) do
     ~H"""
     <div class="space-y-4">
+      <.api_key_form
+        :if={@api_key_only}
+        draft={@draft}
+        key_placeholder={@key_placeholder}
+        key_present={@key_present}
+      />
       <ProviderWizard.step_model
         models={@model_rows}
         selected={@draft["default_model"]}

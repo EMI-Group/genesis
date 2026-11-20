@@ -4340,6 +4340,68 @@ defmodule EvoDashWeb.HomeLiveTest do
     assert assigns(reopened).chat_id == first_chat_id
   end
 
+  test "standalone browser drafts are private to each browser tab", %{conn: conn} do
+    open_assistant = fn client_id ->
+      conn = conn |> recycle() |> put_connect_params(%{"guide_client_id" => client_id})
+      {:ok, view, _} = live(conn, "/assistant")
+      view
+    end
+
+    first = open_assistant.("browser-tab-one")
+    render_change(first, "chat_input", %{"message" => "Local unsent text"})
+    refute assigns(first).chat_id in EvoDash.ChatHistory.list_chats()
+    GenServer.stop(first.pid)
+
+    assert assigns(open_assistant.("browser-tab-two")).chat_draft == ""
+    assert assigns(open_assistant.("browser-tab-one")).chat_draft == "Local unsent text"
+  end
+
+  test "opening a one-shot conversation from history keeps its workbench tab", %{conn: conn} do
+    id = 987_654
+    key = {nil, node(), "/tmp/project", "123456789012345678901234"}
+
+    EvoDash.ChatHistory.put_state(id, %{
+      chat_node: node(),
+      chat_status: :ended,
+      session_mode: :one_shot,
+      transcript: [
+        %{id: "old-message", role: :user, text: "An existing conversation", streaming: false}
+      ],
+      workbench_draft_key: key
+    })
+
+    {:ok, view, _} = live(conn, "/assistant?session=#{id}")
+    assert assigns(view).current_session_id == id
+    assert assigns(view).session_mode == :one_shot
+    assert EvoDash.ChatHistory.get_state(id).workbench_draft_key == key
+    assert has_element?(view, "#chat-messages", "An existing conversation")
+  end
+
+  test "a stale saved node cannot send a workbench draft on the local node", %{conn: conn} do
+    test_pid = self()
+
+    install_session_seam(:home_session_start_runner, fn target, _opts ->
+      send(test_pid, {:unexpected_session_start, target})
+      {:error, :unexpected_session_start}
+    end)
+
+    query =
+      URI.encode_query(%{
+        "node" => "gone-target",
+        "wb_project" => "/tmp",
+        "wb_draft" => "123456789012345678901234"
+      })
+
+    {:ok, view, _} = live(conn, "/assistant?" <> query)
+    assert assigns(view).current_node_id == "gone-target"
+    assert assigns(view).workspace == nil
+
+    assert render_submit(view, "send_message", %{"message" => "keep my draft"}) =~
+             "Connect to the remote node"
+
+    refute_received {:unexpected_session_start, _}
+  end
+
   describe "optional project and source context" do
     test "atomic workspace send failure preserves the unsent draft and conversation", %{
       conn: conn

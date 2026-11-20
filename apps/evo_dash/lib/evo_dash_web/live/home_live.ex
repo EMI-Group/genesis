@@ -304,6 +304,7 @@ defmodule EvoDashWeb.HomeLive do
         socket =
           socket
           |> assign(base_assigns())
+          |> assign(assistant_client_id: assistant_client_id(socket))
           |> ApprovalWorkflow.init()
           |> Uploads.init(&handle_upload_progress/3)
 
@@ -314,6 +315,7 @@ defmodule EvoDashWeb.HomeLive do
   defp base_assigns do
     %{
       workspace: nil,
+      assistant_client_id: nil,
       assistant_conversation_id: nil,
       workspace_open: false,
       workspace_path: "",
@@ -395,11 +397,21 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   defp resolve_session(socket, param, params) do
+    case ModelSelection.pending_remote?(socket) do
+      true -> socket
+      false -> resolve_session_on_node(socket, param, params)
+    end
+  end
+
+  defp resolve_session_on_node(socket, param, params) do
     case SessionActions.parse_session(param) do
       {:ok, id} ->
-        if id == socket.assigns[:session_id], do: socket, else: reattach_session(socket, id)
+        if id == socket.assigns[:current_session_id],
+          do: socket,
+          else: reattach_session(socket, id)
 
-      :none when is_map_key(params, "wb_draft") and not is_nil(socket.assigns.session_id) ->
+      :none
+      when is_map_key(params, "wb_draft") and not is_nil(socket.assigns.current_session_id) ->
         new_workbench_draft(socket)
 
       :none ->
@@ -408,14 +420,40 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   defp reattach_session(socket, id) do
-    socket = socket |> Uploads.cancel_all() |> TaskPicker.reset()
+    state = cached_conversation(socket, id)
 
-    restored =
-      if connected?(socket) do
-        ChatState.restore(ChatHistory.get_state(id))
-      else
-        ChatState.restore(nil)
+    case state do
+      %{session_mode: :one_shot} ->
+        socket
+        |> reset_chat()
+        |> restore_chat(id, state)
+        |> assign(current_session_id: id, workbench_draft_key: state[:workbench_draft_key])
+        |> assign(ChatState.restore_selection(state, ModelSelection.selection_scope(socket)))
+
+      _ ->
+        attach_interactive_session(socket, id, ChatState.restore(state))
+    end
+  end
+
+  defp cached_conversation(socket, id) do
+    if connected?(socket) do
+      target = socket.assigns.current_node
+
+      case ChatHistory.get_state(id) do
+        %{chat_node: ^target} = state ->
+          state
+
+        state when is_map(state) and target == node() ->
+          if is_nil(state[:chat_node]), do: state
+
+        _ ->
+          nil
       end
+    end
+  end
+
+  defp attach_interactive_session(socket, id, restored) do
+    socket = socket |> Uploads.cancel_all() |> TaskPicker.reset()
 
     socket
     |> assign(
@@ -471,11 +509,12 @@ defmodule EvoDashWeb.HomeLive do
   defp restore_status(_status), do: :idle
 
   defp leave_session(socket) do
-    if is_nil(socket.assigns[:session_id]) do
+    if is_nil(socket.assigns[:current_session_id]) do
       socket
     else
       socket
       |> reset_chat()
+      |> assign(workbench_draft: nil, workbench_draft_key: nil)
       |> attach_default_chat()
       |> assign(
         session_id: nil,
@@ -647,7 +686,9 @@ defmodule EvoDashWeb.HomeLive do
   def handle_params(params, _url, socket) do
     prev_node = socket.assigns[:current_node]
     prev_node_id = socket.assigns[:current_node_id]
-    socket = socket |> NodeAware.assign_node(params) |> attach_chat(params)
+
+    socket =
+      socket |> NodeAware.assign_node(params, preserve_unresolved?: true) |> attach_chat(params)
 
     node_changed =
       socket.assigns.model_selection_resolved and
@@ -704,7 +745,7 @@ defmodule EvoDashWeb.HomeLive do
     key = {node_id, target, project, draft}
 
     cond do
-      socket.assigns[:workbench_draft_key] == key or socket.assigns[:session_id] ->
+      socket.assigns[:workbench_draft_key] == key or socket.assigns[:current_session_id] ->
         socket
 
       !connected?(socket) or (node_id && target == node()) ->
@@ -846,7 +887,8 @@ defmodule EvoDashWeb.HomeLive do
   def handle_event("new_chat", _params, socket) do
     if socket.assigns[:chat_status] in [:idle, :ended] do
       had_session? =
-        not is_nil(socket.assigns[:session_id]) or not is_nil(socket.assigns[:workbench_draft])
+        not is_nil(socket.assigns[:current_session_id]) or
+          not is_nil(socket.assigns[:workbench_draft])
 
       if key = ChatState.draft_key(socket.assigns), do: ChatHistory.delete_draft(key)
 
@@ -1939,9 +1981,8 @@ defmodule EvoDashWeb.HomeLive do
   defp start_new_chat(socket) do
     socket =
       if connected?(socket) do
-        chat_id = ChatHistory.new_chat()
-        ChatHistory.prune(10)
-        assign(socket, chat_id: chat_id, assistant_conversation_id: chat_id)
+        id = standalone_chat_id(socket.assigns.assistant_client_id)
+        assign(socket, chat_id: id, assistant_conversation_id: id)
       else
         socket
       end
@@ -1951,6 +1992,23 @@ defmodule EvoDashWeb.HomeLive do
     |> assign(workbench_draft: nil, workbench_draft_key: nil)
     |> ChatState.persist()
     |> TaskTracking.refresh()
+  end
+
+  defp standalone_chat_id(client) when is_binary(client), do: System.unique_integer([:positive])
+
+  defp standalone_chat_id(nil) do
+    id = ChatHistory.new_chat()
+    ChatHistory.prune(10)
+    id
+  end
+
+  defp assistant_client_id(socket) do
+    if connected?(socket) do
+      case get_connect_params(socket)["guide_client_id"] do
+        id when is_binary(id) and byte_size(id) in 1..128 -> id
+        _ -> nil
+      end
+    end
   end
 
   defp new_workbench_draft(socket) do
@@ -1967,6 +2025,23 @@ defmodule EvoDashWeb.HomeLive do
         new_workbench_draft(socket)
       else
         attach_default_chat(socket)
+      end
+    else
+      socket
+    end
+  end
+
+  defp attach_default_chat(%{assigns: %{assistant_client_id: client}} = socket)
+       when is_binary(client) do
+    key = ChatState.draft_key(socket.assigns)
+
+    if connected?(socket) do
+      case key && ChatHistory.get_draft(key) do
+        %{chat_id: id} = state ->
+          socket |> restore_chat(id, state) |> assign(model_selection_restore: state)
+
+        _ ->
+          start_new_chat(socket)
       end
     else
       socket

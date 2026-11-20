@@ -61,7 +61,8 @@ defmodule EvoDashWeb.HomeLive.SendPath do
            gettext("Connect to the remote node before sending a message.")
          )}
 
-      socket.assigns[:workspace_loading] == true ->
+      socket.assigns[:session_attach_pending?] == true or
+          socket.assigns[:workspace_loading] == true ->
         {:noreply,
          put_flash(socket, :error, gettext("Wait for the project selection to finish."))}
 

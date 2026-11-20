@@ -125,14 +125,12 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     next(view)
   end
 
-  # The OpenAI-compatible endpoint offers no authentication CHOICE, so its run
-  # has no auth step; the key still has to reach the page through the same
-  # transient `wizard_api_key` event that step's password form raises.
   defp custom_to_model(view) do
     pick(view, Presentation.custom_value())
-    render_change(view, "wizard_api_key", %{"api_key" => @custom_key})
-    render_change(view, "wizard_field_changed", %{"base_url" => @custom_base_url})
+    view |> form("#wizard-provider-form", base_url: @custom_base_url) |> render_change()
     next(view)
+    view |> form("#wizard-auth-key-form", api_key: @custom_key) |> render_change()
+    view
   end
 
   defp read_config do

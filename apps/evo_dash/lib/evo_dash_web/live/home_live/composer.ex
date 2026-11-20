@@ -450,7 +450,8 @@ defmodule EvoDashWeb.HomeLive.Composer do
   # resolved model — the Send button and the interrupt-turn button — never the
   # textarea.
   defp send_blocked?(assigns) do
-    compose_disabled?(assigns) or assigns[:workspace_loading] == true or
+    compose_disabled?(assigns) or assigns[:session_attach_pending?] == true or
+      assigns[:workspace_loading] == true or
       Workspace.missing_draft_project?(assigns) or
       assigns[:upload_in_progress] == true or not has_content?(assigns) or
       model_missing?(assigns) or model_error?(assigns)
