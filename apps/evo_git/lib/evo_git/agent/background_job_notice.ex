@@ -40,9 +40,10 @@ defmodule EvoGit.Agent.BackgroundJobNotice do
   @doc """
   Renders the `## Background Jobs` `<context>` sub-section for `jobs`.
 
-  Returns `""` (so `EvoGit.Agent.ContextBuilder.blank?/1` drops it) for `nil`
-  or `[]` — an agent with no background jobs keeps a byte-identical context
-  block.
+  Returns `""` (so a `nil`/blank section is dropped — the same
+  `EvoGit.Util.Strings.blank?/1` predicate `EvoGit.Agent.ContextBuilder.blank?/1`
+  delegates to) for `nil` or `[]` — an agent with no background jobs keeps a
+  byte-identical context block.
 
   Non-empty shape (one line per job, newest first as handed in):
 
@@ -201,7 +202,7 @@ defmodule EvoGit.Agent.BackgroundJobNotice do
   defp label_suffix(job) do
     case Map.get(job, :label) do
       label when is_binary(label) ->
-        case label |> flatten() |> truncate(@max_label_chars) do
+        case label |> flatten() |> EvoGit.Util.Strings.truncate(@max_label_chars, "...") do
           "" -> ""
           text -> " — " <> text
         end
@@ -214,14 +215,6 @@ defmodule EvoGit.Agent.BackgroundJobNotice do
   # Fold every whitespace run (newlines included) into ONE space so a job line
   # can never break the markdown list.
   defp flatten(text), do: text |> String.replace(~r/\s+/, " ") |> String.trim()
-
-  defp truncate(text, max) do
-    if String.length(text) > max do
-      String.slice(text, 0, max) <> "..."
-    else
-      text
-    end
-  end
 
   defp cap(text) do
     if String.length(text) > @max_rendered_chars do

@@ -98,6 +98,32 @@ defmodule EvoGit.AgentState.Record do
     {:result, "result", :json}
   ]
 
+  # The MUTABLE per-turn scalars: the only fields a RUNNING agent rewrites on
+  # every checkpoint. Everything else is excluded on purpose —
+  #   * identity and run facts (`depth`, `parent_id`, `branch`, `base_commit`,
+  #     `objective`, `redispatch`, …) never change after a run starts, so
+  #     rewriting them each turn would re-encode the same JSON for nothing;
+  #   * `pause_commit` has its own single-column write
+  #     (`EvoGit.AgentState.Store.put_pause_commit/4`) and `result` its own
+  #     (`mark_done/5`).
+  # The list is a SUBSET SELECTOR over `@field_specs`, so column names still
+  # come from the ONE source list above.
+  @volatile_field_keys [
+    :turn,
+    :usage,
+    :total_tokens,
+    :compression_count,
+    :current_commit,
+    :phase,
+    :pending_inputs,
+    :pending_tool_batch,
+    :status
+  ]
+
+  @volatile_field_specs Enum.filter(@field_specs, fn {key, _column, _type} ->
+                          key in @volatile_field_keys
+                        end)
+
   @doc "The `{field_key, column, type}` specs, in deterministic column order."
   @spec field_specs() :: [{atom(), String.t(), atom()}]
   def field_specs, do: @field_specs
@@ -105,6 +131,49 @@ defmodule EvoGit.AgentState.Record do
   @doc "The scalar field columns, in deterministic order."
   @spec field_columns() :: [String.t()]
   def field_columns, do: Enum.map(@field_specs, fn {_key, column, _type} -> column end)
+
+  # The two JSON columns NO roster consumer reads: `usage` is per-run
+  # accounting (read through `load/3`) and `pending_inputs` is the drained-input
+  # queue (read by the live session). `redispatch` and `objective` deliberately
+  # STAY in the roster projection — `EvoGit.Agent.Resume.RosterBatch.build_spec/2`
+  # rebuilds a subagent spec from both.
+  @roster_omitted_columns ["pending_inputs", "usage"]
+
+  @doc """
+  The LEAN column projection the roster reads select: `all_columns/0` minus the
+  two heavy JSON columns (`pending_inputs` and `usage`) that no roster consumer
+  reads.
+
+  `redispatch` and `objective` are NOT omitted (a resume rebuilds a spec from
+  them), and `decode_fields/1` tolerates an absent column: a roster record's
+  `fields` map still carries EVERY atom key, with `nil` for the two omitted
+  values.
+  """
+  @spec roster_columns() :: [String.t()]
+  def roster_columns do
+    Enum.reject(all_columns(), fn column -> column in @roster_omitted_columns end)
+  end
+
+  @doc """
+  The MUTABLE per-turn `{field_key, column, type}` specs (`volatile_columns/0`'s
+  source), in `field_specs/0` order.
+  """
+  @spec volatile_field_specs() :: [{atom(), String.t(), atom()}]
+  def volatile_field_specs, do: @volatile_field_specs
+
+  @doc """
+  The mutable per-turn columns: `turn`, `usage`, `total_tokens`,
+  `compression_count`, `current_commit`, `phase`, `pending_inputs`,
+  `pending_tool_batch` and `status`.
+
+  Deliberately EXCLUDES `pause_commit` (its own single-column write) and
+  `result` (written by `mark_done/5`) plus every identity/run fact, because
+  none of those change after a run starts.
+  """
+  @spec volatile_columns() :: [String.t()]
+  def volatile_columns do
+    Enum.map(@volatile_field_specs, fn {_key, column, _type} -> column end)
+  end
 
   @doc """
   Every column of an `agent_states` row, in the order `load/3` selects them.
@@ -140,6 +209,35 @@ defmodule EvoGit.AgentState.Record do
   end
 
   def encode_fields(_fields), do: []
+
+  @doc """
+  Encodes a caller `fields` map into `[{column, value}]` for EVERY volatile
+  column (`volatile_columns/0`), with REPLACE semantics: a key the caller
+  omitted encodes as SQL `NULL` instead of being skipped.
+
+  The caller must therefore supply the FULL volatile snapshot on every write —
+  unlike `encode_fields/1` there is no "leave the stored value alone" arm. A
+  non-map encodes the whole projection as `NULL`.
+
+  Encoding is type-driven ONLY: a nullable column (`usage`, `pending_inputs`,
+  `phase`, `current_commit`, `pending_tool_batch`) clears to `NULL`, while the
+  `NOT NULL` columns (`turn`, `total_tokens`, `compression_count`, `status`)
+  cannot hold one — `EvoGit.AgentState.Store.update_volatile/4` binds those
+  through `COALESCE` to their own table default.
+  """
+  @spec encode_volatile_fields(map()) :: [{String.t(), term()}]
+  def encode_volatile_fields(fields) when is_map(fields) do
+    Enum.map(@volatile_field_specs, fn {key, column, type} ->
+      case fetch_field(fields, key) do
+        {:ok, value} -> {column, encode_value(type, value)}
+        :error -> {column, nil}
+      end
+    end)
+  end
+
+  def encode_volatile_fields(_fields) do
+    Enum.map(@volatile_field_specs, fn {_key, column, _type} -> {column, nil} end)
+  end
 
   @doc "Decodes a column-keyed row map into the atom-keyed `fields` map."
   @spec decode_fields(map()) :: %{atom() => term()}

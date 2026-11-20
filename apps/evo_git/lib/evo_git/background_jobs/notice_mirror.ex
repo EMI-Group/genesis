@@ -4,7 +4,7 @@ defmodule EvoGit.BackgroundJobs.NoticeMirror do
 
   The mirror exists so the per-turn notice claim is ONE `:ets` operation instead of a `GenServer.call`: a busy, blocked or slow registry can no longer stall an agent's turn start, and the claim can never time out because there is no reply to wait for.
   The registry's own `%{jobs: ...}` map stays AUTHORITATIVE — the mirror is only a read path for that claim.
-  It is written and deleted exclusively by `EvoGit.BackgroundJobs.put_job/2` (the ONE state writer) plus the explicit drops in `prune_finished/1` and `terminate/2`, so every transition of every job keeps it correct.
+  It is written and deleted exclusively by `EvoGit.BackgroundJobs.put_job/2` (the ONE state writer) plus the explicit drops in `EvoGit.BackgroundJobs.Notice.prune_finished/1` and `EvoGit.BackgroundJobs.terminate/2`, so every transition of every job keeps it correct.
   A row is `{{owner_pid, job_id}, job}` and carries the FULL job record, so a claim needs no registry state lookup.
   Rows exist EXACTLY for terminal, unannounced jobs: any other state deletes the row, which is what makes a second immediate claim empty.
   `:ets.take/2` is atomic per key, so two concurrent claimants can never both win one job — the loser's take answers `[]` and skips that job, which is the whole exactly-once guarantee (no lock, no registry round trip).
@@ -12,6 +12,8 @@ defmodule EvoGit.BackgroundJobs.NoticeMirror do
   """
 
   require Logger
+
+  alias EvoGit.BackgroundJobs.Notice
 
   @type table :: :ets.tab() | nil
 
@@ -85,7 +87,7 @@ defmodule EvoGit.BackgroundJobs.NoticeMirror do
   def put(nil, _job), do: :ok
 
   def put(table, job) when is_map(job) do
-    if terminal?(job) and not Map.get(job, :announced, false) do
+    if Notice.terminal?(job) and not Map.get(job, :announced, false) do
       :ets.insert(table, {key(job), job})
     else
       :ets.delete(table, key(job))
@@ -177,8 +179,4 @@ defmodule EvoGit.BackgroundJobs.NoticeMirror do
   end
 
   defp key(job), do: {Map.get(job, :owner_pid), Map.get(job, :id)}
-
-  # Terminal = the job can never change status again, so it is eligible for a (single) completion notice.
-  defp terminal?(%{status: status}), do: status in [:completed, :killed, :failed]
-  defp terminal?(_job), do: false
 end

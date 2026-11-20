@@ -31,27 +31,42 @@ defmodule EvoGit.Store.Operations.Tasks do
 
   ## Crash philosophy (inherited from the old `EvoGit.Store` moduledoc)
 
-  NO try/rescue in this module except the ONE justified per-row skip-and-log
-  decode boundary of `safe_select_paginated_tasks/2` (a verbatim port of the
-  old `decode_skipping_bad/3` safe-select boundary — DB rows may contain
-  corrupt/legacy data that fails to decode; skipping is the deliberate
-  recovery boundary). A failed statement RAISES out of the `EvoGit.Repo.*`
-  call and surfaces to the caller, exactly like the old handler's deliberate
-  bad-match crash. The disk-full conversion boundary (`{:error, :disk_full}`)
-  lives in the facade unit that will wrap these operations — NOT here.
+  NO try/rescue in this module. The ONE justified per-row skip-and-log decode
+  boundary of `safe_select_paginated_tasks/2` lives in
+  `EvoGit.Store.Operations.Decoding.decode_skipping_bad/4` (DB rows may
+  contain corrupt/legacy data that fails to decode; skipping is the
+  deliberate recovery boundary). A failed statement RAISES out of the
+  `EvoGit.Repo.*` call and surfaces to the caller, exactly like the old
+  handler's deliberate bad-match crash. The disk-full conversion boundary
+  (`{:error, :disk_full}`) lives in the facade unit that will wrap these
+  operations — NOT here.
 
   ## put_task replace semantics
 
-  ONE `Repo.transaction(..., mode: :immediate)` performing a `delete_all` by
-  id and then an `insert_all` of a FULL 20-key row (nils explicit; struct
-  fields absent from the caller's struct default to nil). Re-putting a task
-  therefore NULLs every column the new struct omits — parity with the old
-  `INSERT OR REPLACE`. A changeset upsert (`on_conflict: :replace_all`) would
-  keep stale values in omitted columns and is deliberately NOT used.
+  ONE `Repo.transaction(..., mode: :immediate)` performing ONE
 
-  Denormalizations are ported verbatim from `Codec.encode_task/1`:
-  `project_path` ← `opts[:path]`, `branch_name` ← the `branch_name` of an
-  `{:ok, data}` result (each only when the struct field itself is nil), and
+      Repo.insert_all(TaskRow, [row], on_conflict: :replace_all, conflict_target: :id)
+
+  over a COMPLETE row (`row_for_task/1` always supplies ALL columns — nils
+  explicit; struct fields absent from the caller's struct default to nil).
+  `:replace_all` on a complete row is semantically identical to the old
+  `INSERT OR REPLACE`: re-putting a task NULLs every column the new struct
+  omits. The single statement replaces the old `delete_all` + `insert_all`
+  pair, so a put maintains its index entries in ONE pass over the six
+  `tasks` indexes instead of two.
+
+  ## delete cascade transactions
+
+  `delete_task/2`, `delete_tasks/2` and `clear_tasks/1` each run the task
+  `delete_all` AND the explicit `task_agent_archives` cascade delete inside
+  ONE `Repo.transaction(..., mode: :immediate)`, so a crash or disk-full
+  between the two statements can never orphan archive payloads (there is no
+  foreign key to enforce the pair).
+
+  Denormalizations are the Codec's OWN rules, called instead of copied:
+  `project_path` ← `Codec.extract_project_path/1` (`opts[:path]`),
+  `branch_name` ← `Codec.extract_branch_name/1` (the `branch_name` of an
+  `{:ok, data}` result) — each only when the struct field itself is nil — and
   `updated_at` ← `DateTime.utc_now()` in the Codec's fixed-millisecond ISO
   wire format — `TaskTimestampRaw.dump/1` performs the same
   `DateTime.truncate(:millisecond)` + `DateTime.to_iso8601/1` the old handler
@@ -71,6 +86,7 @@ defmodule EvoGit.Store.Operations.Tasks do
   alias EvoGit.Repo
   alias EvoGit.Store.Codec
   alias EvoGit.Store.Operations.Archives
+  alias EvoGit.Store.Operations.Decoding
   alias EvoGit.Store.Operations.Filters
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskRow
@@ -79,8 +95,9 @@ defmodule EvoGit.Store.Operations.Tasks do
 
   # Batched `DELETE ... WHERE id IN (...)` chunk size — 500 ids, safely under
   # SQLite's 999-host-parameter limit (same chunk size as the old raw-SQL
-  # handler, store.ex:542). Each chunk is its own statement/commit, preserving
-  # the old all-or-nothing-per-chunk partial-crash semantics.
+  # handler, store.ex:542). Every chunk AND the archive cascade commit
+  # together in ONE `:immediate` transaction (see `delete_tasks/2`), so an
+  # interrupted multi-id delete is all-or-nothing.
   @delete_chunk_size 500
 
   ## Public API — writes
@@ -91,8 +108,10 @@ defmodule EvoGit.Store.Operations.Tasks do
 
   Validates via `Codec.validate_task/1` first; when validation fails the error
   tuple is returned and NO row is written. On success the row is replaced
-  atomically (delete + full-column insert inside ONE `:immediate`
-  transaction) and `:ok` is returned.
+  atomically with ONE `on_conflict: :replace_all` insert inside a
+  `:immediate` transaction (`row_for_task/1` supplies ALL columns, so
+  `replace_all` is semantically identical to the old `INSERT OR REPLACE`) and
+  `:ok` is returned.
   """
   @spec put_task(pid(), TaskInfo.t()) ::
           :ok | {:error, :missing_task_id} | {:error, :missing_task_status}
@@ -100,22 +119,24 @@ defmodule EvoGit.Store.Operations.Tasks do
     RepoScope.with_repo(repo, fn ->
       case Codec.validate_task(task) do
         :ok ->
-          # Replace semantics: the explicit delete + FULL 19-key insert NULLs
-          # every column the new struct omits (an upsert would not). The
-          # `:immediate` mode takes the write lock up front, like every other
-          # write of this repo (`default_transaction_mode: :immediate`).
+          # `:immediate` takes the write lock up front, like every other write
+          # of this repo (`default_transaction_mode: :immediate`).
           {:ok, :ok} =
             Repo.transaction(
               fn ->
                 # Diagnostic at the ULTIMATE write chokepoint — only run when
-                # writing :failed, so no SELECT on every put (store.ex:487).
+                # writing :failed, and BEFORE the write so it observes the
+                # PRE-write stored status (store.ex:487).
                 if task.status == :failed, do: log_failed_write_if_transition(task)
 
                 # `task.ref` is runtime-only; the old handler nulled it before
                 # persistence. TaskRow has no ref field and to_task_info/1
                 # always rebuilds ref: nil, so the nulling is inherent here.
-                Repo.delete_all(from(t in TaskRow, where: t.id == ^task.id))
-                Repo.insert_all(TaskRow, [row_for_task(task)])
+                Repo.insert_all(TaskRow, [row_for_task(task)],
+                  on_conflict: :replace_all,
+                  conflict_target: :id
+                )
+
                 :ok
               end,
               mode: :immediate
@@ -137,14 +158,24 @@ defmodule EvoGit.Store.Operations.Tasks do
   successful no-op statement, same as the old raw SQL).
 
   The task's per-agent archive rows (`task_agent_archives`) are deleted in the
-  same call (`Archives.delete_by_task/2`). The cascade is EXPLICIT — there is
-  no foreign key — so a deleted task never leaks its archived conversations.
+  SAME `:immediate` transaction (`Archives.delete_by_task/2`), so the two
+  statements can never be split by a crash or disk-full. The cascade is
+  EXPLICIT — there is no foreign key — so a deleted task never leaks its
+  archived conversations.
   """
   @spec delete_task(pid(), String.t()) :: :ok
   def delete_task(repo, task_id) do
     RepoScope.with_repo(repo, fn ->
-      Repo.delete_all(from(t in TaskRow, where: t.id == ^task_id))
-      Archives.delete_by_task(repo, task_id)
+      {:ok, :ok} =
+        Repo.transaction(
+          fn ->
+            Repo.delete_all(from(t in TaskRow, where: t.id == ^task_id))
+            Archives.delete_by_task(repo, task_id)
+            :ok
+          end,
+          mode: :immediate
+        )
+
       :ok
     end)
   end
@@ -154,8 +185,11 @@ defmodule EvoGit.Store.Operations.Tasks do
   handler (store.ex:539).
 
   The ids are batched into `WHERE id IN (...)` statements of at most 500 ids
-  (under SQLite's 999-parameter limit), one committed statement per chunk.
-  Returns `:ok`; an empty id list writes nothing.
+  (under SQLite's 999-parameter limit). The WHOLE chunk loop and the archive
+  cascade commit TOGETHER in ONE `:immediate` transaction — this deliberately
+  replaces the old per-chunk commit semantics, so an interrupted multi-id
+  delete can never leave a deleted task's archive behind. Returns `:ok`; an
+  empty id list writes nothing.
 
   The named tasks' per-agent archive rows (`task_agent_archives`) are deleted
   too, chunked the same way (`Archives.delete_by_tasks/2`). The cascade is
@@ -164,13 +198,21 @@ defmodule EvoGit.Store.Operations.Tasks do
   @spec delete_tasks(pid(), [String.t()]) :: :ok
   def delete_tasks(repo, task_ids) do
     RepoScope.with_repo(repo, fn ->
-      task_ids
-      |> Enum.chunk_every(@delete_chunk_size)
-      |> Enum.each(fn chunk ->
-        Repo.delete_all(from(t in TaskRow, where: t.id in ^chunk))
-      end)
+      {:ok, :ok} =
+        Repo.transaction(
+          fn ->
+            task_ids
+            |> Enum.chunk_every(@delete_chunk_size)
+            |> Enum.each(fn chunk ->
+              Repo.delete_all(from(t in TaskRow, where: t.id in ^chunk))
+            end)
 
-      Archives.delete_by_tasks(repo, task_ids)
+            Archives.delete_by_tasks(repo, task_ids)
+
+            :ok
+          end,
+          mode: :immediate
+        )
 
       :ok
     end)
@@ -180,15 +222,24 @@ defmodule EvoGit.Store.Operations.Tasks do
   Deletes all task rows — port of the old `:clear_tasks` handler
   (store.ex:598). Returns `:ok`.
 
-  EVERY per-agent archive row (`task_agent_archives`) is deleted as well
-  (`Archives.delete_all/1`), so a cleared store holds no orphaned archive
-  payloads. The cascade is EXPLICIT — there is no foreign key.
+  EVERY per-agent archive row (`task_agent_archives`) is deleted in the SAME
+  `:immediate` transaction (`Archives.delete_all/1`), so a cleared store
+  holds no orphaned archive payloads and an interrupted clear rolls back
+  whole. The cascade is EXPLICIT — there is no foreign key.
   """
   @spec clear_tasks(pid()) :: :ok
   def clear_tasks(repo) do
     RepoScope.with_repo(repo, fn ->
-      Repo.delete_all(TaskRow)
-      Archives.delete_all(repo)
+      {:ok, :ok} =
+        Repo.transaction(
+          fn ->
+            Repo.delete_all(TaskRow)
+            Archives.delete_all(repo)
+            :ok
+          end,
+          mode: :immediate
+        )
+
       :ok
     end)
   end
@@ -227,9 +278,9 @@ defmodule EvoGit.Store.Operations.Tasks do
   (`COUNT(*)` counts rows, never decodes them, so a skipped bad row is still
   counted, exactly like the old raw SQL).
 
-  Rows whose decode raises are SKIPPED with a `Logger.warning` (the old
-  skip-and-log safe-select boundary, `decode_skipping_bad/3` — see
-  `decode_tasks_skipping_bad/1`).
+  Rows whose decode raises are SKIPPED with a `Logger.warning` (the shared
+  `EvoGit.Store.Operations.Decoding` skip-and-log boundary, applied through
+  `Codec.decode_raw_row/1`).
 
   The `ORDER BY started_at DESC` + `LIMIT`/`OFFSET` page is index-served for
   every supported filter: `idx_tasks_started_at` when no filter column is
@@ -256,7 +307,7 @@ defmodule EvoGit.Store.Operations.Tasks do
         |> limit(^limit)
         |> offset(^offset)
         |> Repo.all()
-        |> decode_tasks_skipping_bad()
+        |> Decoding.decode_skipping_bad("tasks", & &1.id, &Codec.decode_raw_row/1)
 
       total_count =
         base
@@ -365,7 +416,13 @@ defmodule EvoGit.Store.Operations.Tasks do
   (`logs`, `result`, `usage`) is decoded. `status` is the
   decoded atom (nil on unknown), `opts` the decoded keyword list (nil when the
   column is NULL), `finished_at` the decoded DateTime (nil on corrupt text),
-  `lease_expires_at` the raw unix-ms INTEGER.
+  `lease_expires_at` the raw unix-ms INTEGER (`Types.UnixMs` loads the bare
+  integer).
+
+  ONE typed query projects all four columns — the returned map carries EXACTLY
+  `:status`, `:opts`, `:finished_at` and `:lease_expires_at`, which
+  `EvoGit.TaskRegistry` pattern-matches and its callers depend on (do NOT add
+  columns here).
   """
   @spec select_task_update_info(pid(), String.t()) :: %{
           status: atom() | nil,
@@ -375,83 +432,18 @@ defmodule EvoGit.Store.Operations.Tasks do
         }
   def select_task_update_info(repo, task_id) do
     RepoScope.with_repo(repo, fn ->
-      case Repo.one(
-             from(t in TaskRow,
-               select: %{status: t.status, opts: t.opts, finished_at: t.finished_at},
-               where: t.id == ^task_id
-             )
-           ) do
-        nil ->
-          nil
-
-        %{status: status, opts: opts, finished_at: finished_at} ->
-          # lease_expires_at is read through the RAW twin so it comes back as
-          # the bare INTEGER the old single-statement SELECT returned (it is
-          # an integer under the typed schema too, but the raw read keeps the
-          # two-column projection in ONE code path — same schema the old SQL
-          # read from, no type casting at all).
-          lease =
-            Repo.one(from(t in TaskRowRaw, select: t.lease_expires_at, where: t.id == ^task_id))
-
-          %{status: status, opts: opts, finished_at: finished_at, lease_expires_at: lease}
-      end
+      Repo.one(
+        from(t in TaskRow,
+          select: %{
+            status: t.status,
+            opts: t.opts,
+            finished_at: t.finished_at,
+            lease_expires_at: t.lease_expires_at
+          },
+          where: t.id == ^task_id
+        )
+      )
     end)
-  end
-
-  ## Private — pagination decode (skip-and-log safe-select boundary)
-
-  # Decodes raw rows one at a time through the Codec (the decode oracle),
-  # SKIPPING (with a warning) any row that raises — a verbatim port of the old
-  # decode_skipping_bad/3 boundary. Loading happens through the RAW wire twin
-  # so Ecto's loader never raises before this per-row rescue can run.
-  defp decode_tasks_skipping_bad(rows) do
-    Enum.flat_map(rows, fn %TaskRowRaw{} = row ->
-      # Justified try/rescue — safe-select boundary (mirrors the raw store's
-      # store.ex:1123): DB rows may contain corrupt or legacy data that fails
-      # to decode; the Codec decoders raise by design and skipping is the
-      # deliberate recovery boundary.
-      try do
-        [decode_raw_task(row)]
-      rescue
-        e ->
-          Logger.warning(
-            "Store: skipping undecodable row in tasks (id: #{inspect(row.id)}): " <>
-              Exception.message(e)
-          )
-
-          []
-      end
-    end)
-  end
-
-  # %TaskRowRaw{} → %TaskInfo{} via the Codec's positional-list decoder — the
-  # same 20-element `Codec.task_columns/0` order (deliberately WITHOUT
-  # `updated_at`, which the old SELECT over those columns never fetched
-  # either). Identical to the existing get_task/to_task_info result: decode_task
-  # itself applies the `status || :pending` and `ref: nil` fallbacks.
-  defp decode_raw_task(%TaskRowRaw{} = row) do
-    Codec.decode_task([
-      row.id,
-      row.type,
-      row.status,
-      row.opts,
-      row.started_at,
-      row.finished_at,
-      row.logs,
-      row.result,
-      row.review_status,
-      row.usage,
-      row.agent_count,
-      row.base_sha,
-      row.commit_sha,
-      row.lease_expires_at,
-      row.model_id,
-      row.project_path,
-      row.branch_name,
-      row.error,
-      row.session_mode,
-      row.pause_kind
-    ])
   end
 
   ## Private — targeted-update SET building
@@ -506,11 +498,12 @@ defmodule EvoGit.Store.Operations.Tasks do
 
   ## Private — row building (TaskInfo → insert map)
 
-  # The FULL 20-key insert row. Every key is EXPLICIT (nils included) so the
-  # delete+insert replace NULLs columns the struct omits. Values are RUNTIME
-  # values; Ecto dumps each through the schema's EvoGit.Store.Types.* field
-  # type, which delegates to the Codec wire format — byte-identical to the old
-  # Codec.encode_task/1 positional list.
+  # The FULL 20-key insert row. Every key is EXPLICIT (nils included), which is
+  # exactly what lets `put_task/2` use `on_conflict: :replace_all` — the
+  # replace NULLs every column the struct omits, like the old INSERT OR
+  # REPLACE. Values are RUNTIME values; Ecto dumps each through the schema's
+  # EvoGit.Store.Types.* field type, which delegates to the Codec wire format —
+  # byte-identical to the old Codec.encode_task/1 positional list.
   defp row_for_task(%TaskInfo{} = task) do
     %{
       id: task.id,
@@ -528,29 +521,14 @@ defmodule EvoGit.Store.Operations.Tasks do
       commit_sha: task.commit_sha,
       lease_expires_at: task.lease_expires_at,
       model_id: task.model_id,
-      project_path: task.project_path || project_path_from_opts(task.opts),
-      branch_name: task.branch_name || branch_name_from_result(task.result),
+      project_path: task.project_path || Codec.extract_project_path(task.opts),
+      branch_name: task.branch_name || Codec.extract_branch_name(task.result),
       error: task.error,
       session_mode: Codec.task_session_mode(task),
       pause_kind: Codec.encode_pause_kind(task.pause_kind),
       updated_at: DateTime.utc_now()
     }
   end
-
-  # Mirrors the Codec's private extract_project_path/1 (codec.ex:114-120): the
-  # denormalization feeding the project_path column from opts[:path].
-  defp project_path_from_opts(nil), do: nil
-
-  defp project_path_from_opts(opts) when is_list(opts), do: Keyword.get(opts, :path)
-
-  # Mirrors the Codec's private extract_branch_name/1 (codec.ex:122-131): the
-  # denormalization feeding the branch_name column from an {:ok, data} result.
-  defp branch_name_from_result(nil), do: nil
-
-  defp branch_name_from_result({:ok, data}) when is_map(data),
-    do: Map.get(data, :branch_name)
-
-  defp branch_name_from_result(_other), do: nil
 
   ## Private — row reading (TaskRow → TaskInfo)
 

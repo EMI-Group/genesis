@@ -20,7 +20,7 @@ Pure functions, NO GenServer — every call reads/writes the TOML file directly 
 - `model_selection_script/0` → script `String.t()` | `nil`.
 - `save_model_selection_script/1` → `:ok | {:error, term}` (empty string removes the key; preserves `[[agents]]`).
 - `reload/0` → `:ok` — invalidates BOTH the `ModelSelector` compile cache AND the `EvoGit.CustomTools` custom-tools load cache (each guarded with `Code.ensure_loaded?/1` + `function_exported?/3` + `apply/3`, warning-free when a module is absent).
-- `stringify_keys/1` (public, `@doc false`) → shared map-stringify helper: `EvoGit.RemoteConnections` (`lib/evo_git/remote_connections.ex`) calls it when serializing connection maps to TOML, rather than keeping a local copy. New code needing string-keyed map serialization for config/TOML stores should reuse `CustomAgents.stringify_keys/1` instead of duplicating it.
+- `stringify_keys/1` (public, `@doc false`) → a one-line delegate to `EvoGit.Util.Map.stringify_keys/1,2` with `drop_nil: true`; that nil-dropping is the ONLY policy this wrapper adds (the agents.toml round-trip requires nil values to vanish), and `EvoGit.RemoteConnections` (`lib/evo_git/remote_connections.ex`) calls it when serializing connection maps to TOML. New code needing string-keyed map serialization should call `EvoGit.Util.Map.stringify_keys/1,2` directly and pass `drop_nil: true` only when it wants this policy.
 
 **Validation error atoms** (`save/1` only — reads never raise): `:missing_name, :missing_prompt, :invalid_agent_type, :invalid_delegation_level, :invalid_model_spec, :invalid_max_turns, :invalid_tools, :invalid_subagents, :duplicate_id`.
 

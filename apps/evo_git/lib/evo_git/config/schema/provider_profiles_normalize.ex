@@ -1,28 +1,23 @@
 defmodule EvoGit.Config.Schema.ProviderProfiles.Normalize do
   @moduledoc false
 
+  alias EvoGit.Config.Keys
   alias EvoGit.Config.Schema.LLM
 
   @generation_keys ~w(temperature max_tokens reasoning_effort top_p top_k frequency_penalty presence_penalty provider_options)
   @shared_keys ~w(auth_mode api_key_env_var base_url oauth_file siwc_account concurrency peak_concurrency peak_hours timezone off_peak_days off_peak_holidays context_window extra)
 
+  @spec generation_keys() :: [String.t()]
   def generation_keys, do: @generation_keys
 
-  # Canonical storage never depends on which modules have already interned atoms.
-  def stringify(%{} = map) do
-    Map.new(map, fn {key, value} -> {string_key(key), stringify(value)} end)
-  end
+  # `EvoGit.Config.Keys.stringify/2` owns the recursive traversal; the
+  # `keyword_lists: true` policy is this call site's own (a provider/model entry
+  # may arrive as a keyword list) and nil values are KEPT, because a present nil
+  # is meaningful input here rather than a TOML null.
+  @spec stringify(term()) :: term()
+  def stringify(value), do: Keys.stringify(value, keyword_lists: true)
 
-  def stringify(list) when is_list(list) do
-    if Keyword.keyword?(list) and list != [] do
-      list |> Map.new() |> stringify()
-    else
-      Enum.map(list, &stringify/1)
-    end
-  end
-
-  def stringify(value), do: value
-
+  @spec section(map(), String.t()) :: map()
   def section(config, key) do
     case Map.get(config, key) do
       %{} = map -> map
@@ -30,6 +25,7 @@ defmodule EvoGit.Config.Schema.ProviderProfiles.Normalize do
     end
   end
 
+  @spec profiles(map()) :: [map()]
   def profiles(config) do
     llm = section(config, "llm")
 
@@ -194,12 +190,14 @@ defmodule EvoGit.Config.Schema.ProviderProfiles.Normalize do
     end
   end
 
+  @spec provider_name(term()) :: String.t() | nil
   def provider_name(provider) when is_atom(provider) and not is_nil(provider),
     do: Atom.to_string(provider)
 
   def provider_name(provider) when is_binary(provider) and provider != "", do: provider
   def provider_name(_), do: nil
 
+  @spec unqualify(String.t(), String.t()) :: String.t()
   def unqualify(model, provider) do
     prefix = provider <> ":"
 
@@ -208,28 +206,43 @@ defmodule EvoGit.Config.Schema.ProviderProfiles.Normalize do
       else: model
   end
 
+  @spec efforts(term()) :: [String.t()]
   def efforts(values) when is_list(values) do
     values |> Enum.map(&string_effort/1) |> Enum.reject(&is_nil/1) |> Enum.uniq()
   end
 
   def efforts(_), do: []
 
-  def string_effort(value) when is_binary(value) and value != "", do: alias_legacy_effort(value)
+  @doc """
+  Canonical STRING spelling of one reasoning-effort value, or `nil` for an
+  unusable input.
 
-  def string_effort(value) when is_atom(value) and not is_nil(value),
-    do: value |> Atom.to_string() |> alias_legacy_effort()
+  Acceptance is decided ONCE by the canonical ladder
+  (`EvoGit.Config.Schema.LLM.canonical_reasoning_effort/1`), never re-derived
+  here: a KNOWN effort — string or atom, any case, surrounding whitespace
+  ignored — becomes its canonical string spelling (`"MAX"` / `:max` /
+  `" max "` → `"xhigh"`, `" High "` → `"high"`, `:default` → `"default"`).
+  An UNKNOWN binary or atom keeps its own string form (it is not offered, so
+  validation reports it), and any other type (`42`, `%{}`) is `nil`.
+  """
+  @spec string_effort(term()) :: String.t() | nil
+  def string_effort(value) when is_binary(value) and value != "" do
+    canonical_effort(value) || value
+  end
+
+  def string_effort(value) when is_atom(value) and not is_nil(value) do
+    canonical_effort(value) || Atom.to_string(value)
+  end
 
   def string_effort(_), do: nil
 
-  # `max` is an ACCEPTED legacy alias, never an offered level (the canonical
-  # ladder lives in `EvoGit.Config.Schema.LLM.reasoning_efforts/0`). Every
-  # effort read — provider/model inventories, provider/model defaults and the
-  # legacy `[[llm.models]]` migration — normalizes to the canonical `xhigh`, so
-  # a persisted config keeps loading and a later save writes `xhigh`.
-  defp alias_legacy_effort(value) do
-    if String.downcase(String.trim(value)) == "max", do: "xhigh", else: value
+  # The ONE ladder's answer as a string: `nil` means "not a recognized effort",
+  # including the `:max` legacy alias, which the ladder itself canonicalizes to
+  # `:xhigh`.
+  defp canonical_effort(value) do
+    case LLM.canonical_reasoning_effort(value) do
+      nil -> nil
+      effort -> Atom.to_string(effort)
+    end
   end
-
-  defp string_key(key) when is_atom(key), do: Atom.to_string(key)
-  defp string_key(key), do: key
 end

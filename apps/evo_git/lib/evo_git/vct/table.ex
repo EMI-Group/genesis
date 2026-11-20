@@ -42,10 +42,25 @@ defmodule EvoGit.VCT.Table do
   never evicts it, it never counts against the cap, and `find_by_os_path/2` /
   `mount_for_path/2` never return it (it owns no OS path). Workspaces never
   nest: a workspace point is refused as a workspace member.
+
+  The ONE namespace definition is `project_mount?/1` / `workspace_point?/1` /
+  `reserved?/1` — all POINT-based; `kind` is a storage-class label and never
+  expresses that split.
   """
 
   alias EvoGit.VCT.Mount
   alias EvoGit.VCT.Path, as: VctPath
+
+  @typedoc """
+  A mutation-rule failure of this module.
+
+  Exactly the reasons the pure rules return: `:invalid_point` (an unparseable
+  point, or a workspace point where a file mount is required — both via
+  `VctPath.canonical/1` / `reject_workspace_point/1` / `require_workspace_point/1`),
+  `:invalid_path` (a blank or non-binary OS path), `:invalid_mounts` (a non-list
+  mount table) and `:not_found` (a removal that matched no mount).
+  """
+  @type mount_error :: :invalid_point | :invalid_path | :invalid_mounts | :not_found
 
   @projects_prefix VctPath.projects()
 
@@ -106,14 +121,14 @@ defmodule EvoGit.VCT.Table do
     do: path |> comparison_form() |> Path.basename()
 
   @doc """
-  Returns the display name for an OS path: its basename, or `"root"`/`"project"`
-  for the degenerate roots.
+  Returns the display name for an OS path: its basename, or `"root"` for the
+  degenerate root (`path_basename/1` normalizes a blank path to `"/"`, whose
+  basename is `""`).
   """
   @spec display_name(String.t()) :: String.t()
   def display_name(path) when is_binary(path) do
     case path_basename(path) do
-      "" -> "project"
-      "/" -> "root"
+      "" -> "root"
       name -> name
     end
   end
@@ -177,6 +192,10 @@ defmodule EvoGit.VCT.Table do
   Returns `true` when `point` names a workspace mount — the POINT-based
   spelling of `workspace_point?/1` (mirroring `project_mount?/1`, which is also
   point-based).
+
+  This is the LEGACY spelling of `workspace_point?/1` — the same rule, with no
+  production caller, kept only while the value-object tests pin it; prefer
+  `workspace_point?/1`.
 
   TOTAL: an unparseable or non-path input is `false`.
   """
@@ -383,6 +402,39 @@ defmodule EvoGit.VCT.Table do
   defp os_path_find(mounts, path) when is_binary(path), do: find_by_os_path(mounts, path)
 
   @doc """
+  Splits a member list into the refs that are USABLE and the ones that are not
+  — the ONE documented member policy: **keep every resolvable member and report
+  the unusable ones**.
+
+  Each element is normalized INDIVIDUALLY with `EvoGit.VCT.Mount.member/1`
+  (which canonicalizes a point, normalizes an OS path and refuses a workspace
+  point). Returns `{valid, invalid}`:
+
+    * `valid` — the normalized `t:EvoGit.VCT.Mount.member_ref/0` maps, in
+      stored order;
+    * `invalid` — the refs that did not normalize, in stored order and in their
+      STORED form (unmodified, so a caller can report exactly what was stored).
+
+  A single unusable ref never hides its siblings. `{[], []}` for a non-list.
+  A member's target need not exist — that is resolution's concern, not this
+  split.
+  """
+  @spec member_refs(term()) :: {[Mount.member_ref()], [term()]}
+  def member_refs(members) when is_list(members) do
+    {valid, invalid} =
+      Enum.reduce(members, {[], []}, fn ref, {valid, invalid} ->
+        case Mount.member(ref) do
+          {:ok, normalized} -> {[normalized | valid], invalid}
+          {:error, _reason} -> {valid, [ref | invalid]}
+        end
+      end)
+
+    {Enum.reverse(valid), Enum.reverse(invalid)}
+  end
+
+  def member_refs(_members), do: {[], []}
+
+  @doc """
   Returns the WORKSPACE mounts whose membership covers `point` and/or `os_path`,
   in input order (the caller sorts).
 
@@ -394,7 +446,9 @@ defmodule EvoGit.VCT.Table do
       this clause never matches);
     * resolves through `member_mount/2` to a mount whose point is `point`.
 
-  A member's target need not exist. TOTAL: a non-list is `[]`.
+  Membership follows `member_refs/1`'s policy: every resolvable member counts,
+  so ONE unusable ref never hides the rest, and a member's target need not
+  exist. TOTAL: a non-list is `[]`.
   """
   @spec workspaces_containing([Mount.t()], term(), term()) :: [Mount.t()]
   def workspaces_containing(mounts, point, os_path) when is_list(mounts) do
@@ -418,14 +472,10 @@ defmodule EvoGit.VCT.Table do
     end)
   end
 
-  defp normal_members(members) when is_list(members) do
-    case Mount.normalize_members(members) do
-      {:ok, normalized} -> normalized
-      {:error, _reason} -> []
-    end
+  defp normal_members(members) do
+    {valid, _invalid} = member_refs(members)
+    valid
   end
-
-  defp normal_members(_members), do: []
 
   defp member_point_match?(_member, nil), do: false
   defp member_point_match?(member, target_point), do: member["point"] == target_point
@@ -571,7 +621,7 @@ defmodule EvoGit.VCT.Table do
   defp repoint_candidate(mounts, derived, base) do
     Enum.find(mounts, fn mount ->
       mount.name == derived and
-        VctPath.name(mount.point) == base and
+        VctPath.last_segment(mount.point) == base and
         not File.exists?(mount.path)
     end)
   end
@@ -606,9 +656,9 @@ defmodule EvoGit.VCT.Table do
   created through `upsert_workspace/6`, never as a file mount.
   """
   @spec ensure_mount([Mount.t()], VctPath.t() | String.t(), String.t(), String.t() | nil) ::
-          {:ok, [Mount.t()], Mount.t(), boolean()} | {:error, term()}
+          {:ok, [Mount.t()], Mount.t(), boolean()} | {:error, mount_error()}
   def ensure_mount(mounts, point, os_path, name) when is_list(mounts) do
-    with {:ok, canonical} <- canonical_point(point),
+    with {:ok, canonical} <- VctPath.canonical(point),
          :ok <- reject_workspace_point(canonical),
          {:ok, normalized} <- ensure_os_path(os_path) do
       name = normalize_name(name)
@@ -640,15 +690,15 @@ defmodule EvoGit.VCT.Table do
           [Mount.t()],
           VctPath.t() | String.t(),
           String.t() | nil,
-          [Mount.member()],
+          [Mount.member_ref()],
           String.t() | nil,
           DateTime.t() | nil
-        ) :: {:ok, [Mount.t()], Mount.t()} | {:error, term()}
+        ) :: {:ok, [Mount.t()], Mount.t()} | {:error, mount_error() | Mount.member_error()}
   def upsert_workspace(mounts, point, name, members, description, now \\ nil)
 
   def upsert_workspace(mounts, point, name, members, description, now)
       when is_list(mounts) do
-    with {:ok, canonical} <- canonical_point(point),
+    with {:ok, canonical} <- VctPath.canonical(point),
          :ok <- require_workspace_point(canonical),
          {:ok, normalized_members} <- Mount.normalize_members(members) do
       mount = %Mount{
@@ -718,21 +768,6 @@ defmodule EvoGit.VCT.Table do
     end
   end
 
-  defp canonical_point(%VctPath{segments: segments}) do
-    if Enum.all?(segments, &is_binary/1),
-      do: {:ok, VctPath.format(segments)},
-      else: {:error, :invalid_point}
-  end
-
-  defp canonical_point(point) when is_binary(point) do
-    case VctPath.parse(point) do
-      {:ok, parsed} -> {:ok, VctPath.format(parsed)}
-      {:error, _reason} -> {:error, :invalid_point}
-    end
-  end
-
-  defp canonical_point(_point), do: {:error, :invalid_point}
-
   defp ensure_os_path(path) when is_binary(path) do
     if String.trim(path) == "", do: {:error, :invalid_path}, else: {:ok, normalize_os_path(path)}
   end
@@ -776,12 +811,16 @@ defmodule EvoGit.VCT.Table do
   ## VCT path derivation
 
   @doc """
-  Returns the canonical VCT URL for `relative_path` inside the mount's OS path.
+  Returns the canonical VCT URL for `relative_path` inside the mount's point.
 
   `"./"`, `""` and `"."`-free relative paths map onto the mount point itself;
   `"./src/auth"` and `"src/auth"` map onto `<point>/src/auth`. Returns `nil` for
   an absolute path, a `".."`/`"."` segment, a control-character segment or a
   non-binary input.
+
+  Takes an already-resolved `%Mount{}` plus a relative path — unlike
+  `EvoGit.VCT.vct_path_for/2`, which takes a repo ROOT plus a relative path and
+  resolves the containing mount itself.
   """
   @spec vct_path_for(Mount.t(), term()) :: String.t() | nil
   def vct_path_for(%Mount{point: point}, relative) when is_binary(relative) do
@@ -833,8 +872,12 @@ defmodule EvoGit.VCT.Table do
   ## Points
 
   @doc """
-  Turns arbitrary text into a VALID VCT path segment (never `""`, `"."` or
-  `".."`, no separators or control characters).
+  Turns arbitrary text into a VALID VCT path segment: folds `/` and `\\` to
+  `-`, strips control characters, trims the result, and maps `""`, `"."` and
+  `".."` to `"project"`.
+
+  It is a SANITIZER, not a slugifier: no downcasing, no transliteration, no
+  space collapsing.
   """
   @spec point_segment(term()) :: String.t()
   def point_segment(raw) do

@@ -4,36 +4,23 @@ defmodule EvoGit.Agent.Tools.ListProjects do
   `EvoGit.CommandShell` via the `run_command` tool. Lists the Virtual Context
   Tree project mounts of this node, newest first.
   """
-  alias EvoGit.Agent.Tools.Failure
+
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
-  Executes the list_projects tool.
-  Reads the project mounts from `EvoGit.VCT` (a live read of its in-memory
-  mount cache) and formats each project on one line. Never raises: a VCT or
-  store failure is reported as a readable error string.
+  Executes the list_projects handler.
+
+  Reads the project mounts from `EvoGit.VCT` (a live read of its in-memory mount
+  cache) and formats each project on one line. `EvoGit.VCT.projects/1` is a
+  TOTAL read — it answers `[]` when the VCT server is absent or dead — so there
+  is no boundary guard here and an empty list is the only degradation.
   """
   def execute(_args, _repo_path, _repo_root) do
-    case safe_list_projects() do
-      projects when is_list(projects) -> format_projects(projects)
-      {:error, reason} -> "project list unavailable: #{Failure.format_reason(reason)}"
-    end
-  end
-
-  # --- VCT call ---
-  defp safe_list_projects do
-    EvoGit.VCT.projects()
-  rescue
-    e ->
-      # Tool boundary: the VCT GenServer may be down. A crash must never kill
-      # the agent loop — the LLM gets a readable error string it can act on.
-      {:error, Exception.message(e)}
-  catch
-    :exit, reason ->
-      {:error, inspect(reason)}
+    EvoGit.VCT.projects() |> format_projects()
   end
 
   # --- Formatting ---
+
   defp format_projects([]), do: "No projects found."
 
   defp format_projects(projects) do

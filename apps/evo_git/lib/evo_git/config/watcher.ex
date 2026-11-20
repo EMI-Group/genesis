@@ -95,8 +95,10 @@ defmodule EvoGit.Config.Watcher do
     File.mkdir_p(dir)
 
     # Prime the snapshot once so the very first reader (the scheduler, the
-    # dashboard) never pays the build on its own stack.
-    EvoGit.Config.Cache.reload(dir: dir)
+    # dashboard) never pays the build on its own stack. This goes through the
+    # SAME total reload as every event path: a raising snapshot build must not
+    # crash-loop the watcher (which would take `:evo_git` down at boot).
+    refresh(dir)
 
     case start_watcher(dir) do
       {:ok, pid} ->
@@ -112,11 +114,12 @@ defmodule EvoGit.Config.Watcher do
     end
   end
 
-  # The save event (`notify_change/2`) — the same refresh a file event runs.
+  # The save event (`notify_change/2`) — the same refresh a file event runs. The
+  # refresh's OWN verdict is replied, so a caller whose refresh FAILED takes its
+  # direct-reload fallback instead of believing the save landed.
   @impl true
   def handle_call({:config_changed, dir}, _from, state) do
-    refresh(dir)
-    {:reply, :ok, state}
+    {:reply, refresh(dir), state}
   end
 
   def handle_call(_request, _from, state), do: {:reply, {:error, :unknown_request}, state}
@@ -168,8 +171,15 @@ defmodule EvoGit.Config.Watcher do
   end
 
   # The ONE snapshot reload: the debounced file event, the save event's
-  # `handle_call/3` and `notify_change/2`'s fallback all converge here.
-  defp refresh(dir), do: EvoGit.Config.Cache.reload_safely(dir: dir)
+  # `handle_call/3` and `notify_change/2`'s fallback all converge here. Answers
+  # `:ok | :error` — the total reload's verdict, normalized so a caller can act
+  # on a FAILED refresh without inspecting a snapshot.
+  defp refresh(dir) do
+    case EvoGit.Config.Cache.reload_safely(dir: dir) do
+      :error -> :error
+      _snapshot -> :ok
+    end
+  end
 
   defp resolve_target(nil), do: nil
   defp resolve_target(pid) when is_pid(pid), do: pid
@@ -177,24 +187,23 @@ defmodule EvoGit.Config.Watcher do
   defp resolve_target(_other), do: nil
 
   # Any failure of the bounded call — a dead/restarting watcher (`:noproc`,
-  # `:shutdown`), a slow one (`:timeout`) or an unexpected reply — is answered
-  # by the caller's fallback, never propagated into the saving process.
+  # `:shutdown`), a slow one (`:timeout`) — EXITS the caller rather than raising
+  # it, so `catch :exit` is the only arm that can fire; a `rescue` here would be
+  # dead code. Answered by the caller's fallback, never propagated into the
+  # saving process.
   defp call_refresh(target, dir, timeout) do
     GenServer.call(target, {:config_changed, dir}, timeout)
-  rescue
-    error ->
-      Logger.debug("Config watcher call failed for #{dir}: #{inspect(error)}; reloading directly")
-
-      :error
   catch
-    kind, reason ->
+    :exit, reason ->
       Logger.debug(
-        "Config watcher call failed for #{dir}: #{inspect({kind, reason})}; reloading directly"
+        "Config watcher call failed for #{dir}: #{inspect({:exit, reason})}; reloading directly"
       )
 
       :error
   end
 
+  # `agents.toml` is user-authored: a raise in the custom-agent reload (a broken
+  # file, a user script) must never take the watcher — or `:evo_git` — down.
   defp reload_custom_agents do
     EvoGit.CustomAgents.reload()
   rescue

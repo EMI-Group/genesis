@@ -38,9 +38,11 @@ defmodule EvoGit.Config.Schema.LLM do
 
   require Logger
   alias EvoGit.Auth
+  alias EvoGit.Config.Keys
   alias EvoGit.Config.LLMCatalog
   alias EvoGit.Config.Schema.LLMConstraints
   alias EvoGit.Config.Schema.ProviderProfiles
+  alias EvoGit.Config.Schema.ReasoningEffort
 
   # Default context window (tokens) for context-compression decisions when a
   # model profile carries no explicit `context_window`.
@@ -52,17 +54,65 @@ defmodule EvoGit.Config.Schema.LLM do
   @cache_identity_prefix "genesis-"
   @cache_identity_max_length 64
 
-  # ── Canonical reasoning-effort ladder (single public source of truth) ────
-  #
-  # The ONE user-selectable set, ascending by intensity. `:max` is
-  # deliberately ABSENT: it is a provider wire/value ALIAS of `:xhigh` (Z.AI
-  # GLM documents `max` natively), never a Genesis level of its own.
-  @reasoning_efforts [:none, :minimal, :low, :medium, :high, :xhigh]
-  # "Send no effort at all": the provider's own default applies.
-  @reasoning_effort_default :default
-  @reasoning_effort_options @reasoning_efforts ++ [@reasoning_effort_default]
-  # Legacy/persisted spelling accepted on input and canonicalized to `:xhigh`.
-  @reasoning_effort_alias_max :max
+  # The LLM catalog's provider atom SPELLINGS, resolved at COMPILE time so a
+  # provider string from user config is matched against a known set instead of
+  # being interned (see `provider_from_model/1`). Both each provider's
+  # `provider_atoms` and its variants' `provider_atom` are included, because a
+  # persisted model spec may name either spelling.
+  @known_providers for provider <- LLMCatalog.providers(),
+                       atom <-
+                         provider.provider_atoms ++
+                           Enum.map(provider[:variants] || [], & &1.provider_atom),
+                       into: %{},
+                       do: {Atom.to_string(atom), atom}
+
+  # ── Types ───────────────────────────────────────────────────────────────
+
+  @typedoc """
+  A model spec in any of the shapes the runtime carries: the ReqLLM-ready
+  qualified `"provider:model"` string, a map, the 2-tuple form, or `nil` when
+  no model is configured. A model spec is an IDENTITY, never a profile.
+  """
+  @type model_spec :: String.t() | model_spec_map() | {atom(), keyword() | String.t()} | nil
+
+  @typedoc """
+  The MAP form of a model spec — the only shape carrying an endpoint override
+  (`base_url` / `extra`), which is what makes an `:openai` spec an
+  OpenAI-COMPATIBLE third-party endpoint. Atom- or string-keyed, and extra keys
+  survive a JSON round trip, so the catch-all stays.
+  """
+  @type model_spec_map :: %{
+          optional(atom() | String.t()) => term(),
+          optional(:provider) => atom() | String.t(),
+          optional(:id) => String.t(),
+          optional(:base_url) => String.t() | nil,
+          optional(:extra) => map() | nil
+        }
+
+  @typedoc """
+  A model profile: one `[[llm.models]]` entry, the runtime projection of a
+  provider ACCOUNT, or an ad-hoc `%{model: model_spec()}` map (the OAuth helpers
+  read no other key).
+
+  Atom- or string-keyed, and generation parameters plus unknown keys survive
+  validation, so only the keys THIS module consumes are named.
+  """
+  @type model_profile :: %{
+          optional(atom() | String.t()) => term(),
+          optional(:id) => String.t(),
+          optional(:model) => model_spec(),
+          optional(:concurrency) => non_neg_integer(),
+          optional(:context_window) => pos_integer(),
+          optional(:reasoning_effort) => ReasoningEffort.effort() | String.t() | nil,
+          optional(:provider_options) => keyword() | map(),
+          optional(:auth_mode) => atom() | String.t(),
+          optional(:oauth_file) => String.t() | nil,
+          optional(:api_key_env_var) => String.t() | nil,
+          optional(:siwc_account) => String.t() | nil
+        }
+
+  @typedoc "The catalog facts `model_metadata/1` resolves; both maps may be empty."
+  @type provider_metadata :: %{limits: map(), capabilities: map()}
 
   # Normalizes the metadata-source result (app-env seam or catalog lookup) to the
   # documented `%{limits:, capabilities:}` / `nil` contract.
@@ -119,7 +169,7 @@ defmodule EvoGit.Config.Schema.LLM do
       iex> Schema.LLM.model_profiles(%{llm: %{models: [%{id: "default", model: "x:y"}]}})
       [%{id: "default", model: "x:y"}]
   """
-  @spec model_profiles(map()) :: [map()]
+  @spec model_profiles(map()) :: [model_profile()]
   def model_profiles(config) when is_map(config) do
     llm = llm_section(config)
 
@@ -137,7 +187,7 @@ defmodule EvoGit.Config.Schema.LLM do
         end
       end)
     else
-      case profile_field(llm, :models) do
+      case Keys.get(llm, :models) do
         models when is_list(models) -> models
         _ -> []
       end
@@ -152,7 +202,7 @@ defmodule EvoGit.Config.Schema.LLM do
   Canonical providers never fall back to flat keys, even when every selection is
   invalid. The parent Schema entry point must delegate here for that guarantee.
   """
-  @spec effective_model_profiles(map()) :: [map()]
+  @spec effective_model_profiles(map()) :: [model_profile()]
   def effective_model_profiles(config) when is_map(config) do
     case model_profiles(config) do
       [] ->
@@ -165,15 +215,19 @@ defmodule EvoGit.Config.Schema.LLM do
     end
   end
 
+  # Every profile/config read below goes through `EvoGit.Config.Keys`: config
+  # maps are atom- OR string-keyed (parsed TOML is string-keyed), and Keys owns
+  # that tolerance — presence-based (a present `nil` reads as `nil`, not as
+  # "absent") and never interning an atom for a user-supplied key.
   defp llm_section(config) do
-    case profile_field(config, :llm) do
+    case Keys.get(config, :llm) do
       %{} = llm -> llm
       _ -> %{}
     end
   end
 
   defp canonical_providers?(llm) do
-    case profile_field(llm, :providers) do
+    case Keys.get(llm, :providers) do
       providers when is_list(providers) and providers != [] -> true
       _ -> false
     end
@@ -189,10 +243,10 @@ defmodule EvoGit.Config.Schema.LLM do
       iex> Schema.LLM.get_model_profile(%{llm: %{models: [%{id: "fast", model: "x:y"}]}}, "fast")
       {:ok, %{id: "fast", model: "x:y"}}
   """
-  @spec get_model_profile(map(), String.t()) :: {:ok, map()} | {:error, :not_found}
+  @spec get_model_profile(map(), String.t()) :: {:ok, model_profile()} | {:error, :not_found}
   def get_model_profile(config, id) when is_map(config) and is_binary(id) do
     case Enum.find(model_profiles(config), fn
-           %{} = profile -> profile_field(profile, :id) == id
+           %{} = profile -> Keys.get(profile, :id) == id
            _ -> false
          end) do
       nil -> {:error, :not_found}
@@ -213,7 +267,7 @@ defmodule EvoGit.Config.Schema.LLM do
       iex> Schema.LLM.default_model_profile(%{llm: %{models: [%{id: "default", model: "x:y"}]}})
       {:ok, %{id: "default", model: "x:y"}}
   """
-  @spec default_model_profile(map()) :: {:ok, map()} | {:error, :not_found}
+  @spec default_model_profile(map()) :: {:ok, model_profile()} | {:error, :not_found}
   def default_model_profile(config) when is_map(config) do
     llm = llm_section(config)
 
@@ -223,7 +277,7 @@ defmodule EvoGit.Config.Schema.LLM do
         {:error, _reason} -> {:error, :not_found}
       end
     else
-      case profile_field(llm, :default_provider_profile) do
+      case Keys.get(llm, :default_provider_profile) do
         nil ->
           case model_profiles(config) do
             [] -> {:error, :not_found}
@@ -268,7 +322,7 @@ defmodule EvoGit.Config.Schema.LLM do
   """
   @spec context_window(map()) :: pos_integer()
   def context_window(profile) when is_map(profile) do
-    case profile_field(profile, :context_window) do
+    case Keys.get(profile, :context_window) do
       nil ->
         @default_context_window
 
@@ -312,15 +366,6 @@ defmodule EvoGit.Config.Schema.LLM do
 
   def context_window_for(_config, _model_id), do: default_context_window()
 
-  # Reads a model-profile field from an atom- or string-keyed map. A
-  # `case Map.get` (not `||`) distinguishes "absent" from "present but nil".
-  defp profile_field(profile, key) do
-    case Map.get(profile, key) do
-      nil -> Map.get(profile, Atom.to_string(key))
-      value -> value
-    end
-  end
-
   @doc """
   Builds a single "default" model profile from flat (legacy) `[llm]` and
   `[scheduler]` config sections.
@@ -348,7 +393,7 @@ defmodule EvoGit.Config.Schema.LLM do
       ...> })
       %{id: "default", model: "anthropic:claude", concurrency: 3, auth_mode: "oauth"}
   """
-  @spec build_legacy_default_profile(map()) :: map()
+  @spec build_legacy_default_profile(map()) :: model_profile()
   def build_legacy_default_profile(config) when is_map(config) do
     raw_llm = Map.get(config, :llm, %{})
     llm = if is_map(raw_llm), do: raw_llm, else: %{}
@@ -402,20 +447,24 @@ defmodule EvoGit.Config.Schema.LLM do
 
   Supports the three model spec formats used throughout EvoGit:
 
-  - **String** like `"openai:gpt-5"` — splits on the first `":"` and atomizes the
-    provider part via `String.to_atom/1`.
-  - **Map** like `%{provider: :openai, id: "gpt-5"}` — returns `Map.get(model, :provider)`,
-    normalizing string values to atoms.
+  - **String** like `"openai:gpt-5"` — splits on the first `":"` and resolves
+    the provider part through the catalog's known provider spellings
+    (`known_provider_atom/1`); it is NEVER interned.
+  - **Map** like `%{provider: :openai, id: "gpt-5"}` — reads the `provider` key
+    (atom- or string-keyed map), normalizing a string value the same way.
   - **Tuple** `{:openai, opts}` — returns the first element (the provider atom).
 
-  Returns `nil` for string specs without a colon, or any unrecognized format.
+  Returns `nil` for string specs without a colon, for a provider spelling that
+  is neither in the catalog nor an already-existing atom, or any unrecognized
+  format. `nil` means "no recognized provider": no cache identity and no
+  provider-specific default, which is the right answer for an unknown vendor.
   """
-  @spec provider_from_model(String.t() | map() | tuple() | nil) :: atom() | nil
+  @spec provider_from_model(model_spec()) :: atom() | nil
   def provider_from_model(nil), do: nil
 
   def provider_from_model(model) when is_binary(model) do
     case String.split(model, ":", parts: 2) do
-      [provider, _id] when provider != "" -> String.to_atom(provider)
+      [provider, _id] when provider != "" -> known_provider_atom(provider)
       _ -> nil
     end
   end
@@ -423,14 +472,36 @@ defmodule EvoGit.Config.Schema.LLM do
   def provider_from_model({provider, _opts}) when is_atom(provider), do: provider
 
   def provider_from_model(model) when is_map(model) do
-    case Map.get(model, :provider) do
+    case Keys.get(model, :provider) do
       provider when is_atom(provider) and not is_nil(provider) -> provider
-      provider when is_binary(provider) -> String.to_atom(provider)
+      provider when is_binary(provider) -> known_provider_atom(provider)
       _ -> nil
     end
   end
 
   def provider_from_model(_other), do: nil
+
+  # A provider spelled as a STRING comes from user config, so `String.to_atom/1`
+  # is forbidden here (it would grow the atom table on every typo). The catalog
+  # whitelist is the exact-match fast path — those atoms exist as compile-time
+  # literals — and the fallback only reads an atom that ALREADY exists, so a
+  # supported ReqLLM provider outside the catalog (e.g. `"mistral"`, once req_llm
+  # has loaded its provider module) keeps resolving exactly as before while no
+  # new atom is ever created.
+  defp known_provider_atom(provider) when is_binary(provider) do
+    case Map.fetch(@known_providers, provider) do
+      {:ok, atom} -> atom
+      :error -> existing_provider_atom(provider)
+    end
+  end
+
+  defp existing_provider_atom(provider) do
+    String.to_existing_atom(provider)
+  rescue
+    # There is no non-raising existing-atom lookup; an unknown provider spelling
+    # is simply "not a provider we recognize".
+    ArgumentError -> nil
+  end
 
   @doc """
   Attaches a stable, per-conversation cache/routing identity to request params.
@@ -458,7 +529,7 @@ defmodule EvoGit.Config.Schema.LLM do
   `provider_options` list — they never replace it, so `auth_mode: :oauth` and
   `oauth_file:` survive.
   """
-  @spec with_cache_identity(keyword(), String.t() | nil, term()) :: keyword()
+  @spec with_cache_identity(keyword(), String.t() | nil, model_spec()) :: keyword()
   def with_cache_identity(params, conversation_id, model) do
     provider = provider_from_model(model)
 
@@ -531,7 +602,7 @@ defmodule EvoGit.Config.Schema.LLM do
   The ChatGPT adapter sets `store: false` in the request body at its own
   protocol boundary.
   """
-  @spec provider_options_for_model(String.t() | map() | tuple() | nil) :: keyword()
+  @spec provider_options_for_model(model_spec()) :: keyword()
   def provider_options_for_model(model) do
     provider = provider_from_model(model)
 
@@ -566,9 +637,9 @@ defmodule EvoGit.Config.Schema.LLM do
       iex> Schema.LLM.oauth_profile?(%{model: "anthropic:claude-opus-5-5"})
       false
   """
-  @spec oauth_profile?(map()) :: boolean()
+  @spec oauth_profile?(model_profile()) :: boolean()
   def oauth_profile?(profile) when is_map(profile) do
-    oauth_auth_mode?(profile_field(profile, :auth_mode)) or
+    oauth_auth_mode?(Keys.get(profile, :auth_mode)) or
       LLMCatalog.oauth_only?(oauth_provider(profile))
   end
 
@@ -587,7 +658,7 @@ defmodule EvoGit.Config.Schema.LLM do
 
   A caller that only has a model spec can pass `%{model: model}`.
   """
-  @spec ensure_profile_credentials(map()) :: :ok | {:error, term()}
+  @spec ensure_profile_credentials(model_profile()) :: :ok | {:error, term()}
   def ensure_profile_credentials(profile) when is_map(profile) do
     if chatgpt_profile?(profile) do
       Auth.ensure_credentials(:openai_codex, siwc_account: siwc_account(profile))
@@ -614,7 +685,7 @@ defmodule EvoGit.Config.Schema.LLM do
   Used by `EvoGit.Config.config_status/0` to decide whether an OAuth profile
   satisfies the API-credential health check.
   """
-  @spec oauth_credential_status(map()) ::
+  @spec oauth_credential_status(model_profile()) ::
           {:ok, %{expires: integer() | nil, account_id: String.t() | nil}}
           | {:error, :no_credentials | :invalid_credentials | term()}
   def oauth_credential_status(profile) when is_map(profile) do
@@ -651,13 +722,13 @@ defmodule EvoGit.Config.Schema.LLM do
   # The provider a profile's subscription credential belongs to. `nil` when the
   # model spec carries no resolvable provider — `EvoGit.Auth` then reports "no
   # credentials" instead of raising.
-  defp oauth_provider(profile), do: provider_from_model(profile_field(profile, :model))
+  defp oauth_provider(profile), do: provider_from_model(Keys.get(profile, :model))
 
   @doc """
   Returns the managed OAuth file a profile's subscription credential uses: the
   profile's `oauth_file` wins, otherwise the default `<config_dir>/auth.json`.
   """
-  @spec oauth_file_for(map()) :: String.t()
+  @spec oauth_file_for(model_profile()) :: String.t()
   def oauth_file_for(profile) when is_map(profile) do
     if chatgpt_profile?(profile) do
       case EvoGit.Auth.ChatGPT.Store.path(siwc_account(profile)) do
@@ -665,7 +736,7 @@ defmodule EvoGit.Config.Schema.LLM do
         {:error, _} -> EvoGit.Auth.ChatGPT.Store.directory()
       end
     else
-      Auth.oauth_file(oauth_file: profile_field(profile, :oauth_file))
+      Auth.oauth_file(oauth_file: Keys.get(profile, :oauth_file))
     end
   end
 
@@ -694,11 +765,11 @@ defmodule EvoGit.Config.Schema.LLM do
     provider = oauth_provider(profile)
 
     provider == :openai_codex or
-      (provider == :openai and oauth_auth_mode?(profile_field(profile, :auth_mode)))
+      (provider == :openai and oauth_auth_mode?(Keys.get(profile, :auth_mode)))
   end
 
   defp siwc_account(profile) do
-    profile_field(profile, :siwc_account) || EvoGit.Auth.ChatGPT.Store.default_account()
+    Keys.get(profile, :siwc_account) || EvoGit.Auth.ChatGPT.Store.default_account()
   end
 
   defp file_provider_options(profile) do
@@ -750,7 +821,7 @@ defmodule EvoGit.Config.Schema.LLM do
   Missing custom credentials emit an empty `:api_key` so ReqLLM rejects the
   request rather than falling back to a provider-wide key; OAuth is excluded.
   """
-  @spec profile_generation_params(map()) :: keyword()
+  @spec profile_generation_params(model_profile()) :: keyword()
   def profile_generation_params(profile) when is_map(profile) do
     model = Map.get(profile, :model)
 
@@ -772,6 +843,7 @@ defmodule EvoGit.Config.Schema.LLM do
   end
 
   @doc "Apply the subscription transport to a request for a resolved model."
+  @spec with_model_http_options(keyword(), model_spec()) :: keyword()
   def with_model_http_options(options, model) do
     if provider_from_model(model) == :openai_codex do
       case EvoGit.Auth.ChatGPT.http_options() do
@@ -807,8 +879,7 @@ defmodule EvoGit.Config.Schema.LLM do
   end
 
   @doc false
-  @spec model_metadata(String.t() | map() | tuple() | nil) ::
-          %{limits: map(), capabilities: map()} | nil
+  @spec model_metadata(model_spec()) :: provider_metadata() | nil
   def model_metadata(model) do
     case Application.get_env(:evo_git, :llm_model_metadata_fun) do
       fun when is_function(fun, 1) ->
@@ -1013,151 +1084,70 @@ defmodule EvoGit.Config.Schema.LLM do
   def maybe_param(keyword_list, _key, nil), do: keyword_list
   def maybe_param(keyword_list, key, value), do: keyword_list ++ [{key, value}]
 
+  # ── Reasoning effort (the ladder lives in `ReasoningEffort`) ─────────────
+  #
+  # These five functions are the public entry points every caller uses (schema
+  # validation, scheduler selection, request assembly, the dashboard); the
+  # ladder itself, its alias rules and its totality guarantees are implemented
+  # ONCE in `EvoGit.Config.Schema.ReasoningEffort`.
+
   @doc """
   Returns the canonical, user-selectable reasoning-effort LEVELS in ascending
-  intensity order:
+  intensity order: `[:none, :minimal, :low, :medium, :high, :xhigh]`.
 
-  `#{inspect(@reasoning_efforts)}`
-
-  This is the ONE source of truth for the offered set. `:max` is NOT a level:
-  it is a provider wire/value alias of `:xhigh` (`canonical_reasoning_effort/1`
-  aliases it), so it must never appear in a level picker.
-
-  Total and pure — same list on every call.
+  `:max` is NOT a level: it is a provider wire/value alias of `:xhigh`
+  (`canonical_reasoning_effort/1` aliases it), so it must never appear in a
+  level picker. Total and pure — same list on every call.
   """
-  @spec reasoning_efforts() :: [atom()]
-  def reasoning_efforts, do: @reasoning_efforts
+  @spec reasoning_efforts() :: [ReasoningEffort.level()]
+  def reasoning_efforts, do: ReasoningEffort.levels()
 
   @doc """
   Returns the ordered pick list a UI renders: `reasoning_efforts/0` plus
-  `:default`:
-
-  `#{inspect(@reasoning_effort_options)}`
+  `:default` (`[:none, :minimal, :low, :medium, :high, :xhigh, :default]`).
 
   `:default` (and an absent/unset value) means "send NO `reasoning_effort`
   field at all, i.e. use the provider default". It is a UI choice, not a
-  provider level.
-
-  Total and pure.
+  provider level. Total and pure.
   """
-  @spec reasoning_effort_options() :: [atom()]
-  def reasoning_effort_options, do: @reasoning_effort_options
+  @spec reasoning_effort_options() :: [ReasoningEffort.level() | :default]
+  def reasoning_effort_options, do: ReasoningEffort.options()
 
   @doc """
-  Returns `true` when `value` is one of the OFFERED reasoning-effort levels,
-  `false` otherwise. Total — never raises, whatever the input.
+  Returns `true` when `value` is one of the OFFERED choices — a canonical level
+  or the provider-default choice (`:default` / `nil`) — given as atoms or as
+  strings (case-insensitive, surrounding whitespace ignored).
 
-  True for the canonical levels (#{inspect(@reasoning_efforts)}) and for the
-  provider-default choice (`:default` / `nil`), given as atoms or as strings
-  (case-insensitive, surrounding whitespace ignored — `" High "` is `:high`).
-
-  `"max"` / `:max` are ACCEPTED legacy ALIASES read as `:xhigh`
-  (`canonical_reasoning_effort/1`), NOT offered levels — so `allowed?("max")`
-  is `false` and `reasoning_efforts/0` never contains it. Anything else
-  (`"garbage"`, `42`, `%{}`) is `false` too.
-
-  ## Examples
-
-      iex> Schema.LLM.allowed?(:xhigh)
-      true
-
-      iex> Schema.LLM.allowed?(" High ")
-      true
-
-      iex> Schema.LLM.allowed?(nil)
-      true
-
-      iex> Schema.LLM.allowed?("max")
-      false
-
-      iex> Schema.LLM.allowed?("garbage")
-      false
+  `:max` / `"max"` are ACCEPTED legacy ALIASES read as `:xhigh`, NOT offered
+  levels, so `allowed?("max")` is `false`. Anything else (`"garbage"`, `42`,
+  `%{}`) is `false` too. Total — never raises, whatever the input.
   """
   @spec allowed?(term()) :: boolean()
-  def allowed?(nil), do: true
-  def allowed?(value), do: effort_atom(value) in @reasoning_effort_options
+  def allowed?(value), do: ReasoningEffort.allowed?(value)
 
   @doc """
   Returns the canonical effort atom for any accepted input, or `nil` for
-  anything unrecognized. Total — never raises, whatever the input.
+  anything unrecognized.
 
-  The canonical levels pass through as themselves, `:max` / `"max"` alias to
-  `:xhigh` (Z.AI GLM's native spelling — see
-  `EvoGit.Config.Schema.LLMConstraints`), and `nil` stays `nil` (meaning
-  "provider default"). Strings are trimmed and case-insensitive.
-
-  ## Examples
-
-      iex> Schema.LLM.canonical_reasoning_effort("MAX")
-      :xhigh
-
-      iex> Schema.LLM.canonical_reasoning_effort(:max)
-      :xhigh
-
-      iex> Schema.LLM.canonical_reasoning_effort("high")
-      :high
-
-      iex> Schema.LLM.canonical_reasoning_effort(nil)
-      nil
-
-      iex> Schema.LLM.canonical_reasoning_effort("garbage")
-      nil
+  The levels pass through as themselves, `:max` / `"max"` alias to `:xhigh`
+  (Z.AI GLM's native spelling — the provider wire spelling is restored by
+  `EvoGit.Config.Schema.LLMConstraints`), `:default` stays `:default` and `nil`
+  stays `nil` (meaning "provider default"). Strings are trimmed and
+  case-insensitive. Total — never raises, whatever the input.
   """
-  @spec canonical_reasoning_effort(term()) :: atom() | nil
-  def canonical_reasoning_effort(nil), do: nil
-
-  def canonical_reasoning_effort(value) do
-    case effort_atom(value) do
-      @reasoning_effort_alias_max -> :xhigh
-      effort -> effort
-    end
-  end
-
-  # The RAW input spelling -> atom, WITHOUT the legacy alias: `:max` stays
-  # `:max` so callers can tell an accepted alias from an offered level.
-  # String matching is explicit (never String.to_existing_atom on user input).
-  defp effort_atom(value) when is_binary(value) do
-    case value |> String.trim() |> String.downcase() do
-      "none" -> :none
-      "minimal" -> :minimal
-      "low" -> :low
-      "medium" -> :medium
-      "high" -> :high
-      "xhigh" -> :xhigh
-      "max" -> @reasoning_effort_alias_max
-      "default" -> @reasoning_effort_default
-      _ -> nil
-    end
-  end
-
-  defp effort_atom(value) when is_atom(value) do
-    if value in @reasoning_effort_options or value == @reasoning_effort_alias_max,
-      do: value,
-      else: nil
-  end
-
-  defp effort_atom(_value), do: nil
+  @spec canonical_reasoning_effort(term()) :: ReasoningEffort.level() | :default | nil
+  def canonical_reasoning_effort(value), do: ReasoningEffort.canonical(value)
 
   @doc """
-  Converts reasoning_effort string from config (TOML) to atom expected by ReqLLM.
-  Explicit case matching rather than String.to_existing_atom for safety: user
-  input never interns a new atom.
+  Converts a persisted `reasoning_effort` value from config (TOML) to the atom
+  ReqLLM expects.
 
-  Canonical level ATOMS pass through unchanged (`:high` -> `:high`). The legacy
-  alias `"max"` / `:max` becomes `:xhigh` (the Genesis level; the provider wire
-  spelling is restored by `EvoGit.Config.Schema.LLMConstraints`). Unknown values
-  are returned unchanged so the caller (validation) can report them.
+  This is `canonical_reasoning_effort/1` plus the documented ECHO: an
+  unrecognized value is returned UNCHANGED so the caller (validation) can
+  report it (`"garbage"` stays `"garbage"`, `42` stays `42`), which is why the
+  spec is `term()` in and out. Canonical level atoms pass through unchanged and
+  `"max"` / `:max` become `:xhigh`.
   """
-  @spec convert_reasoning_effort(String.t() | nil | atom()) :: atom() | String.t() | nil
-  def convert_reasoning_effort(nil), do: nil
-  def convert_reasoning_effort("none"), do: :none
-  def convert_reasoning_effort("minimal"), do: :minimal
-  def convert_reasoning_effort("low"), do: :low
-  def convert_reasoning_effort("medium"), do: :medium
-  def convert_reasoning_effort("high"), do: :high
-  def convert_reasoning_effort("xhigh"), do: :xhigh
-  def convert_reasoning_effort("max"), do: :xhigh
-  def convert_reasoning_effort("default"), do: :default
-  def convert_reasoning_effort(:max), do: :xhigh
-  def convert_reasoning_effort(other), do: other
+  @spec convert_reasoning_effort(term()) :: term()
+  def convert_reasoning_effort(value), do: ReasoningEffort.convert(value)
 end

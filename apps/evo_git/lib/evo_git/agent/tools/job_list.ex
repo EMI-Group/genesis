@@ -14,7 +14,9 @@ defmodule EvoGit.Agent.Tools.JobList do
   `EvoGit.BackgroundJobs.status_string/1`.
   """
 
+  alias EvoGit.Agent.Tools.Boundary
   alias EvoGit.Agent.Tools.Failure
+  alias EvoGit.Agent.Tools.Shared
   alias EvoGit.BackgroundJobs
 
   @doc """
@@ -39,16 +41,19 @@ defmodule EvoGit.Agent.Tools.JobList do
   `Error: ...` string.
   """
   def execute(_args, _repo_path, _repo_root) do
-    owner = BackgroundJobs.current_owner_pid()
+    # Cross-GenServer boundary (BackgroundJobs): see
+    # `EvoGit.Agent.Tools.Boundary` for the ONE guard rationale.
+    Boundary.run(
+      fn ->
+        owner = BackgroundJobs.current_owner_pid()
 
-    case BackgroundJobs.list(owner_opts(owner)) do
-      [] -> "(no background jobs)"
-      jobs when is_list(jobs) -> jobs |> Enum.map(&job_line/1) |> Enum.join("\n")
-    end
-  rescue
-    e -> Failure.error(Exception.message(e))
-  catch
-    :exit, reason -> Failure.error(inspect(reason))
+        case BackgroundJobs.list(Shared.owner_opts(owner)) do
+          [] -> "(no background jobs)"
+          jobs when is_list(jobs) -> jobs |> Enum.map(&job_line/1) |> Enum.join("\n")
+        end
+      end,
+      &Failure.error/1
+    )
   end
 
   defp job_line(job) do
@@ -64,9 +69,4 @@ defmodule EvoGit.Agent.Tools.JobList do
 
   defp field(job, key) when is_map(job), do: Map.get(job, key)
   defp field(_job, _key), do: nil
-
-  # The ownership fence is passed ONLY when the runner installed an owner pid;
-  # otherwise an unscoped listing is used.
-  defp owner_opts(nil), do: []
-  defp owner_opts(pid), do: [owner_pid: pid]
 end

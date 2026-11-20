@@ -9,6 +9,7 @@ defmodule EvoGit.Agent.Tools.DeleteTask do
   reviewable branch/result history is gone.
   """
 
+  alias EvoGit.Agent.Tools.Boundary
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
@@ -17,26 +18,17 @@ defmodule EvoGit.Agent.Tools.DeleteTask do
   def execute(args, _repo_path, _repo_root) do
     case Shared.fetch_string_arg(args, "task_id") do
       {:ok, task_id} ->
-        case safe_delete(task_id) do
+        # Cross-GenServer boundary: see `EvoGit.Agent.Tools.Boundary`.
+        case Boundary.run(
+               fn -> EvoGit.TaskRegistry.delete_task(task_id) end,
+               fn reason -> {:registry_unavailable, reason} end
+             ) do
           :ok -> "Task #{task_id} deleted."
           {:error, reason} -> "Error deleting task #{task_id}: #{describe_error(reason)}"
         end
 
       {:error, message} ->
         message
-    end
-  end
-
-  # Justified try/catch :exit — cross-GenServer boundary (defense-in-depth).
-  # `delete_task/1` is a GenServer.cast (fire-and-forget, never raises even if
-  # the registry is down), but the guard keeps this tool total if the API ever
-  # changes to a call or the registry is unavailable — an exit here would
-  # otherwise crash the agent.
-  defp safe_delete(task_id) do
-    try do
-      EvoGit.TaskRegistry.delete_task(task_id)
-    catch
-      :exit, reason -> {:error, {:registry_unavailable, reason}}
     end
   end
 

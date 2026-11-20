@@ -7,7 +7,7 @@ defmodule EvoGit.BackgroundJobs do
   Completion detection — ONE primary mechanism plus two cheap, idempotent fallbacks: the **observer port** (every backend keeps a port on the handle that reports the job's exit — a `:port` job's own child, and a `:unit` job's `systemd-run --wait` client, which exits with the UNIT's status), the **lazy reconcile** (every `read/2` / `list/1` / `job/2` re-checks a live job against the backend via `EvoGit.BackgroundJobs.StatusProbe` and the registry's per-job probe cache) and the **periodic tick** (while at least one live job uses a `:unit` handle, ONE `@tick_interval_ms` timer re-reconciles them so `finished_at` / `exit_code` land promptly even if nobody reads; it is disarmed as soon as no such job remains). `{:unknown, nil}` from the backend is never treated as "running forever": a job that stays unreportable with no live observer port is settled terminally as `:failed` after a bounded `@unknown_grace_ms` grace.
   No handler blocks on the OS — a `:unit` handle's status probe (`systemctl --user show`, one subprocess) NEVER runs inside this GenServer: `StatusProbe.start/2` computes it in its own unlinked task and reports back with `{:probe_result, job_id, result}`, and `reconcile_job/2` applies only the CACHED result of a live `:unit` job (never inventing a status it has not observed). A `:port` handle's probe is `Port.info/2` and stays synchronous. `@probe_min_interval_ms` (call-time seam `:background_probe_min_interval_ms`) bounds how often one job may be re-probed, so a tight poll loop cannot fork a subprocess per call.
   Completion notices — the per-turn `claim_finished_notices/1` is a PURE `:ets` read of the public mirror owned by `EvoGit.BackgroundJobs.NoticeMirror`: it never calls this GenServer, so a busy, blocked or slow registry cannot stall an agent's turn start and the claim cannot time out (there is no reply to wait for, therefore no "timed out means no notices" path). `%{jobs: ...}` here stays AUTHORITATIVE — the mirror is only that read path, kept correct by the ONE state writer `put_job/2` — and after a claim's atomic `:ets.take/2` the caller fires ONE `GenServer.cast/2` (`{:notices_claimed, owner_pid, ids}`) so the registry records the same `announced: true` marks.
-  Error vocabulary — failures a caller must act on are returned as ONE actionable prose sentence, never a bare atom: `start_job/1` and `read/2` answer `{:error, message}` for EVERY failure INCLUDING an unreachable registry (the dead-registry fallback is wrapped in that tuple at both call sites, since their callers pattern-match it exactly); the ownership/finished probes in `job/2` and `kill/3` keep the small semantic tuples documented on those functions so a caller can branch on them before formatting prose. No input is ever converted with `String.to_atom/1`.
+  Error vocabulary — an unreachable registry is NEVER reported as a missing record: the ONE transport boundary (`EvoGit.BackgroundJobs.RegistryClient`) turns an exited call into `{:error, :registry_unavailable}`, and every public function maps that to its own documented answer in one visible place. `job/2` and `kill/3` return that atom verbatim (a dead registry is honestly "unavailable", not "no such job"); `start_job/1` and `read/2` keep their `{:error, message}` prose contract, so the availability failure becomes ONE actionable sentence; `list/1` and `snapshot/1` answer `[]` and `reap_under/1` always answers `:ok` (a list/admin-shaped API never raises). The ownership/finished probes in `job/2` and `kill/3` keep the small semantic tuples documented on those functions (`:not_found` is reserved for an id the registry really does not know) so a caller can branch on them before formatting prose. No input is ever converted with `String.to_atom/1`.
   Process registry — every job is ALSO recorded as ONE `:background_job` execution in `EvoGit.ProcessManager` (the single source of truth for what this node runs): the start path `track`s it with the agent-visible identity, `attach`es the normalized OS handle (`EvoGit.Sandbox.Background.normalize_handle/1`) and stores the returned `execution_id` on the job record, and ONE terminal funnel in `put_job/2` `finish`es that execution when the job reaches a terminal status (`:completed` / `:failed` / `:killed`, plus `:killed` on a registry shutdown). The registry resolves its manager ONCE at `start_link/1` (`:process_manager` opt, default `EvoGit.ProcessManager`) and passes it as `server:`; every call is total, so an unavailable manager never affects job bookkeeping. Because the manager routes a `:background_job` kill back to `kill/3`, killing through either door stops the process and settles both records.
   """
 
@@ -15,7 +15,9 @@ defmodule EvoGit.BackgroundJobs do
 
   require Logger
 
+  alias EvoGit.BackgroundJobs.Notice
   alias EvoGit.BackgroundJobs.NoticeMirror
+  alias EvoGit.BackgroundJobs.RegistryClient
   alias EvoGit.BackgroundJobs.StatusProbe
   alias EvoGit.ProcessManager
   alias EvoGit.Platform
@@ -73,8 +75,6 @@ defmodule EvoGit.BackgroundJobs do
   @reap_call_timeout 5_000
   # Default `read/2` byte cap when the caller does not pass `:max_bytes`.
   @default_max_bytes 20_000
-  # Retention cap for FINISHED job records (live jobs are never pruned).
-  @max_finished_retained 100
   # Per-owner cap on `snapshot/1` (the per-turn read; a full `list/1` stays uncapped).
   @snapshot_limit 20
   # Minimum interval (ms) between two OFF-PROCESS status probes of the SAME job.
@@ -207,11 +207,16 @@ defmodule EvoGit.BackgroundJobs do
 
   @doc """
   Fetches one job by id, reconciling a live job against the backend first.
-  `opts[:owner_pid]` fences ownership: when it is set, a job belonging to another owner yields `{:error, :not_owner}`; otherwise the lookup is unscoped. Returns `{:ok, job}`, `{:error, :not_found}` (unknown id, or an unreachable registry) or `{:error, :not_owner}` (the job belongs to a different owner).
+  `opts[:owner_pid]` fences ownership: when it is set, a job belonging to another owner yields `{:error, :not_owner}`; otherwise the lookup is unscoped.
+  Returns `{:ok, job}`, `{:error, :not_found}` (an id the registry does not know), `{:error, :not_owner}` (the job belongs to a different owner) or `{:error, :registry_unavailable}` — the registry is not running, so NOTHING is known about the id; retry instead of treating it as missing.
   """
-  @spec job(String.t(), keyword()) :: {:ok, job()} | {:error, :not_found | :not_owner}
+  @spec job(String.t(), keyword()) ::
+          {:ok, job()} | {:error, :not_found | :not_owner | :registry_unavailable}
   def job(id, opts \\ []) when is_binary(id) do
-    call_registry({:job, id, Keyword.get(opts, :owner_pid)}, {:error, :not_found})
+    case call_registry({:job, id, Keyword.get(opts, :owner_pid)}) do
+      {:ok, reply} -> reply
+      {:error, :registry_unavailable} -> {:error, :registry_unavailable}
+    end
   end
 
   @doc """
@@ -223,10 +228,10 @@ defmodule EvoGit.BackgroundJobs do
           {:ok, %{text: String.t(), job: job()}} | {:error, String.t()}
   def read(id, opts \\ []) when is_binary(id) do
     with {:ok, max_bytes} <- normalize_max_bytes(Keyword.get(opts, :max_bytes)) do
-      call_registry(
-        {:read, id, Keyword.get(opts, :owner_pid), max_bytes},
-        {:error, registry_down_error()}
-      )
+      case call_registry({:read, id, Keyword.get(opts, :owner_pid), max_bytes}) do
+        {:ok, reply} -> reply
+        {:error, :registry_unavailable} -> {:error, registry_down_error()}
+      end
     end
   end
 
@@ -236,8 +241,8 @@ defmodule EvoGit.BackgroundJobs do
   """
   @spec list(keyword()) :: [job()]
   def list(opts \\ []) do
-    case call_registry({:list, Keyword.get(opts, :owner_pid)}, []) do
-      jobs when is_list(jobs) -> jobs
+    case call_registry({:list, Keyword.get(opts, :owner_pid)}) do
+      {:ok, jobs} when is_list(jobs) -> jobs
       _ -> []
     end
   end
@@ -252,7 +257,10 @@ defmodule EvoGit.BackgroundJobs do
     owner_pid = Keyword.get(opts, :owner_pid) || current_owner_pid()
 
     if is_pid(owner_pid) and registry_alive?() do
-      call_registry({:snapshot, owner_pid}, [])
+      case call_registry({:snapshot, owner_pid}) do
+        {:ok, jobs} when is_list(jobs) -> jobs
+        _ -> []
+      end
     else
       []
     end
@@ -288,9 +296,9 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   # Cheap pre-flight for `snapshot/1` (the ONE remaining state-only read that still needs the registry): a registry that
-  # died between this check and the call is still caught by `call_registry/3`'s single centralized `catch :exit` boundary
-  # (the repo forbids scattering broad rescues), but skipping the doomed `GenServer.call` keeps the failure path off the
-  # caller's critical path.
+  # died between this check and the call is still caught by `EvoGit.BackgroundJobs.RegistryClient`'s single centralized
+  # `catch :exit` boundary (the repo forbids scattering broad rescues), but skipping the doomed `GenServer.call` keeps
+  # the failure path off the caller's critical path.
   defp registry_alive? do
     case server() do
       pid when is_pid(pid) -> Process.alive?(pid)
@@ -301,18 +309,26 @@ defmodule EvoGit.BackgroundJobs do
 
   @doc """
   Kills a job (and its detached process) if it is still live. `reason` is recorded in the job's `:detail` as `"killed (<reason>)"`; `nil` becomes `"stopped by request"`.
-  Returns `{:ok, job}` (now `:killed`), `{:error, :not_found}` (unknown id, or an unreachable registry), `{:error, :not_owner}` (`opts[:owner_pid]` fences a different owner's job), `{:error, {:already_finished, job}}` (the job already reached a terminal status; nothing was killed) or `{:error, message}` (the backend could not stop the process — one actionable prose sentence; the job is left in `:stopping`).
+  Returns `{:ok, job}` (now `:killed`), `{:error, :not_found}` (an id the registry does not know), `{:error, :not_owner}` (`opts[:owner_pid]` fences a different owner's job), `{:error, {:already_finished, job}}` (the job already reached a terminal status; nothing was killed), `{:error, :registry_unavailable}` (the registry is not running, so the job is NOT known to be gone and may still be running — retry) or `{:error, message}` (the backend could not stop the process — one actionable prose sentence; the job is left in `:stopping`).
   The caller REQUESTED the kill, so both the `{:ok, job}` and `{:error, {:already_finished, job}}` replies come back with `announced: true` — no completion notice is raised for them (`job/2` afterwards returns a record with `announced: true`). The `{:error, message}` branch deliberately does NOT mark it: the process may still be running, so the agent should still learn the final status from a notice. A `read/2` after a kill still returns the output produced before it.
   `opts[:actor]` names who asked (defaults to `:operator`) and becomes the settled execution's terminal cause `{:killed_by, actor}`.
   """
   @spec kill(String.t(), term(), keyword()) ::
           {:ok, job()}
-          | {:error, :not_found | :not_owner | {:already_finished, job()} | String.t()}
+          | {:error,
+             :not_found
+             | :not_owner
+             | :registry_unavailable
+             | {:already_finished, job()}
+             | String.t()}
   def kill(id, reason \\ nil, opts \\ []) when is_binary(id) do
-    call_registry(
-      {:kill, id, reason, Keyword.get(opts, :owner_pid), Keyword.get(opts, :actor) || :operator},
-      {:error, :not_found}
-    )
+    message =
+      {:kill, id, reason, Keyword.get(opts, :owner_pid), Keyword.get(opts, :actor) || :operator}
+
+    case call_registry(message) do
+      {:ok, reply} -> reply
+      {:error, :registry_unavailable} -> {:error, :registry_unavailable}
+    end
   end
 
   @doc """
@@ -320,9 +336,8 @@ defmodule EvoGit.BackgroundJobs do
   """
   @spec reap_under(String.t()) :: :ok
   def reap_under(prefix) when is_binary(prefix) and prefix != "" do
-    case call_registry({:reap_under, prefix}, :ok, @reap_call_timeout) do
-      _ -> :ok
-    end
+    _ = call_registry({:reap_under, prefix}, @reap_call_timeout)
+    :ok
   end
 
   def reap_under(_prefix), do: :ok
@@ -388,19 +403,13 @@ defmodule EvoGit.BackgroundJobs do
 
   ## Registry plumbing
 
-  # Every public call goes through here so a dead/absent registry can never make a calling tool crash with an exit.
+  # Every public call goes through here, and through `RegistryClient` — the ONE place a `GenServer.call/3`
+  # happens — so a dead/absent registry can neither crash a calling tool with an exit nor be reported as a
+  # missing record: the transport failure is ALWAYS `{:error, :registry_unavailable}`, which each public
+  # function maps to its own documented answer in one visible place.
   # The timeout is explicit per call: `reap_under/1` passes a short one so a wedged registry cannot stall its caller.
-  defp call_registry(message, fallback, timeout \\ @call_timeout) do
-    try do
-      GenServer.call(server(), message, timeout)
-    catch
-      :exit, reason ->
-        Logger.warning(
-          "BackgroundJobs: registry call #{request_tag(message)} failed: #{inspect(reason)}"
-        )
-
-        fallback
-    end
+  defp call_registry(message, timeout \\ @call_timeout) do
+    RegistryClient.call(server(), message, timeout)
   end
 
   # Acquire only in the caller: the singleton must remain able to observe exits
@@ -415,16 +424,22 @@ defmodule EvoGit.BackgroundJobs do
     case acquired do
       {:ok, permit} ->
         try do
-          call_registry(
+          message =
             {:start_job,
              Map.merge(spec, %{
                tool_permit: permit,
                launch_requester: self(),
                launch_deadline: System.monotonic_time(:millisecond) + @call_timeout
-             }), handle},
-            {:error,
-             "The background job service is not running or the launch timed out before acknowledgement. Any unaccepted launch will be stopped; check the job list before retrying."}
-          )
+             }), handle}
+
+          case call_registry(message) do
+            {:ok, reply} ->
+              reply
+
+            {:error, :registry_unavailable} ->
+              {:error,
+               "The background job service is not running or the launch timed out before acknowledgement. Any unaccepted launch will be stopped; check the job list before retrying."}
+          end
         after
           # Owner-enforced: after handoff this stale caller cannot free the job's
           # permit; before handoff it cleans up failed/dead registry calls.
@@ -449,9 +464,6 @@ defmodule EvoGit.BackgroundJobs do
     do: permit_call(fn -> EvoGit.AgentScheduler.release_tool_permit(permit) end)
 
   defp release_permit(_), do: :ok
-
-  defp request_tag(message) when is_tuple(message), do: inspect(elem(message, 0))
-  defp request_tag(message), do: inspect(message)
 
   defp registry_down_error do
     "The background job service is not running (it may be restarting after a crash), so this request did nothing. Retry in a moment; if it keeps failing, run the command in the foreground instead."
@@ -665,7 +677,7 @@ defmodule EvoGit.BackgroundJobs do
         case read_delta(job, max_bytes) do
           {:ok, text, job} ->
             # The caller just learned this job's status from the tool result, so a later notice would be a duplicate.
-            job = mark_announced(job)
+            job = Notice.mark_announced(job)
             {:reply, {:ok, %{text: text, job: job}}, put_job(state, job)}
 
           {:error, message} ->
@@ -679,14 +691,14 @@ defmodule EvoGit.BackgroundJobs do
       state.jobs
       |> Map.values()
       |> filter_by_owner(owner_pid)
-      |> sort_newest_first()
+      |> Notice.sort_newest_first()
 
     {jobs, state} =
       Enum.reduce(jobs, {[], state}, fn job, {acc, acc_state} ->
         {job, acc_state} = reconcile_job(job, acc_state)
         acc_state = maybe_start_probe(acc_state, job)
         # Same rule as `read/2`: a terminal job handed back to the caller counts as announced.
-        job = mark_announced(job)
+        job = Notice.mark_announced(job)
         {[job | acc], put_job(acc_state, job)}
       end)
 
@@ -711,12 +723,12 @@ defmodule EvoGit.BackgroundJobs do
         {:reply, {:error, err}, state}
 
       {:ok, job} ->
-        if live?(job) do
+        if Notice.live?(job) do
           case stop_job(job, reason, {:killed_by, actor}) do
             {:ok, job} ->
               # The CALLER requested this kill, so it already knows the job is ending: suppress the
               # completion notice (also covers a `:stopping` record a unit observer settles later).
-              job = suppress_notice(job)
+              job = Notice.suppress_notice(job)
               {:reply, {:ok, job}, put_job(state, job)}
 
             {:error, message} ->
@@ -737,7 +749,7 @@ defmodule EvoGit.BackgroundJobs do
         else
           # Same rule as `read/2` / `list/1`: a terminal job handed back to the caller counts as
           # announced, because the caller just learned its final status.
-          job = suppress_notice(job)
+          job = Notice.suppress_notice(job)
           {:reply, {:error, {:already_finished, job}}, put_job(state, job)}
         end
     end
@@ -746,7 +758,7 @@ defmodule EvoGit.BackgroundJobs do
   def handle_call({:reap_under, prefix}, _from, state) do
     state =
       Enum.reduce(state.jobs, state, fn {_id, job}, acc ->
-        if live?(job) and Platform.path_under?(job.cwd, prefix) do
+        if Notice.live?(job) and Platform.path_under?(job.cwd, prefix) do
           case stop_job(job, :reaped, {:killed_by, :operator}) do
             {:ok, job} ->
               put_job(acc, job)
@@ -774,7 +786,7 @@ defmodule EvoGit.BackgroundJobs do
     state =
       Enum.reduce(ids, state, fn id, acc ->
         case Map.fetch(acc.jobs, id) do
-          {:ok, job} -> put_job(acc, mark_announced(job))
+          {:ok, job} -> put_job(acc, Notice.mark_announced(job))
           :error -> acc
         end
       end)
@@ -821,7 +833,7 @@ defmodule EvoGit.BackgroundJobs do
     # `:unit` job — this handler never forks `systemctl` itself.
     state =
       Enum.reduce(state.jobs, state, fn {_id, job}, acc ->
-        if live?(job) and StatusProbe.offprocess?(job.handle) do
+        if Notice.live?(job) and StatusProbe.offprocess?(job.handle) do
           {job, acc} = reconcile_job(job, acc)
           acc = maybe_start_probe(acc, job)
           put_job(acc, job)
@@ -840,7 +852,7 @@ defmodule EvoGit.BackgroundJobs do
   def handle_info({:probe_result, job_id, result}, state) do
     case Map.fetch(state.jobs, job_id) do
       {:ok, job} when is_map(job) ->
-        if terminal?(job) do
+        if Notice.terminal?(job) do
           {:noreply, drop_probe(state, job_id)}
         else
           state = put_probe(state, job_id, %{result: result, at: now_ms(), in_flight: false})
@@ -864,7 +876,7 @@ defmodule EvoGit.BackgroundJobs do
           Enum.reduce(ids, state, fn id, acc ->
             case Map.fetch(acc.jobs, id) do
               {:ok, job} ->
-                if live?(job) do
+                if Notice.live?(job) do
                   case stop_job(job, :owner_exited, :owner_died) do
                     {:ok, job} ->
                       put_job(acc, job)
@@ -907,7 +919,7 @@ defmodule EvoGit.BackgroundJobs do
     # Defence in depth: the supervisor is shutting down, so no detached process started by this registry may outlive it.
     # Bounded by construction: the `:unit` path's `Sandbox.Background.kill/1` delegates to `stop_unit_async/1`, which spawns a `Task` for `systemctl --user stop` and returns immediately, and a `:port` handle's port closes with this process (its child dies with it). The ONE genuinely async risk is therefore a `systemctl --user stop` that does not finish before the VM goes down, and `EvoGit.Sandbox.Background.sweep_stale_units/0` closes it at the next boot by garbage-collecting `genesis-job-*` units whose embedded `b<beam_os_pid>` is no longer alive.
     Enum.each(state.jobs, fn {_id, job} ->
-      if live?(job) do
+      if Notice.live?(job) do
         kill_detached(job.handle)
         release_permit(Map.get(job, :tool_permit))
         settle_shutdown(state, job)
@@ -952,7 +964,7 @@ defmodule EvoGit.BackgroundJobs do
           {:reply, {:error, _}, updated_state} ->
             # A failed cleanup must stay counted and inspectable until reaped.
             unless Enum.any?(updated_state.jobs, fn {_id, job} ->
-                     job.tool_permit == spec.tool_permit and not terminal?(job)
+                     job.tool_permit == spec.tool_permit and not Notice.terminal?(job)
                    end) do
               release_permit(spec.tool_permit)
             end
@@ -982,7 +994,7 @@ defmodule EvoGit.BackgroundJobs do
             # Spawn/tracking can block past the call budget or outlive the tool
             # task. Only this acceptance point detaches from the requester.
             if launch_valid?(spec) do
-              {:reply, {:ok, job}, arm_tick(prune_finished(state))}
+              {:reply, {:ok, job}, arm_tick(Notice.prune_finished(state))}
             else
               case stop_job(job, :launch_abandoned, {:killed_by, :launch_abandoned}) do
                 {:ok, stopped} ->
@@ -1251,7 +1263,7 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   defp live_jobs_for_owner(jobs, owner_pid) do
-    Enum.count(jobs, fn {_id, job} -> job.owner_pid == owner_pid and live?(job) end)
+    Enum.count(jobs, fn {_id, job} -> job.owner_pid == owner_pid and Notice.live?(job) end)
   end
 
   defp filter_by_owner(jobs, nil), do: jobs
@@ -1283,7 +1295,7 @@ defmodule EvoGit.BackgroundJobs do
 
   defp reconcile_job(job, state) do
     cond do
-      not live?(job) ->
+      not Notice.live?(job) ->
         # Terminal: nothing to probe, and its cached result (if any) is dead weight.
         {job, state |> forget_unknown(job.id) |> drop_probe(job.id)}
 
@@ -1382,7 +1394,7 @@ defmodule EvoGit.BackgroundJobs do
     entry = Map.get(state.probes, job.id)
 
     cond do
-      not live?(job) ->
+      not Notice.live?(job) ->
         state
 
       not StatusProbe.offprocess?(job.handle) ->
@@ -1499,13 +1511,22 @@ defmodule EvoGit.BackgroundJobs do
   defp observer_alive?(%{kind: :unit, port: port}), do: port_open?(port)
   defp observer_alive?(_handle), do: false
 
-  defp port_open?(port) when is_port(port) do
-    is_list(Port.info(port))
-  rescue
-    _ -> false
+  # A live port answers a list of info terms; a CLOSED port answers `nil` and does NOT raise, so the
+  # `nil` clause is the normal closed-port path. Deliberately NO `rescue`: an unexpected raise here must
+  # surface, because swallowing it would silently mean "observer dead" and let the `@unknown_grace_ms`
+  # floor settle a job whose observer may still be alive.
+  @doc false
+  # TEST SEAM — `@doc false` public so a suite can pin the observer probe's totality (a non-port value
+  # and a closed port both answer `false`) without reaching into the GenServer's private helpers.
+  @spec port_open?(term()) :: boolean()
+  def port_open?(port) when is_port(port) do
+    case Port.info(port) do
+      nil -> false
+      info when is_list(info) -> true
+    end
   end
 
-  defp port_open?(_port), do: false
+  def port_open?(_port), do: false
 
   defp forget_unknown(%{unknown_since: %{} = unknown_since} = state, id) do
     %{state | unknown_since: Map.delete(unknown_since, id)}
@@ -1711,7 +1732,7 @@ defmodule EvoGit.BackgroundJobs do
   # backend status costs a subprocess and therefore cannot be polled on demand.
   defp arm_tick(%{tick_timer: nil} = state) do
     if Enum.any?(state.jobs, fn {_id, job} ->
-         live?(job) and StatusProbe.offprocess?(job.handle)
+         Notice.live?(job) and StatusProbe.offprocess?(job.handle)
        end) do
       %{
         state
@@ -1739,7 +1760,7 @@ defmodule EvoGit.BackgroundJobs do
   defp put_job(state, job) do
     previous = Map.get(state.jobs, job.id)
 
-    if not live?(job) and (is_nil(previous) or live?(previous)) do
+    if not Notice.live?(job) and (is_nil(previous) or Notice.live?(previous)) do
       release_permit(Map.get(job, :tool_permit))
     end
 
@@ -1786,31 +1807,10 @@ defmodule EvoGit.BackgroundJobs do
 
   defp fallback_settle_reason(job), do: {:crashed, Map.get(job, :detail)}
 
-  defp live?(%{status: status}), do: status in [:running, :stopping]
-  defp live?(_job), do: false
-
-  # Terminal = the job can never change status again, so it is eligible for a (single) completion notice.
-  defp terminal?(%{status: status}), do: status in [:completed, :killed, :failed]
-  defp terminal?(_job), do: false
-
-  # Marks a terminal job as announced ONCE; never reset back to `false` and never touches a live job.
-  defp mark_announced(job) do
-    if terminal?(job) and not job.announced do
-      %{job | announced: true}
-    else
-      job
-    end
-  end
-
-  # The kill path's own marking: the caller REQUESTED the stop, so it knows the outcome. Unlike
-  # `mark_announced/1` this also applies to a non-terminal record (a `:stopping` unit handle
-  # settles later), so the later `mark_finished/2` cannot resurrect a notice.
-  defp suppress_notice(job), do: %{job | announced: true}
-
   # OUTPUT routing: only a `:port` handle's chunks are the job's own output.
   defp find_live_job_by_port(jobs, port) do
     Enum.find_value(jobs, :error, fn {_id, job} ->
-      if live?(job) and match?(%{kind: :port, port: ^port}, job.handle) do
+      if Notice.live?(job) and match?(%{kind: :port, port: ^port}, job.handle) do
         {:ok, job}
       end
     end)
@@ -1821,62 +1821,16 @@ defmodule EvoGit.BackgroundJobs do
   # observer client.
   defp find_live_job_by_observer_port(jobs, port) do
     Enum.find_value(jobs, :error, fn {_id, job} ->
-      if live?(job) and match?(%{port: ^port}, job.handle) do
+      if Notice.live?(job) and match?(%{port: ^port}, job.handle) do
         {:ok, job}
       end
     end)
   end
 
-  defp sort_newest_first(jobs),
-    do: Enum.sort_by(jobs, &NoticeMirror.started_microseconds/1, :desc)
-
   # Deterministic newest-first ordering for the state-only reads: two jobs started in the same microsecond would
   # otherwise come back in arbitrary map-iteration order. ONE implementation, shared with the mirror's claim, so a
   # claimed batch and a `snapshot/1` can never disagree.
   defp sort_newest_first_with_id(jobs), do: NoticeMirror.sort_newest_first_with_id(jobs)
-
-  # Finished records are retained so a caller can still read the tail after the process exits; the oldest are dropped past the retention cap. Live jobs are never pruned.
-  # A dropped record also loses its notice-mirror row (the ONE explicit mirror delete outside `put_job/2`) and its cached probe result: nothing may outlive the record it describes.
-  defp prune_finished(state) do
-    state = %{state | unknown_since: prune_unknown_since(state)}
-    finished = state.jobs |> Map.values() |> Enum.reject(&live?/1)
-    excess = length(finished) - @max_finished_retained
-
-    if excess > 0 do
-      finished
-      |> Enum.sort_by(&finished_key/1)
-      |> Enum.take(excess)
-      |> Enum.reduce(state, fn job, acc ->
-        NoticeMirror.delete(acc.notice_table, job)
-
-        %{
-          acc
-          | jobs: Map.delete(acc.jobs, job.id),
-            probes: Map.delete(acc.probes, job.id)
-        }
-      end)
-    else
-      state
-    end
-  end
-
-  # The floor only ever tracks LIVE jobs: a job that reached a terminal status by
-  # another route (a kill, or its observer port's exit message) drops its marker
-  # here, so the bookkeeping cannot grow without bound.
-  defp prune_unknown_since(state) do
-    state.unknown_since
-    |> Enum.filter(fn {id, _since} ->
-      match?(%{status: status} when status in [:running, :stopping], Map.get(state.jobs, id))
-    end)
-    |> Map.new()
-  end
-
-  defp finished_key(job) do
-    case job.finished_at do
-      %DateTime{} = finished_at -> DateTime.to_unix(finished_at, :microsecond)
-      _ -> 0
-    end
-  end
 
   ## Prose helpers
 

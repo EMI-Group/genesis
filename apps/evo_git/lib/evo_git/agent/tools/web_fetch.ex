@@ -644,7 +644,7 @@ defmodule EvoGit.Agent.Tools.WebFetch do
         {:binary, label} -> "[binary content omitted: #{label}]"
       end
 
-    {text, truncated_by_chars?} = truncate(body, max_chars)
+    {text, truncated_by_chars?} = truncate_with_flag(body, max_chars)
     text = maybe_mark_raw_cap(text, truncated_by_chars?, response.truncated?, max_chars)
 
     "Fetched #{url} (HTTP #{response.status})\n\n#{text}"
@@ -694,7 +694,10 @@ defmodule EvoGit.Agent.Tools.WebFetch do
     if String.valid?(body), do: body, else: String.replace_invalid(body)
   end
 
-  defp truncate(text, max_chars) do
+  # Deliberately NOT `EvoGit.Util.Strings.truncate/2`: this variant also reports
+  # whether it truncated (the caller appends a byte-cap marker only when it did
+  # not), and the shared helper answers text alone.
+  defp truncate_with_flag(text, max_chars) do
     total = String.length(text)
 
     if total > max_chars do

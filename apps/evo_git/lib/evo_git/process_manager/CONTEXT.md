@@ -34,6 +34,16 @@ While an intent is pending, the FIRST non-killed terminal finish settles the rec
 An incoming `:killed` finish and an `:owner_died` finish are never translated, and the intent is consumed by its ONE translation, so `do_finish/4` stays idempotent for every later finish.
 An intent is dropped together with its record during retention, and a FAILED stop clears it so a later natural exit keeps its own terminal facts.
 
+## Error Vocabulary
+
+A control callback answers its OWN failure, so a caller never has to guess.
+A backend that raises is contained by `Control.guarded/2` and tagged by the operation that failed: `{:error, {:probe_failed, detail}}` (`stats`), `{:error, {:kill_failed, detail}}` (`kill`), `{:error, {:signal_failed, detail}}` (`signal`) — an unusable/unknown handle is `{:error, :no_handle}` and `alive?/1` answers `false`.
+`Control.kill_outcome/3` is the ONE kill verdict shared by the escalating backends: a gone handle is `:ok`, otherwise the first REAL backend failure wins (KILL, then TERM), and `{:error, :still_alive}` means only that both signals were delivered and the handle is still there — an EPERM kill, an unavailable `kill`/`systemctl` or `{:error, :no_pid}` is reported as itself.
+`Control.signal/2` normalizes the signal exactly ONCE and backends receive the NAME as authoritative; a backend never re-validates it.
+A registry request has THREE possible outcomes and they are never conflated: a dead/unregistered registry keeps each call site's documented degraded value (`get/2`/`lookup/2` → `{:error, :not_found}`, `list/1`/`live/1` → `[]`, `prune/1` → `{:ok, 0}`, `track/3` → `{:error, :process_manager_unavailable}`), a WEDGED registry (the call timed out) answers `{:error, :timeout}`, and one that crashed while answering answers `{:error, {:registry_exit, reason}}`, each with ONE `Logger.warning`.
+`Registry.classify_exit/1` is that decision (pure, `@doc false`, unit-tested without waiting out a call); `list/1`, `live/1` and `sample_all/1` stay empty-shaped for both failure kinds because an empty roster IS the dashboard read's contract.
+`Registry.record_stats/3` drops a non-map probe answer (`:ok`) rather than crashing the calling agent, an unknown `handle_call` answers `{:error, {:unknown_call, request}}` (never `:ok`), and `Registry.cast/2` is a bare `GenServer.cast/2` — it cannot fail, so it carries no guard.
+
 ## API Surface
 
 | Module | Role |
@@ -42,9 +52,9 @@ An intent is dropped together with its record during retention, and a FAILED sto
 | `EvoGit.ProcessManager.Registry` | The GenServer: executions + handles + kill-intent maps, owner monitors, ONE sampling timer, `"proc-<n>"` counter, monotonic sample seq, retention (`prune/1`, `max_terminal_records/0`, `finished_retention_ms/0`) |
 | `EvoGit.ProcessManager.Execution` | FROZEN defstruct + `terminal?/1`, `live?/1`, `builtin?/1`, `external?/1`, `sampleable?/1`, `status_for_reason/1`, `control_entry/1` |
 | `EvoGit.ProcessManager.Handle` | Normalized OS handle (`:systemd_unit | :posix | :windows`) and `normalize/1` for legacy `%{kind: :unit | :port}` sandbox handles |
-| `EvoGit.ProcessManager.Control` | Behaviour (`stats/1`, `signal/2`, `kill/1`, `alive?/1`) + dispatcher on `Handle.kind`, signal normalization, `kill_grace_ms/0` |
-| `Control.Systemd` / `Control.Posix` / `Control.Windows` | Backend implementations (`systemctl --user`, `/proc` or one `ps` table, `tasklist`/`taskkill`) |
-| `EvoGit.ProcessManager.Stats` | Pure parsers (`parse_proc_stat/1`, `parse_proc_status/1`, `parse_ps_output/1`, `parse_ps_time/1`, `parse_systemctl_show/1`) plus `empty/0`, `summarize/1`, `cpu_percent/4`, `changed?/2`, `sample_timeout_ms/0` |
+| `EvoGit.ProcessManager.Control` | Behaviour (`stats/1`, `signal/2`, `kill/1`, `alive?/1`) + dispatcher on `Handle.kind`, the ONE signal normalization (backends receive the NAME), `kill_grace_ms/0`, the shared `kill_outcome/3` kill verdict and the `guarded/2` crash boundary |
+| `Control.Systemd` / `Control.Posix` / `Control.Windows` | Backend implementations (`systemctl --user`, `/proc` or one `ps` table, `tasklist`/`taskkill`); Systemd and Posix decide an escalating kill with the shared `Control.kill_outcome/3` |
+| `EvoGit.ProcessManager.Stats` | Pure parsers (`parse_proc_stat/1`, `parse_proc_status/1`, `parse_ps_output/1`, `parse_ps_time/1`, `parse_systemctl_show/1`, `from_systemd/1`) plus `empty/0`, `summarize/1`, `cpu_percent/4`, `changed?/2`, `sample_timeout_ms/0`; every parser is a 2-tuple (`{:ok, value}` / `{:error, :malformed}`), so a `{:ok, stats}` payload is always a map |
 
 ## Constraints
 
@@ -54,7 +64,8 @@ An intent is dropped together with its record during retention, and a FAILED sto
 - The `stats` field is ALWAYS the six-key map from `Stats.empty/0` (`cpu_time_ms`, `cpu_percent`, `memory_bytes`, `rss_bytes`, `pids`, `sampled_at`) — never `nil`, never a partial map.
 - `pgid` lives on the `Handle`, not on `Execution` (the frozen `Execution` schema models identity, not OS addressing).
 - PubSub topic `"processes"` with the emitting node LAST: `{:process_started, execution, node}`, `{:process_updated, id, changes, node}`, `{:process_exited, execution, node}`, `{:process_sample, node, seq, entries}`, `{:process_control, id, entry, node}`; lifecycle changes only, never a no-op.
-- All handlers and all control callbacks are TOTAL: unknown id → `{:error, :not_found}` / `:ok`, failed probe → `{:error, reason}`, unrecognized handle → no-op.
+- All handlers and all control callbacks are TOTAL: an unknown id answers `{:error, :not_found}` for the reads and `:ok` for the idempotent writes, a failed probe is `{:error, reason}` data, an unrecognized handle is a no-op, and only a WEDGED/crashed registry answers `{:error, :timeout}` / `{:error, {:registry_exit, reason}}` — never `:not_found`; nothing here raises for any registry state, and `EvoGit.ProcessManager`'s on-demand sample holds NO second rescue layer because `Control.stats/1` is already total.
+- `kill/2`'s failure text is the backend's OWN reason (see Error Vocabulary), so an operator log distinguishes an EPERM/unavailable-signal failure from a process that survived both signals.
 - Owner lifetime is ONE `Process.monitor/1` per owner pid; the owner's death marks every non-terminal execution it owned `:failed` with `reason: :owner_died` and best-effort kills the handle in a throwaway process.
 - Call-time app-env seams only (no TOML keys, so the suite stays async-safe): `:process_manager_sample_interval_ms` (3_000), `:process_stats_enabled` (true), `:process_finished_retention_ms` (300_000), `:process_finished_max_records` (200), `:process_stats_probe_timeout_ms` (2_000), `:process_kill_grace_ms` (1_500).
 - Terminal records are retained for the retention window and capped at the newest `:process_finished_max_records` (default 200), live records are never pruned, and an owner's monitor is dropped once it has no retained record (re-installed by the next `track/4`); `owner_refs`/`handles` therefore stay bounded by the retained roster.
@@ -76,6 +87,7 @@ An intent is dropped together with its record during retention, and a FAILED sto
 - An execution whose handle exposes no OS identity cannot be probed or signalled by pid: `Control.Posix` and `Control.Windows` answer `{:error, :no_pid}` (so `sample/2` returns that error and `sample_all/1` omits the execution) while the record itself is still tracked, listed and retained; `:systemd_unit` is the exception, because control addresses the UNIT and needs no pid, and its `stats/1` reports cgroup CPU/memory with `pids: []`.
 - `stats` are best-effort point-in-time samples read from `/proc`, one `ps` table, `tasklist` or `systemctl show` at the call-time-configurable sampling interval, not exact accounting; on a backend that reports cumulative CPU only (Linux `/proc`, Windows PowerShell) the value the backend returns carries `cpu_percent: nil` — the sampling TIMER derives it from the delta against the previous sample of the same tree, so the FIRST sample of an execution has no percentage and an on-demand `sample/2` / `sample_all/1` read never derives one (macOS `ps` supplies `%CPU` per sample and needs no delta).
 - Retention deletes terminal records outright once the retention window (Constraints) passes, so a pruned id answers `{:error, :not_found}` from `get/2` and is absent from `list/1` and `sample_all/1`: a FAILED kill never transitions the record (it stays live and controllable, appends `%{action: :kill, reason: {:kill_failed, reason}, actor: actor}` to `control_log` and returns that error), so only successful kills become `:killed`. `:unknown` is declared in `Execution.status` for that degraded case, but NO current code path produces it (only `:starting | :running | :paused | :completed | :failed | :killed` are ever assigned).
+- `attach/3` and `finish/3` can answer `{:error, :timeout}` / `{:error, {:registry_exit, reason}}`, while `EvoGit.Sandbox.Helpers.attach_execution/3` (`../sandbox/`) still specs `:: :ok` and returns `attach/3`'s value verbatim; every caller ignores that value, so the drift is documentation-only.
 
 ## Routing Table
 

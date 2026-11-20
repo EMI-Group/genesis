@@ -176,19 +176,24 @@ defmodule EvoGit.ProcessManager.Stats do
   Builds the stats map for a `:systemd_unit` from `parse_systemctl_show/1`
   output. systemd reports the unit's cgroup totals, so `memory_bytes` is the
   memory figure and `rss_bytes` mirrors it; pids are not queried.
+
+  Like its sibling parsers this is TOTAL and answers `{:ok, t()}` or
+  `{:error, :malformed}` — it never returns a bare map, so a caller can chain
+  it and a `{:ok, stats}` payload is always a map.
   """
-  @spec from_systemd(map()) :: t() | nil
+  @spec from_systemd(term()) :: {:ok, t()} | {:error, :malformed}
   def from_systemd(%{} = parsed) do
-    %{
-      empty()
-      | cpu_time_ms: parsed[:cpu_time_ms],
-        memory_bytes: parsed[:memory_bytes],
-        rss_bytes: parsed[:memory_bytes],
-        sampled_at: DateTime.utc_now()
-    }
+    {:ok,
+     %{
+       empty()
+       | cpu_time_ms: parsed[:cpu_time_ms],
+         memory_bytes: parsed[:memory_bytes],
+         rss_bytes: parsed[:memory_bytes],
+         sampled_at: DateTime.utc_now()
+     }}
   end
 
-  def from_systemd(_parsed), do: nil
+  def from_systemd(_parsed), do: {:error, :malformed}
 
   ## /proc/<pid>/stat
 

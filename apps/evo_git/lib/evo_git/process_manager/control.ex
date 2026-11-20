@@ -15,7 +15,10 @@ defmodule EvoGit.ProcessManager.Control do
   Every callback is **TOTAL**: a failed probe is `{:error, reason}`, an
   unobservable figure is a `nil` field, and nothing ever raises. That is what
   lets the registry and the caller-side sample path treat an OS hiccup as data
-  instead of a crash.
+  instead of a crash. A backend that DOES raise is contained by `guarded/2`,
+  which tags the crash by the operation that failed (`:probe_failed` for a
+  stats probe, `:kill_failed` for a kill, `:signal_failed` for a signal) so a
+  crashed kill is never reported as a probe failure.
 
   `alive?/1` answers a boolean (false for an unknown handle), because it is a
   predicate a caller branches on rather than an error it must format.
@@ -25,22 +28,33 @@ defmodule EvoGit.ProcessManager.Control do
   `normalize_signal/1` maps the small atom vocabulary the public API exposes
   (`:term | :kill | :int | :hup | :stop | :cont | :usr1 | :usr2`) onto the
   POSIX signal NAME, and passes a binary through (upcased), so a caller may send
-  `:term`, `"TERM"` or `"SIGKILL"`. `status_after_signal/1` says which status a
-  successful signal implies (`SIGSTOP` → `:paused`, `SIGCONT` → `:running`,
-  anything else → no status change), so pause/resume and the registry agree on
-  ONE rule.
+  `:term`, `"TERM"` or `"SIGKILL"`. `Control.signal/2` normalizes ONCE and the
+  backends receive that NAME as authoritative — they never re-normalize or
+  re-validate it. `status_after_signal/1` says which status a successful signal
+  implies (`SIGSTOP` → `:paused`, `SIGCONT` → `:running`, anything else → no
+  status change), so pause/resume and the registry agree on ONE rule.
 
   ## Kill escalation
 
   Killing is TERM → short grace → KILL (the grace window is read at CALL time
   from the app env `:process_kill_grace_ms`, default
-  `#{1500}`), then a final `alive?/1` verification:
-  a well-behaved process gets the chance to flush and exit, and the caller
-  learns whether the handle is really gone.
+  `#{1500}`), then a final `alive?/1` verification: a well-behaved process gets
+  the chance to flush and exit, and the caller learns whether the handle is
+  really gone. The KILL attempt ALWAYS happens, even when the TERM itself
+  failed (a dead group leader with live children is exactly what the
+  escalation exists for), and `kill_outcome/3` turns the three observations
+  into ONE verdict: a gone handle is `:ok`, otherwise the first REAL backend
+  failure wins (KILL, then TERM), and `{:error, :still_alive}` means only that
+  both signals were delivered and the handle is still there.
   """
 
   alias EvoGit.ProcessManager.{Handle, Stats}
 
+  @typedoc """
+  The signal vocabulary a CALLER may pass to `EvoGit.ProcessManager.signal/3`:
+  the atom shorthand or a raw name binary. It is normalized ONCE by
+  `normalize_signal/1` / `Control.signal/2`; a backend only ever sees the NAME.
+  """
   @type signal :: :term | :kill | :int | :hup | :stop | :cont | :usr1 | :usr2 | String.t()
 
   # Grace between SIGTERM and SIGKILL — time for a well-behaved process to
@@ -52,14 +66,28 @@ defmodule EvoGit.ProcessManager.Control do
   Probes the handle's live resource usage.
   Returns `{:ok, stats}` with the frozen stats map (see
   `EvoGit.ProcessManager.Stats`), or `{:error, reason}` when the backend cannot
-  answer at all (no executable, no pid, process already gone).
+  answer at all (no executable, no pid, process already gone). The success
+  payload is ALWAYS a map — an unparseable probe is an error, never a `nil`.
   """
   @callback stats(Handle.t()) :: {:ok, Stats.t()} | {:error, term()}
 
-  @doc "Delivers one signal to the handle (the whole tree/unit, not just the leader)."
-  @callback signal(Handle.t(), signal()) :: :ok | {:error, term()}
+  @doc """
+  Delivers one signal to the handle (the whole tree/unit, not just the leader).
 
-  @doc "Terminates the handle: TERM, a short grace, then KILL; then verifies."
+  The signal NAME is authoritative: `Control.signal/2` normalizes it with
+  `normalize_signal/1` exactly ONCE and a backend must not normalize or
+  validate it again (`"TERM"`, `"SIGKILL"`, …). A backend's own escalation
+  calls `signal/2` directly with those literal names.
+  """
+  @callback signal(Handle.t(), String.t()) :: :ok | {:error, term()}
+
+  @doc """
+  Terminates the handle: TERM, a short grace, then KILL; then verifies.
+
+  A real backend failure is answered with its OWN reason (a failed/EPERM kill,
+  an unavailable `kill`/`systemctl`); `{:error, :still_alive}` means only that
+  both signals were delivered and the handle is still there.
+  """
   @callback kill(Handle.t()) :: :ok | {:error, term()}
 
   @doc "Whether the handle still refers to a live OS execution."
@@ -78,7 +106,7 @@ defmodule EvoGit.ProcessManager.Control do
 
   @doc "See `c:stats/1`. Total: a missing backend answers `{:error, :no_handle}`."
   @spec stats(Handle.t() | nil) :: {:ok, Stats.t()} | {:error, term()}
-  def stats(handle), do: dispatch(:stats, handle, {:error, :no_handle})
+  def stats(handle), do: dispatch(:stats, handle)
 
   @doc "See `c:signal/2`. Total: a missing backend answers `{:error, :no_handle}`."
   @spec signal(Handle.t() | nil, signal()) :: :ok | {:error, term()}
@@ -86,7 +114,7 @@ defmodule EvoGit.ProcessManager.Control do
 
   @doc "See `c:kill/1`. Total: a missing backend answers `{:error, :no_handle}`."
   @spec kill(Handle.t() | nil) :: :ok | {:error, term()}
-  def kill(handle), do: dispatch(:kill, handle, {:error, :no_handle})
+  def kill(handle), do: dispatch(:kill, handle)
 
   @doc "See `c:alive?/1`. Total: a missing backend answers `false`."
   @spec alive?(Handle.t() | nil) :: boolean()
@@ -166,14 +194,59 @@ defmodule EvoGit.ProcessManager.Control do
     end
   end
 
+  # The ONE kill verdict shared by every escalating backend (POSIX, systemd, …).
+  #
+  # `alive?` is the post-KILL verification and `hard` / `soft` are the KILL and
+  # TERM results (`:ok | {:error, reason}`). A handle that is gone is `:ok` —
+  # even when a signal reported a failure for a process that had already exited
+  # — otherwise the FIRST real backend failure wins (hard kill, then soft kill).
+  # `{:error, :still_alive}` therefore means only "both signals were delivered
+  # and the handle is still there"; a real reason always outranks it.
+  @doc false
+  @spec kill_outcome(boolean(), :ok | {:error, term()}, :ok | {:error, term()}) ::
+          :ok | {:error, term()}
+  def kill_outcome(alive?, hard, soft) do
+    cond do
+      not alive? -> :ok
+      match?({:error, _}, hard) -> hard
+      match?({:error, _}, soft) -> soft
+      true -> {:error, :still_alive}
+    end
+  end
+
+  # A KILL that raises is a kill failure, a stats probe that raises is a probe
+  # failure, a signal that raises is a signal failure — never one generic tag
+  # for all three.
+  @crash_tags %{stats: :probe_failed, kill: :kill_failed, signal: :signal_failed}
+
+  defp crash_tag(operation), do: Map.get(@crash_tags, operation, :backend_failed)
+
+  # Runs one backend call and contains ANY raise/exit/throw, tagging it by the
+  # operation that failed (`:stats` → `:probe_failed`, `:kill` → `:kill_failed`,
+  # `:signal` → `:signal_failed`).
+  #
+  # The repository forbids unjustified `try/rescue`; this IS the centralized
+  # boundary that keeps the manager and the caller-side sample path alive when a
+  # backend misbehaves. Public (`@doc false`) so a suite can pin both the tags
+  # and the detail shapes without a fake backend.
+  @doc false
+  @spec guarded((-> term()), atom()) :: term()
+  def guarded(fun, operation) do
+    fun.()
+  rescue
+    e -> {:error, {crash_tag(operation), Exception.message(e)}}
+  catch
+    kind, reason -> {:error, {crash_tag(operation), {kind, reason}}}
+  end
+
   ## Internal
 
-  defp dispatch(_fun, handle, fallback) when not is_struct(handle, Handle), do: fallback
+  defp dispatch(_fun, handle) when not is_struct(handle, Handle), do: {:error, :no_handle}
 
-  defp dispatch(fun, handle, fallback) do
+  defp dispatch(fun, handle) do
     case backend_for(handle) do
-      nil -> fallback
-      module -> guarded(fn -> apply(module, fun, [handle]) end, fallback)
+      nil -> {:error, :no_handle}
+      module -> guarded(fn -> apply(module, fun, [handle]) end, fun)
     end
   end
 
@@ -181,19 +254,11 @@ defmodule EvoGit.ProcessManager.Control do
     do: {:error, :no_handle}
 
   defp dispatch_signal(handle, signal) do
-    with {:ok, _name} <- normalize_signal(signal) do
+    with {:ok, name} <- normalize_signal(signal) do
       case backend_for(handle) do
         nil -> {:error, :no_handle}
-        module -> guarded(fn -> module.signal(handle, signal) end, {:error, :no_handle})
+        module -> guarded(fn -> module.signal(handle, name) end, :signal)
       end
     end
-  end
-
-  defp guarded(fun, _fallback) do
-    fun.()
-  rescue
-    e -> {:error, {:probe_failed, Exception.message(e)}}
-  catch
-    kind, reason -> {:error, {:probe_failed, {kind, reason}}}
   end
 end

@@ -16,7 +16,7 @@ defmodule EvoGit.ProcessManagerTest do
   use ExUnit.Case, async: true
 
   alias EvoGit.ProcessManager
-  alias EvoGit.ProcessManager.{Execution, Handle, Stats}
+  alias EvoGit.ProcessManager.{Execution, Handle, Registry, Stats}
 
   setup do
     name = :"process_manager_#{System.unique_integer([:positive])}"
@@ -578,6 +578,84 @@ defmodule EvoGit.ProcessManagerTest do
              ProcessManager.get(again, srv)
   end
 
+  ## Registry boundary (unavailable vs wedged vs unknown call)
+
+  test "a non-map stats answer is dropped instead of crashing the caller", %{srv: srv} do
+    server = Keyword.fetch!(srv, :server)
+    {:ok, id} = ProcessManager.track(:tool_call, %{tool: "bash"}, srv)
+
+    # A probe answer the caller could not parse must never raise here.
+    assert :ok = Registry.record_stats(server, id, nil)
+    assert :ok = Registry.record_stats(server, id, {:error, :malformed})
+    assert :ok = Registry.record_stats(server, id, "not a map")
+    assert :ok = Registry.record_stats(server, "proc-404", %{rss_bytes: 1})
+
+    # Nothing was stored, and the registry is still alive and answering.
+    assert {:ok, %Execution{stats: stats}} = ProcessManager.get(id, srv)
+    assert stats == Stats.empty()
+  end
+
+  test "an unavailable (never started / stopped) registry keeps every documented fallback" do
+    dead = :"process_manager_gone_#{System.unique_integer([:positive])}"
+
+    assert Registry.track(dead, :tool_call, %{}) == {:error, :process_manager_unavailable}
+    assert Registry.attach(dead, "proc-1", nil) == :ok
+    assert Registry.finish(dead, "proc-1", :completed) == :ok
+    assert Registry.get(dead, "proc-1") == {:error, :not_found}
+    assert Registry.lookup(dead, "proc-1") == {:error, :not_found}
+    assert Registry.list(dead, []) == []
+    assert Registry.live(dead) == []
+    assert Registry.prune(dead) == {:ok, 0}
+    assert Registry.put_kill_intent(dead, "proc-1", :operator) == :ok
+    assert Registry.clear_kill_intent(dead, "proc-1") == :ok
+    assert Registry.record_stats(dead, "proc-1", %{rss_bytes: 1}) == :ok
+  end
+
+  test "a wedged registry is a timeout, while a dead one stays the caller's fallback" do
+    # The branch decision behind the call helper, unit-tested instead of waiting
+    # out a real 5 s call.
+    call = {GenServer, :call, [EvoGit.ProcessManager, :live, 5_000]}
+
+    assert Registry.classify_exit({:timeout, call}) == {:error, :timeout}
+    assert Registry.classify_exit({:noproc, call}) == :unavailable
+    assert Registry.classify_exit({:normal, call}) == :unavailable
+    assert Registry.classify_exit({:shutdown, call}) == :unavailable
+    assert Registry.classify_exit({{:shutdown, :bye}, call}) == :unavailable
+    assert Registry.classify_exit({:killed, call}) == :unavailable
+    assert Registry.classify_exit(:noproc) == :unavailable
+
+    # A registry that CRASHED while answering is never "unavailable": the reason
+    # survives for the caller instead of being folded into "not found".
+    crash = {{%RuntimeError{message: "boom"}, []}, call}
+    assert Registry.classify_exit(crash) == {:error, {:registry_exit, crash}}
+  end
+
+  @tag capture_log: true
+  test "a registry that crashes while answering is reported as an exit, not as not_found" do
+    # ONE crashing server per assertion: the crashed one is restarted by its
+    # supervisor, so a second call could race that restart (`:noproc`).
+    direct = :"process_manager_crashing_#{System.unique_integer([:positive])}"
+    through_facade = :"process_manager_crashing_#{System.unique_integer([:positive])}"
+
+    for name <- [direct, through_facade] do
+      start_supervised!(%{id: name, start: {__MODULE__.CrashingRegistry, :start_link, [name]}})
+    end
+
+    assert {:error, {:registry_exit, _reason}} = Registry.get(direct, "proc-1")
+    # The facade forwards it instead of degrading to `:not_found`.
+    assert {:error, {:registry_exit, _reason}} =
+             ProcessManager.get("proc-1", server: through_facade)
+  end
+
+  test "a mistyped call on a live registry answers an explicit unknown-call error", %{srv: srv} do
+    server = Keyword.fetch!(srv, :server)
+
+    assert GenServer.call(server, :bogus) == {:error, {:unknown_call, :bogus}}
+
+    assert GenServer.call(server, {:bogus, "proc-1"}) ==
+             {:error, {:unknown_call, {:bogus, "proc-1"}}}
+  end
+
   ## Helpers
 
   defp open_sleep do
@@ -608,6 +686,22 @@ defmodule EvoGit.ProcessManagerTest do
       0 -> :ok
     end
   end
+end
+
+defmodule EvoGit.ProcessManagerTest.CrashingRegistry do
+  # A registry stand-in whose EVERY request crashes: the caller's `GenServer.call`
+  # exits with the crash reason, which is exactly the `{:registry_exit, reason}`
+  # branch `EvoGit.ProcessManager.Registry` must report instead of "not found".
+  use GenServer
+
+  @spec start_link(atom()) :: GenServer.on_start()
+  def start_link(name), do: GenServer.start_link(__MODULE__, nil, name: name)
+
+  @impl true
+  def init(_state), do: {:ok, nil}
+
+  @impl true
+  def handle_call(request, _from, _state), do: raise("crashing registry: #{inspect(request)}")
 end
 
 defmodule EvoGit.ProcessManagerSeamsTest do

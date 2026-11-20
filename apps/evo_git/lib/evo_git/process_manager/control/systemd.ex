@@ -13,10 +13,16 @@ defmodule EvoGit.ProcessManager.Control.Systemd do
       (bytes, `infinity` for a value systemd cannot measure) becomes
       `memory_bytes`/`rss_bytes`. Pids are NOT queried: the unit's cgroup
       content is not part of this probe.
-    * **signal** — `systemctl --user kill --signal=<SIG> <unit>`.
+    * **signal** — `systemctl --user kill --signal=<SIG> <unit>`, where `<SIG>`
+      is the NAME `EvoGit.ProcessManager.Control.signal/2` already normalized
+      (the backend never re-normalizes it).
     * **kill** — SIGTERM, a short grace
       (`EvoGit.ProcessManager.Control.kill_grace_ms/0`), then SIGKILL, then a
-      final `alive?/1` verification, so `:ok` means the unit really is gone.
+      final `alive?/1` verification decided by
+      `EvoGit.ProcessManager.Control.kill_outcome/3`, so `:ok` means the unit
+      really is gone; a real `systemctl` failure is reported as its OWN reason
+      and `{:error, :still_alive}` only means both signals were delivered and
+      the unit is still there.
     * **alive?** — `ActiveState` in `active`/`activating`/`reloading`.
 
   A transient unit that exited successfully is unloaded by systemd immediately
@@ -36,14 +42,9 @@ defmodule EvoGit.ProcessManager.Control.Systemd do
 
   @impl true
   def stats(%Handle{unit: unit}) when is_binary(unit) and unit != "" do
-    case systemctl(["show", unit, "-p", @properties]) do
-      {:ok, output} ->
-        with {:ok, parsed} <- Stats.parse_systemctl_show(output) do
-          {:ok, Stats.from_systemd(parsed)}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
+    with {:ok, output} <- systemctl(["show", unit, "-p", @properties]),
+         {:ok, parsed} <- Stats.parse_systemctl_show(output) do
+      Stats.from_systemd(parsed)
     end
   end
 
@@ -66,24 +67,31 @@ defmodule EvoGit.ProcessManager.Control.Systemd do
   def alive?(_handle), do: false
 
   @impl true
-  def signal(%Handle{unit: unit}, signal) when is_binary(unit) and unit != "" do
-    with {:ok, name} <- Control.normalize_signal(signal) do
-      case systemctl(["kill", "--signal=#{name}", unit]) do
-        {:ok, _output} -> :ok
-        {:error, reason} -> {:error, reason}
-      end
+  def signal(%Handle{unit: unit}, name)
+      when is_binary(unit) and unit != "" and is_binary(name) do
+    case systemctl(["kill", "--signal=#{name}", unit]) do
+      {:ok, _output} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
+
+  def signal(%Handle{unit: unit}, _name) when is_binary(unit) and unit != "",
+    do: {:error, :invalid_signal}
 
   def signal(_handle, _signal), do: {:error, :no_unit}
 
   @impl true
   def kill(%Handle{unit: unit} = handle) when is_binary(unit) and unit != "" do
-    _ = signal(handle, "TERM")
+    soft = signal(handle, "TERM")
+    # Best-effort escalation: a TERM that already failed still gets the KILL
+    # attempt, because a leader that is already gone with live children is
+    # exactly the case the escalation exists for.
     Process.sleep(Control.kill_grace_ms())
-    _ = signal(handle, "KILL")
+    hard = signal(handle, "KILL")
 
-    if alive?(handle), do: {:error, :still_alive}, else: :ok
+    # A gone unit is :ok; otherwise the REAL backend failure wins over the
+    # generic `:still_alive`.
+    Control.kill_outcome(alive?(handle), hard, soft)
   end
 
   def kill(_handle), do: {:error, :no_unit}

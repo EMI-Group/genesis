@@ -266,13 +266,49 @@ defmodule EvoGit.Config.Schema do
 
   # ── LLM Delegations ──────────────────────────────────────────────────
 
+  @doc "Canonical provider accounts, STRING-keyed. See `ProviderProfiles.provider_profiles/1`."
+  @spec provider_profiles(term()) :: [ProviderProfiles.provider_profile()]
   defdelegate provider_profiles(config), to: ProviderProfiles
+
+  @doc "Ordered model/effort choices across every account inventory."
+  @spec model_selections(term()) :: [ProviderProfiles.selection()]
   defdelegate model_selections(config), to: ProviderProfiles
+
+  @doc """
+  Resolves a provider-profile selection into the runtime's fields.
+
+  The canonical entry point: accepts `nil` (configured default), an account or
+  legacy profile id, or an explicit `provider_profile_id`/`model`/
+  `reasoning_effort` map. See `ProviderProfiles.resolve_selection/2`.
+  """
+  @spec resolve_selection(term(), ProviderProfiles.selection_input()) ::
+          {:ok, ProviderProfiles.resolved_selection()}
+          | {:error, ProviderProfiles.resolution_error()}
+  defdelegate resolve_selection(config, spec), to: ProviderProfiles
+
+  @doc """
+  Compatibility alias for `resolve_selection/2`, identical in arguments and
+  return value.
+
+  Kept for in-tree callers and their tests. The name reads as a task's
+  STRING-keyed `model_spec` selection identity, but this resolver returns a
+  ReqLLM-ready identifier under its `model_spec` key — hence the canonical name.
+  """
+  @spec resolve_model_spec(term(), ProviderProfiles.selection_input()) ::
+          {:ok, ProviderProfiles.resolved_selection()}
+          | {:error, ProviderProfiles.resolution_error()}
   defdelegate resolve_model_spec(config, spec), to: ProviderProfiles
 
+  @spec llm_generation_params(map()) :: keyword()
   defdelegate llm_generation_params(config), to: LLM
+
+  @spec model_profiles(map()) :: [LLM.model_profile()]
   defdelegate model_profiles(config), to: LLM
+
+  @spec get_model_profile(map(), String.t()) :: {:ok, LLM.model_profile()} | {:error, :not_found}
   defdelegate get_model_profile(config, id), to: LLM
+
+  @spec default_model_profile(map()) :: {:ok, LLM.model_profile()} | {:error, :not_found}
   defdelegate default_model_profile(config), to: LLM
 
   @doc """
@@ -287,6 +323,6 @@ defmodule EvoGit.Config.Schema do
   profiles through it, so a boot, a config reload and the catalog warm-up can
   never disagree about which profiles exist.
   """
-  @spec effective_model_profiles(map()) :: [map()]
+  @spec effective_model_profiles(map()) :: [LLM.model_profile()]
   defdelegate effective_model_profiles(config), to: LLM
 end

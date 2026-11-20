@@ -71,6 +71,8 @@ defmodule EvoGit.Agent.Compression.Threshold do
   `try`/`rescue`.
   """
 
+  alias EvoGit.Util.Coerce
+
   @typedoc """
   `source` says which trigger is in force: `:window` (derived from the
   configured context window) or `:config` (an explicit positive
@@ -240,7 +242,7 @@ defmodule EvoGit.Agent.Compression.Threshold do
     case EvoGit.Config.Schema.LLM.model_metadata(llm_model) do
       %{} = metadata ->
         case Map.get(metadata, :limits) do
-          %{} = limits -> positive_integer(limit(limits, :output))
+          %{} = limits -> Coerce.positive_integer(limit(limits, :output), nil)
           _other -> nil
         end
 
@@ -256,9 +258,6 @@ defmodule EvoGit.Agent.Compression.Threshold do
       :error -> Map.get(limits, Atom.to_string(key))
     end
   end
-
-  defp positive_integer(value) when is_integer(value) and value > 0, do: value
-  defp positive_integer(_value), do: nil
 
   defp threshold_of(info) do
     case Map.get(info, :threshold) do

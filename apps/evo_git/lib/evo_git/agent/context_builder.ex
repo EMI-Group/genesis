@@ -350,14 +350,13 @@ defmodule EvoGit.Agent.ContextBuilder do
 
   @doc """
   Treats `nil` or whitespace-only strings/binaries as blank.
+
+  Public one-line delegate to `EvoGit.Util.Strings.blank?/1`, kept on this
+  module because callers such as `EvoGit.Agent.Session.Setup` address the
+  predicate as `EvoGit.Agent.ContextBuilder.blank?/1`.
   """
-  def blank?(nil), do: true
-
-  def blank?(value) when is_binary(value) do
-    String.trim(value) == ""
-  end
-
-  def blank?(_), do: false
+  @spec blank?(term()) :: boolean()
+  def blank?(value), do: EvoGit.Util.Strings.blank?(value)
 
   # --- XML-like Block Wrappers ---
 
@@ -570,27 +569,15 @@ defmodule EvoGit.Agent.ContextBuilder do
   """
   @spec refresh_message?(term()) :: boolean()
   def refresh_message?(%ReqLLM.Message{role: :user, content: content}) do
+    # The `:text` content parts of a message's content, joined with "".
+    # `EvoGit.Util.Strings.content_text/1` is TOTAL over non-list content,
+    # non-map parts and non-binary `:text` values.
     content
-    |> content_text()
+    |> EvoGit.Util.Strings.content_text()
     |> String.starts_with?(@context_refresh_notice)
   end
 
   def refresh_message?(_message), do: false
-
-  # The `:text` content parts of a message's content, joined. Total over
-  # non-list content, non-map parts and non-binary `:text` values.
-  defp content_text(content) when is_binary(content), do: content
-
-  defp content_text(content) when is_list(content) do
-    content
-    |> Enum.map(fn
-      %{type: :text, text: text} when is_binary(text) -> text
-      _part -> ""
-    end)
-    |> Enum.join("")
-  end
-
-  defp content_text(_content), do: ""
 
   @doc """
   Materializes ONE injected (mid-run) user message into an LLM user message.

@@ -92,9 +92,21 @@ defmodule EvoGit.ProcessManager.Registry do
 
   ## Totality
 
-  Every handler is total: an unknown id is `{:ok, :ok}`, a re-`finish` is a
-  no-op, a probe failure is data. A crashing GenServer would lose the whole
-  node's execution view, so nothing here raises on bad input.
+  Every handler is total: an unknown id answers `{:error, :not_found}` for the
+  reads and `:ok` for the idempotent writes, a re-`finish` is a no-op, a probe
+  failure (or a non-map stats answer) is data. A crashing GenServer would lose
+  the whole node's execution view, so nothing here raises on bad input.
+
+  ## Unavailable vs wedged
+
+  Every request goes through ONE client helper. A registry that is simply not
+  running (unregistered, or stopped: `:noproc`, `:normal`, `:shutdown`,
+  `{:shutdown, detail}`, `:killed`) keeps that call site's documented fallback —
+  `[]` for the list reads, `{:ok, 0}` for `prune/1`, `{:error, :not_found}` for
+  the lookups. A registry that is WEDGED (the call timed out) or that crashed
+  while answering is NEVER degraded into that fallback: it answers
+  `{:error, :timeout}` / `{:error, {:registry_exit, reason}}` and logs ONE
+  warning, so "nothing is running" can never mean "the registry is stuck".
   """
 
   use GenServer
@@ -129,6 +141,14 @@ defmodule EvoGit.ProcessManager.Registry do
   }
   @known_meta_keys Map.values(@meta_keys) |> Enum.uniq()
 
+  @typedoc """
+  A request that never reached an answer: the registry call TIMED OUT (a wedged
+  registry, which must never read as "nothing is running") or the registry
+  exited while answering. A dead/unregistered registry keeps each call site's
+  own documented fallback instead.
+  """
+  @type call_error :: :timeout | {:registry_exit, term()}
+
   ## Client-side helpers (called by the facade, never by application code)
 
   @doc "Starts the registry. Honours `:name` (default `EvoGit.ProcessManager`)."
@@ -140,20 +160,26 @@ defmodule EvoGit.ProcessManager.Registry do
 
   @doc "Records a new execution; returns its `\"proc-<n>\"` id."
   @spec track(GenServer.server(), Execution.kind(), map()) ::
-          {:ok, String.t()} | {:error, :process_manager_unavailable}
+          {:ok, String.t()} | {:error, :process_manager_unavailable | call_error()}
   def track(server, kind, meta) do
     call(server, {:track, kind, meta}, {:error, :process_manager_unavailable})
   end
 
   @doc "Records the OS handle that became known for an execution."
-  @spec attach(GenServer.server(), String.t(), term()) :: :ok
+  @spec attach(GenServer.server(), String.t(), term()) :: :ok | {:error, call_error()}
   def attach(server, id, handle), do: call(server, {:attach, id, handle}, :ok)
 
   @doc "Records a terminal status (idempotent)."
-  @spec finish(GenServer.server(), String.t(), Execution.status(), keyword()) :: :ok
+  @spec finish(GenServer.server(), String.t(), Execution.status(), keyword()) ::
+          :ok | {:error, call_error()}
   def finish(server, id, status, opts \\ []), do: call(server, {:finish, id, status, opts}, :ok)
 
-  @doc "Lists executions (newest first), filtered by the given keys."
+  @doc """
+  Lists executions (newest first), filtered by the given keys.
+
+  Both an unreachable registry and a wedged one answer `[]` — this is the
+  dashboard-shaped read, where an empty roster is the documented degraded value.
+  """
   @spec list(GenServer.server(), keyword()) :: [Execution.t()]
   def list(server, filters \\ []) do
     case call(server, {:list, filters}, []) do
@@ -163,22 +189,25 @@ defmodule EvoGit.ProcessManager.Registry do
   end
 
   @doc "Fetches one execution."
-  @spec get(GenServer.server(), String.t()) :: {:ok, Execution.t()} | {:error, :not_found}
+  @spec get(GenServer.server(), String.t()) ::
+          {:ok, Execution.t()} | {:error, :not_found | call_error()}
   def get(server, id), do: call(server, {:get, id}, {:error, :not_found})
 
   @doc """
   Resolves one execution TOGETHER with its OS handle — the read the facade needs
   before probing/signalling outside the registry.
-  Returns `{:ok, execution, handle_or_nil}` or `{:error, :not_found}`.
+  Returns `{:ok, execution, handle_or_nil}`, `{:error, :not_found}` (unknown id,
+  or a registry that is not running) or `{:error, call_error()}` for a wedged /
+  crashed registry.
   """
   @spec lookup(GenServer.server(), String.t()) ::
-          {:ok, Execution.t(), Handle.t() | nil} | {:error, :not_found}
+          {:ok, Execution.t(), Handle.t() | nil} | {:error, :not_found | call_error()}
   def lookup(server, id), do: call(server, {:lookup, id}, {:error, :not_found})
 
   @doc """
   Every SAMPLEABLE execution (live and external) as `[{id, status, handle}]`,
   oldest first. A live `:builtin` record is never returned: it has no OS
-  process to probe.
+  process to probe. An unreachable OR wedged registry answers `[]`.
   """
   @spec live(GenServer.server()) :: [{String.t(), Execution.status(), Handle.t() | nil}]
   def live(server) do
@@ -190,11 +219,16 @@ defmodule EvoGit.ProcessManager.Registry do
 
   @doc false
   # Records a caller-probed stats map (an on-demand `sample/2`). A cast: the
-  # caller never waits for its own observation to be stored.
-  @spec record_stats(GenServer.server(), String.t(), Stats.t()) :: :ok
+  # caller never waits for its own observation to be stored. A non-map answer
+  # (a backend that reported garbage) is DROPPED — the caller obviously cannot
+  # store what it could not parse, and it must never crash on a probe it did not
+  # author.
+  @spec record_stats(GenServer.server(), String.t(), term()) :: :ok
   def record_stats(server, id, stats) when is_map(stats) do
     cast(server, {:record_stats, id, stats})
   end
+
+  def record_stats(_server, _id, _stats), do: :ok
 
   @doc false
   # Records an accepted control action: appends to the execution's log,
@@ -208,20 +242,22 @@ defmodule EvoGit.ProcessManager.Registry do
   @doc """
   Runs retention now and returns `{:ok, removed_count}`.
   Normally called internally on every `finish` and every sampling tick; exposed
-  so an operator (or a suite testing retention) can force a pass.
+  so an operator (or a suite testing retention) can force a pass. An
+  unreachable registry answers `{:ok, 0}`; a wedged one answers
+  `{:error, :timeout}` instead of pretending nothing was removed.
   """
-  @spec prune(GenServer.server()) :: {:ok, non_neg_integer()}
+  @spec prune(GenServer.server()) :: {:ok, non_neg_integer()} | {:error, call_error()}
   def prune(server), do: call(server, :prune, {:ok, 0})
 
   @doc false
   # Declares an OPERATOR kill in flight for `id`: until it is cleared (or the
   # record is pruned), a non-killed terminal finish resolves to the kill outcome.
-  @spec put_kill_intent(GenServer.server(), String.t(), term()) :: :ok
+  @spec put_kill_intent(GenServer.server(), String.t(), term()) :: :ok | {:error, call_error()}
   def put_kill_intent(server, id, actor), do: call(server, {:put_kill_intent, id, actor}, :ok)
 
   @doc false
   # Drops a pending kill intent (accepted kill settled, or the stop failed).
-  @spec clear_kill_intent(GenServer.server(), String.t()) :: :ok
+  @spec clear_kill_intent(GenServer.server(), String.t()) :: :ok | {:error, call_error()}
   def clear_kill_intent(server, id), do: call(server, {:clear_kill_intent, id}, :ok)
 
   ## Call-time seams (app env only — deliberately no TOML keys)
@@ -357,7 +393,9 @@ defmodule EvoGit.ProcessManager.Registry do
     {:reply, :ok, %{state | kill_intents: Map.delete(state.kill_intents, id)}}
   end
 
-  def handle_call(_request, _from, state), do: {:reply, :ok, state}
+  # A mistyped request must never read as success: the caller gets the request
+  # back so the bug is visible instead of silent.
+  def handle_call(request, _from, state), do: {:reply, {:error, {:unknown_call, request}}, state}
 
   @impl true
   def handle_cast({:record_stats, id, stats}, state) do
@@ -950,17 +988,56 @@ defmodule EvoGit.ProcessManager.Registry do
     _, _ -> :ok
   end
 
+  # The ONE place a request leaves this module. A dead or unregistered registry
+  # keeps the caller's per-site `fallback` (the documented degraded value); a
+  # WEDGED registry — the call timed out — or a registry that crashed while
+  # answering is reported as an explicit error AND logged once, so a stuck
+  # registry can never masquerade as "nothing is running" / "not found".
   defp call(server, message, fallback) do
     GenServer.call(server, message, @call_timeout)
   catch
-    :exit, _reason -> fallback
+    :exit, reason ->
+      case classify_exit(reason) do
+        :unavailable ->
+          fallback
+
+        error ->
+          Logger.warning(
+            "ProcessManager.Registry: call #{request_tag(message)} failed: #{inspect(reason)}"
+          )
+
+          error
+      end
   end
 
-  defp cast(server, message) do
-    GenServer.cast(server, message)
-  rescue
-    _ -> :ok
-  catch
-    _, _ -> :ok
-  end
+  @doc false
+  # The one timeout/exit decision, isolated as a pure function so the branch is
+  # unit-testable without waiting out a real `#{@call_timeout}` ms call.
+  #
+  #   * the registry is simply not running → `:unavailable` (per-site fallback)
+  #   * the call timed out (wedged registry)  → `{:error, :timeout}`
+  #   * anything else (crash, unknown exit)   → `{:error, {:registry_exit, reason}}`
+  @spec classify_exit(term()) :: :unavailable | call_error()
+  def classify_exit({:timeout, _call}), do: {:error, :timeout}
+  def classify_exit({:noproc, _call}), do: :unavailable
+  def classify_exit({{:shutdown, _detail}, _call}), do: :unavailable
+
+  def classify_exit({reason, _call}) when reason in [:normal, :shutdown, :killed],
+    do: :unavailable
+
+  def classify_exit(reason) when reason in [:noproc, :normal, :shutdown, :killed],
+    do: :unavailable
+
+  def classify_exit(reason), do: {:error, {:registry_exit, reason}}
+
+  # The request's own tag only, so the warning names WHAT was asked without a
+  # multi-kilobyte payload (the same shape `EvoGit.BackgroundJobs` uses).
+  defp request_tag(message) when is_tuple(message) and tuple_size(message) > 0,
+    do: inspect(elem(message, 0))
+
+  defp request_tag(message), do: inspect(message)
+
+  # `GenServer.cast/2` always returns `:ok`, even for a dead or unregistered
+  # server, and never raises — there is nothing to guard here.
+  defp cast(server, message), do: GenServer.cast(server, message)
 end

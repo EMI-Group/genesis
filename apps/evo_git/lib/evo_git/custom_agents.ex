@@ -81,9 +81,6 @@ defmodule EvoGit.CustomAgents do
     "subagents" => :subagents
   }
 
-  @non_alnum_re ~r/[^a-z0-9]+/
-  @trim_underscore_re ~r/(?:^_+|_+$)/
-
   @type t :: map()
 
   # --- Public API ---
@@ -181,7 +178,7 @@ defmodule EvoGit.CustomAgents do
           upsert(normalize_definition(Map.put(conn, :id, id)))
 
         _ ->
-          generated_id = slugify(name)
+          generated_id = EvoGit.Util.Strings.slugify(name)
           existing = list()
 
           if Enum.any?(existing, fn a -> a.id == generated_id end) do
@@ -493,14 +490,6 @@ defmodule EvoGit.CustomAgents do
   defp normalize_delegation_level("low"), do: :low
   defp normalize_delegation_level(other), do: other
 
-  defp slugify(str) do
-    str
-    |> String.downcase()
-    |> String.replace(@non_alnum_re, "_")
-    |> String.replace(@trim_underscore_re, "")
-    |> String.slice(0, 40)
-  end
-
   # Derives ids for definitions read WITHOUT one (hand-authored TOML entries),
   # so every agent is addressable by id. Explicit ids are never modified and
   # definitions keep their original order. A missing id is slugified from the
@@ -540,7 +529,7 @@ defmodule EvoGit.CustomAgents do
     base =
       case Map.get(agent, :name) do
         name when is_binary(name) ->
-          case slugify(name) do
+          case EvoGit.Util.Strings.slugify(name) do
             "" -> "agent_#{index + 1}"
             slug -> slug
           end
@@ -576,23 +565,12 @@ defmodule EvoGit.CustomAgents do
     end)
   end
 
-  # Recursively converts atom keys to string keys and drops nil values.
-  # Modeled on `stringify_keys/1` in EvoGit.Config. Shared with
-  # EvoGit.RemoteConnections (same body).
+  # The ONE policy this wrapper adds to the shared transform is the
+  # nil-dropping: the agents.toml round-trip needs an absent key to stay
+  # absent, so every nil-valued map entry is dropped at each map level.
+  # The transform itself lives in `EvoGit.Util.Map.stringify_keys/2`
+  # (`drop_nil: true`); `EvoGit.RemoteConnections` reaches it through this
+  # public function when serializing its connection maps to TOML.
   @doc false
-  def stringify_keys(map) when is_map(map) do
-    Map.new(map, fn
-      {key, value} when is_atom(key) -> {Atom.to_string(key), stringify_keys(value)}
-      {key, value} -> {key, stringify_keys(value)}
-    end)
-    |> Enum.reject(fn {_k, v} -> v == nil end)
-    |> Map.new()
-  end
-
-  def stringify_keys(list) when is_list(list) do
-    Enum.map(list, &stringify_keys/1)
-  end
-
-  def stringify_keys(nil), do: nil
-  def stringify_keys(value), do: value
+  def stringify_keys(value), do: EvoGit.Util.Map.stringify_keys(value, drop_nil: true)
 end

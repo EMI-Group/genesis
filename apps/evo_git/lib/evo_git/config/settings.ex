@@ -4,16 +4,23 @@ defmodule EvoGit.Config.Settings do
   alias EvoGit.Config
   alias EvoGit.Config.{Normalization, Schema}
 
+  @spec list_settings() :: [Schema.schema_map()]
   def list_settings, do: Schema.all_schemas()
 
-  def show, do: Config.Cache.get().resolved
+  # Thin alias of `EvoGit.Config.resolve/0` — one snapshot read, two readings.
+  @spec show() :: map()
+  def show, do: Config.resolve()
 
+  @spec show(atom() | String.t() | [atom() | String.t()]) ::
+          Config.config_value()
+          | {:error, :invalid_path | {:unknown_setting, [String.t()]}}
   def show(path) do
     with {:ok, parts} <- parse_path(path) do
       fetch_path(show(), parts)
     end
   end
 
+  @spec update(map()) :: :ok | {:error, term()}
   def update(patch) when is_map(patch) and not is_struct(patch) do
     schemas = Enum.map(list_settings(), &Enum.map(&1.key_path, fn key -> Atom.to_string(key) end))
 
@@ -36,10 +43,10 @@ defmodule EvoGit.Config.Settings do
       end)
 
     with {:ok, _} <- Schema.validate(Normalization.resolve(candidate)) do
-      # The complete normalized candidate was validated above. The existing
-      # save path retains serialization/refresh/error semantics, but receives
-      # only user data (no default materialization or derived model mirrors).
-      Config.save_user_config(candidate)
+      # The complete normalized (atom-keyed) candidate was validated above, so
+      # persistence runs WITHOUT a second validation pass and receives only user
+      # data (no default materialization or derived model mirrors).
+      Config.persist_user_config(candidate)
     end
   end
 

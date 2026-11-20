@@ -84,8 +84,17 @@ defmodule EvoGit.AgentState.Boot do
   # answering: leaving a migrated-then-failed instance linked would keep a
   # connection on the broken file alive for the whole backoff window.
   defp complete_boot(boot, database, pool_size) do
-    run_migrations(boot)
-    reopen(boot, database, pool_size)
+    case run_migrations(boot) do
+      {:ok, _versions} ->
+        reopen(boot, database, pool_size)
+
+      {:error, reason} ->
+        # A failed migration run is a FAILED boot, never a schema-less one: the
+        # caller degrades to a store-less writer and retries with backoff
+        # instead of writing checkpoints into a database with no tables.
+        stop_quietly(boot)
+        {:error, reason}
+    end
   rescue
     error ->
       stop_quietly(boot)
@@ -121,14 +130,20 @@ defmodule EvoGit.AgentState.Boot do
 
   @doc """
   Runs every pending migration against `pid`, restoring the caller's dynamic
-  repo binding afterwards. Returns the migrated versions.
+  repo binding afterwards.
+
+  Answers `{:ok, versions}` with the migrated versions, or
+  `{:error, :migration_lock_unavailable}` when the migration lock could not be
+  acquired — the migration run then did NOT happen, so a caller must never
+  treat this as a booted schema.
   """
-  @spec run_migrations(pid()) :: [integer()]
+  @spec run_migrations(pid()) ::
+          {:ok, [integer()]} | {:error, :migration_lock_unavailable}
   def run_migrations(pid) when is_pid(pid) do
     previous = @repo.put_dynamic_repo(pid)
 
     try do
-      migrate_synchronized!()
+      migrate_synchronized()
     after
       @repo.put_dynamic_repo(previous)
     end
@@ -146,11 +161,24 @@ defmodule EvoGit.AgentState.Boot do
   `.exs` files are compiled at most ONCE per BEAM and memoized, so no boot ever
   redefines an already-loaded migration module (which would emit a
   `redefining module` warning on every boot).
+
+  Answers `{:error, :migration_lock_unavailable}` when the source is not
+  memoized yet AND the migration lock could not be acquired: a compile may only
+  happen under that lock, and an empty list would silently turn a real
+  migration set into a no-op.
   """
-  @spec migration_source() :: [{integer(), module()}]
+  @spec migration_source() ::
+          [{integer(), module()}] | {:error, :migration_lock_unavailable}
   def migration_source do
     case :persistent_term.get(@migration_source_key, nil) do
-      nil -> with_migration_lock(&load_migration_source/0)
+      nil -> acquire_migration_source()
+      source -> source
+    end
+  end
+
+  defp acquire_migration_source do
+    case with_migration_lock(&load_migration_source/0) do
+      :aborted -> {:error, :migration_lock_unavailable}
       source -> source
     end
   end
@@ -184,10 +212,23 @@ defmodule EvoGit.AgentState.Boot do
 
   ## Migration source
 
-  defp migrate_synchronized! do
-    with_migration_lock(fn ->
-      Ecto.Migrator.run(@repo, load_migration_source(), :up, all: true)
-    end)
+  # `:global.trans/2` answers the ATOM `:aborted` when the lock cannot be
+  # acquired, and that value must never be mistaken for a migration run: a
+  # discarded `:aborted` used to answer `start_dynamic/2` with `{:ok, pid}` for
+  # a database where NO migration ran, which left the writer (the documented
+  # degraded path never triggered) failing every checkpoint forever against a
+  # schema-less file. The lock's `:aborted` is therefore mapped to an honest
+  # error instead of an empty/absent result.
+  defp migrate_synchronized do
+    result =
+      with_migration_lock(fn ->
+        Ecto.Migrator.run(@repo, load_migration_source(), :up, all: true)
+      end)
+
+    case result do
+      :aborted -> {:error, :migration_lock_unavailable}
+      versions when is_list(versions) -> {:ok, versions}
+    end
   end
 
   # A `:global` lock (cluster-safe) whose single constant id protects the

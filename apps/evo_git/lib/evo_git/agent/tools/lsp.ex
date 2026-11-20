@@ -75,6 +75,8 @@ defmodule EvoGit.Agent.Tools.Lsp do
   alias EvoGit.Agent.Tools.Lsp.Protocol
   alias EvoGit.Agent.Tools.Shared
   alias EvoGit.Sandbox.Helpers, as: SandboxHelpers
+  alias EvoGit.Util.Coerce
+  alias EvoGit.Util.Time
 
   @actions ["diagnostics", "hover", "definition"]
 
@@ -196,9 +198,9 @@ defmodule EvoGit.Agent.Tools.Lsp do
     enabled = Keyword.get(opts, :enabled, Map.get(config, :enabled, false))
     command = Keyword.get(opts, :command) || Map.get(config, :command)
     args = Keyword.get(opts, :args) || Map.get(config, :args) || []
-    timeout = positive_integer(Keyword.get(opts, :timeout), Map.get(config, :timeout))
-    diagnostics_timeout = positive_integer(Keyword.get(opts, :diagnostics_timeout), nil)
-    settle_ms = positive_integer(Keyword.get(opts, :settle_ms), nil)
+    timeout = Coerce.positive_integer(Keyword.get(opts, :timeout), Map.get(config, :timeout))
+    diagnostics_timeout = Coerce.positive_integer(Keyword.get(opts, :diagnostics_timeout), nil)
+    settle_ms = Coerce.positive_integer(Keyword.get(opts, :settle_ms), nil)
 
     cond do
       enabled not in [true, "true"] ->
@@ -230,10 +232,6 @@ defmodule EvoGit.Agent.Tools.Lsp do
 
   defp normalize_args(args) when is_list(args), do: Enum.map(args, &to_string/1)
   defp normalize_args(_args), do: []
-
-  defp positive_integer(value, _fallback) when is_integer(value) and value > 0, do: value
-  defp positive_integer(_value, fallback) when is_integer(fallback) and fallback > 0, do: fallback
-  defp positive_integer(_value, _fallback), do: nil
 
   # ── Arguments ─────────────────────────────────────────────────────────────
 
@@ -358,7 +356,7 @@ defmodule EvoGit.Agent.Tools.Lsp do
       buffer: "",
       uri: Protocol.uri_for(target.path),
       stderr_path: nil,
-      deadline: now_ms() + settings.timeout,
+      deadline: Time.now_ms() + settings.timeout,
       timeout: settings.timeout
     }
 
@@ -516,7 +514,7 @@ defmodule EvoGit.Agent.Tools.Lsp do
   # ── Actions ───────────────────────────────────────────────────────────────
 
   defp collect_diagnostics(session, display_path, settings) do
-    deadline = min(session.deadline, now_ms() + settings.diagnostics_timeout)
+    deadline = min(session.deadline, Time.now_ms() + settings.diagnostics_timeout)
 
     collect(
       %{session | buffer: session.buffer},
@@ -534,7 +532,7 @@ defmodule EvoGit.Agent.Tools.Lsp do
   defp collect(session, display_path, deadline, settle_ms, lines, received?) do
     wait = if received?, do: min(remaining(deadline), settle_ms), else: remaining(deadline)
 
-    case next_message(session, now_ms() + wait) do
+    case next_message(session, Time.now_ms() + wait) do
       {:ok, %{"method" => "textDocument/publishDiagnostics", "params" => params}, buffer} ->
         session = %{session | buffer: buffer}
 
@@ -837,10 +835,8 @@ defmodule EvoGit.Agent.Tools.Lsp do
   defp truncate_output(text) when is_binary(text), do: Shared.truncate(text, @max_output_chars)
   defp truncate_output(other), do: to_string(other)
 
-  defp now_ms, do: System.monotonic_time(:millisecond)
-
   defp remaining(deadline) do
-    case deadline - now_ms() do
+    case deadline - Time.now_ms() do
       left when left > 0 -> left
       _expired -> 0
     end

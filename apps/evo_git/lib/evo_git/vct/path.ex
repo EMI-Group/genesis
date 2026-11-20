@@ -24,6 +24,25 @@ defmodule EvoGit.VCT.Path do
 
   @type t :: %__MODULE__{segments: [String.t()]}
 
+  @typedoc """
+  A canonical VCT point — the formatted `vct:///…` URL.
+
+  This is the ONE spelling used for a mount's `point`, a workspace point and a
+  member ref's `point`.
+  """
+  @type point :: String.t()
+
+  @typedoc """
+  A `parse/1` failure reason.
+
+  Derived from the parser chain: `strip_scheme/1` yields `:invalid_scheme`,
+  `split_authority/1` yields `:non_local_authority` or `:invalid_path`, and
+  `parse_segments/1` yields `{:invalid_segment, segment}`. A non-binary input is
+  `:invalid_path`.
+  """
+  @type parse_error ::
+          :invalid_scheme | :non_local_authority | :invalid_path | {:invalid_segment, String.t()}
+
   @scheme "vct://"
   @scheme_size byte_size(@scheme)
   @max_control 0x1F
@@ -70,7 +89,7 @@ defmodule EvoGit.VCT.Path do
     * `{:error, :invalid_path}` — the input is not a binary or carries no path
     * `{:error, {:invalid_segment, segment}}` — a rejected segment
   """
-  @spec parse(String.t()) :: {:ok, t()} | {:error, atom() | {atom(), term()}}
+  @spec parse(String.t()) :: {:ok, t()} | {:error, parse_error()}
   def parse(url) when is_binary(url) do
     with {:ok, rest} <- strip_scheme(url),
          {:ok, path} <- split_authority(rest),
@@ -90,6 +109,66 @@ defmodule EvoGit.VCT.Path do
       {:ok, path} -> path
       {:error, reason} -> raise ArgumentError, invalid_url_message(url, reason)
     end
+  end
+
+  @doc """
+  Canonicalizes a `t:t/0` or a VCT URL string into a canonical point.
+
+  TOTAL: returns `{:ok, point}` for a struct whose segments are ALL binaries and
+  for a parseable binary, and `{:error, :invalid_point}` for anything else — a
+  non-binary, an unparseable URL, or a struct carrying a non-binary/invalid
+  segment. The parse reason is deliberately collapsed: callers care whether the
+  input names a point at all, not why it does not.
+
+  ## Examples
+
+      iex> EvoGit.VCT.Path.canonical(%EvoGit.VCT.Path{segments: ["projects", "foo"]})
+      {:ok, "vct:///projects/foo"}
+
+      iex> EvoGit.VCT.Path.canonical("vct:////projects//foo/")
+      {:ok, "vct:///projects/foo"}
+
+      iex> EvoGit.VCT.Path.canonical(nil)
+      {:error, :invalid_point}
+  """
+  @spec canonical(term()) :: {:ok, point()} | {:error, :invalid_point}
+  def canonical(%__MODULE__{segments: segments}) when is_list(segments) do
+    if Enum.all?(segments, &valid_segment?/1) do
+      {:ok, format(segments)}
+    else
+      {:error, :invalid_point}
+    end
+  end
+
+  def canonical(url) when is_binary(url) do
+    case parse(url) do
+      {:ok, path} -> {:ok, format(path)}
+      {:error, _reason} -> {:error, :invalid_point}
+    end
+  end
+
+  def canonical(_point), do: {:error, :invalid_point}
+
+  @doc """
+  Canonicalizes a `t:t/0` or a VCT URL string into a canonical point, raising
+  `ArgumentError` when the input is invalid.
+
+  The raised message reuses `parse!/1`'s wording (it starts with
+  `"invalid VCT URL: "`); a non-binary input is rendered with `inspect/1`.
+  """
+  @spec canonical!(t() | String.t()) :: point()
+  def canonical!(url) when is_binary(url), do: parse!(url) |> format()
+
+  def canonical!(%__MODULE__{} = path) do
+    case canonical(path) do
+      {:ok, point} -> point
+      {:error, :invalid_point} -> raise ArgumentError, "invalid VCT URL: #{inspect(path)}"
+    end
+  end
+
+  def canonical!(other) do
+    raise ArgumentError,
+          "invalid VCT URL: #{inspect(other)} (expected a vct:/// URL or a %EvoGit.VCT.Path{})"
   end
 
   @doc """
@@ -129,8 +208,16 @@ defmodule EvoGit.VCT.Path do
   @doc """
   Returns the last segment of a path, or `nil` for the root.
   """
+  @spec last_segment(t() | String.t()) :: String.t() | nil
+  def last_segment(path), do: path |> to_segments() |> List.last()
+
+  # LEGACY spelling of `last_segment/1`, kept only for its two remaining
+  # callers outside this package's write scope: `EvoGit.VCT.workspace_name_match?/2`
+  # (`../vct.ex`) and `test/evo_git/vct/path_test.exs`. Delete it once both move
+  # to `last_segment/1`.
+  @doc false
   @spec name(t() | String.t()) :: String.t() | nil
-  def name(path), do: path |> to_segments() |> List.last()
+  def name(path), do: last_segment(path)
 
   @doc """
   Returns `true` when `a` is a STRICT ancestor (segment prefix) of `b`.

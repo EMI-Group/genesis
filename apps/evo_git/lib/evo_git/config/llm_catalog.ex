@@ -48,6 +48,19 @@ defmodule EvoGit.Config.LLMCatalog do
           display_name: String.t()
         }
 
+  @typedoc """
+  The ReqLLM-ready spec a request is issued with: the canonical provider atom
+  plus the model id, with optional endpoint overrides.
+
+  This is NOT a task `model_spec` (a STRING-keyed selection identity).
+  """
+  @type runtime_spec :: %{
+          required(:provider) => atom(),
+          required(:id) => String.t(),
+          optional(:base_url) => String.t(),
+          optional(:extra) => map()
+        }
+
   @providers [
     %{
       id: :anthropic,
@@ -344,11 +357,15 @@ defmodule EvoGit.Config.LLMCatalog do
   end
 
   @doc """
-  Resolves a provider atom + model shortcut/full name to a map model spec.
+  Resolves a provider atom + model shortcut/full name to a ReqLLM runtime spec.
 
   This is the map-producing analog of `resolve_model/2` (which returns a
   "provider:model" string). Returns a map of the shape ReqLLM natively
   accepts: `%{provider: atom, id: string}`.
+
+  Named for what it builds — the ReqLLM `runtime_spec` a request is issued
+  with — NOT for a task's `model_spec` selection identity. `resolve_model_spec/3`
+  stays as a compatibility alias.
 
   ## Options
 
@@ -360,15 +377,15 @@ defmodule EvoGit.Config.LLMCatalog do
 
   ## Examples
 
-      iex> EvoGit.Config.LLMCatalog.resolve_model_spec(:anthropic, "claude-sonnet-4")
-      %{provider: :anthropic, id: "claude-sonnet-4"}
+      iex> EvoGit.Config.LLMCatalog.resolve_runtime_spec(:anthropic, "claude-sonnet-4")
+      %{id: "claude-sonnet-4", provider: :anthropic}
 
-      iex> EvoGit.Config.LLMCatalog.resolve_model_spec(:openai, "gpt-6-sol", base_url: "https://my.proxy/v1")
-      %{provider: :openai, id: "gpt-6-sol", base_url: "https://my.proxy/v1"}
+      iex> EvoGit.Config.LLMCatalog.resolve_runtime_spec(:openai, "gpt-6-sol", base_url: "https://my.proxy/v1")
+      %{id: "gpt-6-sol", provider: :openai, base_url: "https://my.proxy/v1"}
 
   """
-  @spec resolve_model_spec(atom(), String.t(), keyword()) :: map()
-  def resolve_model_spec(provider_atom, model_input, opts \\ [])
+  @spec resolve_runtime_spec(atom(), String.t(), keyword()) :: runtime_spec()
+  def resolve_runtime_spec(provider_atom, model_input, opts \\ [])
       when is_atom(provider_atom) and is_binary(model_input) do
     variant_id = Keyword.get(opts, :variant)
     canonical = resolve_provider_atom(provider_atom, variant_id)
@@ -392,6 +409,17 @@ defmodule EvoGit.Config.LLMCatalog do
       extra -> Map.put(spec, :extra, extra)
     end
   end
+
+  @doc """
+  Compatibility alias for `resolve_runtime_spec/3`, identical in arguments and
+  return value.
+
+  Kept because callers and tests still use this name. It is not a task
+  `model_spec` (a STRING-keyed selection identity) — it is the ReqLLM spec.
+  """
+  @spec resolve_model_spec(atom(), String.t(), keyword()) :: runtime_spec()
+  def resolve_model_spec(provider_atom, model_input, opts \\ []),
+    do: resolve_runtime_spec(provider_atom, model_input, opts)
 
   @doc """
   Returns whether the given provider requires a custom `base_url` to function.
