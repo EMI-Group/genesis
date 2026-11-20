@@ -14,7 +14,7 @@ This node has no child directories.
 - `gate_test.exs` → no-sink callbacks absent, installed-sink callbacks present regardless of watchers, actual unwatched callback capture/interruption, public silence, watched coalescing, ordering and synthetic subscribe–snapshot gap.
 - `pure_contract_test.exs` → topics, stale predicate, normalization, Batcher, Watchers, snapshot shape with default/explicit activity and Interrupted exceptions.
 - `subscription_test.exs` → consumer-local idempotent subscription memo, refused-watch cleanup and RemoteNode watch/snapshot local-node contracts.
-- `watcher_lifecycle_test.exs` → monitored watcher removal, self-subscribed consumer lifecycle and unwatched publication silence.
+- `watcher_lifecycle_test.exs` → monitored watcher removal, self-subscribed consumer lifecycle, delivery across TWO coalescing windows (deterministic forced split) and unwatched publication silence.
 - `interrupt_test.exs` → append-before-interrupt ordering, consuming interrupt peek and early-turn context delivery through the exchange seam.
 - `inspection_test.exs` → summary-only roster reads, live/gone bounded history and total missing-target reads.
 - `../session/` → session-owned stale-worker rejection, midcall lifecycle, yield/cancel/terminal retirement (sibling — read-only, escalate writes to parent).
