@@ -71,6 +71,7 @@ defmodule EvoDash.Application do
       EvoDashWeb.Telemetry,
       {Phoenix.PubSub, name: EvoDash.PubSub},
       {Task.Supervisor, name: EvoDash.TaskSupervisor},
+      EvoDash.WorkbenchSidebarCache,
       # In-memory (ETS-backed) chat-history store for the Home chat page —
       # transcripts survive LiveView remounts, not BEAM restarts.
       EvoDash.ChatHistory,

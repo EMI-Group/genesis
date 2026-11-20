@@ -87,7 +87,18 @@ defmodule EvoDashWeb.TasksLive.PageLoad do
     parent = self()
     node = socket.assigns.current_node
     page_size = socket.assigns.page_size
-    filters = filters(socket)
+
+    filters =
+      case Map.get(socket.assigns, :focused_task_id) do
+        nil ->
+          filters(socket)
+
+        id ->
+          [
+            focused_task: id,
+            pending_remote: socket.assigns[:workbench_remote_requested] and node == node()
+          ]
+      end
 
     hook = Application.get_env(:evo_dash, :tasks_page_load_hook, fn inner -> inner.() end)
     hook.(fn -> run(parent, seq, node, page, page_size, filters) end)
@@ -141,6 +152,27 @@ defmodule EvoDashWeb.TasksLive.PageLoad do
 
   Failures propagate to `run/6`, which converts them to values.
   """
+  def load(node, _requested_page, _page_size, focused_task: id, pending_remote: pending?) do
+    tasks =
+      if !pending? do
+        case EvoDash.NodeContext.get_task_lite(node, id) do
+          %EvoGit.TaskInfo{} = task -> [Map.from_struct(task)]
+          _ -> []
+        end
+      else
+        []
+      end
+
+    %{
+      tasks: tasks,
+      current_page: 1,
+      total_count: length(tasks),
+      total_pages: 1,
+      project_paths: [],
+      awaiting_sessions: if(pending?, do: %{}, else: Map.take(awaiting_sessions(node), [id]))
+    }
+  end
+
   def load(node, requested_page, page_size, filters) do
     {session_mode, sql_filters} = Keyword.pop(filters, :session_mode, "all")
     session_mode = normalize_session_mode(session_mode)

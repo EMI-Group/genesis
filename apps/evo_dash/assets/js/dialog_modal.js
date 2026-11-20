@@ -1,4 +1,4 @@
-// Review UI only: this hook never grants, denies or submits an approval.
+// Opens and dismisses dialogs. Actions inside each dialog remain with its LiveView.
 // Markup/fallback contract: see CONTEXT.md, "DialogModal Integration Contract".
 const DialogModal = {
   mounted() {

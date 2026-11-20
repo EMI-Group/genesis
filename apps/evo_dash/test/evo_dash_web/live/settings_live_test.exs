@@ -711,6 +711,31 @@ defmodule EvoDashWeb.SettingsLiveTest do
   # `EvoDashWeb.ConfigIssues.lines/1`, so these page-wide assertions cover both
   # surfaces; every string asserted is unique to one surface/variant so the two
   # banners cannot mask each other.
+  test "the settings window keeps the provider wizard and category navigation in the window", %{
+    conn: conn
+  } do
+    {:ok, view, _html} = mount_settings(conn, ~p"/settings/window")
+
+    assert has_element?(view, "#workbench-window-content #provider-profiles-panel")
+    assert has_element?(view, "#workbench-settings-server-form")
+    refute has_element?(view, "#sidebar")
+
+    view
+    |> element("#workbench-settings-nav button[phx-value-category=appearance]")
+    |> render_click()
+
+    assert_patch(view, ~p"/settings/window?category=appearance")
+    assert has_element?(view, "#workbench-preferences")
+    refute has_element?(view, "#workbench-settings-server-form")
+
+    view
+    |> element("#workbench-settings-nav button[phx-value-category=llm]")
+    |> render_click()
+
+    assert_patch(view, ~p"/settings/window?category=llm")
+    assert has_element?(view, "#provider-profiles-panel")
+  end
+
   describe "config status banner (warnings + validation errors)" do
     @neutral_cta "Fix the settings listed above to resolve these issues."
     @model_cta "Configure your LLM model in the LLM category to resolve these issues."

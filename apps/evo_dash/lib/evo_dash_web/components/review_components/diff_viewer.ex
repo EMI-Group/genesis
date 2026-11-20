@@ -35,8 +35,8 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
       |> assign(:sidebar_limit, @max_sidebar_files)
 
     ~H"""
-    <div class="w-full lg:w-72 shrink-0 lg:sticky lg:top-0 lg:max-h-[100dvh] overflow-y-auto rounded-xl border border-base-300 bg-base-100">
-      <div class="p-3 border-b border-base-300 bg-base-200/40 sticky top-0 z-10">
+    <div class="w-full xl:w-60 2xl:w-72 shrink-0 xl:sticky xl:top-0 max-h-[min(25rem,55dvh)] xl:max-h-[calc(100dvh-5rem)] overflow-y-auto rounded-xl border border-base-300 bg-base-100">
+      <div class="p-3 border-b border-base-300 bg-base-100 sticky top-0 z-10">
         <div class="flex items-center gap-2">
           <%!-- zh_CN: "Files changed" → 变更文件（评审文件树侧栏标题） --%>
           <h3 class="flex-1 min-w-0 truncate font-semibold text-xs text-base-content/60 uppercase tracking-wider">
@@ -44,7 +44,12 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           </h3>
           <span class="font-mono text-xs text-base-content/60 shrink-0">{length(@files)}</span>
         </div>
-        <div class="relative mt-2">
+        <form
+          id="review-file-filter"
+          phx-change="filter_files"
+          phx-submit="filter_files"
+          class="relative mt-2"
+        >
           <.icon
             name="hero-magnifying-glass"
             class="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-base-content/40 pointer-events-none"
@@ -53,14 +58,14 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           <input
             type="text"
             name="filter"
-            phx-change="filter_files"
             phx-debounce="200"
+            aria-label={gettext("Filter files…")}
             value={@file_filter}
             placeholder={gettext("Filter files…")}
             class="input input-sm input-bordered rounded-lg w-full pl-8"
           />
-        </div>
-        <div class="flex items-center gap-2 mt-2">
+        </form>
+        <div :if={String.trim(@file_filter) == ""} class="flex flex-wrap items-center gap-2 mt-2">
           <%!-- zh_CN: "Collapse all" → 全部折叠（收起所有目录） --%>
           <button
             type="button"
@@ -168,8 +173,8 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
         phx-click="toggle_dir"
         phx-value-dir={@node.path}
         aria-expanded={if @open, do: "true", else: "false"}
-        class="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md hover:bg-base-200/60 text-xs transition-colors"
-        style={"padding-left: #{0.75 + @depth * 0.75}rem"}
+        class="w-full min-h-8 flex items-center gap-1.5 px-2 py-1.5 rounded-md hover:bg-base-200/60 text-xs transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone"
+        style={"padding-left: #{0.75 + min(@depth, 6) * 0.65}rem"}
       >
         <.icon
           name="hero-chevron-right"
@@ -232,11 +237,13 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
       type="button"
       phx-click="select_file"
       phx-value-path={@path}
+      aria-current={if @selected_file == @path, do: "true"}
+      title={@path}
       class={[
-        "w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs transition-colors",
+        "w-full min-h-8 flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone",
         (@selected_file == @path && "bg-primary/10 text-primary-standalone") || "hover:bg-base-200/60"
       ]}
-      style={"padding-left: #{0.75 + @depth * 0.75}rem"}
+      style={"padding-left: #{0.75 + min(@depth, 6) * 0.65}rem"}
     >
       <.icon
         name={file_status_icon(@status)}
@@ -266,39 +273,56 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   attr(:selected_file, :string, default: nil)
   attr(:file_context_levels, :map, default: %{})
 
+  attr(:diff_in_flight, :map, default: %{})
+  attr(:diff_scope, :any, default: :commit)
+
   def diff_viewer(assigns) do
     ~H"""
     <div class="diff-main-content space-y-3" id="diff-viewer" phx-hook="DiffViewer">
       <%= for file <- @files do %>
-        <div
-          class="diff-file-section rounded-xl border border-base-300 overflow-hidden bg-base-100"
-          id={"file-section-#{file_path_to_id(file.path)}"}
+        <% expanded? = Map.get(@expanded_files, file.path, false) %>
+        <section
+          class="diff-file-section rounded-xl border border-base-300 overflow-hidden bg-base-100 scroll-mt-3"
+          id={file_section_id(file.path)}
           data-language={file.language}
         >
           <button
+            type="button"
             phx-click="toggle_file_expansion"
             phx-value-path={file.path}
-            class="diff-file-header w-full text-left flex items-center gap-2 px-4 py-2.5 bg-base-200/70 backdrop-blur-sm text-sm"
+            aria-expanded={to_string(expanded?)}
+            class={[
+              "diff-file-header w-full text-left flex items-start gap-2 px-3 py-2.5 text-sm hover:bg-base-200 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone",
+              file.path == @selected_file && "bg-primary/10",
+              file.path != @selected_file && "bg-base-200/60"
+            ]}
           >
             <.icon
               name="hero-chevron-right"
-              class={"size-3.5 transition-transform shrink-0 #{if Map.get(@expanded_files, file.path, false), do: "rotate-90", else: ""}"}
+              class={"size-3.5 mt-1 transition-transform motion-reduce:transition-none shrink-0 #{if expanded?, do: "rotate-90"}"}
             />
             <.icon
               name={file_status_icon(file.status)}
-              class={"size-3.5 shrink-0 #{file_status_color(file.status)}"}
+              class={"size-3.5 mt-1 shrink-0 #{file_status_color(file.status)}"}
             />
-            <span class="truncate flex-1 font-mono">{file.path}</span>
-            <span class="shrink-0 text-xs font-mono text-success">+{file.additions}</span>
-            <span class="shrink-0 text-xs font-mono text-error">-{file.deletions}</span>
+            <span class="min-w-0 flex-1 font-mono" title={file.path}>
+              <span class="block [overflow-wrap:anywhere]">{Path.basename(file.path)}</span>
+              <span
+                :if={Path.dirname(file.path) != "."}
+                class="block text-xs text-base-content/65 [overflow-wrap:anywhere]"
+              >
+                {Path.dirname(file.path)}/
+              </span>
+            </span>
+            <span class="shrink-0 text-xs leading-5 font-mono text-success">+{file.additions}</span>
+            <span class="shrink-0 text-xs leading-5 font-mono text-error">-{file.deletions}</span>
           </button>
-          <%= if Map.get(@expanded_files, file.path, false) do %>
-            <div class="overflow-x-auto">
-              <% context_level = Map.get(@file_context_levels, file.path, 3) %>
-              {render_diff_content(file, file.path, context_level)}
-            </div>
-          <% end %>
-        </div>
+          <div :if={expanded?} class="overflow-x-auto">
+            <% context_level = Map.get(@file_context_levels, file.path, 3) %>
+            <% loading? = Map.has_key?(@diff_in_flight, {@diff_scope, file.path}) %>
+            {render_diff_content(file, file.path, context_level, loading?)}
+          </div>
+        </section>
       <% end %>
     </div>
     """
@@ -309,20 +333,21 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   # toolbar + file-tree sidebar + diff column.
   # ---------------------------------------------------------------------------
 
-  attr(:files, :list, required: true)
+  attr(:files, :list, default: nil)
   attr(:expanded_files, :map, default: %{})
   attr(:selected_file, :string, default: nil)
   attr(:file_context_levels, :map, default: %{})
   attr(:expanded_dirs, :map, default: %{})
   attr(:file_filter, :string, default: "")
+  attr(:diff_in_flight, :map, default: %{})
   attr(:repos, :list, default: [])
   attr(:active_repo_id, :string, default: "primary")
 
   def split_diff_layout(assigns) do
     assigns =
       assigns
-      |> assign(:total_additions, sum_files(assigns.files, :additions))
-      |> assign(:total_deletions, sum_files(assigns.files, :deletions))
+      |> assign(:total_additions, sum_files(assigns.files || [], :additions))
+      |> assign(:total_deletions, sum_files(assigns.files || [], :deletions))
 
     ~H"""
     <div>
@@ -359,7 +384,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           </div>
         </div>
       <% end %>
-      <div class="flex flex-col lg:flex-row gap-3 items-start">
+      <div :if={@files not in [nil, []]} class="flex flex-col xl:flex-row gap-3 items-start">
         <.file_tree_sidebar
           files={@files}
           selected_file={@selected_file}
@@ -372,9 +397,12 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
             expanded_files={@expanded_files}
             selected_file={@selected_file}
             file_context_levels={@file_context_levels}
+            diff_in_flight={@diff_in_flight}
+            diff_scope={@active_repo_id}
           />
         </div>
       </div>
+      <.empty_diff :if={@files in [nil, []]} unavailable={is_nil(@files)} />
     </div>
     """
   end
@@ -386,37 +414,41 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   attr(:commit, :map, required: true)
   attr(:back_url, :string, required: true)
   attr(:task_title, :string, default: nil)
+  attr(:unavailable, :boolean, default: false)
 
   def commit_detail_header(assigns) do
     ~H"""
-    <div class="rounded-xl border border-base-300 bg-base-100 p-4 mb-3">
-      <div class="flex items-center gap-2">
-        <%!-- zh_CN: "Back to review" → 返回评审页（提交详情页左上角的返回按钮） --%>
-        <a
-          href={@back_url}
-          title={gettext("Back to review")}
-          aria-label={gettext("Back to review")}
-          class="btn btn-ghost btn-sm btn-square rounded-lg shrink-0"
-        >
-          <.icon name="hero-arrow-left" class="size-4" />
-        </a>
-        <h1 class="text-base font-semibold truncate flex-1 min-w-0" title={@commit.message}>
-          {@commit.message}
-        </h1>
-      </div>
+    <header class="rounded-xl border border-base-300 bg-base-100 p-4 mb-3">
+      <.link
+        patch={@back_url}
+        class="inline-flex min-h-9 items-center gap-2 -ml-2 rounded-md px-2 text-sm text-base-content/75 hover:bg-base-200 hover:text-base-content"
+      >
+        <.icon name="hero-arrow-left" class="size-4" />
+        {gettext("Back to review")}
+      </.link>
+      <h1 class="mt-1 text-lg font-semibold leading-snug [overflow-wrap:anywhere]">
+        {if @unavailable, do: gettext("Commit unavailable"), else: @commit.message}
+      </h1>
       <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm min-w-0">
-        <span class="badge badge-sm badge-ghost font-mono shrink-0">
-          {String.slice(@commit.sha, 0..7)}
+        <span
+          :if={@commit.sha}
+          class="badge badge-sm badge-ghost font-mono shrink-0"
+          title={@commit.sha}
+        >
+          {Map.get(@commit, :short_sha) || String.slice(@commit.sha, 0..7)}
         </span>
-        <span class="text-base-content/70 truncate min-w-0">{@commit.author_name}</span>
-        <span class="text-base-content/60 shrink-0">{relative_time(@commit.date)}</span>
-        <%= if @task_title do %>
-          <span class="text-base-content/60 truncate min-w-0" title={@task_title}>
-            {@task_title}
-          </span>
-        <% end %>
+        <span :if={@commit.author_name} class="text-base-content/70 [overflow-wrap:anywhere]">
+          {@commit.author_name}
+        </span>
+        <span :if={@commit.date} class="text-base-content/60 shrink-0">{relative_time(@commit.date)}</span>
+        <span :if={@task_title} class="text-base-content/60 truncate min-w-0" title={@task_title}>
+          {@task_title}
+        </span>
       </div>
-    </div>
+      <p :if={@unavailable} id="review-commit-error" class="mt-3 text-sm text-base-content/80">
+        {gettext("This commit’s changes could not be loaded.")}
+      </p>
+    </header>
     """
   end
 
@@ -431,9 +463,11 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   attr(:expanded_dirs, :map, default: %{})
   attr(:file_filter, :string, default: "")
 
+  attr(:diff_in_flight, :map, default: %{})
+
   def commit_diff_layout(assigns) do
     ~H"""
-    <div class="flex flex-col lg:flex-row gap-3 items-start">
+    <div :if={@files != []} class="flex flex-col xl:flex-row gap-3 items-start">
       <.file_tree_sidebar
         files={@files}
         selected_file={@selected_file}
@@ -446,8 +480,28 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           expanded_files={@expanded_files}
           selected_file={@selected_file}
           file_context_levels={@file_context_levels}
+          diff_in_flight={@diff_in_flight}
         />
       </div>
+    </div>
+    <.empty_diff :if={@files == []} />
+    """
+  end
+
+  attr(:unavailable, :boolean, default: false)
+
+  defp empty_diff(assigns) do
+    ~H"""
+    <div
+      id="review-empty-diff"
+      class="rounded-xl border border-base-300 bg-base-100 p-6 text-center text-sm text-base-content/75"
+    >
+      <.icon name="hero-document-magnifying-glass" class="size-6 mx-auto mb-2" />
+      <p>
+        {if @unavailable,
+          do: gettext("No diff data available for this review."),
+          else: gettext("No changed files.")}
+      </p>
     </div>
     """
   end
@@ -478,7 +532,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     end
   end
 
-  defp render_diff_content(file, file_path, context_level) do
+  defp render_diff_content(file, file_path, context_level, loading?) do
     {lines, omitted_line_count} = if file.diff, do: parse_diff_lines_bounded(file), else: {[], 0}
 
     # Group lines into segments: pre-hunk lines (meta/header) and hunk blocks.
@@ -490,52 +544,63 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
       file_path: file_path,
       context_level: context_level,
       segments: segments,
-      omitted_line_count: omitted_line_count
+      omitted_line_count: omitted_line_count,
+      loading?: loading?
     }
 
     ~H"""
     <div class="text-xs font-mono">
-      <%= if is_nil(@file.diff) do %>
-        <div class="flex items-center justify-center py-8 gap-2 text-base-content/60">
-          <span class="loading loading-spinner loading-sm"></span>
-          <span>{gettext("Loading diff...")}</span>
-        </div>
-      <% else %>
-        <% show_bottom_expand = @context_level != :all %>
-        <div class="diff-split-table">
-          <%= if length(@segments) > 0 and @context_level != :all do %>
-            <.diff_expand_bar path={@file_path} context_level={@context_level} direction={:above} />
-          <% end %>
-          <%= for segment <- @segments do %>
-            <%= case segment do %>
-              <% {:pre_hunk, pre_lines} -> %>
-                <%= for line <- pre_lines do %>
-                  <div class={["diff-split-pre-hunk", diff_line_class(line.type)]}>
-                    <span class="diff-line-content" phx-no-format>{line.content}</span>
-                  </div>
-                <% end %>
-              <% {:hunk, hunk_line, pairs} -> %>
-                <div class="diff-split-hunk">
-                  <span class="diff-line-content" phx-no-format>{hunk_line.content}</span>
-                </div>
-                <%= for pair <- pairs do %>
-                  <.diff_split_row pair={pair} />
-                <% end %>
+      <%= cond do %>
+        <% @loading? and is_nil(@file.diff) -> %>
+          <div role="status" class="flex items-center justify-center py-8 gap-2 text-base-content/70">
+            <span class="loading loading-spinner loading-sm"></span>
+            <span>{gettext("Loading diff...")}</span>
+          </div>
+        <% is_nil(@file.diff) -> %>
+          <div class="flex flex-wrap items-center justify-center gap-2 p-4 text-base-content/75">
+            <span>{gettext("No diff data available for this review.")}</span>
+            <button
+              type="button"
+              phx-click="load_file_diff"
+              phx-value-path={@file_path}
+              class="btn btn-outline btn-sm"
+            >
+              {gettext("Retry")}
+            </button>
+          </div>
+        <% true -> %>
+          <% show_expand? =
+            @context_level != :all and Enum.any?(@segments, &match?({:hunk, _, _}, &1)) %>
+          <div class="diff-split-table max-sm:grid-cols-[2rem_minmax(0,1fr)_2rem_minmax(0,1fr)]!">
+            <%= if show_expand? do %>
+              <.diff_expand_bar path={@file_path} context_level={@context_level} direction={:above} />
             <% end %>
-          <% end %>
-          <%= if @omitted_line_count > 0 do %>
-            <%!-- zh_CN: "… more lines not shown" → 还有 %{count} 行未显示（单个文件 diff 超过渲染上限时的提示） --%>
-            <div class="col-span-full flex items-center justify-center gap-2 px-3 py-1.5 text-xs text-base-content/60 bg-base-200/40 border-t border-base-300">
-              <.icon name="hero-ellipsis-horizontal" class="size-3.5 shrink-0" />
-              <span>{gettext("%{count} more lines not shown",
-                count: format_number(@omitted_line_count)
-              )}</span>
-            </div>
-          <% end %>
-          <%= if show_bottom_expand do %>
-            <.diff_expand_bar path={@file_path} context_level={@context_level} direction={:below} />
-          <% end %>
-        </div>
+            <%= for segment <- @segments do %>
+              <%= case segment do %>
+                <% {:pre_hunk, pre_lines} -> %>
+                  <%= for line <- pre_lines do %>
+                    <div class="diff-split-pre-hunk text-base-content/75" phx-no-format>{line.content}</div>
+                  <% end %>
+                <% {:hunk, hunk_line, pairs} -> %>
+                  <div class="diff-split-hunk text-base-content/75!" phx-no-format>{hunk_line.content}</div>
+                  <%= for pair <- pairs do %>
+                    <.diff_split_row pair={pair} />
+                  <% end %>
+              <% end %>
+            <% end %>
+            <%= if @omitted_line_count > 0 do %>
+              <%!-- zh_CN: "… more lines not shown" → 还有 %{count} 行未显示（单个文件 diff 超过渲染上限时的提示） --%>
+              <div class="col-span-full flex items-center justify-center gap-2 px-3 py-1.5 text-xs text-base-content/60 bg-base-200/40 border-t border-base-300">
+                <.icon name="hero-ellipsis-horizontal" class="size-3.5 shrink-0" />
+                <span>{gettext("%{count} more lines not shown",
+                  count: format_number(@omitted_line_count)
+                )}</span>
+              </div>
+            <% end %>
+            <%= if show_expand? do %>
+              <.diff_expand_bar path={@file_path} context_level={@context_level} direction={:below} />
+            <% end %>
+          </div>
       <% end %>
     </div>
     """
@@ -573,10 +638,10 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
 
     ~H"""
     <div class={@row_class}>
-      <span class="diff-split-gutter diff-split-gutter-left">{@left_num}</span>
-      <span class="diff-split-cell diff-split-cell-left" phx-no-format>{@left_content}</span>
-      <span class="diff-split-gutter diff-split-gutter-right">{@right_num}</span>
-      <span class="diff-split-cell diff-split-cell-right" phx-no-format>{@right_content}</span>
+      <span class="diff-split-gutter diff-split-gutter-left max-sm:min-w-0! max-sm:px-1!">{@left_num}</span>
+      <span class="diff-split-cell diff-split-cell-left max-sm:px-1!" phx-no-format>{@left_content}</span>
+      <span class="diff-split-gutter diff-split-gutter-right max-sm:min-w-0! max-sm:px-1!">{@right_num}</span>
+      <span class="diff-split-cell diff-split-cell-right max-sm:px-1!" phx-no-format>{@right_content}</span>
     </div>
     """
   end
@@ -755,7 +820,9 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     <%= if @context_level != :all do %>
       <div class="diff-expand-bar">
         <button
-          class="diff-expand-btn"
+          type="button"
+          class="diff-expand-btn min-h-7 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone"
+          aria-label={gettext("Show more diff context")}
           phx-click="expand_context"
           phx-value-path={@path}
         >
@@ -771,67 +838,39 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     """
   end
 
-  # Map line types to CSS classes
-  defp diff_line_class(:addition), do: "diff-line-addition"
-  defp diff_line_class(:deletion), do: "diff-line-deletion"
-  defp diff_line_class(:hunk), do: "diff-line-hunk"
-  defp diff_line_class(:context), do: "diff-line-context"
-  defp diff_line_class(:header), do: "diff-line-meta"
-  defp diff_line_class(:meta), do: "diff-line-meta"
-  defp diff_line_class(_), do: ""
-
-  # Parse diff lines into structured data
   @doc false
   def parse_diff_lines(file) do
-    file.diff
-    |> String.split("\n")
-    |> Enum.with_index(1)
-    |> Enum.map(fn {line, idx} ->
-      cond do
-        String.starts_with?(line, "+++") ->
-          %{line_number: idx, prefix: " ", content: line, type: :header}
+    {lines, _in_hunk?} =
+      file.diff
+      |> String.split("\n", trim: true)
+      |> Enum.with_index(1)
+      |> Enum.map_reduce(false, fn {line, idx}, in_hunk? ->
+        {type, prefix, content, in_hunk?} =
+          case line do
+            "diff " <> _ -> {:meta, " ", line, false}
+            "@@" <> _ -> {:hunk, " ", line, true}
+            "+++" <> _ when not in_hunk? -> {:header, " ", line, false}
+            "---" <> _ when not in_hunk? -> {:header, " ", line, false}
+            "+" <> text when in_hunk? -> {:addition, "+", text, true}
+            "-" <> text when in_hunk? -> {:deletion, "-", text, true}
+            " " <> text when in_hunk? -> {:context, " ", text, true}
+            "\\ " <> _ when in_hunk? -> {:no_newline, " ", line, true}
+            _ -> {:meta, " ", line, in_hunk?}
+          end
 
-        String.starts_with?(line, "---") ->
-          %{line_number: idx, prefix: " ", content: line, type: :header}
+        {%{line_number: idx, prefix: prefix, content: content, type: type}, in_hunk?}
+      end)
 
-        String.starts_with?(line, "@@") ->
-          %{line_number: idx, prefix: " ", content: line, type: :hunk}
-
-        String.starts_with?(line, "+") ->
-          content = String.slice(line, 1..-1//1) || ""
-          %{line_number: idx, prefix: "+", content: content, type: :addition}
-
-        String.starts_with?(line, "-") ->
-          content = String.slice(line, 1..-1//1) || ""
-          %{line_number: idx, prefix: "-", content: content, type: :deletion}
-
-        String.starts_with?(line, "diff ") ->
-          %{line_number: idx, prefix: " ", content: line, type: :meta}
-
-        String.starts_with?(line, "index ") ->
-          %{line_number: idx, prefix: " ", content: line, type: :meta}
-
-        # "\ No newline at end of file" git marker — not code
-        String.starts_with?(line, "\\ ") ->
-          %{line_number: idx, prefix: " ", content: line, type: :no_newline}
-
-        true ->
-          content = if String.length(line) > 0, do: String.slice(line, 1..-1//1), else: ""
-          %{line_number: idx, prefix: " ", content: content, type: :context}
-      end
-    end)
+    lines
   end
 
   # ---------------------------------------------------------------------------
   # Bounded diff rendering.
   #
   # A single generated file can produce a diff of tens of megabytes (~1M
-  # lines). `parse_diff_lines/1` deliberately keeps its exact,
-  # behaviour-for-behaviour "split the whole binary" semantics (pinned by
-  # tests), so the render path goes through `parse_diff_lines_bounded/1`
-  # instead: it slices at most @max_rendered_diff_lines lines off the RAW
-  # binary BEFORE any line list exists, then feeds that slice to
-  # `parse_diff_lines/1`. The remainder is only COUNTED (one scoped
+  # lines). The render path slices at most @max_rendered_diff_lines lines before
+  # giving the prefix to `parse_diff_lines/1`. The remainder is only counted
+  # (one scoped
   # `:binary.match/3` walk, no list building) so the template can render a
   # single "%{count} more lines not shown" note instead of a row per line.
   #
@@ -933,11 +972,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   end
 
   # Convert a file path to a valid HTML id (replace / and . with -)
-  defp file_path_to_id(path) do
-    path
-    |> String.replace(~r{[^a-zA-Z0-9_-]}, "-")
-    |> String.trim("-")
-  end
+  def file_section_id(path), do: "file-section-" <> Base.url_encode64(path, padding: false)
 
   defp file_status_icon("added"), do: "hero-plus-circle"
   defp file_status_icon("deleted"), do: "hero-minus-circle"

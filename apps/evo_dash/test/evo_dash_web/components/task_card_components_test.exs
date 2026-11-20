@@ -934,7 +934,7 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       assert [pause] = Floki.find(tree, "button[phx-click='open_pause_modal']")
       refute disabled?(pause)
       assert Floki.find(tree, "button[phx-click='open_cancel_modal']") != []
-      assert tree |> Floki.find(".badge") |> Floki.text() =~ "running"
+      assert tree |> Floki.find(".badge") |> Floki.text() =~ "Running"
     end
 
     test "Resume is not gated on session_mode" do
@@ -1082,7 +1082,7 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       refute html =~ "subagents that were still running"
 
       assert [resume] = html |> parse() |> Floki.find("button[phx-click='resume_task']")
-      assert Floki.attribute(resume, "phx-confirm") == []
+      assert Floki.attribute(resume, "data-confirm") == []
     end
 
     test "a dirty pause warns about inconsistent state and confirms before resuming" do
@@ -1100,7 +1100,7 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
 
       assert [resume] = html |> parse() |> Floki.find("button[phx-click='resume_task']")
 
-      assert Floki.attribute(resume, "phx-confirm") == [
+      assert Floki.attribute(resume, "data-confirm") == [
                "Resume anyway? The last tool call may not have completed, so files and background jobs may be inconsistent."
              ]
     end
@@ -1117,7 +1117,7 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       refute html =~ "Resumed after a restart"
 
       assert [resume] = html |> parse() |> Floki.find("button[phx-click='resume_task']")
-      assert Floki.attribute(resume, "phx-confirm") == []
+      assert Floki.attribute(resume, "data-confirm") == []
     end
 
     test "the explainer renders for no other status (even with a dirty pause_kind)" do

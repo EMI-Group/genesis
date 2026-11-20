@@ -4,7 +4,7 @@ defmodule EvoDashWeb.ProcessesLive.Load do
   (`EvoDashWeb.ProcessesLive`).
 
   ONE load = ONE supervised `EvoDash.TaskSupervisor` child that calls the
-  process-manager RPC (`EvoDash.NodeContext.list_processes/2` by default) and
+  process-manager RPC (`EvoDash.NodeContext.list_processes_result/2` by default) and
   reports back to the LiveView as `{:processes_loaded, seq, node, result}`.
   The LiveView process never blocks on a store/RPC call: a `GenServer.call`
   to a dead or busy target EXITS its caller instead of returning an error, so
@@ -17,7 +17,7 @@ defmodule EvoDashWeb.ProcessesLive.Load do
   `socket.assigns.current_node`.
 
   App-env seam, resolved AT SPAWN TIME: `:processes_page_load_runner` — a
-  2-arity `(node, opts)` function, default `&EvoDash.NodeContext.list_processes/2`.
+  2-arity `(node, opts)` function, default `&EvoDash.NodeContext.list_processes_result/2`.
 
   Liveness after the first load is push-based (PubSub topic `"processes"`);
   this module only constructs the initial snapshot, plus the refetch the page
@@ -63,10 +63,7 @@ defmodule EvoDashWeb.ProcessesLive.Load do
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
       result =
         case SafeCall.run(fn -> runner.(node, opts) end) do
-          # `SafeCall` wraps whatever the runner RETURNED. A seam runner may
-          # answer the documented `{:ok, list}` / `{:error, reason}` envelope,
-          # while the default runner (`EvoDash.NodeContext.list_processes/2`)
-          # answers the bare list — both shapes normalize to the same result.
+          # A runner may return a bare list or the node-aware result envelope.
           {:ok, value} -> normalize(value)
           {:error, reason} -> {:error, reason}
         end
@@ -80,12 +77,11 @@ defmodule EvoDashWeb.ProcessesLive.Load do
   @doc """
   Fetches the tracked executions of `node`, newest first.
 
-  The RPC itself is total (a failed call degrades to `[]`); this module keeps
-  the list-or-error contract explicit so a runner returning something else is
-  reported instead of rendered as a broken list.
+  The result distinguishes an empty list from a failed call.
   """
-  @spec load(node(), keyword()) :: [EvoGit.ProcessManager.Execution.t()]
-  def load(node, opts), do: EvoDash.NodeContext.list_processes(node, opts)
+  @spec load(node(), keyword()) ::
+          {:ok, [EvoGit.ProcessManager.Execution.t()]} | {:error, term()}
+  def load(node, opts), do: EvoDash.NodeContext.list_processes_result(node, opts)
 
   @doc """
   The CORE-side RPC filters of the current page: only `:agent_id` and

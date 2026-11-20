@@ -13,6 +13,7 @@ const NodeSwitchFade = {
     if (currentNodeId !== this.previousNodeId) {
       this.previousNodeId = currentNodeId;
       this.el.classList.remove('node-switch-fade');
+      if (this.el.closest("#app-layout")?.dataset.workbenchProject) return;
       // Force reflow so the animation restarts if the class was already present
       void this.el.offsetWidth;
       this.el.classList.add('node-switch-fade');

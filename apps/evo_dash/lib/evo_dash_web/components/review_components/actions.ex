@@ -79,7 +79,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
     <button
       class="btn btn-primary btn-sm rounded-lg gap-1.5"
       phx-click="ignore"
-      phx-confirm={gettext("Mark this review as read? It will be dismissed from pending reviews.")}
+      data-confirm={gettext("Mark this review as read? It will be dismissed from pending reviews.")}
       disabled={@loading}
     >
       <.icon name="hero-check" class="size-4" />
@@ -183,7 +183,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             <button
               class="rounded-md"
               phx-click="ignore"
-              phx-confirm={gettext("Ignore this review? It will be dismissed from pending reviews.")}
+              data-confirm={gettext("Ignore this review? It will be dismissed from pending reviews.")}
               disabled={@loading}
             >
               <.icon name="hero-eye-slash" class="size-4 mr-2" />

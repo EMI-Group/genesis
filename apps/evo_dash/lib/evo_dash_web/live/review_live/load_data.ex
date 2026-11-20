@@ -39,6 +39,7 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
   def load(node, task_id, opts \\ []) do
     live_action = Keyword.get(opts, :live_action)
     inspect_commit_sha = Keyword.get(opts, :inspect_commit_sha)
+    repo_id = Keyword.get(opts, :repo_id, "primary")
 
     # LITE task read: the heavy `archive_metadata` blob is NOT transferred (its
     # result data carries no `:archive_records` either). The archive is a
@@ -52,9 +53,13 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
 
         assigns =
           if live_action == :commit do
-            Map.merge(assigns, commit_inspection(node, assigns, inspect_commit_sha))
+            Map.merge(
+              assigns,
+              commit_inspection(node, assigns.review_repos, repo_id, inspect_commit_sha)
+            )
           else
-            assigns
+            active_repo = Enum.find(assigns.review_repos, &(&1.repo_id == repo_id))
+            %{assigns | active_repo_id: (active_repo && repo_id) || "primary"}
           end
 
         {:ok, assigns}
@@ -119,7 +124,7 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
     # exactly one entry) — the flat assigns below are projected from it.
     primary = Enum.find(review_repos, &(&1.repo_id == "primary"))
 
-    title = pr_title || objective || primary.branch_name || gettext("Review Changes")
+    title = Enum.find([pr_title, objective, primary.branch_name, task_id], &present_text?/1)
 
     can_resume =
       repo_available?(node, primary.repo_path) &&
@@ -175,6 +180,7 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
       file_context_levels: %{},
       selected_file: nil,
       repo_path: primary.repo_path,
+      workbench_project: primary.repo_path,
       objective: objective,
       commits: primary.commits,
       task_usage: task.usage,
@@ -393,35 +399,31 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
     EvoDash.NodeContext.branch_exists?(node, repo_path, branch_name) == true
   end
 
-  # Loads commit inspection data (header + file list) for the `:commit` route.
-  # PRIMARY-scoped: reads the primary entry's repo_path/commits via the flat
-  # assigns (foreign repos have no commit-inspection route).
-  defp commit_inspection(node, assigns, inspect_commit_sha) do
-    commit_sha = inspect_commit_sha || assigns.commit_sha
+  defp present_text?(value), do: is_binary(value) and String.trim(value) != ""
+
+  defp commit_inspection(node, repos, repo_id, commit_sha) do
+    repo = Enum.find(repos, &(&1.repo_id == repo_id))
 
     commit_header =
-      Enum.find(assigns.commits, &(&1.sha == commit_sha)) ||
+      (repo && Enum.find(repo.commits, &(&1.sha == commit_sha))) ||
         %EvoGit.Review.CommitInfo{
           sha: commit_sha,
-          short_sha: String.slice(commit_sha, 0..7),
-          message: gettext("Commit details"),
-          author_name: "",
-          date: DateTime.utc_now()
+          message: gettext("Commit details")
         }
 
     commit_data =
-      case EvoDash.NodeContext.load_commit_files(node, assigns.repo_path, commit_sha) do
-        {:ok, data} -> data
-        _ -> nil
+      if repo && is_binary(repo.repo_path) && is_binary(commit_sha) do
+        case EvoDash.NodeContext.load_commit_files(node, repo.repo_path, commit_sha) do
+          {:ok, data} -> data
+          _ -> nil
+        end
       end
 
     %{
       inspect_commit_sha: commit_sha,
+      repo_path: repo && repo.repo_path,
       commit_header: commit_header,
-      commit_data: commit_data,
-      expanded_files: %{},
-      file_context_levels: %{},
-      selected_file: nil
+      commit_data: commit_data
     }
   end
 end

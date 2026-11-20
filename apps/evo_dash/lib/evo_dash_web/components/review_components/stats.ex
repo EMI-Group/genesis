@@ -47,6 +47,8 @@ defmodule EvoDashWeb.ReviewComponents.Stats do
   attr(:commits, :list, required: true)
   attr(:repos, :list, default: [])
   attr(:active_repo_id, :string, default: "primary")
+  attr(:task_id, :string, required: true)
+  attr(:node_id, :string, default: nil)
 
   def commits_list(assigns) do
     ~H"""
@@ -66,7 +68,7 @@ defmodule EvoDashWeb.ReviewComponents.Stats do
             name="repo_id"
             phx-change="switch_repo"
             aria-label={gettext("Repository")}
-            class="select select-sm rounded-lg border-base-300 max-w-56"
+            class="select select-sm rounded-lg border-base-300 min-w-0 max-w-56"
           >
             <option
               :for={repo <- @repos}
@@ -89,31 +91,48 @@ defmodule EvoDashWeb.ReviewComponents.Stats do
             </span>
           </div>
         </div>
-        <div>
-          <%= for commit <- @commits do %>
-            <button
-              class="flex items-center gap-3 px-4 py-3 text-left w-full hover:bg-base-200/50 transition-colors border-b border-base-200/60 last:border-b-0"
-              phx-click="inspect_commit"
-              phx-value-sha={commit.sha}
+        <p
+          :if={@commits == []}
+          id="review-empty-commits"
+          class="px-4 py-6 text-center text-sm text-base-content/75"
+        >
+          {gettext("No commits to review.")}
+        </p>
+        <ul :if={@commits != []} id="review-commits" class="divide-y divide-base-300">
+          <li :for={commit <- @commits}>
+            <.link
+              patch={commit_path(@task_id, commit.sha, @node_id, @active_repo_id)}
+              class="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 text-left min-h-12 w-full hover:bg-base-200/50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone transition-colors"
             >
               <span class="badge badge-sm bg-base-200 border-0 font-mono rounded-md shrink-0">
                 {commit.short_sha}
               </span>
-              <span class="text-sm font-medium truncate flex-1" title={commit.message}>
-                {commit.message}
+              <span class="min-w-0 flex-1">
+                <span
+                  class="block text-sm font-medium [overflow-wrap:anywhere]"
+                  title={commit.message}
+                >
+                  {commit.message}
+                </span>
+                <span class="block text-xs text-base-content/70 truncate" title={commit.author_name}>
+                  {commit.author_name}
+                </span>
               </span>
-              <span class="text-sm text-base-content/60 shrink-0 hidden sm:inline">
-                {commit.author_name}
-              </span>
-              <span class="text-sm text-base-content/60 shrink-0">
+              <span class="text-xs text-base-content/70 shrink-0 hidden sm:inline">
                 {relative_time(commit.date)}
               </span>
               <.icon name="hero-chevron-right" class="size-4 text-base-content/60 shrink-0" />
-            </button>
-          <% end %>
-        </div>
+            </.link>
+          </li>
+        </ul>
       </div>
     </div>
     """
+  end
+
+  defp commit_path(task_id, sha, node_id, repo_id) do
+    params = if node_id, do: %{node: node_id}, else: %{}
+    params = if repo_id != "primary", do: Map.put(params, :repo, repo_id), else: params
+    ~p"/review/#{task_id}/commit/#{sha}?#{params}"
   end
 end

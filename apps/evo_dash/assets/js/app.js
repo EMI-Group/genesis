@@ -61,6 +61,7 @@ import "../vendor/highlight-fsharp.min.js"
 import "../vendor/highlight-lisp.min.js"
 import "../vendor/highlight-scheme.min.js"
 import SidebarCollapse from "./hooks/sidebar_collapse.js"
+import Workbench, {WorkbenchSection, WorkbenchWindow} from "./hooks/workbench.js"
 import NodeSwitchFade from "./hooks/node_switch_fade.js"
 import AdaptiveInput from "./hooks/adaptive_input.js"
 import LegendTooltip from "./hooks/legend_tooltip.js"
@@ -1297,7 +1298,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken, guide_client_id: guideClientId},
-  hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, UpdateStatus, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, Guide, StatePersistence, BrowserNotifications, AutoClearFlash, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, LegendTooltip, FocusInput, PaletteList, DiffViewer, CommitGraph, CapsulePanel, InspectorMessages, AssistantDisclosure, AssistantComposer},
+  hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, UpdateStatus, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, Guide, StatePersistence, BrowserNotifications, AutoClearFlash, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, Workbench, WorkbenchSection, WorkbenchWindow, NodeSwitchFade, AdaptiveInput, LegendTooltip, FocusInput, PaletteList, DiffViewer, CommitGraph, CapsulePanel, InspectorMessages, AssistantDisclosure, AssistantComposer},
 })
 
 // Show progress bar on live navigation and form submits

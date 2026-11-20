@@ -26,7 +26,6 @@ defmodule EvoDashWeb.ProjectsLive do
   }
 
   alias EvoDashWeb.ThemeColor
-  alias EvoDashWeb.ExampleTask
   alias EvoDashWeb.LLMSelection
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.Platform
@@ -65,6 +64,8 @@ defmodule EvoDashWeb.ProjectsLive do
         current_page={:phx_dashboard}
         config_status={@config_status}
         current_node_id={@current_node_id}
+        remote_targets={assigns[:remote_targets] || []}
+        connection_statuses={assigns[:connection_statuses] || %{}}
         current_node_name={@current_node_name}
         running_tasks={@running_tasks}
         session_list={assigns[:session_list] || []}
@@ -92,11 +93,23 @@ defmodule EvoDashWeb.ProjectsLive do
         ></iframe>
       </EvoDashWeb.Layouts.app>
     <% else %>
+      <% selecting_workbench_project? = get_in(@workbench_reconnect_params, ["wb_home"]) == "1" %>
+      <% workbench_project =
+        if selecting_workbench_project?,
+          do:
+            (@workbench_project_selection && @workbench_project_selection.path) ||
+              @remote_project_loading || @active_project_path,
+          else: @active_project_path %>
       <EvoDashWeb.Layouts.app
         flash={@flash}
         current_page={:dashboard}
         config_status={@config_status}
         current_node_id={@current_node_id}
+        remote_targets={assigns[:remote_targets] || []}
+        connection_statuses={assigns[:connection_statuses] || %{}}
+        workbench_project={workbench_project}
+        workbench_git_branch={@workbench_reconnect_params["wb_git_branch"]}
+        workbench_starting_commit={@workbench_reconnect_params["starting_commit"]}
         current_node_name={@current_node_name}
         running_tasks={@running_tasks}
         session_list={assigns[:session_list] || []}
@@ -122,8 +135,9 @@ defmodule EvoDashWeb.ProjectsLive do
         --%>
         <div
           id="dashboard-root"
-          phx-hook="StatePersistence"
-          data-project={@active_project_path}
+          phx-hook={unless @workbench_idle?, do: "StatePersistence"}
+          data-workbench-compose={to_string(!@workbench_idle?)}
+          data-project={workbench_project}
           data-task-mode={@task_mode}
           data-node-id={@current_node_id || "local"}
           class="flex flex-col min-h-full"
@@ -139,7 +153,7 @@ defmodule EvoDashWeb.ProjectsLive do
             class="flex-1 flex flex-col min-h-0"
           >
             <div
-              :if={not is_nil(@model_selection_error)}
+              :if={!@workbench_idle? and not is_nil(@model_selection_error)}
               id="model-selection-error"
               role="alert"
               class="flex items-center gap-3 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm"
@@ -171,171 +185,133 @@ defmodule EvoDashWeb.ProjectsLive do
                 %{phase: p} -> p
                 _ -> :connecting
               end %>
+            <EvoDashWeb.ProjectComponents.project_omnibox
+              :if={@project_palette_open and !EvoDashWeb.RemoteGateComponents.gate_active?(assigns)}
+              show_trigger={false}
+              projects={@projects}
+              palette_open={@project_palette_open}
+              palette_search={@palette_search}
+              palette_mode={@palette_mode}
+              palette_selected_index={@palette_selected_index}
+              workspaces={@workspaces}
+              expanded_workspaces={@expanded_workspaces}
+              new_workspace_members={@new_workspace_members}
+              path_suggestions={@path_suggestions}
+              tauri_detected={@tauri_detected}
+              platform={@platform}
+              remote={@remote?}
+            />
             <%= cond do %>
-              <% is_nil(@current_node_id) -> %>
-                <div class="flex-1 flex flex-col min-h-0 gap-3">
-                  <RemoteView.top_bar
-                    active_project={@active_project}
-                    active_project_path={@active_project_path}
-                    no_project_hint_dismissed={@no_project_hint_dismissed}
-                    projects={@projects}
-                    palette_open={@project_palette_open}
-                    palette_search={@palette_search}
-                    palette_mode={@palette_mode}
-                    palette_selected_index={@palette_selected_index}
-                    workspaces={@workspaces}
-                    expanded_workspaces={@expanded_workspaces}
-                    new_workspace_members={@new_workspace_members}
-                    path_suggestions={@path_suggestions}
-                    tauri_detected={@tauri_detected}
-                    platform={@platform}
-                    show_project_settings={@show_project_settings}
-                    task_mode={@task_mode}
-                    task_node_path={@task_node_path}
-                    task_starting_commit={@task_starting_commit}
-                    task_resume_from={@task_resume_from}
-                    task_archive={@task_archive}
-                    persist_agent_state?={@persist_agent_state?}
-                    build_systems={@build_systems}
-                    task_build_system={@task_build_system}
-                    project_config={@project_config}
-                    worktree_script={@worktree_script}
-                    commands={@commands}
-                    foreign_repos={@foreign_repos}
-                    foreign_repo_path_suggestions={@foreign_repo_path_suggestions}
-                    show_add_foreign_repo_form={@show_add_foreign_repo_form}
-                    new_repo_id={@new_repo_id}
-                    new_repo_path={@new_repo_path}
-                    new_repo_description={@new_repo_description}
-                    disabled={is_nil(@active_project)}
-                    show_configure_dropdown={@show_configure_dropdown}
-                    github_status={@github_status}
-                  />
-
-                  <%!-- No-project page dim: purely visual (position: fixed,
-                       pointer-events: none — CSS in app.css), tied to the same
-                       flag as the top-bar hint pill so dismissing the hint
-                       also lifts the dim. --%>
-                  <%= if is_nil(@active_project) and !@no_project_hint_dismissed do %>
-                    <div class="no-project-overlay" aria-hidden="true"></div>
-                  <% end %>
-
-                  <!-- Zone 2 (textarea, flex-1) + Zone 3 (floating bottom launcher) -->
-                  <EvoDashWeb.TaskFormComponents.task_form
-                    prompt={@task_prompt}
-                    mode={@task_mode}
-                    mode_info={@task_mode_info}
-                    node_path={@task_node_path}
-                    starting_commit={@task_starting_commit}
-                    resume_from={@task_resume_from}
-                    show_advanced={@show_advanced}
-                    disabled={is_nil(@active_project)}
-                    archive={@task_archive}
-                    persist_agent_state?={@persist_agent_state?}
-                    provider_profiles={@provider_profiles}
-                    model_selections={@model_selections}
-                    model_spec={@selected_model_spec}
-                    custom_agents={@custom_agents}
-                    selected_agent_id={@selected_agent_id}
-                    quality_level={@quality_level}
-                    show_auto_model_option={@model_selection_enabled}
-                    build_systems={@build_systems}
-                    selected_build_system={@task_build_system}
-                    staged_attachments={@staged_attachments}
-                  />
-
-                  <%= if is_nil(@active_project) do %>
-                    <%!-- Empty-state example task help — shown only while no
-                         project is open (disappears once one is activated).
-                         Collapsible <details> + max-height scrollable <pre> keep
-                         it compact so it can never overflow on small screens.
-                         The hidden textarea is an RCDATA holder: reading .value
-                         in JS returns the exact example text (including the
-                         literal <link>/<script> strings) without HTML injection.
-                         The prefill button sets the prompt textarea's .value
-                         (never innerHTML) and dispatches a bubbling `input`
-                         event, which drives the AdaptiveInput hook (autogrow
-                         + client-side layout switch — the example (1554
-                         chars) crosses the layout thresholds (char count and
-                         the compact height cap), so the layout flips to
-                         expanded; the flip can also be height-driven). No
-                         server event is involved; @task_prompt
-                         is only updated by restore_state / task_submit. --%>
-                    <div class="mx-auto w-full max-w-3xl px-4 pb-4 shrink-0">
-                      <details
-                        class="group overflow-hidden rounded-lg border border-base-300 bg-base-100/60 shadow-sm"
-                        open
-                      >
-                        <summary class="flex items-center gap-2 px-4 py-3 text-sm font-medium text-base-content/80 cursor-pointer select-none list-none hover:bg-base-200 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone [&::-webkit-details-marker]:hidden">
-                          <.icon
-                            name="hero-sparkles"
-                            class="size-4 shrink-0 text-primary-standalone/70"
-                          />
-                          <span>{gettext("New to Genesis? Start with an example")}</span>
-                          <span class="ml-auto text-xs font-normal text-base-content/60">
-                            <span class="group-open:hidden">{gettext("Show example")}</span>
-                            <span class="hidden group-open:inline">{gettext("Hide example")}</span>
-                          </span>
-                        </summary>
-                        <div class="px-4 pb-4 pt-1">
-                          <p class="text-sm text-base-content/70 mb-3">
-                            {gettext(
-                              "Set an end goal, launch, and Genesis builds it — it figures out the architecture, delegates agents, and writes the code."
-                            )}
-                          </p>
-                          <div class="relative rounded-md border border-base-300 bg-base-200/50">
-                            <pre class="max-h-48 overflow-y-auto p-3 pr-12 font-mono text-xs leading-relaxed whitespace-pre-wrap text-base-content/80"><%= ExampleTask.example_objective() %></pre>
-                            <button
-                              id="example-task-copy"
-                              phx-hook="ClipboardCopy"
-                              data-content={ExampleTask.example_objective()}
-                              class="btn btn-ghost btn-sm btn-square absolute top-2 right-2 bg-base-100/80"
-                              title={gettext("Copy")}
-                            >
-                              <.icon name="hero-clipboard" class="size-4" />
-                            </button>
-                          </div>
-                          <button
-                            id="example-task-prefill"
-                            type="button"
-                            onclick="var h=document.getElementById('example-task-objective');var p=document.getElementById('prompt');if(h&&p){p.value=h.value;p.dispatchEvent(new Event('input',{bubbles:true}));}"
-                            class="btn btn-ghost btn-sm mt-3 gap-1.5"
-                          >
-                            <.icon name="hero-arrow-down-tray" class="size-4" />
-                            {gettext("Use this example")}
-                          </button>
-                        </div>
-                      </details>
-                      <textarea
-                        id="example-task-objective"
-                        class="hidden"
-                        readonly
-                        tabindex="-1"
-                        aria-hidden="true"
-                      ><%= ExampleTask.example_objective() %></textarea>
-                    </div>
-                  <% end %>
+              <% @remote_project_loading != nil and !selecting_workbench_project? and
+                   !EvoDashWeb.RemoteGateComponents.gate_active?(assigns) -> %>
+                <div id="workbench-project-loading" class="workbench-idle" role="status">
+                  {gettext("Loading project…")}
                 </div>
-              <% @remote? -> %>
-                <div class="flex-1 flex flex-col min-h-0 gap-3">
-                  <RemoteView.top_bar
-                    remote={true}
-                    current_node_name={@current_node_name}
-                    active_project={@active_project}
+              <% !EvoDashWeb.RemoteGateComponents.gate_active?(assigns) and
+                   (@workbench_idle? or is_nil(@active_project)) -> %>
+                <div id="workbench-idle" class="workbench-idle" role="status">
+                  <p data-workbench-idle-projects hidden={!is_nil(workbench_project)}>
+                    {gettext("No projects")}
+                  </p>
+                  <p data-workbench-idle-window hidden={is_nil(workbench_project)}>
+                    {gettext("No window selected")}
+                  </p>
+                </div>
+              <% is_nil(@current_node_id) or @remote? -> %>
+                <div
+                  id="workbench-task-composer"
+                  phx-hook="WorkbenchSection"
+                  class="flex-1 flex flex-col min-h-0"
+                >
+                  <EvoDashWeb.TaskFormComponents.task_form
+                    prompt={@task_prompt}
+                    mode={@task_mode}
+                    mode_info={@task_mode_info}
+                    node_path={@task_node_path}
+                    starting_commit={@task_starting_commit}
+                    resume_from={@task_resume_from}
+                    show_advanced={@show_advanced}
+                    archive={@task_archive}
+                    persist_agent_state?={@persist_agent_state?}
+                    provider_profiles={@provider_profiles}
+                    model_selections={@model_selections}
+                    model_spec={@selected_model_spec}
+                    launch_disabled={!@model_selection_ready? || @model_selections == []}
+                    custom_agents={@custom_agents}
+                    selected_agent_id={@selected_agent_id}
+                    quality_level={@quality_level}
+                    show_auto_model_option={@model_selection_enabled}
+                    build_systems={@build_systems}
+                    selected_build_system={@task_build_system}
+                    staged_attachments={@staged_attachments}
+                  >
+                    <:controls>
+                      <button
+                        :if={@model_selection_ready? && @model_selections == []}
+                        id="task-model-setup"
+                        type="button"
+                        class="btn btn-sm btn-ghost"
+                        data-workbench-settings={
+                          EvoDashWeb.WorkbenchComponent.navigation_path(
+                            ~p"/settings/window",
+                            @current_node_id,
+                            category: "llm"
+                          )
+                        }
+                      >
+                        <.icon name="hero-adjustments-horizontal" class="size-4" />
+                        {gettext("Configure a model")}
+                      </button>
+                      <span
+                        :if={!@model_selection_ready? && is_nil(@model_selection_error)}
+                        class="text-xs text-base-content/70"
+                        role="status"
+                      >{gettext("Loading models…")}</span>
+                      <span
+                        :if={
+                          git_task_draft?(@workbench_reconnect_params) &&
+                            @task_mode == "evolve_simple"
+                        }
+                        id="workbench-task-git-base"
+                        class="workbench-task-git-base"
+                        title={@task_starting_commit}
+                      >
+                        <.icon name="hero-code-bracket" class="size-4 shrink-0" />
+                        <span class="truncate">{@workbench_reconnect_params["wb_git_branch"]}</span>
+                      </span>
+                      <button
+                        :if={
+                          match?(
+                            %{state: :ok, owner: owner, repo: repo}
+                            when is_binary(owner) and is_binary(repo),
+                            @github_status
+                          )
+                        }
+                        type="button"
+                        class="workbench-icon-button shrink-0"
+                        phx-click="open_github_issues"
+                        title={"#{gettext("Open GitHub Issues")} · #{@github_status.owner}/#{@github_status.repo}"}
+                        aria-label={gettext("Open GitHub Issues")}
+                      >
+                        <.icon name="brand-github" class="size-4" />
+                      </button>
+                      <button
+                        type="button"
+                        class="workbench-icon-button shrink-0"
+                        data-workbench-task-settings
+                        aria-haspopup="dialog"
+                        aria-controls="workbench-task-settings"
+                        aria-label={gettext("Configure")}
+                        title={gettext("Configure")}
+                      >
+                        <.icon name="hero-adjustments-horizontal" class="size-4" />
+                      </button>
+                    </:controls>
+                  </EvoDashWeb.TaskFormComponents.task_form>
+                  <RemoteView.task_configuration
                     active_project_path={@active_project_path}
-                    no_project_hint_dismissed={@no_project_hint_dismissed}
-                    projects={@projects}
-                    palette_open={@project_palette_open}
-                    palette_search={@palette_search}
-                    palette_mode={@palette_mode}
-                    palette_selected_index={@palette_selected_index}
-                    workspaces={@workspaces}
-                    expanded_workspaces={@expanded_workspaces}
-                    new_workspace_members={@new_workspace_members}
-                    path_suggestions={@path_suggestions}
                     tauri_detected={@tauri_detected}
                     platform={@platform}
-                    show_project_settings={@show_project_settings}
                     task_mode={@task_mode}
                     task_node_path={@task_node_path}
                     task_starting_commit={@task_starting_commit}
@@ -353,101 +329,17 @@ defmodule EvoDashWeb.ProjectsLive do
                     new_repo_id={@new_repo_id}
                     new_repo_path={@new_repo_path}
                     new_repo_description={@new_repo_description}
-                    disabled={is_nil(@active_project)}
-                    show_configure_dropdown={@show_configure_dropdown}
-                    github_status={@github_status}
-                  />
-
-                  <div class="mt-2 mb-4 rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-2">
-                    <.icon name="hero-server-stack" class="size-5 text-info shrink-0 mt-0.5" />
-                    <p class="text-sm text-base-content/70">
-                      {gettext(
-                        "You are viewing a remote node. Tasks launched here will run on the remote machine."
-                      )}
-                    </p>
-                  </div>
-
-                  <%!-- Remote project activation in flight: the RPC-heavy
-                       sequence runs in a supervised task (spawned by
-                       ProjectFlow.spawn_remote_project_activation/2), so this
-                       banner is the only feedback until the result applies.
-                       The path shown is the one being loaded. --%>
-                  <%= if @remote_project_loading != nil do %>
-                    <div class="mb-2 rounded-lg border border-base-300 bg-base-200/50 px-3 py-2 flex items-center gap-2">
-                      <span class="loading loading-spinner loading-sm text-primary-standalone"></span>
-                      <%!-- 正在通过远程节点加载所选项目，加载完成前任务表单保持禁用 --%>
-                      <span class="text-sm text-base-content/70">{gettext("Loading project…")}</span>
-                      <code class="text-xs text-base-content/70 font-mono truncate min-w-0">
-                        {@remote_project_loading}
-                      </code>
-                    </div>
-                  <% end %>
-
-                  <EvoDashWeb.TaskFormComponents.task_form
-                    prompt={@task_prompt}
-                    mode={@task_mode}
-                    mode_info={@task_mode_info}
-                    node_path={@task_node_path}
-                    starting_commit={@task_starting_commit}
-                    resume_from={@task_resume_from}
-                    show_advanced={@show_advanced}
-                    disabled={is_nil(@active_project)}
-                    archive={@task_archive}
-                    persist_agent_state?={@persist_agent_state?}
-                    provider_profiles={@provider_profiles}
-                    model_selections={@model_selections}
-                    model_spec={@selected_model_spec}
-                    custom_agents={@custom_agents}
-                    selected_agent_id={@selected_agent_id}
-                    quality_level={@quality_level}
-                    show_auto_model_option={@model_selection_enabled}
-                    build_systems={@build_systems}
-                    selected_build_system={@task_build_system}
-                    staged_attachments={@staged_attachments}
+                    remote={@remote?}
                   />
                 </div>
               <% phase in [:connecting, :bootstrapping, :disconnecting] -> %>
                 <!-- Pending remote context: connecting chrome only — no
                      project data, no task form, no local project list (the
                      node-switch clear already reset project state). -->
-                <RemoteView.top_bar
-                  remote={true}
-                  hide_palette={true}
-                  current_node_name={@current_node_name}
-                  active_project={@active_project}
-                  active_project_path={@active_project_path}
-                  no_project_hint_dismissed={@no_project_hint_dismissed}
-                  projects={@projects}
-                  palette_open={@project_palette_open}
-                  palette_search={@palette_search}
-                  palette_mode={@palette_mode}
-                  palette_selected_index={@palette_selected_index}
-                  path_suggestions={@path_suggestions}
-                  tauri_detected={@tauri_detected}
-                  platform={@platform}
-                  github_status={@github_status}
-                />
                 <RemoteView.connecting_state current_node_name={@current_node_name} />
               <% true -> %>
                 <!-- Failed/disconnected remote context: prominent error state
                      with Retry / Manage Connections / Switch to Local. -->
-                <RemoteView.top_bar
-                  remote={true}
-                  hide_palette={true}
-                  current_node_name={@current_node_name}
-                  active_project={@active_project}
-                  active_project_path={@active_project_path}
-                  no_project_hint_dismissed={@no_project_hint_dismissed}
-                  projects={@projects}
-                  palette_open={@project_palette_open}
-                  palette_search={@palette_search}
-                  palette_mode={@palette_mode}
-                  palette_selected_index={@palette_selected_index}
-                  path_suggestions={@path_suggestions}
-                  tauri_detected={@tauri_detected}
-                  platform={@platform}
-                  github_status={@github_status}
-                />
                 <RemoteView.error_state
                   current_node_name={@current_node_name}
                   last_error={Map.get(@remote_status || %{}, :last_error)}
@@ -455,11 +347,6 @@ defmodule EvoDashWeb.ProjectsLive do
             <% end %>
             <%!-- end of node-context cond --%>
 
-            <%!-- GitHub issues modal — rendered OUTSIDE the node-context cond
-                 so it works in both the local and remote-connected branches.
-                 It can only be opened from those branches anyway: the top-bar
-                 GitHub button renders only after the async upstream check
-                 resolves :ok, and project/node switches reset the flag. --%>
             <%= if @github_modal_open do %>
               <EvoDashWeb.GitHubComponents.issues_modal
                 github_status={@github_status}
@@ -497,6 +384,13 @@ defmodule EvoDashWeb.ProjectsLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    title =
+      if socket.assigns[:live_action] == :system_dashboard,
+        do: gettext("System Dashboard"),
+        else: gettext("Projects")
+
+    socket = assign(socket, :page_title, title)
+
     # On the dead render (initial HTTP request), use server-based detection to
     # decide whether to redirect first-time users to /welcome. The check is
     # backed by EvoGit.Config.VersionState.onboarding_needed?/0 (which reports
@@ -560,7 +454,7 @@ defmodule EvoDashWeb.ProjectsLive do
           # {:async_remote_project, ...} continuation (or the node-switch
           # state clear, which drops in-flight results from an old node).
           remote_project_loading: nil,
-          no_project_hint_dismissed: false,
+          workbench_project_selection: nil,
           project_palette_open: false,
           palette_search: "",
           palette_mode: :menu,
@@ -588,7 +482,6 @@ defmodule EvoDashWeb.ProjectsLive do
           new_repo_base_sha: "",
           editing_foreign_repo_id: nil,
           foreign_repo_edit_form: nil,
-          show_configure_dropdown: false,
           model_selection: nil,
           model_selection_scope: nil,
           model_selection_ready?: false,
@@ -752,7 +645,34 @@ defmodule EvoDashWeb.ProjectsLive do
         socket
       end
 
+    socket =
+      assign(socket,
+        workbench_reconnect_params:
+          Map.take(params, ~w(project wb_open wb_home wb_task wb_git_branch starting_commit)),
+        workbench_open_requested: params["wb_open"] == "1",
+        workbench_idle?:
+          params["wb_home"] == "1" or
+            Enum.all?(~w(project starting_commit resume_from), &is_nil(params[&1]))
+      )
+
     project_path = params["project"]
+
+    socket =
+      if params["wb_home"] != "1" or node_context_changed? or
+           get_in(socket.assigns, [:workbench_project_selection, :requested_path]) != project_path do
+        socket
+        |> cancel_async(:workbench_project_selection)
+        |> assign(:workbench_project_selection, nil)
+      else
+        socket
+      end
+
+    # An in-flight activation cannot select a project after navigation has
+    # moved back to another project (including the already active one).
+    socket =
+      if socket.assigns.remote_project_loading != project_path,
+        do: assign(socket, :remote_project_loading, nil),
+        else: socket
 
     socket =
       if socket.assigns[:current_node_id] != nil do
@@ -791,9 +711,12 @@ defmodule EvoDashWeb.ProjectsLive do
                    project_path
                  ) do
               {:ok, expanded} ->
-                case params["resume_from"] do
-                  task_id when is_binary(task_id) and task_id != "" ->
+                case params do
+                  %{"resume_from" => task_id} when is_binary(task_id) and task_id != "" ->
                     ProjectFlow.spawn_remote_project_activation(socket, expanded, task_id)
+
+                  %{"wb_home" => "1"} ->
+                    select_remote_workbench_project(socket, project_path, expanded)
 
                   _ ->
                     ProjectFlow.spawn_remote_project_activation(socket, expanded)
@@ -851,13 +774,18 @@ defmodule EvoDashWeb.ProjectsLive do
     # so a result spawned for the very activation that just happened is never
     # dropped as "stale" (and a remote→local switch can never keep a remote
     # node's model profiles/projects after a local project activates).
-    socket = AsyncLoad.maybe_spawn(socket, prev_node_id)
+    socket =
+      if socket.assigns.workbench_project_selection,
+        do: socket,
+        else: AsyncLoad.maybe_spawn(socket, prev_node_id)
 
     # Preserve starting_commit from URL query param (e.g. ?starting_commit=abc123)
     socket =
       case params["starting_commit"] do
         sha when is_binary(sha) and sha != "" ->
-          assign(socket, :task_starting_commit, sha)
+          socket
+          |> assign(:task_starting_commit, sha)
+          |> use_git_task_mode()
 
         _ ->
           socket
@@ -887,6 +815,9 @@ defmodule EvoDashWeb.ProjectsLive do
     # is active, the mode is genesis_new, or a status is already present.
     socket = GitHub.maybe_check(socket)
 
+    socket =
+      if socket.assigns.workbench_open_requested, do: open_project_palette(socket), else: socket
+
     {:noreply, socket}
   end
 
@@ -894,21 +825,7 @@ defmodule EvoDashWeb.ProjectsLive do
 
   @impl true
   def handle_event("open_project_palette", _params, socket) do
-    # Gate guard (defense in depth): never open the palette while a selected
-    # remote target is pending/failed — `@current_node` is still the LOCAL
-    # BEAM node in that state, so project activation would touch local data
-    # while the user believes they are operating on the remote node.
-    if EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) do
-      {:noreply, socket}
-    else
-      {:noreply,
-       socket
-       |> assign(:project_palette_open, true)
-       |> assign(:palette_mode, :menu)
-       |> assign(:palette_search, "")
-       |> assign(:palette_selected_index, 0)
-       |> assign(:show_configure_dropdown, false)}
-    end
+    {:noreply, open_project_palette(socket)}
   end
 
   @impl true
@@ -919,14 +836,6 @@ defmodule EvoDashWeb.ProjectsLive do
      |> assign(:palette_mode, :menu)
      |> assign(:palette_search, "")
      |> assign(:palette_selected_index, 0)}
-  end
-
-  # Dismisses the "Open or create a project" hint pill in the top bar (the
-  # no-project page dim overlay is tied to the same flag). The hint returns
-  # for future no-project sessions — activate_project/2 resets the flag.
-  @impl true
-  def handle_event("dismiss_no_project_hint", _params, socket) do
-    {:noreply, assign(socket, :no_project_hint_dismissed, true)}
   end
 
   @impl true
@@ -1043,16 +952,6 @@ defmodule EvoDashWeb.ProjectsLive do
   end
 
   @impl true
-  def handle_event("toggle_configure_dropdown", _params, socket) do
-    {:noreply, assign(socket, :show_configure_dropdown, !socket.assigns.show_configure_dropdown)}
-  end
-
-  @impl true
-  def handle_event("close_configure_dropdown", _params, socket) do
-    {:noreply, assign(socket, :show_configure_dropdown, false)}
-  end
-
-  @impl true
   def handle_event("toggle_advanced", _params, socket) do
     {:noreply, assign(socket, :show_advanced, !socket.assigns.show_advanced)}
   end
@@ -1101,7 +1000,7 @@ defmodule EvoDashWeb.ProjectsLive do
       |> assign(
         :projects,
         Enum.reject(socket.assigns[:projects] || [], fn entry ->
-          Map.get(entry, :point) == point
+          (Map.get(entry, :point) || entry.path) == point
         end)
       )
 
@@ -1280,7 +1179,7 @@ defmodule EvoDashWeb.ProjectsLive do
     {:noreply, GitHub.fix_issue(socket, number)}
   end
 
-  # Flash acknowledgement for the ClipboardCopy hook (example task copy button)
+  # Flash acknowledgement for the ClipboardCopy hook
   @impl true
   def handle_event("copied", _params, socket) do
     {:noreply, put_flash(socket, :info, gettext("Copied to clipboard"))}
@@ -1351,7 +1250,12 @@ defmodule EvoDashWeb.ProjectsLive do
       # takes precedence over auto-detection when returning to a project.
       # Normalizes a legacy persisted "reflect" value to "evolve_simple" (the
       # reflect mode was removed from the task form).
-      socket = StatePersistence.maybe_restore_task_mode(socket, params["task_mode"])
+      socket =
+        if git_task_draft?(socket.assigns.workbench_reconnect_params) do
+          socket
+        else
+          StatePersistence.maybe_restore_task_mode(socket, params["task_mode"])
+        end
 
       # Restore project if we don't already have one active.
       # Only restore project-specific assigns (node_path) when no project is
@@ -2079,6 +1983,58 @@ defmodule EvoDashWeb.ProjectsLive do
 
   defp truncate_output(output), do: String.trim(output)
 
+  # Selecting an open project's empty workspace only needs its registered path.
+  # Task configuration is loaded when the user enters the task composer.
+  defp select_remote_workbench_project(socket, requested_path, path) do
+    target = socket.assigns.current_node
+    selection = %{target: target, requested_path: requested_path, path: path}
+
+    if socket.assigns.workbench_project_selection == selection do
+      socket
+    else
+      socket
+      |> assign(:workbench_project_selection, selection)
+      |> start_async(:workbench_project_selection, fn ->
+        if NodeContext.dir?(target, path) do
+          projects =
+            AsyncLoad.filter_absolute_projects_for_node(target, NodeContext.projects(target))
+
+          if Enum.any?(projects, &(&1.path == path)),
+            do: {:registered, projects},
+            else: :unregistered
+        else
+          :not_a_directory
+        end
+      end)
+    end
+  end
+
+  @impl true
+  def handle_async(:workbench_project_selection, result, socket) do
+    case {socket.assigns.workbench_project_selection, result} do
+      {nil, _} ->
+        {:noreply, socket}
+
+      {_, {:ok, {:registered, projects}}} ->
+        {:noreply, assign(socket, :projects, projects)}
+
+      {%{path: path}, {:ok, :unregistered}} ->
+        {:noreply,
+         socket
+         |> assign(:workbench_project_selection, nil)
+         |> ProjectFlow.spawn_remote_project_activation(path)}
+
+      {%{path: path}, _} ->
+        {:noreply,
+         socket
+         |> assign(:workbench_project_selection, nil)
+         |> put_flash(
+           :error,
+           gettext("Directory does not exist on the remote node: %{path}", path: path)
+         )}
+    end
+  end
+
   # --- PubSub Handlers ---
 
   # Results from the async directory picker (EvoDash.DirectoryPicker sends
@@ -2456,6 +2412,8 @@ defmodule EvoDashWeb.ProjectsLive do
   # remote context never consumes the reload (its own activation owns the list).
   @impl true
   def handle_info({:vct_updated, node}, socket) do
+    send_update(EvoDashWeb.WorkbenchComponent, id: "workbench-projects", refresh: true)
+
     pending_remote? =
       is_binary(socket.assigns[:current_node_id]) and socket.assigns[:current_node] == node()
 
@@ -2518,6 +2476,11 @@ defmodule EvoDashWeb.ProjectsLive do
     {socket, applied?} = AsyncLoad.handle_result(socket, node, prev_node_id, path, results)
 
     socket =
+      if applied? && Map.has_key?(results, :task_mode),
+        do: use_git_task_mode(socket),
+        else: socket
+
+    socket =
       if applied? and Map.get(results, :auto_activate?, false) do
         maybe_auto_activate_project(socket)
       else
@@ -2568,6 +2531,7 @@ defmodule EvoDashWeb.ProjectsLive do
               |> assign(:active_project_path, results.active_project_path)
               |> assign(:task_mode, results.task_mode)
               |> assign(:task_mode_info, results.task_mode_info)
+              |> use_git_task_mode()
               |> assign(:project_config, results.project_config)
               |> assign(:worktree_script, results.worktree_script)
               |> assign(:commands, results.commands)
@@ -2577,7 +2541,15 @@ defmodule EvoDashWeb.ProjectsLive do
               |> maybe_reset_github_state(project_changed?)
               |> GitHub.maybe_check()
 
-            {:noreply, push_patch(socket, to: project_url(socket, path))}
+            params = socket.assigns[:workbench_reconnect_params] || %{}
+
+            if (params["wb_home"] == "1" or git_task_draft?(params)) and params["project"] == path do
+              # The project link already updated the URL. Load node data
+              # against the validated project without adding a second entry.
+              {:noreply, AsyncLoad.maybe_spawn(socket, socket.assigns.current_node_id)}
+            else
+              {:noreply, push_patch(socket, to: project_url(socket, path))}
+            end
 
           {:error, :not_a_directory} ->
             socket =
@@ -2617,13 +2589,37 @@ defmodule EvoDashWeb.ProjectsLive do
   # the projects list (replaces the old synchronous mount-time auto-load). Only
   # for a LOCAL context whose handle_params run carried no `?project=`; a
   # missing/non-existent path leaves the no-project view untouched.
+  defp open_project_palette(socket) do
+    # Gate guard (defense in depth): never open the palette while a selected
+    # remote target is pending/failed — `@current_node` is still the LOCAL
+    # BEAM node in that state, so project activation would touch local data
+    # while the user believes they are operating on the remote node.
+    if EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) do
+      socket
+    else
+      socket
+      |> assign(:project_palette_open, true)
+      |> assign(:palette_mode, :menu)
+      |> assign(:palette_search, "")
+      |> assign(:palette_selected_index, 0)
+    end
+  end
+
   defp maybe_auto_activate_project(socket) do
     if socket.assigns[:auto_activate_candidate?] == true and
          is_nil(socket.assigns[:current_node_id]) and
          is_nil(socket.assigns[:active_project]) do
       case List.first(socket.assigns[:projects]) do
         %{path: project_path} when is_binary(project_path) ->
-          if File.dir?(project_path), do: activate_project(socket, project_path), else: socket
+          if File.dir?(project_path) do
+            activated = activate_project(socket, project_path)
+
+            if socket.assigns[:workbench_open_requested],
+              do: open_project_palette(activated),
+              else: activated
+          else
+            socket
+          end
 
         _ ->
           socket
@@ -3166,9 +3162,39 @@ defmodule EvoDashWeb.ProjectsLive do
   # NOTE: deliberately NOT `EvoDashWeb.Helpers.with_node_param/2`, which
   # appends with `?` and would corrupt the existing `?project=` query.
   defp project_url(socket, path) do
-    case socket.assigns[:current_node_id] do
-      nil -> "/projects?project=#{URI.encode(path)}"
-      node_id -> "/projects?project=#{URI.encode(path)}&node=#{node_id}"
+    params = socket.assigns[:workbench_reconnect_params] || %{}
+
+    query =
+      [project: path] ++
+        Enum.reject([wb_home: params["wb_home"], wb_task: params["wb_task"]], fn {_, value} ->
+          is_nil(value)
+        end)
+
+    EvoDashWeb.WorkbenchComponent.navigation_path(
+      "/projects",
+      socket.assigns.current_node_id,
+      query
+    )
+  end
+
+  defp git_task_draft?(%{
+         "wb_task" => "1",
+         "wb_git_branch" => branch,
+         "starting_commit" => commit
+       })
+       when is_binary(branch) and byte_size(branch) in 1..1024 and is_binary(commit),
+       do: Regex.match?(~r/\A(?:[0-9a-f]{40}|[0-9a-f]{64})\z/, commit)
+
+  defp git_task_draft?(_), do: false
+
+  defp use_git_task_mode(socket) do
+    if git_task_draft?(socket.assigns[:workbench_reconnect_params]) do
+      assign(socket,
+        task_mode: "evolve_simple",
+        task_mode_info: mode_info_message("evolve_simple")
+      )
+    else
+      socket
     end
   end
 
@@ -3204,9 +3230,6 @@ defmodule EvoDashWeb.ProjectsLive do
         point: ProjectFlow.mount_point_for(socket.assigns[:projects] || [], path)
       },
       active_project_path: path,
-      # Re-arm the no-project hint so it returns for a future no-project
-      # session (dismissal is per no-project session, not permanent).
-      no_project_hint_dismissed: false,
       task_mode: mode,
       task_mode_info: mode_info,
       project_palette_open: false,
@@ -3435,6 +3458,14 @@ defmodule EvoDashWeb.ProjectsLive do
            |> assign(:staged_attachments, [])
            |> StatePersistence.maybe_persist_state()
            |> push_event("clear_prompt", %{})}
+
+        {:error, :no_task_model} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Configure a model on this server before launching a task.")
+           )}
 
         {:error, reason} ->
           {:noreply,

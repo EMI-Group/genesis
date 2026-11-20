@@ -112,6 +112,16 @@ defmodule EvoDashWeb.ProjectsLive.LaunchOptionsTest do
            ]
   end
 
+  test "Auto cannot launch without models, including on servers with selection rules" do
+    for rules_enabled <- [false, true] do
+      assert {:error, :no_task_model} =
+               LaunchOptions.apply([], %{
+                 model_selection: Project.load_model_selection_from_config(%{}, rules_enabled),
+                 selected_model_spec: %{}
+               })
+    end
+  end
+
   test "a model without an effort inventory never gains a task reasoning override" do
     assert {:ok, opts} =
              LaunchOptions.apply([], %{

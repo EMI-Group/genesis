@@ -106,6 +106,28 @@ defmodule EvoDashWeb.Helpers do
   # Task Status Helpers
   # ---------------------------------------------------------------------------
 
+  @doc "Returns the display label for an execution status, including filter values."
+  def task_status_label(status) when status in [:pending, "pending"], do: gettext("Pending")
+  def task_status_label(status) when status in [:running, "running"], do: gettext("Running")
+
+  def task_status_label(status) when status in [:awaiting_input, "awaiting_input"],
+    do: gettext("Awaiting input")
+
+  def task_status_label(status) when status in [:pausing, "pausing"], do: gettext("Pausing")
+  def task_status_label(status) when status in [:paused, "paused"], do: gettext("Paused")
+
+  def task_status_label(status) when status in [:finalizing, "finalizing"],
+    do: gettext("Finalizing")
+
+  def task_status_label(status) when status in [:cancelling, "cancelling"],
+    do: gettext("Cancelling")
+
+  def task_status_label(status) when status in [:completed, "completed"], do: gettext("Completed")
+  def task_status_label(status) when status in [:cancelled, "cancelled"], do: gettext("Cancelled")
+  def task_status_label(status) when status in [:failed, "failed"], do: gettext("Failed")
+  def task_status_label(:ended), do: gettext("Ended")
+  def task_status_label(_), do: gettext("Unknown")
+
   @doc """
   Returns badge class string for task status (`:running`, `:finalizing`,
   `:pausing`, `:completed`, `:failed`, `:cancelled`, `:cancelling`, `:pending`,

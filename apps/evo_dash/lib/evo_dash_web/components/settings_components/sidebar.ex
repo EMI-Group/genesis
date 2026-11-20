@@ -16,6 +16,8 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
 
   use EvoDashWeb, :html
 
+  import EvoDashWeb.SettingsLive.Navigation, only: [client_category?: 1]
+
   import EvoDashWeb.SettingsComponents.CategoryMetadata,
     only: [
       category_icon: 1,
@@ -28,11 +30,76 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
   # settings_sidebar/1 — Category sidebar
   # ───────────────────────────────────────────────────────────────────────────
 
+  attr(:window, :boolean, default: false)
   attr(:categories, :map, required: true)
   attr(:active_category, :atom, required: true)
   attr(:search_text, :string, default: "")
   attr(:config_path, :string, required: true)
   attr(:config_file_exists, :boolean, required: true)
+
+  def settings_sidebar(%{window: true} = assigns) do
+    assigns =
+      assign(
+        assigns,
+        server_categories:
+          Enum.reject(sort_categories(assigns.categories), fn {category, _} ->
+            client_category?(category)
+          end),
+        window_search_form: to_form(%{"value" => assigns.search_text})
+      )
+
+    ~H"""
+    <button
+      id="workbench-settings-nav-toggle"
+      type="button"
+      class="workbench-settings-nav-toggle"
+      aria-controls="workbench-settings-nav"
+      aria-expanded="false"
+    >
+      <.icon name="hero-bars-3" class="size-4" />
+      <span>{gettext("Settings categories")}</span>
+      <.icon name="hero-chevron-down" class="size-4 ms-auto" />
+    </button>
+    <nav id="workbench-settings-nav" class="workbench-settings-nav" aria-label={gettext("Settings")}>
+      <.form
+        for={@window_search_form}
+        id="settings-search"
+        phx-submit="noop"
+        phx-change="search"
+        class="workbench-query"
+      >
+        <.icon name="hero-magnifying-glass" class="size-4 shrink-0" />
+        <.input
+          field={@window_search_form[:value]}
+          id="workbench-settings-search"
+          type="search"
+          class="min-w-0 w-full"
+          aria-label={gettext("Filter settings...")}
+          placeholder={gettext("Filter settings...")}
+        />
+      </.form>
+
+      <div class="workbench-settings-group">
+        <h3>{gettext("Client settings")}</h3>
+        <.window_category category={:appearance} active={@active_category} />
+        <.window_category
+          category={:remote_connections}
+          label={gettext("Genesis servers")}
+          active={@active_category}
+        />
+      </div>
+      <div id="workbench-server-settings" class="workbench-settings-group">
+        <h3>{gettext("Server settings")}</h3>
+        <.window_category
+          :for={{category, _} <- @server_categories}
+          category={category}
+          label={if category == :llm, do: gettext("Models")}
+          active={@active_category}
+        />
+      </div>
+    </nav>
+    """
+  end
 
   def settings_sidebar(assigns) do
     ~H"""
@@ -139,6 +206,25 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
         <% end %>
       </div>
     </div>
+    """
+  end
+
+  attr(:category, :atom, required: true)
+  attr(:active, :atom, required: true)
+  attr(:label, :string, default: nil)
+
+  defp window_category(assigns) do
+    ~H"""
+    <button
+      type="button"
+      phx-click="select_category"
+      phx-value-category={@category}
+      aria-current={@active == @category && "page"}
+      class={["workbench-row", @active == @category && "is-current"]}
+    >
+      <.icon name={category_icon(@category)} class="size-4 shrink-0" />
+      <span>{@label || category_display_name(@category)}</span>
+    </button>
     """
   end
 end

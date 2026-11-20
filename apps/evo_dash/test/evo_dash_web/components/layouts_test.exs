@@ -424,22 +424,26 @@ defmodule EvoDashWeb.LayoutsTest do
   end
 
   describe "app/1 — shell navigation" do
-    test "Assistant is a chat link and preserves the selected remote node" do
-      for {node_id, href} <- [{nil, "/assistant"}, {"remote-test", "/assistant?node=remote-test"}] do
+    test "settings opens a window on the local machine from either workbench node" do
+      for node_id <- [nil, "remote-test"] do
         tree = render_app(current_node_id: node_id, current_page: :assistant) |> parse()
-        assert [assistant_link] = Floki.find(tree, "nav a[href='#{href}']")
-        assert Floki.text(assistant_link) |> String.trim() == "Assistant"
-        assert [_] = Floki.find(assistant_link, ".hero-chat-bubble-left-right")
-        assert Floki.attribute(assistant_link, "data-phx-link") == ["redirect"]
-        assert Floki.attribute(assistant_link, "aria-current") == ["page"]
+
+        assert [button] = Floki.find(tree, "[data-sidebar-bottom-bar] #workbench-settings")
+        assert Floki.attribute(button, "data-workbench-settings") == ["/settings/window"]
+        assert [_] = Floki.find(tree, "#workbench-settings-window iframe")
+        assert Floki.find(tree, "#workbench-settings-window .workbench-window-location") == []
+        assert [_] = Floki.find(tree, "#workbench-new-project")
+        assert Floki.find(tree, "#node-selector") == []
+        assistant = if node_id, do: "/assistant?node=" <> node_id, else: "/assistant"
+        assert [_] = Floki.find(tree, "nav a[href='#{assistant}']")
+        assert [_] = Floki.find(tree, "#workbench-recent-projects[href*='wb_open=1']")
       end
     end
 
     test "active and inactive sidebar links retain visible keyboard focus" do
-      tree = render_app(current_page: :assistant) |> parse()
-      paths = ~w(/projects /agents /tasks /settings /system /assistant)
+      tree = render_app(current_page: :agents) |> parse()
 
-      for path <- paths do
+      for path <- ~w(/agents /tasks /system) do
         assert [link] = Floki.find(tree, "nav a[href='#{path}']")
 
         assert_classes(
@@ -447,11 +451,8 @@ defmodule EvoDashWeb.LayoutsTest do
           ~w(focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone)
         )
 
-        if path == "/assistant" do
-          assert Floki.attribute(link, "aria-current") == ["page"]
-        else
-          refute Floki.attribute(link, "aria-current") == ["page"]
-        end
+        assert Floki.attribute(link, "aria-current") ==
+                 if(path == "/agents", do: ["page"], else: [])
       end
     end
   end
@@ -682,14 +683,12 @@ defmodule EvoDashWeb.LayoutsTest do
   # The layout-owned Conversations block: the one sidebar section carrying the
   # `#chat-session-list` body (its own `pt-5 mt-4` block, a sibling of the
   # Active Tasks block).
-  defp conversations_sections(tree), do: Floki.find(tree, "div.pt-5.mt-4:has(#chat-session-list)")
+  defp conversations_sections(tree), do: Floki.find(tree, "#workbench-conversations")
 
   # The layout-owned "Conversations" header(s), in sidebar order.
   defp conversations_headers(tree) do
     tree
-    |> Floki.find(
-      "div.pt-5.mt-4:has(#chat-session-list) span.sidebar-label:has(.hero-chat-bubble-left-right)"
-    )
+    |> Floki.find("#workbench-conversations > summary")
     |> Enum.map(&Floki.text/1)
     |> Enum.map(&String.trim/1)
   end

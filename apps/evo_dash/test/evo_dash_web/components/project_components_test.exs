@@ -42,7 +42,7 @@ defmodule EvoDashWeb.ProjectComponentsTest do
 
       assert trigger_class(html) =~ "px-4"
       assert trigger_class(html) =~ "py-2"
-      assert html =~ ~s(class="text-base font-bold text-base-content truncate leading-tight")
+      assert [_] = Floki.find(parse(html), ".project-palette-name.text-base.font-bold.truncate")
     end
 
     test "palette search input carries the palette_keydown binding" do

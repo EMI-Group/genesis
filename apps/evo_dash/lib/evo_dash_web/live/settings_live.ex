@@ -57,6 +57,9 @@ defmodule EvoDashWeb.SettingsLive do
     <EvoDashWeb.Layouts.app
       flash={@flash}
       current_page={:settings}
+      workbench_window={@live_action == :window}
+      remote_targets={assigns[:remote_targets] || []}
+      connection_statuses={assigns[:connection_statuses] || %{}}
       config_status={@config_status}
       current_node_id={@current_node_id}
       current_node_name={@current_node_name}
@@ -71,10 +74,34 @@ defmodule EvoDashWeb.SettingsLive do
       guide={@guide}
       accent_color={assigns[:accent_color] || "blue"}
     >
+      <header :if={@live_action == :window} class="workbench-window-header">
+        <h1 class="min-w-0 flex-1 text-sm font-semibold">{gettext("Settings")}</h1>
+        <.form
+          :if={!Navigation.client_category?(@active_category)}
+          for={@settings_server_form}
+          id="workbench-settings-server-form"
+          phx-change="select_settings_server"
+          class="workbench-settings-server-picker"
+        >
+          <.input
+            field={@settings_server_form[:node]}
+            type="select"
+            label={gettext("Settings server")}
+            options={
+              [{gettext("Local"), "local"}] ++
+                Enum.map(@remote_targets, &{&1.name, &1.id})
+            }
+            class="select select-sm w-full"
+          />
+        </.form>
+      </header>
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
-        <div class="flex flex-col md:h-full">
+        <div class={[
+          "flex flex-col min-h-0",
+          if(@live_action == :window, do: "flex-1", else: "md:h-full")
+        ]}>
           <%!-- ConfigSave runs local and remote writes outside the LiveView.
            Keep feedback visible until the owned settings_config_saved result
            settles, rather than relying on the Save button's pending state. --%>
@@ -252,6 +279,7 @@ defmodule EvoDashWeb.SettingsLive do
           <div class="flex flex-col md:flex-row md:flex-1 md:min-h-0 bg-base-100">
             <%!-- Sidebar --%>
             <EvoDashWeb.SettingsComponents.settings_sidebar
+              window={@live_action == :window}
               categories={@schemas_by_category}
               active_category={@active_category}
               search_text={@search_text}
@@ -279,11 +307,11 @@ defmodule EvoDashWeb.SettingsLive do
                 {RemotePanel.remote_connections_panel(assigns)}
               <% else %>
                 <%!-- Custom Agents UI — same design as category_section but for
-                   the special :agents pseudo-category. Both editors contain
-                   their own <form> elements (save_custom_agent,
-                   save_model_selection_script), so they are NOT wrapped in a
-                   save_category form (nested <form> elements are invalid
-                   HTML). --%>
+                 the special :agents pseudo-category. Both editors contain
+                 their own <form> elements (save_custom_agent,
+                 save_model_selection_script), so they are NOT wrapped in a
+                 save_category form (nested <form> elements are invalid
+                 HTML). --%>
                 <%= if @active_category == :agents do %>
                   <div
                     class="flex-1 flex flex-col min-w-0 overflow-y-auto"
@@ -339,15 +367,19 @@ defmodule EvoDashWeb.SettingsLive do
                   </div>
                 <% else %>
                   <%!-- category_section renders its own <form phx-submit="save_category">
-                 internally. The LLM category's provider-account panel and its
-                 inline wizards contain their own nested forms
-                 (save_provider_profile, provider_profile_form_change,
-                 provider_wizard_change), so they must NOT be wrapped in the
-                 outer save_category form (nested <form> elements are invalid
-                 HTML — browsers ignore the inner <form> tag, causing the
-                 account editor's Save button to submit save_category instead
-                 of save_provider_profile). --%>
+               internally. The LLM category's provider-account panel and its
+               inline wizards contain their own nested forms
+               (save_provider_profile, provider_profile_form_change,
+               provider_wizard_change), so they must NOT be wrapped in the
+               outer save_category form (nested <form> elements are invalid
+               HTML — browsers ignore the inner <form> tag, causing the
+               account editor's Save button to submit save_category instead
+               of save_provider_profile). --%>
+                  <EvoDashWeb.WorkbenchPreferences.panel :if={
+                    @live_action == :window and @active_category == :appearance
+                  } />
                   <EvoDashWeb.SettingsComponents.category_section
+                    :if={@live_action != :window or @active_category != :appearance}
                     category={@active_category}
                     schemas={Map.get(@schemas_by_category, @active_category, [])}
                     file_config={@file_config}
@@ -404,10 +436,18 @@ defmodule EvoDashWeb.SettingsLive do
         do: PageState.reset_config_scope(socket),
         else: socket
 
+    settings_path =
+      if socket.assigns.live_action == :window, do: ~p"/settings/window", else: ~p"/settings"
+
     socket =
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
-      |> assign(:current_path, ~p"/settings")
+      |> assign(
+        current_path: settings_path,
+        workbench_reconnect_params: Map.take(params, ["category"]),
+        settings_server_form:
+          to_form(%{"node" => requested_target || "local"}, as: :settings_server)
+      )
       |> PageState.reconcile_config_scope()
 
     # The sidebar/content map is ALWAYS the last-known PLATFORM-FILTERED map —
@@ -577,8 +617,29 @@ defmodule EvoDashWeb.SettingsLive do
         # The URL is the source of truth for the category, so a later
         # handle_params (node switch, connection-status patch, retry) re-reads
         # the SAME category instead of undoing the click.
+        target =
+          unless socket.assigns.live_action == :window and Navigation.client_category?(cat),
+            do: PageState.nav_node(socket)
+
         {:noreply,
-         push_patch(socket, to: Navigation.path(cat, %{"node" => PageState.nav_node(socket)}))}
+         push_patch(socket,
+           to: Navigation.path(cat, %{"node" => target}, socket.assigns.current_path)
+         )}
+    end
+  end
+
+  @impl true
+  def handle_event(
+        "select_settings_server",
+        %{"settings_server" => %{"node" => target}},
+        %{assigns: %{live_action: :window} = assigns} = socket
+      ) do
+    if target == "local" or Enum.any?(assigns.remote_targets, &(&1.id == target)) do
+      node = if target != "local", do: target
+      to = Navigation.path(assigns.active_category, %{"node" => node}, assigns.current_path)
+      {:noreply, push_patch(socket, to: to)}
+    else
+      {:noreply, socket}
     end
   end
 

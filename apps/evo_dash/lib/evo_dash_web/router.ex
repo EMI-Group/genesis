@@ -37,6 +37,7 @@ defmodule EvoDashWeb.Router do
     live("/processes", ProcessesLive, :index)
     live("/agents", AgentsLive, :index)
     live("/settings", SettingsLive, :index)
+    live("/settings/window", SettingsLive, :window)
     live("/system", SystemLive, :index)
     live("/review/:task_id", ReviewLive, :show)
     live("/review/:task_id/commit/:commit_sha", ReviewLive, :commit)

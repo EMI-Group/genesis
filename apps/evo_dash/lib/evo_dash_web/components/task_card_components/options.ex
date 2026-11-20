@@ -63,9 +63,9 @@ defmodule EvoDashWeb.TaskCardComponents.Options do
           </span>
         <% end %>
         <%= if @path != "" do %>
-          <span class="badge badge-ghost font-mono">
-            <.icon name="hero-folder" class="size-3 mr-1" />
-            {@path}
+          <span class="inline-flex min-w-0 max-w-full items-start gap-1.5 text-base-content/70">
+            <.icon name="hero-folder" class="mt-0.5 size-3 shrink-0" />
+            <code class="min-w-0 [overflow-wrap:anywhere]">{@path}</code>
           </span>
         <% end %>
       </div>

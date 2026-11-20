@@ -175,7 +175,6 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
       editing_foreign_repo_id: nil,
       foreign_repo_edit_form: nil,
       show_project_settings: false,
-      show_configure_dropdown: false,
       project_palette_open: false,
       palette_mode: :menu,
       palette_search: "",

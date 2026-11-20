@@ -98,7 +98,7 @@ defmodule EvoDashWeb.TaskCardComponents do
       a `persistent_state: false` task's `{:error, :not_resumable}` is covered
       by the TasksLive flash line instead;
     * **Resume** (`phx-click="resume_task"`, `phx-value-task_id`) — offered only
-      for `:paused`, DIRECT for a `:clean` pause, `phx-confirm`-gated for a
+      for `:paused`, DIRECT for a `:clean` pause, `data-confirm`-gated for a
       `:dirty` one; disabled while an async resume is in flight;
     * the `action_busy` attr (`%{task_id_string => :pause | :resume}`) marks an
       in-flight async call: ANY entry for a task disables BOTH of its buttons
@@ -168,6 +168,7 @@ defmodule EvoDashWeb.TaskCardComponents do
 
   attr(:task, :map, required: true)
   attr(:show_details, :boolean, default: false)
+  attr(:focused, :boolean, default: false)
   attr(:current_node_id, :any, default: nil)
   # nil | %{state: :loading | :ok | :error, task:, error:, seq:, archive:} —
   # the lazily-fetched heavy payload (see the moduledoc). nil = not loaded.
@@ -213,11 +214,17 @@ defmodule EvoDashWeb.TaskCardComponents do
          | nil) — read defensively so a nil/absent map never crashes the card. --%>
     <% busy_action = action_busy(@action_busy, @task.id) %>
     <div class={[
-      "bg-base-100 rounded-lg shadow-sm hover:shadow-md transition-shadow border border-base-200/60 relative z-10 group has-[[open]]:z-30",
-      task_card_tint(@task)
+      "min-w-0 bg-base-100 rounded-lg border relative z-10 group has-[[open]]:z-30",
+      if(@focused,
+        do: "border-base-300",
+        else: [
+          "border-base-200/60 shadow-sm hover:shadow-md transition-shadow",
+          task_card_tint(@task)
+        ]
+      )
     ]}>
       <!-- Accent Top Border — clipped by inner wrapper so it respects rounded corners -->
-      <div class="absolute inset-0 rounded-lg overflow-hidden pointer-events-none">
+      <div :if={!@focused} class="absolute inset-0 rounded-lg overflow-hidden pointer-events-none">
         <div class={["absolute top-0 left-0 right-0 h-1 opacity-80", task_accent_color(@task)]}></div>
       </div>
 
@@ -226,8 +233,9 @@ defmodule EvoDashWeb.TaskCardComponents do
         <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
           <div class="flex flex-wrap items-center gap-2.5 mt-1">
             <span class="text-xs font-bold tracking-widest uppercase text-base-content/70">{@task.type}</span>
-            <span class="w-1 h-1 rounded-full bg-base-content/20"></span>
-            <span class="text-xs font-mono font-medium text-base-content/70">{@task.opts[:mode]}</span>
+            <span :if={@task.opts[:mode]} class="text-xs text-base-content/70">
+              {@task.opts[:mode]}
+            </span>
             <span class="w-1 h-1 rounded-full bg-base-content/20"></span>
             <span class="text-xs font-mono text-base-content/60">#{String.slice(@task.id, 0, 8)}</span>
           </div>
@@ -273,8 +281,6 @@ defmodule EvoDashWeb.TaskCardComponents do
                 <span class="loading loading-spinner loading-xs mr-2"></span>
               <% end %>
               <%= cond do %>
-                <% @task.status == :finalizing -> %>
-                  Finalizing
                 <% @task.status == :cancelling -> %>
                   {gettext("Cancelling…")}
                 <% @task.status == :awaiting_input -> %>
@@ -287,10 +293,8 @@ defmodule EvoDashWeb.TaskCardComponents do
                   <%!-- zh_CN: Pausing… = 暂停中(等待当前工具调用结束);
                        Paused = 已暂停(可恢复) --%>
                   {gettext("Pausing…")}
-                <% @task.status == :paused -> %>
-                  {gettext("Paused")}
                 <% true -> %>
-                  {@task.status}
+                  {task_status_label(@task.status)}
               <% end %>
             </span>
           </div>
@@ -303,21 +307,21 @@ defmodule EvoDashWeb.TaskCardComponents do
              Copy payload (`objective_text/1`, full). -->
         <div class="pr-2 -mt-2">
           <% objective_preview = text_preview(objective_text(@task.opts), true) %>
-          <%= if objective_preview.text != "" do %>
-            <p
-              class="text-base text-base-content/90 font-medium leading-relaxed line-clamp-2"
-              title={objective_preview.text}
-            >
-              {objective_preview.text}
-            </p>
-          <% else %>
-            <p
-              class="text-base text-base-content/90 font-medium leading-relaxed line-clamp-2"
-              title={task_description(@task)}
-            >
-              {task_description(@task)}
-            </p>
-          <% end %>
+          <% task_title =
+            if objective_preview.text == "", do: task_description(@task), else: objective_preview.text %>
+          <.dynamic_tag
+            tag_name={if(@focused, do: "h1", else: "p")}
+            class={
+              if(@focused,
+                do: "line-clamp-2 break-words text-xl font-semibold leading-snug text-base-content",
+                else:
+                  "line-clamp-2 break-words text-base font-medium leading-relaxed text-base-content"
+              )
+            }
+            title={task_title}
+          >
+            {task_title}
+          </.dynamic_tag>
         </div>
 
         <%!-- Session reply panel — ONLY for an `:awaiting_input` task that was
@@ -400,8 +404,8 @@ defmodule EvoDashWeb.TaskCardComponents do
         <% end %>
 
         <!-- Bottom row: Time, Actions, Menu -->
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-4 border-t border-base-200/60">
-          <div class="flex items-center gap-4 text-xs font-medium text-base-content/70">
+        <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 pt-3 border-t border-base-200/60">
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs font-medium text-base-content/70">
             <span class="flex items-center gap-1.5">
               <.icon name="hero-play" class="size-4 opacity-60" />
               {gettext("Started")} {relative_time(@task.started_at)}
@@ -422,7 +426,7 @@ defmodule EvoDashWeb.TaskCardComponents do
             <% end %>
           </div>
 
-          <div class="flex items-center gap-2 sm:gap-3">
+          <div class="flex flex-wrap items-center gap-2 sm:gap-3">
             <%!-- Pause — a running task drains its agents at the next turn
                  boundary (`:pausing`) and then rests in `:paused`. Offered ONLY
                  for a one-shot run: the core refuses a pause for an
@@ -456,7 +460,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                 phx-click="resume_task"
                 phx-value-task_id={@task.id}
                 disabled={busy_action != nil}
-                phx-confirm={resume_confirm(@task)}
+                data-confirm={resume_confirm(@task)}
                 title={gettext("Resume this paused task where it stopped")}
               >
                 <%= if busy_action == :resume do %>
@@ -485,15 +489,17 @@ defmodule EvoDashWeb.TaskCardComponents do
             <%= if show_review_button?(@task) do %>
               <.link
                 navigate={with_node_param(~p"/review/#{@task.id}", @current_node_id)}
-                class="btn btn-sm btn-primary rounded-md px-5 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all"
+                class="btn btn-sm btn-primary rounded-md px-4"
               >
                 <.icon name="hero-eye" class="size-4 mr-1" /> {gettext("Review")}
               </.link>
             <% end %>
 
             <button
+              :if={!@focused}
+              type="button"
               class={[
-                "btn btn-sm rounded-md px-4 font-medium transition-all",
+                "btn btn-sm rounded-md px-4 font-medium transition-colors",
                 (@show_details && "btn-neutral shadow-sm") ||
                   "btn-ghost bg-base-200/50 hover:bg-base-200"
               ]}
@@ -508,7 +514,10 @@ defmodule EvoDashWeb.TaskCardComponents do
             </button>
 
             <details class="dropdown dropdown-end dropdown-top sm:dropdown-bottom">
-              <summary class="btn btn-sm btn-ghost btn-circle rounded-md hover:bg-base-200">
+              <summary
+                class="btn btn-sm btn-ghost btn-circle rounded-md hover:bg-base-200"
+                aria-label={gettext("Task actions")}
+              >
                 <.icon name="hero-ellipsis-vertical" class="size-4" />
               </summary>
               <ul class="menu menu-sm dropdown-content mt-1 z-50 p-2 shadow-lg bg-base-100 rounded-lg w-44 border border-base-200">
@@ -534,7 +543,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                     class="text-error hover:bg-error/10 hover:text-error rounded-md"
                     phx-click="delete_task"
                     phx-value-task_id={@task.id}
-                    phx-confirm={gettext("Delete this task?")}
+                    data-confirm={gettext("Delete this task?")}
                   >
                     <.icon name="hero-trash" class="size-4 mr-2" /> {gettext("Delete")}
                   </button>
@@ -588,14 +597,14 @@ defmodule EvoDashWeb.TaskCardComponents do
                   <% end %>
                 </div>
               <% end %>
-              <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div class={["grid grid-cols-1 gap-4", !@focused && "lg:grid-cols-2"]}>
                 <!-- Objective card — full objective text (scrollable) + mode/path badges -->
                 <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
-                  <div class="flex items-center justify-between mb-4">
+                  <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
                     <h4 class="text-sm font-bold flex items-center gap-2">
                       <.icon
                         name="hero-chat-bubble-left-ellipsis"
-                        class="size-4.5 text-primary-standalone"
+                        class="size-4.5 shrink-0 text-primary-standalone"
                       />
                       {gettext("Objective")}
                     </h4>
@@ -631,9 +640,12 @@ defmodule EvoDashWeb.TaskCardComponents do
                 <%= if card_result do %>
                   <!-- Agent Message card — full result content (scrollable) + badges -->
                   <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
-                    <div class="flex items-center justify-between mb-4">
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
                       <h4 class="text-sm font-bold flex items-center gap-2">
-                        <.icon name="hero-chat-bubble-left-ellipsis" class="size-4.5 text-success" />
+                        <.icon
+                          name="hero-chat-bubble-left-ellipsis"
+                          class="size-4.5 shrink-0 text-success"
+                        />
                         <%!-- zh_CN: 智能体的最终消息 --%>{gettext("Agent Message")}
                       </h4>
                       <div class="flex items-center gap-2">

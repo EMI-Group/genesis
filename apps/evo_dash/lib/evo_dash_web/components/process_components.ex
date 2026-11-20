@@ -93,9 +93,12 @@ defmodule EvoDashWeb.ProcessComponents do
       |> assign(:running?, status == :running)
       |> assign(
         :agents_link,
-        assigns.agents_path || with_node_param(~p"/agents", assigns.node_id)
+        assigns.agents_path || linked_agent(id_param(execution, :agent_id), assigns.node_id)
       )
-      |> assign(:tasks_link, assigns.tasks_path || with_node_param(~p"/tasks", assigns.node_id))
+      |> assign(
+        :tasks_link,
+        assigns.tasks_path || linked_task(id_param(execution, :task_id), assigns.node_id)
+      )
       |> assign(:row_attrs, [
         {"phx-click", assigns.row_event},
         {"phx-value-id", id || ""}
@@ -104,77 +107,79 @@ defmodule EvoDashWeb.ProcessComponents do
     ~H"""
     <tr
       id={"process-row-#{@id || "unknown"}"}
+      role="row"
       class={[
-        "border-b border-base-300/60 align-top hover:bg-base-200/50",
+        "grid grid-cols-[minmax(0,1fr)_auto] items-center border-b border-base-300/60 last:border-b-0 xl:table-row",
         @entering && "process-row-enter"
       ]}
     >
-      <td class="py-2 pl-2 pr-2" {@row_attrs}>
-        <div class="flex items-center gap-1">
-          <span class="inline-flex w-3.5 shrink-0 text-base-content/40" aria-hidden="true">
-            <.icon
-              name={if @expanded, do: "hero-chevron-down", else: "hero-chevron-right"}
-              class="size-3.5"
-            />
+      <td role="cell" class="px-3 py-1.5 xl:py-2">
+        {status_badge(%{status: @status})}
+      </td>
+      <td role="cell" class="hidden py-2 xl:table-cell">
+        <.execution_link href={@agents_link} value={@agent_id} />
+      </td>
+      <td role="cell" class="hidden max-w-36 py-2 xl:table-cell">
+        <.execution_link href={@tasks_link} value={@task_id} />
+      </td>
+      <td role="cell" class="order-first col-span-2 min-w-0 px-3 py-2 xl:max-w-0">
+        <button
+          id={"process-toggle-#{@id || "unknown"}"}
+          type="button"
+          aria-label={gettext("Process details: %{command}", command: truncate_string(@command, 90))}
+          aria-expanded={to_string(@expanded)}
+          aria-controls={if @expanded, do: "process-details-#{@id || "unknown"}"}
+          class="flex min-h-10 w-full cursor-pointer items-center gap-2 rounded-md text-start hover:text-primary-standalone focus-visible:outline-2 focus-visible:outline-primary-standalone"
+          {@row_attrs}
+        >
+          <.icon
+            name={if @expanded, do: "hero-chevron-down", else: "hero-chevron-right"}
+            class="size-4 shrink-0 text-base-content/70"
+          />
+          <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+            <code class="block truncate text-sm" title={@command}>{truncate_string(@command, 90)}</code>
+            <span :if={@tool} class="truncate text-xs text-base-content/70">{@tool}</span>
           </span>
-          {status_badge(%{status: @status})}
-        </div>
+        </button>
       </td>
-      <td class="py-2 pr-2 whitespace-nowrap">
-        <%= if present?(@agent_id) do %>
-          <.link navigate={@agents_link} class="link link-hover text-xs font-mono">
-            #{Format.id_string(@agent_id)}
-          </.link>
-        <% else %>
-          <span class="text-xs text-base-content/50">—</span>
-        <% end %>
-      </td>
-      <td class="py-2 pr-2 whitespace-nowrap">
-        <%= if present?(@task_id) do %>
-          <.link navigate={@tasks_link} class="link link-hover text-xs font-mono">
-            #{Format.id_string(@task_id)}
-          </.link>
-        <% else %>
-          <span class="text-xs text-base-content/50">—</span>
-        <% end %>
-      </td>
-      <td class="py-2 pr-2 max-w-[22rem]" {@row_attrs}>
-        <div class="flex flex-col gap-0.5 min-w-0">
-          <%= if @tool do %>
-            <span class="badge badge-ghost badge-xs w-fit font-mono">{@tool}</span>
-          <% end %>
-          <code class="text-xs block truncate" title={@command}>
-            {truncate_string(@command, 90)}
-          </code>
-        </div>
-      </td>
-      <td class="py-2 pr-2 text-xs whitespace-nowrap" {@row_attrs}>
+      <td role="cell" class="hidden whitespace-nowrap py-2 text-xs 2xl:table-cell">
         {@runtime}
       </td>
-      <td class="py-2 pr-2 text-xs whitespace-nowrap" {@row_attrs}>
+      <td role="cell" class="hidden max-w-24 truncate py-2 text-xs 2xl:table-cell">
         {@backend}
       </td>
       <td
-        class="py-2 pr-2 text-xs font-mono whitespace-nowrap"
+        role="cell"
+        class="hidden max-w-28 truncate py-2 font-mono text-xs 2xl:table-cell"
         title={Format.target_label(@execution)}
-        {@row_attrs}
       >
         {Format.target_label(@execution)}
       </td>
-      <td class="py-2 pr-2 text-xs whitespace-nowrap" {@row_attrs}>{Format.uptime(@execution)}</td>
-      <td class="py-2 pr-2 text-xs text-right whitespace-nowrap" {@row_attrs}>
+      <td role="cell" class="hidden whitespace-nowrap py-2 text-xs tabular-nums xl:table-cell">
+        {Format.uptime(@execution)}
+      </td>
+      <td
+        role="cell"
+        class="hidden whitespace-nowrap py-2 text-right text-xs tabular-nums xl:table-cell"
+      >
         {Format.cpu_label(@execution)}
       </td>
-      <td class="py-2 pr-2 text-xs text-right whitespace-nowrap" {@row_attrs}>
+      <td
+        role="cell"
+        class="hidden whitespace-nowrap py-2 text-right text-xs tabular-nums xl:table-cell"
+      >
         {Format.memory_label(@execution)}
       </td>
-      <td class="py-2 pr-2 text-xs text-right whitespace-nowrap" {@row_attrs}>
+      <td
+        role="cell"
+        class="hidden whitespace-nowrap py-2 text-right text-xs tabular-nums xl:table-cell"
+      >
         {Format.exit_label(@execution)}
       </td>
-      <td class="py-2 pl-2 pr-2">
+      <td role="cell" class="px-3 py-1.5 xl:py-2">
         <%!--
-          The summary cells toggle expansion; the action cluster deliberately has
-          no row handler, so a Pause/Terminate click can never also toggle the row.
+          The command button toggles expansion. The action cluster handles
+          process controls independently.
           Terminate = send TERM and ask the process to exit gracefully;
           Kill = force-terminate (TERM, then SIGKILL after a grace period).
           A built-in (in-BEAM) execution has NO OS process, so it renders no
@@ -186,7 +191,7 @@ defmodule EvoDashWeb.ProcessComponents do
           <button
             :if={@running? and @live?}
             type="button"
-            class="btn btn-ghost btn-xs btn-square"
+            class="btn btn-ghost btn-sm btn-square min-h-9 min-w-9"
             title={gettext("Pause (SIGSTOP)")}
             aria-label={gettext("Pause")}
             phx-click={@pause_event}
@@ -197,7 +202,7 @@ defmodule EvoDashWeb.ProcessComponents do
           <button
             :if={@paused? and @live?}
             type="button"
-            class="btn btn-ghost btn-xs btn-square"
+            class="btn btn-ghost btn-sm btn-square min-h-9 min-w-9"
             title={gettext("Resume (SIGCONT)")}
             aria-label={gettext("Resume")}
             phx-click={@resume_event}
@@ -208,10 +213,10 @@ defmodule EvoDashWeb.ProcessComponents do
           <button
             :if={@live?}
             type="button"
-            class="btn btn-ghost btn-xs btn-square text-warning"
+            class="btn btn-ghost btn-sm btn-square min-h-9 min-w-9 text-warning"
             title={gettext("Terminate — asks the process to exit gracefully (TERM)")}
             aria-label={gettext("Terminate")}
-            phx-click={@terminate_event}
+            phx-click={Phoenix.LiveView.JS.push_focus() |> Phoenix.LiveView.JS.push(@terminate_event)}
             phx-value-id={@id}
           >
             <.icon name="hero-x-circle" class="size-3.5" />
@@ -219,10 +224,10 @@ defmodule EvoDashWeb.ProcessComponents do
           <button
             :if={@live?}
             type="button"
-            class="btn btn-ghost btn-xs btn-square text-error"
+            class="btn btn-ghost btn-sm btn-square min-h-9 min-w-9 text-error"
             title={gettext("Kill — force-terminates the process (TERM, then KILL)")}
             aria-label={gettext("Kill")}
-            phx-click={@kill_event}
+            phx-click={Phoenix.LiveView.JS.push_focus() |> Phoenix.LiveView.JS.push(@kill_event)}
             phx-value-id={@id}
           >
             <.icon name="hero-trash" class="size-3.5" />
@@ -230,22 +235,60 @@ defmodule EvoDashWeb.ProcessComponents do
         </div>
       </td>
     </tr>
-    <tr :if={@expanded} class="border-b border-base-300/60 bg-base-200/30">
-      <td colspan="12" class="px-4 py-3">
-        <%!-- Must go through the component call syntax: `execution_details/1`
-        runs `assign/3`, which needs Phoenix's assigns change-tracking wrapper
-        (a hand-built `%{execution: ...}` map raises on expansion). --%>
-        <.execution_details execution={@execution} />
+    <tr
+      :if={@expanded}
+      id={"process-details-#{@id || "unknown"}"}
+      role="row"
+      class="block border-b border-base-300/60 bg-base-200/30 xl:table-row"
+    >
+      <td colspan="12" role="cell" class="block px-4 py-3 xl:table-cell">
+        <.execution_details
+          execution={@execution}
+          agents_link={@agents_link}
+          tasks_link={@tasks_link}
+        />
       </td>
     </tr>
     """
   end
+
+  attr(:href, :string, default: nil)
+  attr(:value, :any, required: true)
+
+  defp execution_link(assigns) do
+    ~H"""
+    <.link
+      :if={@href}
+      navigate={@href}
+      class="link link-hover block truncate font-mono text-xs"
+      title={Format.id_string(@value)}
+    >
+      #{Format.id_string(@value)}
+    </.link>
+    <span :if={!@href} class="text-xs text-base-content/70">—</span>
+    """
+  end
+
+  defp id_param(execution, key) do
+    id = field(execution, key)
+    if present?(id), do: Format.id_string(id)
+  end
+
+  defp linked_agent(nil, _node_id), do: nil
+  defp linked_agent(id, nil), do: ~p"/agents?#{[agent_id: id]}"
+  defp linked_agent(id, node_id), do: ~p"/agents?#{[agent_id: id, node: node_id]}"
+
+  defp linked_task(nil, _node_id), do: nil
+  defp linked_task(id, nil), do: ~p"/tasks?#{[task: id]}"
+  defp linked_task(id, node_id), do: ~p"/tasks?#{[task: id, node: node_id]}"
 
   @doc """
   The expanded detail block of one execution: identity/OS context, the FULL
   command, and the operator control log.
   """
   attr(:execution, :map, required: true)
+  attr(:agents_link, :string, default: nil)
+  attr(:tasks_link, :string, default: nil)
 
   def execution_details(assigns) do
     execution = assigns.execution
@@ -271,9 +314,27 @@ defmodule EvoDashWeb.ProcessComponents do
           <h5 class="text-xs font-semibold uppercase text-base-content/70 mb-0.5">
             {gettext("Full Command")}
           </h5>
-          <pre class="text-xs bg-base-100 border border-base-300 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all"><%= @command %></pre>
+          <pre class="rounded border border-base-300 bg-base-100 p-2 text-xs whitespace-pre-wrap [overflow-wrap:anywhere]"><%= @command %></pre>
         </div>
-        <div class="grid grid-cols-1 gap-1.5">
+        <div class="grid min-w-0 grid-cols-1 gap-1.5">
+          <div
+            :if={@agents_link || @tasks_link}
+            class="flex min-w-0 flex-wrap gap-x-4 gap-y-1 xl:hidden"
+          >
+            <div :if={@agents_link} class="flex min-w-0 items-center gap-1">
+              <span class="text-xs text-base-content/70">{gettext("Agent")}</span>
+              <.execution_link href={@agents_link} value={field(@execution, :agent_id)} />
+            </div>
+            <div :if={@tasks_link} class="flex min-w-0 items-center gap-1">
+              <span class="text-xs text-base-content/70">{gettext("Task")}</span>
+              <.execution_link href={@tasks_link} value={field(@execution, :task_id)} />
+            </div>
+          </div>
+          <div class="grid gap-1.5 xl:hidden">
+            <.detail_field label={gettext("Uptime")} value={Format.uptime(@execution)} />
+            <.detail_field label={gettext("CPU")} value={Format.cpu_label(@execution)} />
+            <.detail_field label={gettext("Memory")} value={Format.memory_label(@execution)} />
+          </div>
           <.detail_field label={gettext("Working Directory")} value={@cwd} mono />
           <.detail_field label={gettext("Repository Root")} value={@repo_root} mono />
           <.detail_field label={gettext("Target")} value={@target} mono />
@@ -308,12 +369,12 @@ defmodule EvoDashWeb.ProcessComponents do
                   <tr>
                     <td class="whitespace-nowrap font-mono">{Format.entry_time(entry)}</td>
                     <td class="whitespace-nowrap">
-                      {Format.action_label(Format.entry_action(entry))}
+                      {action_label(Format.entry_action(entry))}
                     </td>
                     <td class="whitespace-nowrap font-mono">{Format.signal_label(entry)}</td>
                     <td class="break-words">{Format.entry_reason(entry)}</td>
                     <td class="whitespace-nowrap">
-                      {Format.actor_label(Format.entry_get(entry, :actor))}
+                      {actor_label(Format.entry_get(entry, :actor))}
                     </td>
                   </tr>
                 <% end %>
@@ -416,15 +477,27 @@ defmodule EvoDashWeb.ProcessComponents do
       |> assign(:submit_label, confirm_submit_label(action))
 
     ~H"""
-    <div class="fixed inset-0 z-50 flex items-center justify-center p-4" id="process-confirm-modal">
-      <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click={@close_event}></div>
-      <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-6">
+    <div
+      id="process-confirm-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="process-confirm-title"
+      class="fixed inset-0 z-50 flex items-center justify-center p-4"
+      phx-window-keydown={@close_event}
+      phx-key="Escape"
+      phx-remove={Phoenix.LiveView.JS.pop_focus()}
+    >
+      <div class="fixed inset-0 bg-black/50" phx-click={@close_event}></div>
+      <.focus_wrap
+        id="process-confirm-focus"
+        class="relative max-h-full w-full max-w-lg overflow-y-auto rounded-lg border border-base-300 bg-base-100 p-4 sm:p-6"
+      >
         <div class="flex items-center gap-3 mb-3">
           <.icon
             name={if @action == :kill, do: "hero-exclamation-triangle", else: "hero-x-circle"}
             class={"size-5 #{if @action == :kill, do: "text-error", else: "text-warning"}"}
           />
-          <h3 class="text-lg font-bold">{@title}</h3>
+          <h2 id="process-confirm-title" class="text-lg font-bold">{@title}</h2>
         </div>
         <p class="text-sm text-base-content/70 mb-3 leading-relaxed">{@description}</p>
         <div class="rounded border border-base-300 bg-base-200/40 p-2 mb-3">
@@ -432,7 +505,7 @@ defmodule EvoDashWeb.ProcessComponents do
           <code class="text-xs font-mono block break-all" title={@command}>{@command}</code>
           <div class="mt-1 flex items-center gap-3 text-xs text-base-content/60">
             <span class="font-mono">{@target}</span>
-            <span>{gettext("Actor")}: {Format.actor_label(:remote)}</span>
+            <span>{gettext("Actor")}: {actor_label(:remote)}</span>
           </div>
         </div>
         <form phx-submit={@submit_event} id="process-confirm-form">
@@ -443,10 +516,16 @@ defmodule EvoDashWeb.ProcessComponents do
             id="process-reason"
             name="reason"
             rows="2"
+            aria-required="true"
+            aria-invalid={if @error, do: "true"}
+            aria-describedby={if @error, do: "process-confirm-error"}
+            phx-mounted={Phoenix.LiveView.JS.focus()}
             class="textarea textarea-bordered w-full rounded-md mt-1 text-sm"
             placeholder={gettext("Why are you doing this? It is recorded in the control log.")}
           >{@reason}</textarea>
-          <p :if={@error} class="text-xs text-error mt-1">{@error}</p>
+          <p :if={@error} id="process-confirm-error" role="alert" class="mt-1 text-sm text-error">
+            {@error}
+          </p>
           <div class="flex justify-end gap-2 pt-4">
             <button type="button" class="btn btn-ghost btn-sm rounded-md" phx-click={@close_event}>
               {gettext("Cancel")}
@@ -460,7 +539,7 @@ defmodule EvoDashWeb.ProcessComponents do
             </button>
           </div>
         </form>
-      </div>
+      </.focus_wrap>
     </div>
     """
   end
@@ -468,6 +547,18 @@ defmodule EvoDashWeb.ProcessComponents do
   # ---------------------------------------------------------------------------
   # Private helpers
   # ---------------------------------------------------------------------------
+
+  defp actor_label(:remote), do: gettext("Dashboard")
+  defp actor_label(actor), do: Format.actor_label(actor)
+
+  defp action_label(:pause), do: gettext("Pause")
+  defp action_label(:resume), do: gettext("Resume")
+  defp action_label(:kill), do: gettext("Kill")
+
+  defp action_label({:signal, signal}),
+    do: gettext("Signal %{signal}", signal: Format.term_text(signal))
+
+  defp action_label(action), do: Format.action_label(action)
 
   defp confirm_title(:kill), do: gettext("Kill process?")
   defp confirm_title(_action), do: gettext("Terminate process?")

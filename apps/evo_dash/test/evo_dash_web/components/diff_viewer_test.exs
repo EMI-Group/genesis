@@ -340,15 +340,14 @@ defmodule EvoDashWeb.DiffViewerTest do
       refute html =~ "data-language"
     end
 
-    test "derives the per-file section id from the sanitized path" do
-      html =
-        render_diff_viewer([
-          file_fixture("lib/sub/Foo.bar.ex", @basic_diff, language: nil)
-        ])
+    test "distinct Git paths produce distinct, selector-safe section ids" do
+      paths = ["lib/Foo.bar.ex", "lib/Foo bar.ex", "lib/Foo-bar.ex"]
+      html = render_diff_viewer(Enum.map(paths, &file_fixture(&1, @basic_diff)))
 
-      # file_path_to_id/1 replaces every non [a-zA-Z0-9_-] char with "-".
-      [section] = Floki.find(parse(html), ".diff-file-section")
-      assert Floki.attribute(section, "id") == ["file-section-lib-sub-Foo-bar-ex"]
+      ids = Floki.attribute(parse(html), ".diff-file-section", "id")
+      assert ids == Enum.map(paths, &DiffViewer.file_section_id/1)
+      assert length(Enum.uniq(ids)) == length(paths)
+      assert Enum.all?(ids, &Regex.match?(~r/^[a-zA-Z0-9_-]+$/, &1))
     end
 
     test "renders hunk headers as plain text" do
@@ -358,6 +357,30 @@ defmodule EvoDashWeb.DiffViewerTest do
 
       [hunk] = Floki.find(parse(html), ".diff-split-hunk")
       assert Floki.text(hunk) =~ "@@ -1,3 +1,3 @@"
+    end
+
+    test "displays compact Git metadata and preserves diff-like lines of code" do
+      diff = """
+      diff --git a/script.txt b/script.txt
+      new file mode 100644
+      --- /dev/null
+      +++ b/script.txt
+      @@ -0,0 +1 @@
+      +++ literal code
+      """
+
+      doc = parse(render_diff_viewer([file_fixture("script.txt", diff)]))
+
+      assert doc |> Floki.find(".diff-split-pre-hunk") |> Enum.map(&Floki.text/1) ==
+               [
+                 "diff --git a/script.txt b/script.txt",
+                 "new file mode 100644",
+                 "--- /dev/null",
+                 "+++ b/script.txt"
+               ]
+
+      assert doc |> Floki.find(".diff-split-hunk") |> Floki.text() == "@@ -0,0 +1 @@"
+      assert doc |> Floki.find(".diff-split-cell-right") |> Floki.text() == "++ literal code"
     end
 
     test "renders split-view pairs with gutters and content on both sides" do
@@ -489,7 +512,8 @@ defmodule EvoDashWeb.DiffViewerTest do
           files: files,
           expanded_files: %{"lib/foo.ex" => true},
           selected_file: nil,
-          file_context_levels: %{}
+          file_context_levels: %{},
+          diff_in_flight: %{{:commit, "lib/foo.ex"} => 1}
         )
 
       doc = parse(html)
@@ -499,6 +523,16 @@ defmodule EvoDashWeb.DiffViewerTest do
       assert Floki.find(doc, ".loading") |> length() == 1
       # No split rows yet — the diff has not been fetched.
       assert Floki.find(doc, ".diff-split-row") == []
+    end
+
+    test "an expanded file whose load did not return a diff can be retried" do
+      html = render_diff_viewer([file_fixture("lib/foo.ex", nil)])
+      doc = parse(html)
+
+      assert Floki.attribute(doc, ~s(button[phx-click="load_file_diff"]), "phx-value-path") ==
+               ["lib/foo.ex"]
+
+      refute html =~ "Loading diff..."
     end
 
     test "an expanded file with a fetched diff renders its split rows" do
@@ -624,14 +658,12 @@ defmodule EvoDashWeb.DiffViewerTest do
       # Only the selected row carries the highlight classes (tint stays on the
       # fill token bg-primary/10; the text color is the standalone primary —
       # the accent role-split keeps it readable over the tint).
-      assert Enum.map(buttons, &Floki.attribute(&1, "class")) == [
-               [
-                 ~s(w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs transition-colors bg-primary/10 text-primary-standalone)
-               ],
-               [
-                 "w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs transition-colors hover:bg-base-200/60"
-               ]
-             ]
+      assert Floki.attribute(
+               doc,
+               ~s(button[phx-click="select_file"][aria-current="true"]),
+               "phx-value-path"
+             ) ==
+               ["lib/foo.ex"]
     end
 
     test "header carries the file count, the debounced filter input and the collapse/expand-all buttons" do
@@ -642,7 +674,7 @@ defmodule EvoDashWeb.DiffViewerTest do
       # Filter input: name="filter", fires filter_files, 200ms debounce, and
       # is pre-filled with the server-owned filter value.
       assert Floki.attribute(doc, "input", "name") == ["filter"]
-      assert Floki.attribute(doc, "input", "phx-change") == ["filter_files"]
+      assert Floki.attribute(doc, "#review-file-filter", "phx-change") == ["filter_files"]
       assert Floki.attribute(doc, "input", "phx-debounce") == ["200"]
       assert Floki.attribute(doc, "input", "value") == [""]
 
@@ -893,7 +925,7 @@ defmodule EvoDashWeb.DiffViewerTest do
       refute html =~ "Repository"
 
       # But the same sidebar + viewer pair as the split layout.
-      assert Floki.attribute(doc, "input", "phx-change") == ["filter_files"]
+      assert Floki.attribute(doc, "#review-file-filter", "phx-change") == ["filter_files"]
       assert Enum.map(dir_buttons(doc), & &1.path) == ["lib", "lib/bar"]
       assert Floki.find(doc, "#diff-viewer") |> length() == 1
     end
@@ -904,7 +936,7 @@ defmodule EvoDashWeb.DiffViewerTest do
   # ---------------------------------------------------------------------------
 
   describe "commit_detail_header/1" do
-    test "renders a plain back link, truncated message, short sha, author and date" do
+    test "renders a review patch link, message, short sha, author and date" do
       commit = %{
         message: "Fix the frobnicator",
         sha: "abcdef1234567890abcdef",
@@ -915,21 +947,17 @@ defmodule EvoDashWeb.DiffViewerTest do
       html =
         render_component(&DiffViewer.commit_detail_header/1,
           commit: commit,
-          back_url: "/review/t1/commit/abcdef12",
+          back_url: "/review/t1?tab=commits",
           task_title: "Fix the bug"
         )
 
       doc = parse(html)
 
-      # Plain <a href> back link (no phx navigation — full page load).
-      [back] = Floki.find(doc, "a[href=\"/review/t1/commit/abcdef12\"]")
-      assert Floki.attribute(back, "aria-label") == ["Back to review"]
-      assert Floki.attribute(back, "title") == ["Back to review"]
-      refute Floki.attribute(back, "phx-click") == [""]
+      [back] = Floki.find(doc, ~s(a[href="/review/t1?tab=commits"]))
+      assert Floki.attribute(back, "data-phx-link") == ["patch"]
+      assert String.trim(Floki.text(back)) == "Back to review"
 
-      # Truncated message with a title attr carrying the full message.
       [h1] = Floki.find(doc, "h1")
-      assert Floki.attribute(h1, "title") == ["Fix the frobnicator"]
       assert String.trim(Floki.text(h1)) == "Fix the frobnicator"
 
       # SHA sliced to 8 chars in a mono ghost badge.
@@ -1002,9 +1030,7 @@ defmodule EvoDashWeb.DiffViewerTest do
 
   # Helper: build a file map in the shape of %EvoGit.Review.FileInfo{} that
   # the diff_viewer component consumes (path/status/additions/deletions/diff/
-  # language/full_new_content/full_old_content). The trailing newline is
-  # trimmed so parse_diff_lines does not synthesize a phantom empty context
-  # line at the end of the diff.
+  # language/full_new_content/full_old_content).
   defp file_fixture(path, diff, opts \\ []) do
     %{
       path: path,

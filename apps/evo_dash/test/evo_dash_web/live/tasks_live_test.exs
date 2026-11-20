@@ -79,6 +79,26 @@ defmodule EvoDashWeb.TasksLiveTest do
     id
   end
 
+  test "a workbench task link shows the requested card and opens its existing details", %{
+    conn: conn
+  } do
+    requested =
+      insert_fixture!(
+        project_path: "/tmp/workbench",
+        opts: [path: "/tmp/workbench", objective: "Check the selected workbench task"]
+      )
+
+    other = insert_fixture!(project_path: "/tmp/workbench")
+
+    {:ok, view, _html} = live(conn, ~p"/tasks?#{[task: requested]}")
+    flush_tasks_load(view)
+
+    wait_until(fn -> match?(%{state: :ok}, detail_entry(view, requested)) end, 5_000)
+    assert has_element?(view, "#tasks-list #task-#{requested}-objective-copy")
+    refute has_element?(view, "#tasks-list [phx-value-task_id='#{other}']")
+    assert has_element?(view, "#app-layout[data-workbench-project='/tmp/workbench']")
+  end
+
   # Drains the async page load (via the shared EvoDashWeb.TestHelpers.flush_loading/4)
   # AND synchronizes the test proxy before returning: flush_loading stops as soon
   # as the "Loading tasks..." marker leaves the proxy's cached tree, but that tree
@@ -870,10 +890,8 @@ defmodule EvoDashWeb.TasksLiveTest do
       _html = render_hook(view, "filter_tasks", %{"status_filter" => "failed"})
       html = flush_tasks_load(view)
 
-      # 10 failed tasks, page_size 25 → 1 page.
-      assert html =~ "Page 1 of 1"
-      # "Showing 1–10 of 10 tasks"
-      assert html =~ "Showing 1–10 of 10 tasks"
+      assert html =~ "10 tasks found"
+      refute has_element?(view, "button[phx-click=next_page]")
 
       # The failed prompts should appear.
       assert render_tasks_list(view) =~ "failed task number 9"
@@ -1007,7 +1025,7 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       assert html =~ "async visible task"
       assert html =~ "1 task found"
-      assert html =~ "Page 1 of 1"
+      refute has_element?(view, "button[phx-click=next_page]")
     end
 
     test "stale page-load result is dropped", %{conn: conn} do
@@ -1652,9 +1670,9 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ "Danger zone"
       assert html =~ "Force kill"
 
-      # The existing Delete item keeps its phx-click + phx-confirm wiring.
+      # The existing Delete item keeps its phx-click + data-confirm wiring.
       assert html =~ ~s(phx-click="delete_task")
-      assert html =~ ~s(phx-confirm="Delete this task?")
+      assert html =~ ~s(data-confirm="Delete this task?")
     end
 
     test "open_force_kill_modal shows the confirmation modal", %{conn: conn} do
@@ -3004,7 +3022,7 @@ defmodule EvoDashWeb.TasksLiveTest do
   # core SQL WHERE builder has no `session_mode` predicate, so the loader scans
   # pages and paginates the MATCHING rows), which means BOTH the rendered rows
   # AND the reported total must move with the filter — the total is observable
-  # only through the pagination line.
+  # through the result count and, for multiple pages, pagination.
   describe "session_mode filter (server-side)" do
     test "interactive / oneshot / all move the rows AND the total", %{conn: conn} do
       insert_session_fixture!("oneshot", "one-shot alpha")
@@ -3025,7 +3043,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       refute list =~ "one-shot alpha"
       refute list =~ "one-shot beta"
       refute list =~ "legacy blank mode"
-      assert html =~ "of 2 tasks"
+      assert html =~ "2 tasks found"
       # One-shot only: the two one-shot rows PLUS the blank legacy row.
       _html = render_hook(view, "filter_session_mode", %{"session_mode_filter" => "oneshot"})
       html = flush_tasks_load(view)
@@ -3035,7 +3053,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert list =~ "legacy blank mode"
       refute list =~ "interactive gamma"
       refute list =~ "interactive delta"
-      assert html =~ "of 3 tasks"
+      assert html =~ "3 tasks found"
       # "all" restores everything.
       _html = render_hook(view, "filter_session_mode", %{"session_mode_filter" => "all"})
       html = flush_tasks_load(view)
@@ -3043,7 +3061,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert list =~ "one-shot alpha"
       assert list =~ "interactive gamma"
       assert list =~ "legacy blank mode"
-      assert html =~ "of 5 tasks"
+      assert html =~ "5 tasks found"
       flush_tasks_load(view)
     end
 
@@ -3057,7 +3075,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       list = render_tasks_list(view)
       assert list =~ "one-shot alpha"
       assert list =~ "interactive gamma"
-      assert html =~ "of 2 tasks"
+      assert html =~ "2 tasks found"
       assert selected_session_mode(html) == "all"
 
       assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.session_mode_filter ==
@@ -3124,12 +3142,12 @@ defmodule EvoDashWeb.TasksLiveTest do
       list = render_tasks_list(view)
       assert list =~ "idle session task"
       refute list =~ "finished task"
-      assert html =~ "of 1 tasks"
+      assert html =~ "1 task found"
       # Clearing the status filter restores the finished task too.
       _html = render_hook(view, "filter_tasks", %{"status_filter" => "all"})
       html = flush_tasks_load(view)
       assert render_tasks_list(view) =~ "finished task"
-      assert html =~ "of 2 tasks"
+      assert html =~ "2 tasks found"
       flush_tasks_load(view)
     end
   end

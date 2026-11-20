@@ -282,8 +282,8 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     # Agent / task cells are node-aware links.
     assert running =~ "#101"
     assert running =~ "#task-1"
-    assert running =~ ~s(href="/agents")
-    assert running =~ ~s(href="/tasks")
+    assert running =~ ~s(href="/agents?agent_id=101")
+    assert running =~ ~s(href="/tasks?task=task-1")
     assert running =~ "bash"
     assert running =~ "Foreground"
     assert running =~ "systemd"
@@ -303,6 +303,26 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     # A paused (still live) process keeps its operator controls.
     assert paused =~ ~s(aria-label="Resume")
     assert paused =~ ~s(aria-label="Kill")
+  end
+
+  test "recovery clears a query and a kind even when no rows match", %{conn: conn} do
+    install_load_runner(fn _node, _opts -> {:ok, executions()} end)
+    view = mount_page(conn, ~p"/processes?kind=background_job&q=no-match")
+
+    assert has_element?(view, "#processes-clear-filters")
+    view |> element("#processes-clear-filters") |> render_click()
+    refute has_element?(view, "#processes-clear-filters")
+    assert has_element?(view, "#process-row-proc-1")
+  end
+
+  test "the command disclosure exposes expanded state to keyboard users", %{conn: conn} do
+    install_load_runner(fn _node, _opts -> {:ok, executions()} end)
+    view = mount_page(conn)
+
+    assert has_element?(view, "button#process-toggle-proc-1[aria-expanded=false]")
+    view |> element("#process-toggle-proc-1") |> render_click()
+    assert has_element?(view, "#process-toggle-proc-1[aria-expanded=true]")
+    assert has_element?(view, "#process-details-proc-1")
   end
 
   # ---------------------------------------------------------------------------
@@ -517,7 +537,7 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     view = mount_page(conn)
 
     # Expand the row so the detail log renders.
-    html = view |> element("#process-row-proc-1 td:first-child") |> render_click()
+    html = view |> element("#process-toggle-proc-1") |> render_click()
     assert html =~ "Full Command"
     assert count_occurrences(html, "initial pause by operator") == 1
 
@@ -763,7 +783,7 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     assert collapsed_code == String.slice(@long_command, 0, 90) <> "..."
     assert collapsed_code != @long_command
 
-    html = view |> element("#process-row-proc-1 td:first-child") |> render_click()
+    html = view |> element("#process-toggle-proc-1") |> render_click()
 
     assert html =~ "Full Command"
     assert html =~ @long_command
@@ -779,7 +799,7 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     assert html =~ "STOP"
 
     # Clicking again collapses it.
-    html = view |> element("#process-row-proc-1 td:first-child") |> render_click()
+    html = view |> element("#process-toggle-proc-1") |> render_click()
     refute html =~ "Full Command"
   end
 
@@ -823,7 +843,7 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     refute completed =~ ~s(aria-label="Terminate")
 
     # The expanded branch (`execution_details/1`) is the second latent crash.
-    expanded = view |> element("#process-row-proc-s1 td:first-child") |> render_click()
+    expanded = view |> element("#process-toggle-proc-s1") |> render_click()
     assert expanded =~ "Full Command"
     assert expanded =~ "mix test --struct"
     assert expanded =~ "Working Directory"
@@ -833,7 +853,7 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     assert expanded =~ "No control actions recorded."
 
     expanded_completed =
-      view |> element("#process-row-proc-s2 td:first-child") |> render_click()
+      view |> element("#process-toggle-proc-s2") |> render_click()
 
     assert expanded_completed =~ "cargo build --release"
     assert expanded_completed =~ "Ended"

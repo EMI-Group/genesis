@@ -134,6 +134,7 @@ defmodule EvoDashWeb.TaskFormComponents do
   attr(:resume_from, :string, default: "")
   attr(:show_advanced, :boolean, default: false)
   attr(:disabled, :boolean, default: false)
+  attr(:launch_disabled, :boolean, default: false)
   attr(:archive, :boolean, default: false)
   # INERT, exactly like :archive — never read in this component's HEEx; the
   # visual control lives only in task_options_tab/1, the assign is the truth.
@@ -153,6 +154,8 @@ defmodule EvoDashWeb.TaskFormComponents do
   attr(:selected_build_system, :string, default: nil)
   attr(:staged_attachments, :list, default: [])
   attr(:quality_level, :string, default: "balanced")
+
+  slot(:controls)
 
   def task_form(assigns) do
     assigns =
@@ -792,30 +795,24 @@ defmodule EvoDashWeb.TaskFormComponents do
                   </select>
                 <% end %>
 
-                <!-- Launch button — circular icon-only send (ChatGPT/Gemini
-                   style): the LAST element of the toolbar's right-aligned
-                   cluster = the row's far right. It carries NO auto margin of
-                   its own — the cluster is packed right by the FIRST element
-                   of the right cluster's ml-auto (model capsule when
-                   @use_llm_selection?, else custom-agent select, else legacy
-                   model select). data-mode drives the per-mode hover ring
-                   color; data-resume drives the resume-ring variant (lighter
-                   green when a resume task id is set — evolve only). Both
-                   keyed in CSS in assets/css/app.css.
-                   id="task-launch-button" is a stable test/UI marker that
-                   survives icon swaps. -->
-                <button
-                  type="submit"
-                  id="task-launch-button"
-                  class="btn btn-primary btn-circle btn-sm shrink-0"
-                  data-mode={@mode}
-                  data-resume={String.trim(@resume_from) != ""}
-                  disabled={@disabled}
-                  aria-label={gettext("Launch")}
-                  title={gettext("Launch")}
-                >
-                  <.icon name="hero-arrow-up" class="size-4" />
-                </button>
+                <div class={[
+                  "flex items-center gap-1 shrink-0",
+                  !@use_llm_selection? && @custom_agents == [] && @model_profiles == [] && "ml-auto"
+                ]}>
+                  {render_slot(@controls)}
+                  <button
+                    type="submit"
+                    id="task-launch-button"
+                    class="btn btn-primary btn-circle btn-sm shrink-0"
+                    data-mode={@mode}
+                    data-resume={String.trim(@resume_from) != ""}
+                    disabled={@launch_disabled}
+                    aria-label={gettext("Launch")}
+                    title={gettext("Launch")}
+                  >
+                    <.icon name="hero-arrow-up" class="size-4" />
+                  </button>
+                </div>
               </div>
 
               <%!-- Custom Agent mode hint — a single-line explanation under the
