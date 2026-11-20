@@ -206,7 +206,7 @@ The Projects page surfaces the active project's GitHub issues (existing repos on
 
 ### UI Components (`./lib/evo_dash_web/components/`)
 
-`CoreComponents` (base + flash kinds + `icon/1`), `GitHubComponents`, `ProjectComponents` (palette + project settings), `TaskFormComponents` (single-card two-layout objective editor with independent agent/quality controls), `LLMSelectionComponents`, `TaskCardComponents` (+ helpers; summary-map-safe cards), `ArchiveComponents` (+ `ArchiveHelpers`), `ReviewComponents`, `AgentsComponents`, `SettingsComponents` (incl. `provider_profiles/` + `ProviderWizard` steps), `RemoteGateComponents` (`gate_active?/1`), `Layouts` (sidebar shell, `simple_nav`, theme toggles, language selector, node selector, `NodeSwitchFade`); detail incl. field-usage audit + known issues: `components/CONTEXT.md`.
+`CoreComponents` (base + flash kinds + `icon/1`), `GitHubComponents`, `ProjectComponents`, `TaskFormComponents` (single-card two-layout objective editor), `LLMSelectionComponents`, `TaskCardComponents` (+ helpers; summary-map-safe), `ArchiveComponents` (+ `ArchiveHelpers`), `ReviewComponents`, `AgentsComponents`, `SettingsComponents` (incl. `provider_profiles/` + `ProviderWizard` steps), `RemoteGateComponents` (`gate_active?/1`), `Layouts` (sidebar shell, `simple_nav`, theme/language/node selectors, `NodeSwitchFade`) — field-usage audit + known issues: `components/CONTEXT.md`.
 
 ### Auto-Update (Tauri Updater)
 
