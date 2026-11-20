@@ -362,17 +362,45 @@ defmodule EvoDashWeb.HomeLiveTest do
   # only after the log was emitted.
   #
   # TOTAL await: `TaskRegistry.start_task/2` is a GenServer.call, so a real
-  # LOCAL send has already persisted its row (non-terminal) by the time
-  # `send_fun` returns — the poll then waits it to terminal. A send that starts
+  # LOCAL send has already persisted its row (non-terminal) by the time the
+  # send has SETTLED — the poll then waits it to terminal. A send that starts
   # NO task at all (a gate-blocked composer, or a remote fail-fast send that
   # persists no local row) leaves no non-terminal :reflect row, so the poll is
   # immediately satisfied.
-  defp send_and_await_terminal(send_fun) when is_function(send_fun, 0) do
+  #
+  # ORDERING — `await_send_settled/1` runs FIRST, because `await_reflect_terminal/0`
+  # alone is NOT a settle signal any more: the start/send RPC is ASYNC, so an
+  # EMPTY :reflect row set counts as settled and the poll used to return before
+  # the async start had even run (and created its row). Once the send settled,
+  # the started row exists (start_task is a GenServer.call inside the settle
+  # callback), so the terminal await is the ordering proof for the log above.
+  defp send_and_await_terminal(view, send_fun) when is_function(send_fun, 0) do
     ExUnit.CaptureLog.with_log(fn ->
-      html = send_fun.()
+      send_fun.()
+      await_send_settled(view)
       await_reflect_terminal()
-      html
+      render(view)
     end)
+  end
+
+  # The ONLY settle signal for the ASYNC send path: the start/send RPC runs in
+  # `EvoDash.TaskSupervisor` (`EvoDash.SafeCall.start/3`) and the page applies
+  # its answer in `HomeLive.handle_info({{:chat_send_result, seq}, result})`
+  # (`SendPath.apply_send_result/3`) — a message delivered to the LIVEVIEW
+  # process, so `assert_receive` cannot observe it from this test process.
+  # `:send_in_flight` is set SYNCHRONOUSLY by the submit itself and cleared at
+  # the top of that callback, whose one-shot `:reflect` fallback then runs
+  # synchronously inside the SAME callback; `assigns/1` is a `:sys.get_state`
+  # round-trip, so it can only observe state BETWEEN callbacks — seeing the
+  # settle assigns therefore proves the whole result callback (fallback and
+  # flash included) has already completed. Polls; never a fixed sleep.
+  defp await_send_settled(view, timeout \\ @async_wait_budget_ms) do
+    wait_until(
+      fn -> assigns(view)[:send_in_flight] == false and assigns(view)[:send_pending] == nil end,
+      timeout
+    )
+
+    render(view)
   end
 
   # Polls until every :reflect row in the store is terminal (an empty set counts
@@ -550,10 +578,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       # The wrapper's `SelfReflective failed: ...` error log is emitted
       # ASYNCHRONOUSLY at task end, so the submit + the await of the row's
       # terminal status run inside ONE ExUnit.CaptureLog.with_log/2 window (see
-      # send_and_await_terminal/1, which documents the ordering guarantee and
+      # send_and_await_terminal/2, which documents the ordering guarantee and
       # why an un-windowed send prints uncaptured noise between tests).
       {html, log} =
-        send_and_await_terminal(fn ->
+        send_and_await_terminal(view, fn ->
           render_submit(view, "send_message", %{"message" => "hello genesis"})
         end)
 
@@ -619,14 +647,14 @@ defmodule EvoDashWeb.HomeLiveTest do
       end)
 
       {_html, log} =
-        send_and_await_terminal(fn ->
+        send_and_await_terminal(view, fn ->
           render_submit(view, "send_message", %{"message" => "what is genesis?"})
         end)
 
       # Deterministic proof that the capture window really held the registry's
       # asynchronous FAILED_TRANSITION warning: the persisted row only reaches
       # its terminal status AFTER that log is emitted (see
-      # send_and_await_terminal/1), so a log landing between tests would make
+      # send_and_await_terminal/2), so a log landing between tests would make
       # this assert flunk instead of leaking to the console.
       assert log =~ "FAILED_TRANSITION"
 
@@ -2278,7 +2306,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).model_spec == work_spec("high")
 
       {html, _log} =
-        send_and_await_terminal(fn ->
+        send_and_await_terminal(view, fn ->
           render_submit(view, "send_message", %{"message" => "hello"})
         end)
 
@@ -2308,7 +2336,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert provider_drill_label(html) == "Choose a provider profile"
       refute present?(html, "#chat-llm-selection-reasoning")
 
-      send_and_await_terminal(fn ->
+      send_and_await_terminal(view, fn ->
         render_submit(view, "send_message", %{"message" => "auto please"})
       end)
 
@@ -2415,7 +2443,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # A REAL form submit: the test client resolves `phx-submit` from the
       # `#chat-form` DOM node and collects the form's own input values.
       {html, _log} =
-        send_and_await_terminal(fn ->
+        send_and_await_terminal(view, fn ->
           view |> form("#chat-form", %{message: "sent from the composer"}) |> render_submit()
         end)
 
@@ -2506,7 +2534,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       write_provider_profile_config()
       {:ok, view, _html} = live(conn, "/assistant")
 
-      send_and_await_terminal(fn ->
+      send_and_await_terminal(view, fn ->
         view |> element(~s(button[phx-value-message="Show my running tasks"])) |> render_click()
       end)
 
@@ -2522,7 +2550,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, view, _html} = live(conn, "/assistant")
       render_change(view, "select_provider_profile", %{"provider_profile_id" => ""})
 
-      send_and_await_terminal(fn ->
+      send_and_await_terminal(view, fn ->
         view |> element(~s(button[phx-value-message="Start a task for me"])) |> render_click()
       end)
 
@@ -2545,7 +2573,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).model_spec == work_spec("high")
       assert EvoDash.ChatHistory.get_state(assigns(view).chat_id).model_spec == work_spec("high")
 
-      send_and_await_terminal(fn ->
+      send_and_await_terminal(view, fn ->
         render_submit(view, "send_message", %{"message" => "after new chat"})
       end)
 
@@ -2818,10 +2846,14 @@ defmodule EvoDashWeb.HomeLiveTest do
       send(view.pid, {:task_updated, fixture_id, :running, node()})
       render(view)
       assert assigns(view).chat_status == :running
-      # render_click("stop") runs the REAL cancel: :pending → immediate
-      # :cancelled + broadcast. The view shows :cancelling (the async task
-      # fetch may already have landed → :idle; accept both).
+      # render_click("stop") only DISPATCHES the real cancel: the ":pending →
+      # immediate :cancelled + broadcast" RPC runs in `EvoDash.TaskSupervisor`
+      # and the status lands with `{:chat_finish_result, …}` in the LiveView
+      # process, so await the settle through the assigns. The view then shows
+      # :cancelling (the async task fetch may already have landed → :idle;
+      # accept both).
       render_click(view, "stop", %{})
+      wait_until(fn -> assigns(view).chat_status in [:cancelling, :idle] end)
       assert assigns(view).chat_status in [:cancelling, :idle]
       # Deterministic finalize: inject the fetched :cancelled task with the
       # CURRENT seq. If the real async fetch already landed (chat_task_id nil),
@@ -4420,9 +4452,12 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _} = live(conn, "/assistant")
       seed_session_state(view, 987_653, %{chat_draft: "keep this draft", workspace: workspace})
-      html = render_submit(view, "send_message", %{"message" => "keep this draft"})
-      assert html =~ "project selection changed in another view"
+      render_submit(view, "send_message", %{"message" => "keep this draft"})
       assert_receive {:atomic_send_attempt, _, 987_653, "keep this draft", :queue, ^workspace}
+      # The refused-send flash (and the rollback) land with the ASYNC
+      # `{:chat_send_result, seq}` answer, so settle before reading them.
+      html = await_send_settled(view)
+      assert html =~ "project selection changed in another view"
       assert assigns(view).chat_draft == "keep this draft"
       assert assigns(view).transcript == []
       assert assigns(view).session_id == 987_653
@@ -5405,12 +5440,12 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, view, _html} = live(conn, "/assistant")
 
       {html, log} =
-        send_and_await_terminal(fn ->
+        send_and_await_terminal(view, fn ->
           render_submit(view, "send_message", %{"message" => text})
         end)
 
       # The real (fail-fast) reflect wrapper's asynchronous error log, captured
-      # inside the same window (see send_and_await_terminal/1).
+      # inside the same window (see send_and_await_terminal/2).
       assert log =~ "SelfReflective failed"
 
       assigns = assigns(view)
@@ -5449,7 +5484,10 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       view |> form("#chat-upload-form") |> render_change(upload)
       render_upload(upload, "fallback.png")
-      send_and_await_terminal(fn -> render_submit(view, "send_message", %{"message" => ""}) end)
+
+      send_and_await_terminal(view, fn ->
+        render_submit(view, "send_message", %{"message" => ""})
+      end)
 
       assert [task] =
                Enum.filter(
@@ -5476,7 +5514,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, view, _html} = live(conn, "/assistant")
 
       {_html, log} =
-        send_and_await_terminal(fn ->
+        send_and_await_terminal(view, fn ->
           render_submit(view, "send_message", %{"message" => text})
         end)
 
@@ -5524,6 +5562,9 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       render_submit(view, "send_message", %{"message" => "hello"})
       assert_receive {:session_send_called, "hello"}
+      # The retryable-failure flash lands with the ASYNC
+      # `{:chat_send_result, seq}` answer, so settle before reading it.
+      await_send_settled(view)
 
       assigns = assigns(view)
       # NOT an ended conversation: the session may still be alive, so the send
@@ -5552,12 +5593,17 @@ defmodule EvoDashWeb.HomeLiveTest do
     {:ok, view, _html} = live(conn, "/assistant")
     seed_session_state(view, 6363)
 
-    html = render_submit(view, "send_message", %{"message" => "old question"})
+    render_submit(view, "send_message", %{"message" => "old question"})
     assert_receive {:session_send_called, "old question"}
+    # The optimistic bubble is in the socket assigns at once, but every
+    # send's settle (and the second send's :ended refusal) lands with the
+    # ASYNC `{:chat_send_result, seq}` answer, so settle each send first.
+    html = await_send_settled(view)
     assert html =~ "old question"
 
-    html2 = render_submit(view, "send_message", %{"message" => "after end"})
+    render_submit(view, "send_message", %{"message" => "after end"})
     assert_receive {:session_send_called, "after end"}
+    html2 = await_send_settled(view)
 
     assigns = assigns(view)
     assert assigns.chat_status == :ended
