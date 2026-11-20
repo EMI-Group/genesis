@@ -25,7 +25,10 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
   rail is therefore computed by `Wizard.progress/2` / `Wizard.index/2` against
   the steps we ACTUALLY render, not against `Wizard.all_steps/0`.
 
-  The ChatGPT authentication step binds the new provider account to a registration.
+  The ChatGPT authentication step binds the new provider account to a
+  registration: it renders the in-browser sign-in (`sign_in`) unless the page
+  says the dashboard cannot reach the execution node (`manual`), in which case
+  it points at the CLI command.
 
   ## Events
 
@@ -84,6 +87,8 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
       |> assign(:oauth_only?, Fields.oauth_only?(draft))
       |> assign(:chatgpt?, ChatGPT.provider?(draft["provider"]))
       |> assign(:chatgpt_accounts, wizard.chatgpt_accounts)
+      |> assign(:chatgpt_sign_in, wizard.chatgpt_sign_in)
+      |> assign(:chatgpt_sign_in_manual, wizard.chatgpt_sign_in_manual)
       |> assign(:models, model_choices(draft, wizard.chatgpt_accounts))
       |> assign(:inventory, list(draft, "reasoning_efforts"))
       |> assign(:default_effort, text(draft, "default_reasoning_effort"))
@@ -141,6 +146,8 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
                   accounts={@chatgpt_accounts}
                   change_event="provider_wizard_change"
                   refresh_event="provider_wizard_change"
+                  sign_in={@chatgpt_sign_in}
+                  manual={@chatgpt_sign_in_manual}
                 />
               </:auth_detail>
             </ProviderWizard.step_auth>
@@ -308,12 +315,25 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
       step: Map.get(wizard, :step) || Map.get(wizard, "step"),
       draft: Map.get(wizard, :draft) || Map.get(wizard, "draft") || %{},
       errors: Map.get(wizard, :errors) || Map.get(wizard, "errors") || %{},
-      chatgpt_accounts: Map.get(wizard, :chatgpt_accounts, %{})
+      chatgpt_accounts: Map.get(wizard, :chatgpt_accounts, %{}),
+      # Sign-in presentation is owned by the page; a wizard without those
+      # assigns still renders the LOCAL flow (the same default the component
+      # uses) instead of failing on a missing key.
+      chatgpt_sign_in: Map.get(wizard, :chatgpt_sign_in) || %{},
+      chatgpt_sign_in_manual: Map.get(wizard, :chatgpt_sign_in_manual) == true
     }
   end
 
   defp normalize_wizard(_wizard),
-    do: %{mode: nil, step: nil, draft: %{}, errors: %{}, chatgpt_accounts: %{}}
+    do: %{
+      mode: nil,
+      step: nil,
+      draft: %{},
+      errors: %{},
+      chatgpt_accounts: %{},
+      chatgpt_sign_in: %{},
+      chatgpt_sign_in_manual: false
+    }
 
   defp profile_id({:model, profile_id}) when is_binary(profile_id), do: profile_id
 

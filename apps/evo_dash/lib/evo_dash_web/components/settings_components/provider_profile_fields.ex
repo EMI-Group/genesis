@@ -511,7 +511,11 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
       <div :if={@details} class="space-y-1 text-xs leading-relaxed text-base-content/70">
         <%= cond do %>
           <% @chatgpt? and @state != :ok -> %>
-            <p>{gettext("Connect the account on the selected node, then recheck.")}</p>
+            <p>
+              {gettext(
+                "Connect the account on the selected node — sign in there, or run this command on it — then recheck."
+              )}
+            </p>
             <p>
               <code>{@chatgpt_command}</code>
             </p>
