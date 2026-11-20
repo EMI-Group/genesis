@@ -5883,11 +5883,10 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # launch is spawned (`LaunchOptions.apply/2` → `:no_task_model`), so no
       # `:task_launch_seq` bump ever happens and `await_task_launch/2` would
       # time out. Await the effect the server does produce: its rendered
-      # refusal. (This is the shared "Failed to start task" flash — the
-      # dedicated "Configure a model on this server" wording lives in the async
-      # launch ack, which this pre-spawn guard never reaches.)
-      wait_for_flash(view, :error, "Failed to start task: :no_task_model")
-      assert has_element?(view, "#flash-error", "Failed to start task: :no_task_model")
+      # refusal — the friendly, actionable line that points at the model
+      # settings, NOT the generic "Failed to start task" wording.
+      wait_for_flash(view, :error, "Configure a model on this server")
+      assert has_element?(view, "#flash-error", "Configure a model on this server")
       # ...and nothing was enqueued: the refusal happens before any task row.
       assert EvoGit.TaskRegistry.list_task_ids() -- tasks_before == []
     end
