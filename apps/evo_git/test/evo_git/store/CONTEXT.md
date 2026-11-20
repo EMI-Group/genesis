@@ -9,6 +9,7 @@ Interrupted preservation objects fail closed before migrations rather than being
 
 ## Routing Table
 - `operations/` → typed-schema operation tests for tasks, lightweight reads, summaries, pages, safety, archives and VCT mounts.
+`operations/safety_test.exs` also pins the LOAD-failure fallback of `safe_select_all_tasks/1`: 133 rows with 3 wrong-typed cells (`agent_count` TEXT via a side `Xqlite` connection, straddling both 100-id chunks) return the 130 good rows in insertion order with ONE skip warning per poisoned row plus the single batch-load warning.
 - `historical_sources_test.exs` → empty and unknown-shape `__genesis_historical_sources` markers, hidden `tasks.__genesis_preserved_archive_metadata`, hidden `__genesis_preserved_projects`, and combined remnants refuse `Boot.run_migrations/1` before ledger bootstrap or migration.
 Repeated attempts preserve exact schema, ledger and source bytes both without a ledger and with versions 1–9 stamped.
 - `boot_migration_test.exs` → fresh schema and raw pre-Ecto 15/17/19/20-column adoption, exact physical column order, nullable tail appends, healthy data preservation and final indexes.

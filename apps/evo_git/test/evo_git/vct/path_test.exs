@@ -147,7 +147,7 @@ defmodule EvoGit.VCT.PathTest do
     end
   end
 
-  describe "segments/1 and name/1" do
+  describe "segments/1 and last_segment/1" do
     test "segments/1 accepts structs and URL strings" do
       assert Path.segments(Path.root()) == []
       assert Path.segments("vct:///projects/foo") == ["projects", "foo"]
@@ -158,10 +158,10 @@ defmodule EvoGit.VCT.PathTest do
       assert_raise ArgumentError, fn -> Path.segments("vct://host/foo") end
     end
 
-    test "name/1 is the last segment, nil for the root" do
-      assert Path.name(Path.root()) == nil
-      assert Path.name(Path.projects()) == "projects"
-      assert Path.name("vct:///projects/foo") == "foo"
+    test "last_segment/1 is the last segment, nil for the root" do
+      assert Path.last_segment(Path.root()) == nil
+      assert Path.last_segment(Path.projects()) == "projects"
+      assert Path.last_segment("vct:///projects/foo") == "foo"
     end
   end
 

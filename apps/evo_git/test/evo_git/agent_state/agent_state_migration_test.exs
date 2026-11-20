@@ -19,6 +19,13 @@ defmodule EvoGit.AgentState.MigrationTest do
 
   `async: true` with a parked prune timer and an explicit `store:` pid on every
   call — the app-global `EvoGit.AgentState.Server` is never touched.
+
+  The index-only `000005_agent_state_indexes` step is covered on BOTH paths it
+  ships for: a FRESH database (index names, `PRAGMA index_list` shape and the
+  exact ordered columns of each index) and an UPGRADED one — a database driven
+  to version 4 on a bare `EvoGit.Repo`, seeded with rows, then upgraded through
+  the real `Boot.run_migrations/1`, where the two indexes must appear and every
+  pre-existing row must survive untouched.
   """
 
   use ExUnit.Case, async: true
@@ -38,8 +45,57 @@ defmodule EvoGit.AgentState.MigrationTest do
   @pause_column {"pause_commit", "TEXT", 0, 0}
 
   # The two indexes `000005_agent_state_indexes` adds (the id-seed and roster
-  # read paths). Listed so a re-applied version 5 is proven idempotent.
-  @v5_indexes ["agent_states_agent_id_index", "agent_states_task_depth_agent_index"]
+  # read paths), with the ordered columns `PRAGMA index_info/1` must report
+  # back. Listed so a re-applied version 5 is proven idempotent.
+  @v5_index_shapes [
+    {"agent_states_agent_id_index", ["agent_id"]},
+    {"agent_states_task_depth_agent_index", ["task_id", "depth", "agent_id"]}
+  ]
+  @v5_indexes Enum.map(@v5_index_shapes, &elem(&1, 0))
+
+  # The rows a version-4 database already holds before the index-only step runs,
+  # one with a DISTINCTIVE value in every column this fixture populates.
+  @upgraded_seed [
+    %{
+      "task_id" => "task_upgrade_root",
+      "agent_id" => 1,
+      "depth" => 0,
+      "parent_id" => nil,
+      "objective" => "root objective",
+      "branch" => "evogit-agent-upgrade",
+      "status" => "done",
+      "current_commit" => "aaaa1111",
+      "pause_commit" => "pause-root"
+    },
+    %{
+      "task_id" => "task_upgrade_root",
+      "agent_id" => 2,
+      "depth" => 1,
+      "parent_id" => 1,
+      "objective" => "child objective",
+      "branch" => "evogit-agent-upgrade-child",
+      "status" => "running",
+      "current_commit" => "bbbb2222",
+      "pause_commit" => nil
+    },
+    %{
+      "task_id" => "task_upgrade_other",
+      "agent_id" => 9,
+      "depth" => 0,
+      "parent_id" => nil,
+      "objective" => "other task",
+      "branch" => "evogit-agent-other",
+      "status" => "done",
+      "current_commit" => "cccc3333",
+      "pause_commit" => "pause-other"
+    }
+  ]
+
+  # The projection `upgraded_rows!/1` reads, in `ORDER BY task_id, agent_id`
+  # order — derived from the seed below, so the two can never drift.
+  @upgraded_projection ~w(task_id agent_id depth parent_id objective branch status
+                          current_commit pause_commit)
+  @upgraded_stamp "2026-08-15T00:00:00Z"
 
   ## Isolation / introspection helpers
 
@@ -56,35 +112,66 @@ defmodule EvoGit.AgentState.MigrationTest do
     :ok = AgentState.flush(store: pid)
   end
 
-  defp sql!(pid, sql, params) do
-    repo = AgentState.repo(pid)
-    assert is_pid(repo), "the isolated agent-state server has no repo pid"
+  # A bare dynamic `EvoGit.Repo` on the SAME file the agent-state server would
+  # use, for the cases that must drive the migration chain THEMSELVES (bring a
+  # database to one version, seed it, then apply the next version).
+  defp start_bare_repo!(tmp_dir, id) do
+    start_supervised!(
+      Supervisor.child_spec(
+        {EvoGit.Repo,
+         EvoGit.Repo.start_opts() ++
+           [
+             database: Path.join(tmp_dir, "agent_state.sqlite"),
+             name: nil,
+             pool_size: 1,
+             journal_mode: :wal,
+             synchronous: :normal
+           ]},
+        id: id
+      )
+    )
+  end
 
+  defp sql!(pid, sql, params), do: pid |> server_repo!() |> repo_sql!(sql, params)
+
+  defp repo_sql!(repo, sql, params) do
     RepoScope.with_repo(repo, fn ->
       {:ok, result} = Ecto.Adapters.SQL.query(EvoGit.Repo.get_dynamic_repo(), sql, params)
       result
     end)
   end
 
-  defp applied_versions!(pid) do
-    pid
-    |> sql!("SELECT version FROM schema_migrations ORDER BY version ASC", [])
+  defp server_repo!(pid) do
+    repo = AgentState.repo(pid)
+    assert is_pid(repo), "the isolated agent-state server has no repo pid"
+    repo
+  end
+
+  defp applied_versions!(pid), do: pid |> server_repo!() |> applied_versions_of!()
+
+  defp applied_versions_of!(repo) do
+    repo
+    |> repo_sql!("SELECT version FROM schema_migrations ORDER BY version ASC", [])
     |> Map.fetch!(:rows)
     |> List.flatten()
   end
 
-  defp state_columns!(pid) do
-    pid
-    |> sql!("PRAGMA table_info(agent_states)", [])
+  defp state_columns!(pid), do: pid |> server_repo!() |> state_columns_of!()
+
+  defp state_columns_of!(repo) do
+    repo
+    |> repo_sql!("PRAGMA table_info(agent_states)", [])
     |> Map.fetch!(:rows)
     |> Enum.map(fn [_cid, name, type, notnull, _dflt, pk] -> {name, type, notnull, pk} end)
   end
 
   # Every index on `agent_states`, so "exactly once" is asserted on the real
   # catalog rather than inferred from the migration's own post-conditions.
-  defp index_names!(pid) do
-    pid
-    |> sql!(
+  defp index_names!(pid), do: pid |> server_repo!() |> index_names_of!()
+
+  defp index_names_of!(repo) do
+    repo
+    |> repo_sql!(
       "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'agent_states'",
       []
     )
@@ -93,8 +180,27 @@ defmodule EvoGit.AgentState.MigrationTest do
     |> Enum.sort()
   end
 
-  defp index_count!(pid, index) do
-    Enum.count(index_names!(pid), &(&1 == index))
+  defp index_count!(pid, index), do: pid |> server_repo!() |> index_count_of!(index)
+
+  defp index_count_of!(repo, index) do
+    Enum.count(index_names_of!(repo), &(&1 == index))
+  end
+
+  # `PRAGMA index_list` answers `[seq, name, unique, origin, partial]` per
+  # index; `PRAGMA index_info` answers `[seqno, cid, name]` in index order.
+  defp index_list_of!(repo) do
+    repo
+    |> repo_sql!("PRAGMA index_list(agent_states)", [])
+    |> Map.fetch!(:rows)
+    |> Enum.map(fn [_seq, name, unique, origin, partial] -> {name, unique, origin, partial} end)
+    |> Enum.sort()
+  end
+
+  defp index_columns_of!(repo, index) do
+    repo
+    |> repo_sql!("PRAGMA index_info(#{index})", [])
+    |> Map.fetch!(:rows)
+    |> Enum.map(fn [_seqno, _cid, name] -> name end)
   end
 
   defp raw_marker!(pid) do
@@ -223,6 +329,72 @@ defmodule EvoGit.AgentState.MigrationTest do
 
       for index <- @v5_indexes, do: assert(index_count!(pid, index) == 1)
     end
+
+    test "both indexes sit on their documented columns", %{tmp_dir: tmp_dir} do
+      pid = start_store!(tmp_dir, :migration_index_columns)
+      repo = server_repo!(pid)
+      list = index_list_of!(repo)
+
+      for {index, columns} <- @v5_index_shapes do
+        # `{name, unique?, origin, partial?}`: a plain, non-unique,
+        # non-partial index created by `CREATE INDEX` — not a constraint index.
+        assert {index, 0, "c", 0} in list,
+               "expected #{index} as a plain catalog index, got #{inspect(list)}"
+
+        # The COLUMN ORDER is load-bearing: the id seed needs `agent_id` as its
+        # only key and the roster read needs exactly `(task_id, depth, agent_id)`.
+        assert index_columns_of!(repo, index) == columns,
+               "index #{index} must be on (#{Enum.join(columns, ", ")}), " <>
+                 "got #{inspect(index_columns_of!(repo, index))}"
+      end
+
+      # Purely additive: the retention (v1) and batch (v4) indexes survive.
+      for index <- [
+            "agent_states_status_completed_at_index",
+            "agent_states_updated_at_index",
+            "agent_states_task_parent_index"
+          ] do
+        assert {index, 0, "c", 0} in list, "expected index #{index}, got #{inspect(list)}"
+      end
+    end
+  end
+
+  ## (a) The same step as a real UPGRADE of an existing database
+
+  describe "migration 000005 on an upgraded database" do
+    test "a version-4 database gains both indexes on their columns and keeps its rows",
+         %{tmp_dir: tmp_dir} do
+      repo = start_bare_repo!(tmp_dir, :migration_upgrade_repo)
+
+      # Exactly the file the previous release leaves behind: versions 1-4
+      # stamped, version 5 pending, neither v5 index present. Driving the chain
+      # directly (rather than rolling version 5 back) keeps the pre-state
+      # independent of `down/0`.
+      assert migrate_through!(repo, 4) == [1, 2, 3, 4]
+      assert applied_versions_of!(repo) == [1, 2, 3, 4]
+
+      for {index, _columns} <- @v5_index_shapes do
+        assert index_count_of!(repo, index) == 0,
+               "index #{index} must not exist before version 5"
+      end
+
+      seed_upgraded_rows!(repo)
+
+      # The real upgrade step: `run_migrations/1` applies only what is pending.
+      assert {:ok, [5]} = Boot.run_migrations(repo)
+      assert applied_versions_of!(repo) == [1, 2, 3, 4, 5]
+
+      for {index, columns} <- @v5_index_shapes do
+        assert index_count_of!(repo, index) == 1,
+               "expected index #{index} exactly once, got #{inspect(index_names_of!(repo))}"
+
+        assert index_columns_of!(repo, index) == columns
+      end
+
+      # Index-only: every row the old release wrote is still there, byte for
+      # byte in every column it populated.
+      assert upgraded_rows!(repo) == expected_upgraded_rows()
+    end
   end
 
   ## (a) + (b) durable marker + load/normalize round-trip
@@ -349,23 +521,24 @@ defmodule EvoGit.AgentState.MigrationTest do
     end
   end
 
-  ## Rollback helper
+  ## Migration-source helper
 
   # The migration module is reached through `Boot.migration_source/0` (public
   # seam) so this file never names a runtime-compiled module directly. Its error
   # shape is handled explicitly: `{:error, :migration_lock_unavailable}` fed to
   # `Enum.find/2` would raise an opaque `Protocol.UndefinedError`.
+  defp migration_source! do
+    case Boot.migration_source() do
+      {:error, reason} ->
+        flunk("the agent-state migration source is unavailable: #{inspect(reason)}")
+
+      source when is_list(source) ->
+        source
+    end
+  end
+
   defp run_down!(pid, version) do
-    source =
-      case Boot.migration_source() do
-        {:error, reason} ->
-          flunk("the agent-state migration source is unavailable: #{inspect(reason)}")
-
-        source when is_list(source) ->
-          source
-      end
-
-    {^version, module} = Enum.find(source, fn {v, _m} -> v == version end)
+    {^version, module} = Enum.find(migration_source!(), fn {v, _m} -> v == version end)
 
     assert [^version] =
              RepoScope.with_repo(AgentState.repo(pid), fn ->
@@ -373,5 +546,66 @@ defmodule EvoGit.AgentState.MigrationTest do
              end)
 
     :ok
+  end
+
+  ## Version-4 (pre-index) database helpers
+
+  # Applies the chain UP TO `last_version`, so the next boot / `run_migrations/1`
+  # is a genuine upgrade step rather than a fresh install.
+  defp migrate_through!(repo, last_version) do
+    source =
+      migration_source!()
+      |> Enum.filter(fn {version, _module} -> version <= last_version end)
+
+    # Guard the fixture: a filtered chain must be exactly 1..last_version.
+    assert Enum.map(source, &elem(&1, 0)) == Enum.to_list(1..last_version)
+
+    RepoScope.with_repo(repo, fn ->
+      Ecto.Migrator.run(EvoGit.Repo, source, :up, all: true, log: false)
+    end)
+  end
+
+  defp seed_upgraded_rows!(repo) do
+    for seed <- @upgraded_seed do
+      row =
+        Map.merge(seed, %{
+          "created_at" => @upgraded_stamp,
+          "updated_at" => @upgraded_stamp,
+          "completed_at" => @upgraded_stamp
+        })
+
+      columns = row |> Map.keys() |> Enum.sort()
+      values = Enum.map(columns, &Map.fetch!(row, &1))
+      placeholders = Enum.map_join(1..length(columns), ", ", fn index -> "?#{index}" end)
+
+      assert %{num_rows: 1} =
+               repo_sql!(
+                 repo,
+                 "INSERT INTO agent_states (#{Enum.join(columns, ", ")}) VALUES (#{placeholders})",
+                 values
+               )
+    end
+  end
+
+  defp upgraded_rows!(repo) do
+    projection = Enum.join(@upgraded_projection, ", ")
+
+    repo
+    |> repo_sql!(
+      "SELECT #{projection} FROM agent_states ORDER BY task_id ASC, agent_id ASC",
+      []
+    )
+    |> Map.fetch!(:rows)
+    |> Enum.map(&List.to_tuple/1)
+  end
+
+  defp expected_upgraded_rows do
+    @upgraded_seed
+    |> Enum.sort_by(fn seed -> {seed["task_id"], seed["agent_id"]} end)
+    |> Enum.map(fn seed ->
+      @upgraded_projection
+      |> Enum.map(&Map.fetch!(seed, &1))
+      |> List.to_tuple()
+    end)
   end
 end

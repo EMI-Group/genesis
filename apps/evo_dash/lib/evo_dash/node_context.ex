@@ -1039,6 +1039,27 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
+  Lists the Virtual Context Tree WORKSPACE entries of the given node, newest
+  first, with EVERY workspace's members ALREADY resolved — ONE node round trip
+  for the whole roster.
+  Delegates to the node's `EvoGit.VCT.workspace_entries/1` (one
+  `GenServer.call` there; one `:erpc.call` here on a remote node), so a caller
+  that needs the members of every workspace never pays one call per entry.
+  Each entry is `%{workspace: mount, members: [%{point: point, name: name,
+  path: path}], missing: [ref], nested: [ref]}`: `members` are the resolved
+  mounts FLATTENED in STORED order, while `missing`/`nested` carry the STORED
+  refs unexpanded. A failed read (or an unusable answer) degrades to `[]`, so
+  the dashboard never crashes or blocks on the workspace roster.
+  """
+  @spec workspace_entries(node()) :: [EvoGit.VCT.workspace_entry()]
+  def workspace_entries(node) do
+    case call_remote(node, EvoGit.VCT, :workspace_entries, [[]]) do
+      {:ok, entries} when is_list(entries) -> entries
+      _ -> []
+    end
+  end
+
+  @doc """
   Creates or REPLACES a Virtual Context Tree workspace on the given node.
 
   Delegates to `EvoGit.RemoteNode.create_workspace/4`. This is an IDEMPOTENT
