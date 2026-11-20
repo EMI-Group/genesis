@@ -63,14 +63,12 @@ No facade operation changes credentials, reloads the scheduler or applies runtim
 `provider_presets.ex` — machine-readable copies of peak/off-peak policies a vendor publishes unambiguously, so the dashboard's provider-profile editor can pre-fill an account's schedule in one click.
 | Function | Description |
 |----------|-------------|
-| `all/0` | Every preset in display order |
-| `ids/0` | The stable preset ids in display order |
+| `all/0` / `ids/0` | Every preset / the stable preset ids, in display order |
 | `get/1` | One preset by id; `nil` for an unknown id or a non-binary input |
 | `for_provider/1` | Presets for one provider, by atom (`:deepseek`) or case-/separator-insensitive STRING (`"deepseek"`, `"ZAI-Coding-Plan"`); `[]` for nil or an unknown provider |
 DATA ONLY: writes no config, touches no disk, starts no process, reads no clock, raises on nothing.
-The envelope is `%{id, label, provider, schedule, note}`; `schedule` is STRING-keyed so it merges into a string-keyed canonical account over `concurrency`, `peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days`, `off_peak_holidays`, carries only the keys its provider uses, and is valid input for `EvoGit.PeakHours.validate_windows/1`, `validate_days/1`, `validate_holidays/1`.
-A published price/quota ratio is conservatively mapped onto slots (a rate that halves off-peak → `peak_concurrency` = half of `concurrency`) as an editable pre-fill, never a vendor-capacity claim.
-Two presets ship: `deepseek-standard` (`:deepseek`, UTC weekday windows, CN holidays + weekends off-peak) and `zai-glm-coding-plan` (`:zai_coding_plan`, weekday 14:00-18:00 Singapore time); sources and the per-provider no-preset rationale live in the module's moduledoc and `docs/llm-profiles.md` §7.
+The envelope is `%{id, label, provider, schedule, note}`; `schedule` is STRING-keyed so it merges into a string-keyed canonical account over `concurrency`, `peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days`, `off_peak_holidays`, carries only the keys its provider uses, and is valid input for `EvoGit.PeakHours.validate_windows/1`, `validate_days/1` and `validate_holidays/1`. A published price/quota ratio maps conservatively onto slots (a rate that halves off-peak → `peak_concurrency` = half of `concurrency`) as an editable pre-fill, never a vendor-capacity claim.
+Two presets ship: `deepseek-standard` (`:deepseek`, UTC weekday windows, CN holidays + weekends off-peak) and `zai-glm-coding-plan` (`:zai_coding_plan`, weekday 14:00-18:00 Singapore time); sources and the per-provider no-preset rationale: the module's moduledoc + `docs/llm-profiles.md` §7.
 
 ### `EvoGit.Config.VersionState` (upgrade detection)
 Tracks the last-seen Genesis version in `version_state.toml` (config dir); defaults to `"0.8.0"` when no file exists.
