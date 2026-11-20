@@ -482,8 +482,10 @@ defmodule EvoGit.AgentState.Store do
   (a `task_id IN (?, …)` delete per table) instead of two statements per task
   id, and the whole set commits in one transaction.
 
-  Total: `:ok` on an empty list (no transaction is opened), a missing store or
-  a store fault; a non-list is `:ok` and does nothing.
+  `:ok` when the rows were deleted, on an empty list (no transaction is
+  opened) and for a non-list (which does nothing); `{:error, reason}` when the
+  transaction fails, which is `{:error, :store_unavailable}` for a missing
+  store or a raised/caught store fault.
   """
   @spec delete_tasks(pid(), [String.t()]) :: :ok | {:error, term()}
   def delete_tasks(repo, task_ids) when is_list(task_ids) do

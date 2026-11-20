@@ -507,13 +507,16 @@ defmodule EvoGit.AgentState do
   Deletes runs outside the retention window (see
   `EvoGit.AgentState.Retention.cutoffs/2`).
 
-  Returns `{:ok, deleted_count}`; total (`{:ok, 0}` when the server is
-  unavailable).
+  `{:ok, deleted_count}` when the sweep ran, and `{:error, reason}` when it
+  FAILED — the store's own failure is passed through, never flattened into
+  "0 runs expired". Absence is not a failure: with no store or a dead server
+  there is nothing to prune, so that answers `{:ok, 0}`.
   """
-  @spec prune(keyword()) :: {:ok, non_neg_integer()}
+  @spec prune(keyword()) :: {:ok, non_neg_integer()} | {:error, term()}
   def prune(opts \\ []) do
     case call(opts, :prune) do
       {:ok, count} when is_integer(count) -> {:ok, count}
+      {:error, _reason} = error -> error
       _other -> {:ok, 0}
     end
   end
