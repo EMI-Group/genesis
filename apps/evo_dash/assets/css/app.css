@@ -8,6 +8,11 @@
    so it is "last" within the import block (a literal append at EOF is invalid
    and would be dropped); its !important reduced-motion backstop is order-proof. */
 @import "./motion.css";
+/* View-transition motion (page loads, theme switch, per-patch cross-fades).
+   CSS requires @import before every other rule, so "last import" is the correct
+   reading of "loaded last" — this file only styles ::view-transition-* pseudo
+   elements and names two elements, so it cannot fight the layers above it. */
+@import "./view_transitions.css";
 @source "../css";
 @source "../js";
 @source "../../lib/evo_dash_web";
@@ -472,18 +477,6 @@ button, a, input, textarea, select, summary,
   }
 }
 
-/* Entrance: scale in (subtle) */
-@keyframes scale-in {
-  0% {
-    opacity: 0;
-    transform: scale(0.96);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
 /* Pulse glow for running task indicators */
 @keyframes pulse-glow {
   0%, 100% {
@@ -491,16 +484,6 @@ button, a, input, textarea, select, summary,
   }
   50% {
     box-shadow: 0 0 0 4px color-mix(in oklch, var(--color-success) 0%, transparent);
-  }
-}
-
-/* Pulse glow for finalizing task indicators (warning amber) */
-@keyframes pulse-glow-warning {
-  0%, 100% {
-    box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-warning) 15%, transparent);
-  }
-  50% {
-    box-shadow: 0 0 0 4px color-mix(in oklch, var(--color-warning) 0%, transparent);
   }
 }
 
@@ -513,24 +496,6 @@ button, a, input, textarea, select, summary,
   100% {
     opacity: 1;
     max-height: 1000px;
-  }
-}
-
-/* Subtle bounce entrance */
-@keyframes bounce-in {
-  0% {
-    opacity: 0;
-    transform: scale(0.3);
-  }
-  50% {
-    transform: scale(1.04);
-  }
-  70% {
-    transform: scale(0.98);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1);
   }
 }
 
@@ -570,24 +535,12 @@ button, a, input, textarea, select, summary,
   animation: fade-in-up 0.4s ease-out both;
 }
 
-.animate-scale-in {
-  animation: scale-in 0.3s ease-out both;
-}
-
 .animate-pulse-glow {
   animation: pulse-glow 6s ease-in-out infinite;
 }
 
-.animate-pulse-glow-warning {
-  animation: pulse-glow-warning 6s ease-in-out infinite;
-}
-
 .animate-slide-down {
   animation: slide-down 0.3s ease-out both;
-}
-
-.animate-bounce-in {
-  animation: bounce-in 0.5s ease-out both;
 }
 
 .animate-float {
@@ -704,22 +657,6 @@ button, a, input, textarea, select, summary,
 
 .animate-toast-exit {
   animation: toast-exit 0.25s ease-in both;
-}
-
-/* History entry fade in */
-@keyframes history-appear {
-  0% {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-history-appear {
-  animation: history-appear 0.3s ease-out both;
 }
 
 /* Legacy non-Assistant history entrances. Assistant history must stay still on
@@ -1622,18 +1559,14 @@ button, a, input, textarea, select, summary,
 /* Respect reduced motion preferences */
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-in-up,
-  .animate-scale-in,
   .animate-pulse-glow,
-  .animate-pulse-glow-warning,
   .animate-slide-down,
-  .animate-bounce-in,
   .animate-float,
   .animate-countdown,
   .animate-agent-spawn,
   .animate-detail-enter,
   .animate-toast-enter,
   .animate-toast-exit,
-  .animate-history-appear,
   .agent-card-running,
   .skeleton {
     animation: none;

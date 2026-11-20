@@ -138,8 +138,6 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
   attr(:stream_unavailable, :boolean, default: false)
   attr(:transcript, :list, required: true)
   attr(:chat_task_status, :any, required: true)
-  # declared for the home_live.ex call site; the value is not rendered here
-  attr(:thought_process, :list, required: true)
   attr(:raw_entry_ids, :any, required: true)
 
   attr(:stream_meta, :any,

@@ -96,6 +96,14 @@ function longestCommonPrefix(strings) {
   return prefix;
 }
 
+// The ONE reduced-motion read for app.js. hooks/disclosure_motion.js publishes
+// its guarded matchMedia helper on globalThis.genesisMotion (dialog_modal.js
+// reaches it the same way), so a missing bridge — tests, an unusual embed —
+// means "no preference" instead of a crash.
+function prefersReducedMotion() {
+  return globalThis.genesisMotion?.prefersReducedMotion?.() === true;
+}
+
 // PathAutocomplete hook: shell-like Tab completion and real-time auto-complete from datalist suggestions
 const PathAutocomplete = {
   mounted() {
@@ -262,20 +270,60 @@ const ClipboardCopy = {
   }
 };
 
-// AutoClearFlash hook: auto-dismisses flash messages after 4 seconds
+// AutoClearFlash hook: auto-dismisses flash messages after 4 seconds.
+//
+// The flash element is rendered by core_components.ex with
+// `animate-toast-enter` and a close button whose phx-click chains
+// JS.push("lv:clear-flash") |> hide("##{@id}") — so clicking it removes the node
+// in the same frame and the toast vanished with NO exit frame. That is exactly
+// what app.css's `animate-toast-exit` (250ms `toast-exit` keyframes, `both`
+// fill) exists for, so the auto-clear path plays it first and only then clicks
+// the close button.
 const AutoClearFlash = {
   mounted() {
     const ignoredIDs = ["client-error", "server-error"];
     if (ignoredIDs.includes(this.el.id)) return;
 
-    setTimeout(() => {
+    let cleared = false;
+    // ONE dismissal per toast: a user clicking the close button during the exit
+    // removes the node, and the bounded fallback below must not fire a second
+    // click at the server.
+    const clear = () => {
+      if (cleared) return;
+      cleared = true;
+      clearTimeout(this.exitFallbackTimer);
       const closeBtn = this.el.querySelector("button[aria-label='close']")
       if (closeBtn) {
         closeBtn.click()
       } else {
         this.el.click()
       }
+    };
+
+    this.autoClearTimer = setTimeout(() => {
+      // Reduced motion (or an environment without animations) gets the plain
+      // immediate dismissal — never a delayed one.
+      if (prefersReducedMotion()) return clear();
+
+      // Only the toast's OWN animation may finish the exit: a child element's
+      // animationend bubbles up here too.
+      const onEnd = (event) => {
+        if (event.target !== this.el) return;
+        this.el.removeEventListener("animationend", onEnd);
+        clear();
+      };
+      this.el.classList.remove("animate-toast-enter");
+      this.el.classList.add("animate-toast-exit");
+      this.el.addEventListener("animationend", onEnd);
+      // Bounded fallback just above the 250ms exit, in case no animation ever
+      // fires (a hidden or zero-height toast, animations disabled at the OS
+      // level, a detached node).
+      this.exitFallbackTimer = setTimeout(clear, 400);
     }, 4000);
+  },
+  destroyed() {
+    clearTimeout(this.autoClearTimer);
+    clearTimeout(this.exitFallbackTimer);
   }
 };
 
@@ -346,6 +394,72 @@ const liveSocket = new LiveSocket("/live", Socket, {
 topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
 window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
+
+// Per-patch view transition: cross-DOCUMENT view transitions only cover full
+// page loads (the <meta name="view-transition"> in root.html.heex), so a
+// live_patch route change inside ONE LiveView — switching project, or
+// /projects → /tasks on a patched link — used to snap.
+//
+// The window is the phx:page-loading pair LiveView already dispatches for a
+// link patch: `pushHistoryPatch` dispatches page-loading-start(kind: "patch")
+// BEFORE it pushes the patch URL, and the matching page-loading-stop is
+// dispatched from pushLinkPatch's callback, AFTER `applyPendingUpdates()` has
+// morphed the reply's diff into the DOM. So starting the transition on START
+// snapshots the OLD frame and resolving its update callback on STOP snapshots
+// the NEW one, with the server round-trip in between.
+//
+// The `dom: {onDocumentPatch}` route was verified and rejected: the patch's
+// diff reaches that callback while the pending link is still set, so its
+// `update()` only QUEUES the diff (View.update → pendingDiffs) and the DOM
+// change lands later, inside applyPendingUpdates — outside any
+// startViewTransition callback, which would cross-fade the old frame onto
+// itself and then snap. It is also the only route that sees every event-driven
+// diff (stream tick, form submit, phx-click), which must never be snapshotted.
+//
+// Known gap: a SERVER-initiated push_patch dispatches no page-loading events,
+// so it still snaps (covering it would need the queued-diff awareness above).
+const PATCH_TRANSITION_TIMEOUT_MS = 600
+let patchTransitionInFlight = false
+
+window.addEventListener("phx:page-loading-start", (event) => {
+  if (event.detail?.kind !== "patch") return
+  if (patchTransitionInFlight) return
+  if (typeof document.startViewTransition !== "function") return
+  if (prefersReducedMotion()) return
+
+  let settle
+  const settled = new Promise((resolve) => { settle = resolve })
+  const finish = () => {
+    window.removeEventListener("phx:page-loading-stop", onStop)
+    clearTimeout(timeout)
+    settle()
+  }
+  const onStop = (event) => {
+    // withPageLoading hands the SAME info object to both events, so an
+    // unrelated element-level page loading must not settle this patch.
+    if (event.detail?.kind === "patch") finish()
+  }
+  // Safety net: a failed patch falls back to a full navigation, where "stop" is
+  // never dispatched — the transition must never be left hanging.
+  const timeout = setTimeout(finish, PATCH_TRANSITION_TIMEOUT_MS)
+  window.addEventListener("phx:page-loading-stop", onStop)
+
+  patchTransitionInFlight = true
+  // Single flight: the flag is released only when this transition has finished
+  // (and immediately, as a fallback, on an implementation without `finished`).
+  const release = () => { patchTransitionInFlight = false }
+  try {
+    const transition = document.startViewTransition(() => settled)
+    if (transition?.finished?.then) {
+      transition.finished.then(release, release)
+    } else {
+      release()
+    }
+  } catch (_error) {
+    finish()
+    release()
+  }
+})
 
 // connect if there are any LiveViews on the page
 liveSocket.connect()

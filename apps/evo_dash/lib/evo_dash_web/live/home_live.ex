@@ -44,52 +44,49 @@ defmodule EvoDashWeb.HomeLive do
   use Gettext, backend: EvoDashWeb.Gettext
 
   alias EvoDashWeb.HomeLive.{
-    AgentStream,
+    ApprovalDialogState,
     ApprovalWorkflow,
-    Attachments,
-    ChatState,
-    Workspace,
-    TaskTracking,
-    TaskPicker,
-    Messages,
-    ModelSelection,
+    AttachPipeline,
+    AttachmentPipeline,
+    ChatBootstrap,
     SendPath,
-    SessionActions,
-    SessionList,
-    SourceGate,
-    Transcript,
-    Watch
+    SessionResolution,
+    StreamFold,
+    TaskEvents,
+    TaskPicker,
+    TaskTracking,
+    Watch,
+    WorkbenchScope,
+    Workspace
   }
 
-  alias EvoDash.{
-    AttachedFile,
-    ChatHistory,
-    DirectoryPicker,
-    NodeContext,
-    SafeCall,
-    TaskSupervisor
-  }
-
-  alias EvoDashWeb.LiveHooks.NodeAware
   import EvoDashWeb.HomeLive.ChatMessages
-  @terminal_statuses [:completed, :cancelled, :failed]
-
   @impl true
   def render(assigns) do
     assigns =
       assigns
       |> assign_new(:workspace, fn -> nil end)
+      # Seeded by the global on-mount hooks (`NodeAware` seeds the node
+      # bookkeeping, `Appearance` the accent), so these are no-ops in the real
+      # mount path and cover a direct template render with a partial assign map.
+      |> assign_new(:remote_targets, fn -> [] end)
+      |> assign_new(:connection_statuses, fn -> %{} end)
+      |> assign_new(:accent_color, fn -> "blue" end)
       |> assign(:draft_project, Workspace.draft_project(assigns))
       |> assign(:stream_error, Watch.failure(assigns))
       |> assign(:approval_host, ApprovalWorkflow.notification_host(assigns))
+      |> assign(
+        :approval_strip_open,
+        EvoDashWeb.HomeLive.ApprovalDialogState.approval_strip_open?(assigns)
+      )
 
     ~H"""
     <EvoDashWeb.Layouts.app
       flash={@flash}
       current_page={:assistant}
       current_node_id={@current_node_id}
-      remote_targets={assigns[:remote_targets] || []}
-      connection_statuses={assigns[:connection_statuses] || %{}}
+      remote_targets={@remote_targets}
+      connection_statuses={@connection_statuses}
       workbench_project={(@workspace && @workspace.path) || @draft_project}
       workbench_git_project={@workspace && @workspace.path}
       workbench_draft={assigns[:workbench_draft]}
@@ -104,7 +101,7 @@ defmodule EvoDashWeb.HomeLive do
       desktop_quit_confirm={@desktop_quit_confirm}
       update_status={@update_status}
       guide={@guide}
-      accent_color={assigns[:accent_color] || "blue"}
+      accent_color={@accent_color}
     >
       <div id="assistant-surface" class="assistant-surface h-full min-h-0 w-full">
         <div class={[
@@ -176,7 +173,6 @@ defmodule EvoDashWeb.HomeLive do
                 <.message_list
                   transcript={@transcript}
                   chat_task_status={@chat_task_status}
-                  thought_process={@thought_process}
                   raw_entry_ids={@raw_entry_ids}
                   stream_meta={@chat_stream_meta}
                   stream_unavailable={@stream_error != nil}
@@ -191,14 +187,15 @@ defmodule EvoDashWeb.HomeLive do
              or being resolved never reflows the transcript column (the
              historical cause of the chat "shaking" at the end of a turn).
              Decisions happen in the single-request dialog below, opened from
-             the strip's Review button or automatically for a NEW live request. -->
+             the strip's Review button or automatically for a NEW live request.
+             The strip stays MOUNTED and collapses through the shared
+             `motion-collapse-grid` helper (`data-motion-open`), so showing and
+             hiding it both animate instead of jumping the column. -->
           <div
             id="assistant-notifications"
             phx-hook="BrowserNotifications"
-            class={[
-              "flex h-10 shrink-0 items-center",
-              (@transcript == [] or @chat_status == :ended) and @pending_approvals == [] and "hidden!"
-            ]}
+            class="motion-collapse-grid shrink-0"
+            data-motion-open={to_string(@approval_strip_open)}
             data-approval-request-ids={Jason.encode!(@approval_host.request_ids)}
             data-approval-scope={@approval_host.scope}
             data-notification-label-unsupported={gettext("Notifications unavailable")}
@@ -208,29 +205,34 @@ defmodule EvoDashWeb.HomeLive do
             data-notification-label-requesting={gettext("Requesting notification permission…")}
             data-notification-label-error={gettext("Notifications failed — review approvals here")}
           >
-            <div class="min-w-0 flex-1">
-              {EvoDashWeb.HomeLive.ApprovalDialog.approval_bar(assigns)}
-            </div>
-            <!-- Permission is requested only by this explicit user control.
-               The end slot shares the approval strip's reserved height. -->
-            <div class="flex shrink-0 items-center gap-1 pr-3 sm:pr-4">
-              <button
-                type="button"
-                data-enable-notifications
-                class="btn btn-ghost btn-xs btn-square"
-                aria-label={gettext("Enable notifications")}
-                title={gettext("Enable notifications")}
-              >
-                <.icon name="hero-bell" class="size-3.5" />
-              </button>
-              <span
-                data-notification-status
-                role="status"
-                aria-label={gettext("Notification permission status")}
-                class="max-w-16 truncate text-[10px] text-base-content/60 sm:max-w-24"
-              >
-                {gettext("Notifications not enabled")}
-              </span>
+            <!-- The grid helper collapses/expands its DIRECT children only, and
+               animates grid rows — never a raw height — so the whole visible
+               strip lives in this one `h-10` child. -->
+            <div class="flex h-10 items-center">
+              <div class="min-w-0 flex-1">
+                {EvoDashWeb.HomeLive.ApprovalDialog.approval_bar(assigns)}
+              </div>
+              <!-- Permission is requested only by this explicit user control.
+                 The end slot shares the approval strip's reserved height. -->
+              <div class="flex shrink-0 items-center gap-1 pr-3 sm:pr-4">
+                <button
+                  type="button"
+                  data-enable-notifications
+                  class="btn btn-ghost btn-xs btn-square"
+                  aria-label={gettext("Enable notifications")}
+                  title={gettext("Enable notifications")}
+                >
+                  <.icon name="hero-bell" class="size-3.5" />
+                </button>
+                <span
+                  data-notification-status
+                  role="status"
+                  aria-label={gettext("Notification permission status")}
+                  class="max-w-16 truncate text-[10px] text-base-content/60 sm:max-w-24"
+                >
+                  {gettext("Notifications not enabled")}
+                </span>
+              </div>
             </div>
           </div>
           <%= if @approval_dialog_open do %>
@@ -270,8 +272,6 @@ defmodule EvoDashWeb.HomeLive do
     """
   end
 
-  alias EvoDashWeb.HomeLive.Uploads
-
   @impl true
   def mount(params, _session, socket) do
     socket = assign(socket, :page_title, gettext("Genesis Assistant"))
@@ -304,609 +304,58 @@ defmodule EvoDashWeb.HomeLive do
 
         socket =
           socket
-          |> assign(base_assigns())
-          |> assign(assistant_client_id: assistant_client_id(socket))
-          |> ApprovalWorkflow.init()
-          |> Uploads.init(&handle_upload_progress/3)
+          |> assign(ChatBootstrap.base_assigns())
+          |> ChatBootstrap.init()
 
         {:ok, socket}
     end
   end
 
-  defp base_assigns do
-    %{
-      workspace: nil,
-      assistant_client_id: nil,
-      assistant_conversation_id: nil,
-      workspace_open: false,
-      workspace_path: "",
-      workspace_projects: [],
-      workspace_workspaces: [],
-      workspace_expanded: MapSet.new(),
-      workspace_error: nil,
-      workspace_loading: false,
-      workspace_seq: 0,
-      tracked_tasks: [],
-      task_tracking_error: nil,
-      task_tracking_loading: false,
-      task_tracking_seq: 0,
-      task_picker: TaskPicker.new(),
-      transcript: Transcript.new(),
-      chat_draft: "",
-      draft_edited?: false,
-      chat_status: :idle,
-      chat_task_id: nil,
-      chat_agent_id: nil,
-      agent_message_count: nil,
-      chat_task_status: nil,
-      thought_process: [],
-      chat_node: nil,
-      chat_id: nil,
-      session_id: nil,
-      current_session_id: nil,
-      session_mode: nil,
-      queued_echoes: [],
-      session_attach_seq: 0,
-      session_attach_pending?: false,
-      # Push-only delta stream state (`EvoDashWeb.HomeLive.Watch`): the
-      # subscribed agent + its seeded `%Delta{}` (nil until the registration
-      # snapshot lands), that snapshot's turn meta, and the monotonic attach seq.
-      chat_stream: nil,
-      chat_stream_meta: nil,
-      stream_attach_seq: 0,
-      chat_stream_worker: nil,
-      chat_stream_worker_monitor: nil,
-      # `:session_list` / `:session_list_loading` / `:session_list_error` /
-      # `:session_list_seq` are seeded (and loaded) by
-      # `EvoDashWeb.LiveHooks.NodeAware` — the layout sidebar owns the
-      # Conversations section on every page, including this one.
-      pending_attachments: Attachments.new(),
-      attach_unavailable: false,
-      chat_fetch_seq: 0,
-      chat_task_fetch_seq: 0,
-      selected_model_id: nil,
-      raw_entry_ids: MapSet.new(),
-      # after handle_params resolves the node, never against mount's local seed.
-      approval_context: nil,
-      # Purely local view state for the approval review dialog; ApprovalWorkflow
-      # owns the requests themselves and never touches these two.
-      approval_dialog_open: false,
-      approval_dialog_index: 0,
-      provider_profiles: [],
-      model_selections: [],
-      model_spec: nil,
-      model_selection_scope: nil,
-      model_selection_error: nil,
-      model_selection_restore: nil,
-      model_selection_resolved: false,
-      model_selection_enabled: false,
-      model_snapshot: nil,
-      model_selection_bundle: nil,
-      model_select_loading: false,
-      model_select_load_error: nil,
-      model_select_seq: 0,
-      source_available: nil,
-      source_check_loading: false,
-      source_check_seq: 0,
-      source_busy: nil,
-      current_path: ~p"/assistant",
-      workbench_draft: nil,
-      workbench_draft_key: nil
-    }
-  end
+  @doc "Every assign the page owns at mount time — `EvoDashWeb.HomeLive.ChatBootstrap`."
+  defdelegate base_assigns(), to: ChatBootstrap
 
-  defp interactive_session?(socket) do
-    socket.assigns[:session_mode] == :interactive and not is_nil(socket.assigns[:session_id])
-  end
-
-  defp resolve_session(socket, param, params) do
-    case ModelSelection.pending_remote?(socket) do
-      true -> socket
-      false -> resolve_session_on_node(socket, param, params)
-    end
-  end
-
-  defp resolve_session_on_node(socket, param, params) do
-    case SessionActions.parse_session(param) do
-      {:ok, id} ->
-        if id == socket.assigns[:current_session_id],
-          do: socket,
-          else: reattach_session(socket, id)
-
-      :none
-      when is_map_key(params, "wb_draft") and not is_nil(socket.assigns.current_session_id) ->
-        new_workbench_draft(socket)
-
-      :none ->
-        leave_session(socket)
-    end
-  end
-
-  defp reattach_session(socket, id) do
-    state = cached_conversation(socket, id)
-
-    case state do
-      %{session_mode: :one_shot} ->
-        socket
-        |> reset_chat()
-        |> restore_chat(id, state)
-        |> assign(current_session_id: id, workbench_draft_key: state[:workbench_draft_key])
-        |> assign(ChatState.restore_selection(state, ModelSelection.selection_scope(socket)))
-
-      _ ->
-        attach_interactive_session(socket, id, ChatState.restore(state))
-    end
-  end
-
-  defp cached_conversation(socket, id) do
-    if connected?(socket) do
-      target = socket.assigns.current_node
-
-      case ChatHistory.get_state(id) do
-        %{chat_node: ^target} = state ->
-          state
-
-        state when is_map(state) and target == node() ->
-          if is_nil(state[:chat_node]), do: state
-
-        _ ->
-          nil
-      end
-    end
-  end
-
-  defp attach_interactive_session(socket, id, restored) do
-    socket = socket |> Uploads.cancel_all() |> TaskPicker.reset()
-
-    socket
-    |> assign(
-      session_id: id,
-      current_session_id: id,
-      chat_id: id,
-      session_mode: :interactive,
-      workbench_draft: nil,
-      workbench_draft_key: nil,
-      chat_agent_id: id,
-      chat_node: socket.assigns[:current_node],
-      chat_task_id: nil,
-      chat_task_status: nil,
-      agent_message_count: nil,
-      queued_echoes: [],
-      task_action_ids: restored.task_action_ids,
-      task_action_pending: restored.task_action_pending,
-      workspace: Workspace.restore(restored[:workspace], Workspace.scope(socket.assigns)),
-      assistant_conversation_id: restored[:assistant_conversation_id] || id,
-      workspace_open: false,
-      workspace_loading: false,
-      workspace_error: nil,
-      workspace_seq: socket.assigns.workspace_seq + 1,
-      thought_process: restored.thought_process,
-      raw_entry_ids: MapSet.new(),
-      pending_attachments: Attachments.clear(),
-      chat_draft: restored.chat_draft,
-      draft_edited?: false,
-      transcript: restored.transcript,
-      chat_status: restore_status(restored.chat_status)
-    )
-    |> assign(ChatState.restore_selection(restored, ModelSelection.selection_scope(socket)))
-    |> ApprovalWorkflow.init()
-    |> spawn_attach(id)
-    |> attach_stream()
-  end
-
-  @doc """
-  Attaches the page to the current `?session=` agent's PUSH-ONLY delta stream.
-
-  The stream is seeded by a snapshot from `EvoDashWeb.HomeLive.Watch`, which
-  also owns the consumer-local PubSub subscription; `SendPath.adopt_session/3`
-  calls this for a freshly started session (whose URL push short-circuits
-  `resolve_session/2`, so `reattach_session/2` never runs for it).
-  """
-  def attach_stream(socket), do: socket |> Watch.attach() |> settle_watch_failure()
-
-  # `ChatState.restore/1` already whitelists the stored status; this defensive
-  defp restore_status(status)
-       when status in [:idle, :running, :cancelling, :awaiting_input, :ended],
-       do: status
-
-  defp restore_status(_status), do: :idle
-
-  defp leave_session(socket) do
-    if is_nil(socket.assigns[:current_session_id]) do
-      socket
-    else
-      socket
-      |> reset_chat()
-      |> assign(workbench_draft: nil, workbench_draft_key: nil)
-      |> attach_default_chat()
-      |> assign(
-        session_id: nil,
-        current_session_id: nil,
-        session_mode: nil,
-        queued_echoes: [],
-        pending_attachments: Attachments.clear()
-      )
-      |> ChatState.persist()
-    end
-  end
-
-  def spawn_attach(socket, session_id) do
-    if connected?(socket) do
-      # Establish watch ownership before tagging the independent metadata read.
-      # Its history/phase must never replace the watch's atomic display cut.
-      socket = attach_stream(socket)
-      seq = (socket.assigns[:session_attach_seq] || 0) + 1
-      node = socket.assigns[:current_node]
-      stream_seq = socket.assigns[:stream_attach_seq]
-
-      case SafeCall.start(self(), {:session_attached, seq, node, session_id, stream_seq}, fn ->
-             SessionActions.load_attach(node, session_id)
-           end) do
-        {:ok, _pid} ->
-          assign(socket, session_attach_seq: seq, session_attach_pending?: true)
-
-        {:error, reason} ->
-          socket |> assign(session_attach_pending?: false) |> settle_attach({:error, reason})
-      end
-    else
-      socket
-    end
-  end
-
-  defp apply_attach(socket, {:ok, %{summary: summary, awaiting?: awaiting?, history: history}}) do
-    status = SessionActions.status_from(summary, awaiting?)
-
-    socket = assign(socket, chat_task_id: summary_value(summary, :task_id))
-
-    socket =
-      if Watch.stream_active?(socket) do
-        socket
-      else
-        socket
-        |> assign(chat_task_status: summary_value(summary, :status))
-        |> apply_history(history, true)
-        |> assign(chat_status: attach_status(summary, awaiting?, status))
-      end
-
-    socket
-    |> ChatState.persist()
-    |> maybe_load_sessions()
-  end
-
-  defp apply_attach(socket, {:error, reason}), do: settle_attach(socket, {:error, reason})
-
-  defp apply_attach(socket, _other),
-    do: settle_attach(socket, {:error, :unexpected_attach_result})
-
-  defp settle_attach(socket, _result) do
-    socket = assign(socket, workspace_loading: false)
-
-    if Watch.stream_active?(socket) do
-      socket
-    else
-      status = if socket.assigns[:transcript] == [], do: :ended, else: :idle
-
-      socket
-      |> assign(chat_status: status)
-      |> ChatState.persist()
-    end
-  end
-
-  defp restore_attached_context(socket, {:ok, %{summary: %{assistant_context: context}}})
-       when is_map(context) do
-    workspace = Map.get(context, :assistant_workspace, socket.assigns.workspace)
-
-    assign(socket,
-      assistant_conversation_id:
-        context[:assistant_conversation_id] || socket.assigns.assistant_conversation_id,
-      workspace: Workspace.restore(workspace, Workspace.scope(socket.assigns))
-    )
-  end
-
-  defp restore_attached_context(socket, _result), do: socket
-
-  defp attach_status(nil, false, _status), do: :ended
-
-  defp attach_status(_summary, _awaiting?, status)
-       when status in [:idle, :running, :cancelling],
-       do: status
-
-  defp attach_status(_summary, _awaiting?, _status), do: :ended
-  # tolerated defensively for a foreign/legacy row).
-  defp summary_value(summary, key) when is_map(summary) do
-    case Map.fetch(summary, key) do
-      {:ok, value} -> value
-      :error -> Map.get(summary, Atom.to_string(key))
-    end
-  end
-
-  defp summary_value(_summary, _key), do: nil
-
-  defp apply_history(socket, messages, rebuild?) when is_list(messages) do
-    %{transcript: built, entries: entries} = Messages.transcript(messages)
-    text = Messages.assistant_text(messages)
-
-    # A REBUILD from an EMPTY fetched history means the session is gone with
-    # nothing to replay, so a non-empty locally cached transcript (and its
-    # reasoning) is KEPT and rendered read-only instead of being wiped by `[]`.
-    # A non-empty history always wins, and a first-ever attach with no cache
-    # stays empty (the ended state).
-    keep_cache? = rebuild? and messages == [] and socket.assigns[:transcript] not in [nil, []]
-
-    transcript =
-      cond do
-        keep_cache? ->
-          socket.assigns[:transcript]
-
-        rebuild? ->
-          built
-
-        interactive_session?(socket) and messages != [] ->
-          built
-
-        text == "" ->
-          socket.assigns[:transcript]
-
-        true ->
-          transcript = Transcript.put_streaming_text(socket.assigns[:transcript], text)
-          answer = Enum.find(Enum.reverse(transcript), &(&1.role == :assistant and &1.streaming))
-
-          reasoning =
-            for entry <- built, entry.role == :assistant, thought <- entry.reasoning, do: thought
-
-          Transcript.put_reasoning(transcript, answer.id, reasoning)
-      end
-
-    assign(socket,
-      transcript: transcript,
-      agent_message_count: length(messages),
-      thought_process: if(keep_cache?, do: socket.assigns[:thought_process] || [], else: entries)
-    )
-  end
-
-  defp apply_history(socket, _messages, _rebuild?), do: socket
-
-  def maybe_load_sessions(socket) do
-    if connected?(socket) do
-      SessionList.spawn_load(socket, socket.assigns[:current_node])
-    else
-      socket
-    end
-  end
-
-  defp maybe_check_source(socket) do
-    if connected?(socket) and SourceGate.visible?(socket.assigns[:current_node]) do
-      seq = socket.assigns[:source_check_seq] + 1
-      node = socket.assigns[:current_node] || node()
-      SourceGate.spawn_availability_check(self(), seq, node)
-      assign(socket, source_check_seq: seq, source_check_loading: true)
-    else
-      socket
-    end
-  end
-
+  # The `handle_params/3` pipeline (node context, chat scope, model selection and
+  # the `?session=` / `?wb_draft=` conversation resolution).
   @impl true
   def handle_params(params, _url, socket) do
-    prev_node = socket.assigns[:current_node]
-    prev_node_id = socket.assigns[:current_node_id]
-
-    socket =
-      socket |> NodeAware.assign_node(params, preserve_unresolved?: true) |> attach_chat(params)
-
-    node_changed =
-      socket.assigns.model_selection_resolved and
-        (socket.assigns[:current_node] != prev_node or
-           socket.assigns[:current_node_id] != prev_node_id)
-
-    chat_node_mismatch =
-      socket.assigns[:chat_node] != nil and
-        socket.assigns[:chat_node] != socket.assigns[:current_node]
-
-    scope = ModelSelection.selection_scope(socket)
-    saved_selection = socket.assigns.model_selection_restore || socket.assigns
-
-    saved_scope =
-      if is_map(saved_selection), do: Map.get(saved_selection, :model_selection_scope)
-
-    selection_scope_mismatch = not is_nil(saved_scope) and saved_scope != scope
-
-    socket =
-      socket
-      |> assign(ChatState.restore_selection(saved_selection, scope))
-      |> assign(model_selection_restore: nil, model_selection_resolved: true)
-
-    socket =
-      cond do
-        node_changed or chat_node_mismatch or selection_scope_mismatch ->
-          start_new_chat(socket)
-
-        true ->
-          socket
-      end
-
-    socket =
-      socket
-      |> resolve_session(params["session"], params)
-      |> restore_workspace_scope(scope)
-      |> open_workbench_draft(params)
-      |> adopt_workbench_scope()
-      |> ChatState.persist()
-      |> ModelSelection.assign_model_select()
-      |> assign(
-        current_path: ~p"/assistant",
-        workbench_reconnect_params: Map.take(params, ~w(session wb_project wb_draft))
-      )
-      |> maybe_check_source()
-      |> maybe_recover_approvals()
-      |> TaskTracking.refresh()
-
-    {:noreply, socket}
+    {:noreply, SessionResolution.run(socket, params)}
   end
 
-  # `?wb_project=` carries a PATH (the workbench client's only spelling), so a
-  # workbench tab starts PATH-keyed and re-settles onto the VCT point of the
-  # project the mount resolves to (`adopt_workbench_scope/1`).
-  defp open_workbench_draft(socket, %{"wb_draft" => draft, "wb_project" => project})
-       when is_binary(draft) and byte_size(draft) == 24 and is_binary(project) do
-    {node_id, target} = Workspace.scope(socket.assigns)
-    key = {node_id, target, project, draft}
+  # Hand-offs `EvoDashWeb.HomeLive.SendPath` calls back into the page for.
+  defdelegate maybe_recover_approvals(socket), to: ApprovalDialogState
+  defdelegate spawn_attach(socket, session_id), to: AttachPipeline
+  defdelegate attach_stream(socket), to: StreamFold
+  defdelegate maybe_load_sessions(socket), to: AttachPipeline
+  defdelegate async_lookup_agent(socket, node_override \\ nil), to: AttachPipeline
 
-    cond do
-      socket.assigns[:current_session_id] != nil ->
-        socket
+  @impl true
+  def handle_event("workspace_toggle", _params, socket),
+    do: WorkbenchScope.workspace_toggle(socket)
 
-      Workspace.open_tab?(socket.assigns, project, draft) ->
-        socket
+  def handle_event("workspace_clear", _params, socket), do: WorkbenchScope.workspace_clear(socket)
 
-      !connected?(socket) or (node_id && target == node()) ->
-        socket
+  def handle_event("workspace_path", params, socket),
+    do: WorkbenchScope.workspace_path(socket, params)
 
-      true ->
-        existing = ChatHistory.get_draft({:workbench, key}) || one_shot_workbench_chat(key)
+  def handle_event("workspace_open", params, socket),
+    do: WorkbenchScope.workspace_open(socket, params)
 
-        socket =
-          case existing do
-            %{chat_id: id} = state ->
-              socket
-              |> reset_chat()
-              |> restore_chat(id, state)
-              |> assign(
-                ChatState.restore_selection(state, ModelSelection.selection_scope(socket))
-              )
+  def handle_event("workspace_select", params, socket),
+    do: WorkbenchScope.workspace_select(socket, params)
 
-            nil ->
-              socket |> new_workbench_draft() |> assign(workspace: nil)
-          end
+  def handle_event("workspace_pick", params, socket),
+    do: WorkbenchScope.workspace_pick(socket, params)
 
-        workspace = Workspace.restore(socket.assigns[:workspace], {node_id, target})
+  def handle_event("workspace_expand", params, socket),
+    do: WorkbenchScope.workspace_expand(socket, params)
 
-        socket
-        |> assign(workbench_draft: draft, workbench_draft_key: key, workspace: workspace)
-        |> Workspace.select_mounted((workspace && workspace.path) || project)
-    end
-  end
-
-  defp open_workbench_draft(socket, _), do: socket
-
-  # Adoption: once the mount resolves, the SAME workbench tab moves from its
-  # path spelling onto the VCT-point scope, carrying whatever the legacy
-  # spelling already stored (an unsaved draft OR an older one-shot chat) so a
-  # re-key never orphans work. A chat that already owns a session, or a
-  # streaming turn, is never re-keyed.
-  defp adopt_workbench_scope(socket) do
-    {settled, legacy_keys} =
-      Workspace.settle_workbench_key(socket.assigns, socket.assigns[:workspace])
-
-    cond do
-      is_nil(settled) -> socket
-      is_nil(socket.assigns[:workspace]) -> socket
-      socket.assigns[:current_session_id] != nil -> socket
-      socket.assigns[:chat_status] in [:running, :cancelling] -> socket
-      true -> adopt_workbench_draft(socket, settled, legacy_keys)
-    end
-  end
-
-  defp adopt_workbench_draft(socket, settled, legacy_keys) do
-    keys = Enum.uniq([settled | legacy_keys])
-
-    case find_workbench_chat(keys) do
-      %{chat_id: id} = state ->
-        socket
-        |> reset_chat()
-        |> restore_chat(id, state)
-        |> assign(workbench_draft_key: settled)
-        |> assign(ChatState.restore_selection(state, ModelSelection.selection_scope(socket)))
-        |> ChatState.persist()
-        |> forget_workbench_drafts(legacy_keys)
-
-      nil ->
-        socket
-        |> move_workbench_draft(keys, settled)
-        |> assign(workbench_draft_key: settled)
-    end
-  end
-
-  # A draft adopted onto the VCT point identity must not ALSO linger under its
-  # retired raw-path spelling, or the workbench link would resurrect a twin.
-  defp forget_workbench_drafts(socket, keys) do
-    Enum.each(keys, &ChatHistory.delete_draft({:workbench, &1}))
-    socket
-  end
-
-  defp find_workbench_chat(keys) do
-    Enum.find_value(keys, &ChatHistory.get_draft({:workbench, &1})) ||
-      Enum.find_value(keys, &one_shot_workbench_chat/1)
-  end
-
-  # An unsaved draft keeps its text: it is MOVED onto the settled key and the
-  # abandoned spellings are dropped so no second restore can find a stale copy.
-  defp move_workbench_draft(socket, keys, settled) do
-    case ChatHistory.get_draft({:workbench, settled}) do
-      nil ->
-        case Enum.find_value(keys, &ChatHistory.get_draft({:workbench, &1})) do
-          nil ->
-            socket
-
-          state ->
-            ChatHistory.put_draft({:workbench, settled}, state)
-
-            keys
-            |> Enum.reject(&(&1 == settled))
-            |> Enum.each(&ChatHistory.delete_draft({:workbench, &1}))
-
-            socket
-        end
-
-      _existing ->
-        socket
-    end
-  end
-
-  defp one_shot_workbench_chat(key) do
-    Enum.find_value(ChatHistory.list_chats(), fn id ->
-      case ChatHistory.get_state(id) do
-        %{workbench_draft_key: ^key, session_mode: :one_shot} = state ->
-          if ChatState.conversation?(state), do: Map.put(state, :chat_id, id)
-
-        _ ->
-          nil
-      end
-    end)
-  end
-
-  defp restore_workspace_scope(socket, scope) do
-    assign(socket, workspace: Workspace.restore(socket.assigns[:workspace], scope))
-  end
-
-  def handle_event("workspace_toggle", _, socket), do: {:noreply, Workspace.toggle(socket)}
-  def handle_event("workspace_clear", _, socket), do: {:noreply, Workspace.clear(socket)}
-
-  def handle_event("workspace_path", %{"workspace" => %{"path" => path}}, socket),
-    do: {:noreply, assign(socket, workspace_path: path, workspace_error: nil)}
-
-  def handle_event("workspace_open", %{"workspace" => %{"path" => path}}, socket),
-    do: {:noreply, Workspace.select(socket, path)}
-
-  def handle_event("workspace_select", %{"path" => path}, socket),
-    do: {:noreply, Workspace.select(socket, path)}
-
-  def handle_event("workspace_pick", %{"point" => point}, socket),
-    do: {:noreply, Workspace.select_workspace(socket, point)}
-
-  def handle_event("workspace_pick", _params, socket), do: {:noreply, socket}
-
-  def handle_event("workspace_expand", %{"point" => point}, socket),
-    do: {:noreply, Workspace.toggle_expanded(socket, point)}
-
-  def handle_event("workspace_expand", _params, socket), do: {:noreply, socket}
-
-  def handle_event("assistant_task_picker_open", _, socket),
+  def handle_event("assistant_task_picker_open", _params, socket),
     do: {:noreply, TaskPicker.load(socket, TaskPicker.view(socket.assigns).query)}
 
   def handle_event("assistant_task_picker_search", %{"query" => query}, socket),
     do: {:noreply, TaskPicker.load(socket, query)}
 
-  def handle_event("assistant_task_picker_more", _, socket),
+  def handle_event("assistant_task_picker_more", _params, socket),
     do: {:noreply, TaskPicker.load(socket, TaskPicker.view(socket.assigns).query, true)}
 
   def handle_event("assistant_follow_task", %{"task_id" => id}, socket),
@@ -919,56 +368,31 @@ defmodule EvoDashWeb.HomeLive do
   def handle_event("assistant_task_cancel", %{"task_id" => id}, socket),
     do: TaskTracking.action(socket, "genesis_cancel_task", %{"task_id" => id})
 
-  @impl true
   def handle_event("send_message", %{"message" => text}, socket), do: send_chat(socket, text)
 
   def handle_event("send_message", _params, socket),
     do: send_chat(socket, socket.assigns[:chat_draft])
 
-  def handle_event("chat_input", %{"message" => text}, socket) do
-    {:noreply,
-     socket |> assign(chat_draft: text || "") |> ChatState.persist(clear_empty_draft: true)}
-  end
+  def handle_event("chat_input", params, socket), do: ChatBootstrap.chat_input(socket, params)
 
-  def handle_event("select_provider_profile", %{"provider_profile_id" => id}, socket) do
-    ModelSelection.update_model_selection(socket, :select_provider, id)
-  end
+  def handle_event("select_provider_profile", params, socket),
+    do: WorkbenchScope.select_provider(socket, params)
 
-  def handle_event("select_model", %{"model" => model}, socket) do
-    ModelSelection.update_model_selection(socket, :select_model, model)
-  end
+  def handle_event("select_model", params, socket),
+    do: WorkbenchScope.select_model(socket, params)
 
-  def handle_event("select_reasoning_effort", %{"reasoning_effort" => index}, socket) do
-    ModelSelection.update_model_selection(socket, :select_reasoning_effort, index)
-  end
+  def handle_event("select_reasoning_effort", params, socket),
+    do: WorkbenchScope.select_reasoning_effort(socket, params)
 
-  def handle_event("toggle_assistant_raw", %{"id" => id}, socket) when is_binary(id) do
-    raw = socket.assigns[:raw_entry_ids] || MapSet.new()
-
-    raw =
-      if MapSet.member?(raw, id) do
-        MapSet.delete(raw, id)
-      else
-        MapSet.put(raw, id)
-      end
-
-    {:noreply, assign(socket, raw_entry_ids: raw)}
-  end
-
-  def handle_event("toggle_assistant_raw", _params, socket), do: {:noreply, socket}
+  def handle_event("toggle_assistant_raw", params, socket),
+    do: ChatBootstrap.toggle_assistant_raw(socket, params)
 
   def handle_event("copied", _params, socket) do
     {:noreply, put_flash(socket, :info, gettext("Copied to clipboard"))}
   end
 
-  def handle_event("download_source", _params, socket) do
-    if socket.assigns[:source_busy] != nil do
-      {:noreply, socket}
-    else
-      SourceGate.spawn_clone(self(), socket.assigns[:current_node] || node())
-      {:noreply, assign(socket, source_busy: :clone)}
-    end
-  end
+  def handle_event("download_source", _params, socket),
+    do: WorkbenchScope.download_source(socket)
 
   def handle_event("retry_chat_stream", _params, socket) do
     if Watch.failure(socket.assigns) != nil do
@@ -978,37 +402,12 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  def handle_event("new_chat", _params, socket) do
-    if socket.assigns[:chat_status] in [:idle, :ended] do
-      had_session? =
-        not is_nil(socket.assigns[:current_session_id]) or
-          not is_nil(socket.assigns[:workbench_draft])
-
-      if key = ChatState.draft_key(socket.assigns), do: ChatHistory.delete_draft(key)
-
-      socket =
-        socket
-        |> assign(session_id: nil, current_session_id: nil, session_mode: nil)
-        |> start_new_chat()
-        |> maybe_load_sessions()
-
-      socket =
-        if had_session? do
-          push_patch(socket, to: SessionActions.url(socket.assigns[:current_node_id], nil))
-        else
-          socket
-        end
-
-      {:noreply, socket}
-    else
-      {:noreply, socket}
-    end
-  end
+  def handle_event("new_chat", _params, socket), do: ChatBootstrap.new_chat(socket)
 
   def handle_event("stop", _params, socket) do
     cond do
-      interactive_session?(socket) -> stop_reply(socket)
-      not is_nil(socket.assigns[:chat_task_id]) -> cancel_chat_task(socket)
+      ChatBootstrap.interactive_session?(socket) -> TaskEvents.stop_reply(socket)
+      not is_nil(socket.assigns[:chat_task_id]) -> TaskEvents.cancel_chat_task(socket)
       true -> {:noreply, socket}
     end
   end
@@ -1022,1172 +421,181 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   def handle_event("chat_upload_validate", _params, socket),
-    do: {:noreply, Uploads.validate(socket)}
+    do: AttachmentPipeline.upload_validate(socket)
 
-  def handle_event("chat_upload_cancel", %{"ref" => ref}, socket),
-    do: {:noreply, Uploads.cancel_entry(socket, ref)}
+  def handle_event("chat_upload_cancel", params, socket),
+    do: AttachmentPipeline.upload_cancel(socket, params)
 
   def handle_event("chat_upload_clear_error", _params, socket),
-    do: {:noreply, Uploads.clear_error(socket)}
+    do: AttachmentPipeline.upload_clear_error(socket)
 
-  # ── Composer attachments ──
-  # The attach affordance dispatches ONE whitelisted kind (pattern match, never
-  # an atom conversion). The native picker runs on the LOCAL node only and
-  # reports asynchronously ({:directory_picker_result, picker_id, result});
-  # when it is unavailable the composer reveals its manual-path fallback.
-  def handle_event("chat_attach", %{"kind" => kind}, socket) do
-    {:noreply, begin_attach(socket, kind)}
-  end
+  def handle_event("chat_attach", params, socket),
+    do: AttachmentPipeline.chat_attach(socket, params)
 
-  def handle_event("chat_attach", _params, socket), do: {:noreply, socket}
+  def handle_event("chat_attach_manual", params, socket),
+    do: AttachmentPipeline.chat_attach_manual(socket, params)
 
-  def handle_event("chat_attach_manual", %{"path" => path}, socket) do
-    {:noreply, attach_manual(socket, path)}
-  end
+  def handle_event("chat_attachment_remove", params, socket),
+    do: AttachmentPipeline.remove_attachment(socket, params)
 
-  def handle_event("chat_attach_manual", _params, socket), do: {:noreply, socket}
+  def handle_event("approval_response", params, socket),
+    do: ApprovalDialogState.respond(socket, params)
 
-  def handle_event("chat_attachment_remove", %{"index" => index}, socket) do
-    socket =
-      case parse_attachment_index(index) do
-        nil ->
-          socket
+  def handle_event("retry_approvals", _params, socket), do: ApprovalDialogState.retry(socket)
 
-        idx ->
-          socket
-          |> assign(
-            pending_attachments: Attachments.remove(socket.assigns[:pending_attachments], idx)
-          )
-          |> ChatState.persist()
-      end
+  def handle_event("review_approval_notification", params, socket),
+    do: ApprovalDialogState.notification_clicked(socket, params)
 
-    {:noreply, socket}
-  end
+  def handle_event("open_approval_dialog", _params, socket),
+    do: ApprovalDialogState.open_dialog(socket)
 
-  def handle_event("chat_attachment_remove", _params, socket), do: {:noreply, socket}
+  def handle_event("dialog_closed", _params, socket),
+    do: ApprovalDialogState.dialog_closed(socket)
 
-  def handle_event(
-        "approval_response",
-        %{"request_id" => request_id, "decision" => decision},
-        socket
-      ) do
-    # The decision payload stays exactly the request id plus the whitelisted
-    # decision — ApprovalWorkflow re-validates both. The dialog cursor is
-    # re-derived from the (possibly shorter) request list afterwards.
-    socket = ApprovalWorkflow.respond(socket, request_id, decision)
-    {:noreply, sync_approval_dialog(socket)}
-  end
+  def handle_event("prev_approval", _params, socket), do: ApprovalDialogState.prev(socket)
 
-  def handle_event("retry_approvals", _params, socket) do
-    {:noreply, recover_approvals(socket)}
-  end
-
-  def handle_event(
-        "review_approval_notification",
-        %{"request_id" => request_id, "scope" => scope},
-        socket
-      ) do
-    # Notification clicks must match the captured chat scope as well as the exact
-    # currently owned pending request; they never authorize or select a fallback.
-    case ApprovalWorkflow.dialog_index(socket.assigns, request_id, scope) do
-      index when is_integer(index) ->
-        {:noreply, assign(socket, approval_dialog_open: true, approval_dialog_index: index)}
-
-      nil ->
-        {:noreply, socket}
-    end
-  end
-
-  def handle_event("review_approval_notification", _params, socket), do: {:noreply, socket}
-
-  def handle_event("open_approval_dialog", _params, socket) do
-    {:noreply, open_approval_dialog(socket)}
-  end
-
-  def handle_event("dialog_closed", _params, socket) do
-    {:noreply, assign(socket, approval_dialog_open: false)}
-  end
-
-  def handle_event("prev_approval", _params, socket) do
-    {:noreply, step_approval_dialog(socket, -1)}
-  end
-
-  def handle_event("next_approval", _params, socket) do
-    {:noreply, step_approval_dialog(socket, 1)}
-  end
-
-  def handle_event("approval_response", _params, socket), do: {:noreply, socket}
-
-  defp cancel_chat_task(socket) do
-    node = socket.assigns[:current_node] || node()
-
-    finish_chat(
-      socket,
-      fn -> NodeContext.cancel_task(node, socket.assigns[:chat_task_id]) end,
-      [chat_status: :cancelling, chat_task_status: :cancelling, queued_echoes: []],
-      false
-    )
-  end
-
-  defp stop_reply(socket) do
-    target = socket.assigns[:current_node] || node()
-
-    runner =
-      Application.get_env(:evo_dash, :home_session_stop_runner, &NodeContext.stop_current_turn/2)
-
-    case SafeCall.run(fn -> runner.(target, socket.assigns[:session_id]) end) do
-      {:ok, :ok} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :info,
-           gettext("Stopping this reply. Background development tasks continue.")
-         )}
-
-      {:ok, {:error, reason}} ->
-        {:noreply, stop_flash(socket, reason)}
-
-      {:error, reason} ->
-        {:noreply, stop_flash(socket, reason)}
-    end
-  end
-
-  defp finish_chat(socket, fun, assigns, reload?) do
-    case SafeCall.run(fun) do
-      {:ok, {:error, reason}} -> {:noreply, stop_flash(socket, reason)}
-      {:error, reason} -> {:noreply, stop_flash(socket, reason)}
-      {:ok, _ok} -> {:noreply, stop_ok(socket, assigns, reload?)}
-    end
-  end
-
-  defp stop_ok(socket, assigns, reload?) do
-    socket = assign(socket, assigns)
-    socket = if reload?, do: maybe_load_sessions(socket), else: socket
-    ChatState.persist(socket)
-  end
-
-  # Justification: transport/exit reasons are untrusted terms, inspected for the operator.
-  defp stop_flash(socket, reason) do
-    put_flash(socket, :error, gettext("Failed to stop: %{reason}", reason: inspect(reason)))
-  end
-
-  defp handle_upload_progress(:chat_files, entry, socket),
-    do: {:noreply, Uploads.progress(entry, socket)}
-
-  ## Composer attachments
-
-  # Picker id → attachment kind (the ONE place the mapping lives). Both the
-  # picker ids and the 4-attachment / 15 MiB caps belong to
-  # `EvoDashWeb.HomeLive.Attachments`, so they are read at call time.
-  defp attach_kind(picker_id) do
-    cond do
-      picker_id == Attachments.picker_id() -> "text"
-      picker_id == Attachments.picker_id_image() -> "image"
-      picker_id == Attachments.picker_id_audio() -> "audio"
-      true -> nil
-    end
-  end
-
-  defp picker_id_for("text"), do: Attachments.picker_id()
-  defp picker_id_for("image"), do: Attachments.picker_id_image()
-  defp picker_id_for("audio"), do: Attachments.picker_id_audio()
-
-  # Attachments are read from THIS node's filesystem, so the picker is local
-  # only; a remote/pending target reveals the manual-path fallback instead of
-  # attaching a file the agent could never see.
-  defp begin_attach(socket, kind) when kind in ["text", "image", "audio"] do
-    cond do
-      not local_attach_node?(socket) ->
-        assign(socket, attach_unavailable: true)
-
-      at_attachment_cap?(socket) ->
-        attachment_flash(socket, :too_many, nil)
-
-      true ->
-        case DirectoryPicker.pick(self(), picker_id_for(kind), :file) do
-          :ok -> socket
-          # No native picker here (headless server, OTP without wx, a dialog
-          # already open): reveal the manual-path fallback.
-          {:error, _reason} -> assign(socket, attach_unavailable: true)
-        end
-    end
-  end
-
-  defp begin_attach(socket, _kind), do: socket
-
-  # NodeAware retains a target id while a remote connection still uses the local
-  # node as a placeholder. Reuse the same authoritative pending predicate as sends.
-  defp local_attach_node?(socket),
-    do: socket.assigns[:current_node] == node() and not ModelSelection.pending_remote?(socket)
-
-  defp at_attachment_cap?(socket) do
-    Attachments.count(socket.assigns[:pending_attachments]) >= Attachments.max_attachments()
-  end
-
-  # Manual fallback: a TEXT file read from this node's filesystem (the native
-  # picker is unavailable, but the read itself is a plain local file read).
-  defp attach_manual(socket, path) do
-    path = path |> to_string() |> String.trim()
-
-    cond do
-      not local_attach_node?(socket) ->
-        put_flash(
-          socket,
-          :error,
-          gettext(
-            "Adding a server file is unavailable on the selected node. Upload a file from this computer instead."
-          )
-        )
-
-      path == "" ->
-        put_flash(socket, :error, gettext("Enter a file path to attach."))
-
-      not File.regular?(path) ->
-        attachment_flash(socket, :enoent, path)
-
-      true ->
-        case Attachments.stage_uploaded(
-               socket.assigns[:pending_attachments],
-               path,
-               Path.basename(path)
-             ) do
-          {:ok, pending} -> store_pending_attachments(socket, pending)
-          {:error, reason} -> attachment_flash(socket, reason, path)
-        end
-    end
-  end
-
-  defp handle_attach_result(socket, "text", {:ok, path}), do: stage_text_attachment(socket, path)
-
-  defp handle_attach_result(socket, kind, {:ok, path}) when kind in ["image", "audio"],
-    do: stage_binary_attachment(socket, kind, path)
-
-  defp handle_attach_result(socket, _kind, :cancelled), do: socket
-
-  defp handle_attach_result(socket, _kind, :unavailable),
-    do: assign(socket, attach_unavailable: true)
-
-  defp handle_attach_result(socket, _kind, {:unavailable, _reason}),
-    do: assign(socket, attach_unavailable: true)
-
-  defp handle_attach_result(socket, _kind, _other), do: socket
-
-  # A TEXT attachment stays OUT of the composer draft: `Attachments.to_message/2`
-  # appends its Markdown block to the outgoing body exactly once at send time.
-  defp stage_text_attachment(socket, path) do
-    case AttachedFile.read(path) do
-      {:ok, content} ->
-        case Attachments.stage_text(socket.assigns[:pending_attachments], path, content) do
-          {:ok, pending} -> store_pending_attachments(socket, pending)
-          {:error, :too_many} -> attachment_flash(socket, :too_many, path)
-        end
-
-      {:error, reason} ->
-        attachment_flash(socket, reason, path)
-    end
-  end
-
-  # Image/audio files are staged as RAW bytes (base64 happens once, inside
-  # `Attachments.to_message/2`); the extension allowlist and the 15 MiB
-  # per-file cap live in `EvoDash.AttachedFile.read_kind/2`.
-  defp stage_binary_attachment(socket, kind, path) do
-    case Attachments.stage_binary(socket.assigns[:pending_attachments], path, kind) do
-      {:ok, pending} -> store_pending_attachments(socket, pending)
-      {:error, reason} -> attachment_flash(socket, reason, path)
-    end
-  end
-
-  defp attachment_flash(socket, reason, path) do
-    put_flash(socket, :error, Attachments.describe_error(reason, path))
-  end
-
-  defp store_pending_attachments(socket, pending) do
-    socket
-    |> assign(pending_attachments: pending)
-    |> ChatState.persist()
-  end
-
-  defp parse_attachment_index(index) when is_integer(index), do: if(index >= 0, do: index)
-
-  defp parse_attachment_index(index) when is_binary(index) do
-    case Integer.parse(index) do
-      {idx, ""} when idx >= 0 -> idx
-      _other -> nil
-    end
-  end
-
-  defp parse_attachment_index(_index), do: nil
+  def handle_event("next_approval", _params, socket), do: ApprovalDialogState.next(socket)
 
   @impl true
-  def handle_info({:task_updated, task_id, status, node} = msg, socket) do
-    {:noreply, socket} = NodeAware.handle_task_info(socket, msg)
-    socket = handle_task_event(socket, task_id, status, node)
+  def handle_info({:task_updated, _task_id, _status, _node} = msg, socket),
+    do: TaskEvents.task_updated(socket, msg)
 
-    socket =
-      if NodeAware.event_from_current_node?(socket.assigns, node),
-        do: TaskTracking.refresh(socket),
-        else: socket
+  def handle_info({:task_deleted, _task_id, _node} = msg, socket),
+    do: TaskEvents.task_deleted(socket, msg)
 
-    {:noreply, socket}
-  end
+  def handle_info({:agent_registered, _id, _summary, _node} = msg, socket),
+    do: TaskEvents.agent_registered(socket, msg)
 
-  def handle_info({:task_deleted, task_id, node} = msg, socket) do
-    {:noreply, socket} = NodeAware.handle_task_info(socket, msg)
-    {:noreply, handle_task_deleted(socket, task_id, node)}
-  end
+  def handle_info({:agent_updated, _id, _changed_fields, _node} = msg, socket),
+    do: TaskEvents.agent_updated(socket, msg)
 
-  def handle_info({:agent_registered, id, summary, node}, socket) do
-    if NodeAware.event_from_current_node?(socket.assigns, node) and
-         Map.get(summary, :task_id) == socket.assigns[:chat_task_id] do
-      socket =
-        assign(socket,
-          chat_agent_id: id,
-          agent_message_count: AgentStream.message_count(summary)
-        )
+  def handle_info({:agent_removed, _id, _node} = msg, socket),
+    do: TaskEvents.agent_removed(socket, msg)
 
-      socket =
-        if Watch.stream_active?(socket) do
-          ChatState.persist(socket)
-        else
-          socket |> ChatState.persist() |> async_fetch_history()
-        end
+  def handle_info({:agents_updated, _node} = msg, socket),
+    do: TaskEvents.agents_updated(socket, msg)
 
-      {:noreply, maybe_recover_approvals(socket)}
-    else
-      {:noreply, socket}
-    end
-  end
+  def handle_info({:approval_requested, request}, socket),
+    do: ApprovalDialogState.requested(socket, request)
 
-  def handle_info({:agent_updated, id, changed_fields, node}, socket) do
-    if NodeAware.event_from_current_node?(socket.assigns, node) and
-         id == socket.assigns[:chat_agent_id] and
-         is_list(changed_fields) and Keyword.has_key?(changed_fields, :message_count) do
-      socket =
-        if message_count_grew?(socket, changed_fields), do: drop_echoes(socket), else: socket
+  def handle_info({:approval_resolved, request_id, _decision, source_node}, socket),
+    do: ApprovalDialogState.resolved(socket, request_id, source_node)
 
-      # A WATCHED session is driven by its delta stream: refetching the whole
-      # history per message-count change IS the poll this feature removes.
-      socket =
-        if Watch.stream_active?(socket) do
-          ChatState.persist(socket)
-        else
-          async_fetch_history(socket)
-        end
+  def handle_info({:approval_resolved, request_id, _decision}, socket),
+    do: ApprovalDialogState.resolved(socket, request_id)
 
-      {:noreply, socket}
-    else
-      {:noreply, socket}
-    end
-  end
+  def handle_info(:node_aware_reload_tasks, socket),
+    do: TaskEvents.node_aware_reload_tasks(socket)
 
-  def handle_info({:agent_removed, _id, _node}, socket) do
-    {:noreply, socket}
-  end
+  def handle_info({:chat_agent_lookup, _node, _seq, _task_id, _stream_seq, _agent} = msg, socket),
+    do: AttachPipeline.handle_info(socket, msg)
 
-  def handle_info({:agents_updated, node}, socket) do
-    if NodeAware.event_from_current_node?(socket.assigns, node) and
-         socket.assigns[:chat_task_id] != nil and socket.assigns[:chat_agent_id] == nil do
-      {:noreply, async_lookup_agent(socket)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_info({:approval_requested, request}, socket) do
-    # Live-arrival admission is shared with notification generation: duplicates,
-    # recovered/resolved requests and foreign scopes must not open or notify.
-    {socket, notification} = ApprovalWorkflow.requested_with_notification(socket, request)
-
-    if notification do
-      {:noreply,
-       socket
-       |> auto_open_approval_dialog()
-       |> push_event("task_notification", notification)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_info({:approval_resolved, request_id, _decision, source_node}, socket) do
-    socket = ApprovalWorkflow.resolved(socket, request_id, source_node)
-    {:noreply, sync_approval_dialog(socket)}
-  end
-
-  def handle_info({:approval_resolved, request_id, _decision}, socket) do
-    socket = ApprovalWorkflow.resolved(socket, request_id)
-    {:noreply, sync_approval_dialog(socket)}
-  end
-
-  def handle_info(:node_aware_reload_tasks, socket) do
-    socket =
-      socket
-      |> NodeAware.reload_tasks()
-      |> NodeAware.clear_task_reload_pending()
-      |> maybe_load_sessions()
-
-    {:noreply, socket}
-  end
-
-  def handle_info({:chat_agent_lookup, node, seq, task_id, stream_seq, agent}, socket) do
-    if stale?(socket, node, seq) or task_id != socket.assigns[:chat_task_id] or
-         stream_seq != socket.assigns[:stream_attach_seq] or Watch.stream_active?(socket) do
-      {:noreply, socket}
-    else
-      if is_map(agent) do
-        socket =
-          assign(socket,
-            chat_agent_id: Map.get(agent, :id),
-            agent_message_count: AgentStream.message_count(agent)
-          )
-
-        {:noreply,
-         socket |> ChatState.persist() |> async_fetch_history() |> maybe_recover_approvals()}
-      else
-        {:noreply, socket}
-      end
-    end
-  end
-
-  def handle_info({:chat_history_loaded, node, seq, agent_id, stream_seq, result}, socket) do
-    if stale?(socket, node, seq) or agent_id != socket.assigns[:chat_agent_id] or
-         stream_seq != socket.assigns[:stream_attach_seq] or Watch.stream_active?(socket) do
-      {:noreply, socket}
-    else
-      case result do
-        msgs when is_list(msgs) ->
-          socket = socket |> apply_history(msgs, false) |> ChatState.persist()
-
-          # No writer is left once the session stopped, so a reply that just
-          # landed from history must not stay rendered as still streaming.
-          socket =
-            if socket.assigns[:chat_status] in [:ended, :idle],
-              do: finalize_bubble(socket),
-              else: socket
-
-          {:noreply, socket}
-
-        _ ->
-          {:noreply, socket}
-      end
-    end
-  end
-
-  def handle_info({:chat_task_loaded, node, seq, task_id, task}, socket) do
-    if Watch.closed?(socket) or node != socket.assigns[:current_node] or
-         seq != socket.assigns[:chat_task_fetch_seq] or
-         task_id != socket.assigns[:chat_task_id] do
-      {:noreply, socket}
-    else
-      {:noreply, finalize_terminal(socket, task)}
-    end
-  end
-
-  def handle_info({{:assistant_workspace_loaded, seq, scope, chat_id, kind}, result}, socket) do
-    socket = Workspace.apply_result(socket, seq, scope, chat_id, kind, result)
-    {:noreply, if(kind == :list, do: socket, else: adopt_workbench_scope(socket))}
-  end
-
-  def handle_info({:assistant_action_reconcile, scope}, socket),
-    do: {:noreply, TaskTracking.reconcile(socket, scope)}
-
-  def handle_info({{:assistant_action_status, scope, id}, result}, socket),
-    do: {:noreply, TaskTracking.reconcile_result(socket, scope, id, result)}
-
-  def handle_info({{:assistant_follow_result, scope}, result}, socket),
-    do: {:noreply, TaskTracking.follow_result(socket, scope, result)}
-
-  def handle_info({{:assistant_task_choices, seq, scope, offset}, result}, socket),
-    do: {:noreply, TaskPicker.apply_result(socket, seq, scope, offset, result)}
-
-  def handle_info(:assistant_tasks_tick, socket), do: {:noreply, TaskTracking.refresh(socket)}
-
-  def handle_info({{:assistant_tasks_loaded, seq, scope}, result}, socket),
-    do: {:noreply, TaskTracking.apply_result(socket, seq, scope, result)}
-
-  def handle_info({{:assistant_task_action, scope, id}, result}, socket),
-    do: {:noreply, TaskTracking.correlated_result(socket, scope, id, result)}
-
-  def handle_info({:source_availability_loaded, seq, node, result}, socket) do
-    if seq == socket.assigns[:source_check_seq] and is_atom(node) and
-         NodeAware.event_from_current_node?(socket.assigns, node) do
-      {:noreply, assign(socket, source_available: result, source_check_loading: false)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_info({:source_clone_result, node, result}, socket) do
-    if is_atom(node) and NodeAware.event_from_current_node?(socket.assigns, node) do
-      case result do
-        {:ok, _status} ->
-          {:noreply, socket |> assign(source_busy: nil) |> maybe_check_source()}
-
-        {:error, reason} ->
-          {:noreply,
-           socket
-           |> assign(source_busy: nil)
-           |> put_flash(
-             :error,
-             gettext("Failed to download the Genesis source: %{reason}",
-               reason: inspect(reason)
-             )
-           )}
-
-        {:unavailable, _reason} ->
-          {:noreply, assign(socket, source_busy: nil, source_available: nil)}
-
-        _other ->
-          {:noreply, assign(socket, source_busy: nil)}
-      end
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_info({{:approval_pending_loaded, _seq, _scope} = tag, result}, socket) do
-    # A recovery snapshot mutates `pending_approvals` too, so the dialog cursor
-    # is re-derived: an empty result closes the dialog instead of leaving it
-    # "open" with nothing to show.
-    {:noreply, socket |> ApprovalWorkflow.recovered(tag, result) |> sync_approval_dialog()}
-  end
-
-  def handle_info({{:approval_workflow_response, _seq, _scope, _id} = tag, result}, socket) do
-    # Success / not-found removes the request: sync closes the dialog when it
-    # was the last one and clamps the cursor to what remains.
-    {:noreply, socket |> ApprovalWorkflow.responded(tag, result) |> sync_approval_dialog()}
-  end
-
-  def handle_info({{:model_select_loaded, seq, target_node}, result}, socket) do
-    if target_node != elem(ModelSelection.selection_scope(socket), 1) or
-         seq != socket.assigns.model_select_seq or ModelSelection.pending_remote?(socket) do
-      {:noreply, socket}
-    else
-      case result do
-        {:ok, snapshot_result} ->
-          {:noreply, ModelSelection.apply_model_snapshot(socket, snapshot_result)}
-
-        {:error, reason} ->
-          {:noreply, ModelSelection.apply_model_snapshot(socket, {:error, reason})}
-      end
-    end
-  end
-
-  def handle_info({{:session_attached, seq, node, session_id, stream_seq}, result}, socket) do
-    if seq == socket.assigns[:session_attach_seq] and
-         node == socket.assigns[:current_node] and
-         session_id == socket.assigns[:session_id] do
-      socket =
+  def handle_info(
+        {:chat_history_loaded, _node, _seq, _agent_id, _stream_seq, _result} = msg,
         socket
-        |> assign(session_attach_pending?: false)
-        |> restore_attached_context(result)
+      ),
+      do: AttachPipeline.handle_info(socket, msg)
 
-      # Stream generations own the transcript, while the owning session supplies identity.
-      socket =
-        if stream_seq == socket.assigns[:stream_attach_seq],
-          do: apply_attach(socket, result),
-          else: ChatState.persist(socket)
+  def handle_info({:chat_task_loaded, _node, _seq, _task_id, _task} = msg, socket),
+    do: TaskEvents.chat_task_loaded(socket, msg)
 
-      {:noreply, socket |> maybe_recover_approvals() |> TaskTracking.refresh()}
-    else
-      {:noreply, socket}
-    end
+  # The async send answer keeps its own monotonic generation plus the identity it
+  # was issued for, so a superseded answer is DROPPED instead of mutating a
+  # different chat (`SendPath.apply_send_result/3`).
+  def handle_info({{:chat_send_result, seq}, result}, socket) do
+    {:noreply, SendPath.apply_send_result(socket, seq, result)}
   end
 
-  def handle_info({:node_selected, node_id}, socket) do
-    {:noreply, socket} = NodeAware.handle_node_selected(socket, node_id)
-    {:noreply, maybe_load_sessions(socket)}
-  end
+  def handle_info({{:chat_stop_result, _seq, _node, _session_id}, _result} = msg, socket),
+    do: TaskEvents.chat_stop_result(socket, msg)
 
-  def handle_info({:remote_connection_status, target_id, status}, socket) do
-    {:noreply, socket} =
-      NodeAware.handle_connection_status(socket, {:remote_connection_status, target_id, status})
+  def handle_info(
+        {{:chat_finish_result, _seq, _node, _task_id, _assigns, _reload?}, _result} = msg,
+        socket
+      ),
+      do: TaskEvents.chat_finish_result(socket, msg)
 
-    {:noreply, maybe_load_sessions(socket)}
-  end
+  def handle_info(
+        {{:assistant_workspace_loaded, seq, scope, chat_id, kind}, result},
+        socket
+      ),
+      do: SessionResolution.workspace_loaded(socket, seq, scope, chat_id, kind, result)
 
-  # Async native-picker results for the composer's three attach ids; any other
-  # picker id keeps the page's existing ignore behaviour (the catch-all below).
-  def handle_info({:directory_picker_result, picker_id, result}, socket)
-      when is_binary(picker_id) do
-    case attach_kind(picker_id) do
-      nil -> {:noreply, socket}
-      kind -> {:noreply, handle_attach_result(socket, kind, result)}
-    end
-  end
+  def handle_info({:assistant_action_reconcile, _scope} = msg, socket),
+    do: TaskEvents.assistant_action_reconcile(socket, msg)
+
+  def handle_info({{:assistant_action_status, _scope, _id}, _result} = msg, socket),
+    do: TaskEvents.assistant_action_status(socket, msg)
+
+  def handle_info({{:assistant_follow_result, _scope}, _result} = msg, socket),
+    do: TaskEvents.assistant_follow_result(socket, msg)
+
+  def handle_info({{:assistant_task_choices, _seq, _scope, _offset}, _result} = msg, socket),
+    do: TaskEvents.assistant_task_choices(socket, msg)
+
+  def handle_info(:assistant_tasks_tick, socket),
+    do: TaskEvents.assistant_tasks_tick(socket, :assistant_tasks_tick)
+
+  def handle_info({{:assistant_tasks_loaded, _seq, _scope}, _result} = msg, socket),
+    do: TaskEvents.assistant_tasks_loaded(socket, msg)
+
+  def handle_info({{:assistant_task_action, _scope, _id}, _result} = msg, socket),
+    do: TaskEvents.assistant_task_action(socket, msg)
+
+  def handle_info({:source_availability_loaded, _seq, _node, _result} = msg, socket),
+    do: WorkbenchScope.source_availability_loaded(socket, msg)
+
+  def handle_info({:source_clone_result, _node, _result} = msg, socket),
+    do: WorkbenchScope.source_clone_result(socket, msg)
+
+  # A recovery snapshot mutates `pending_approvals` too, so the dialog cursor is
+  # re-derived: an empty result closes the dialog instead of leaving it "open".
+  def handle_info({{:approval_pending_loaded, _seq, _scope} = tag, result}, socket),
+    do: ApprovalDialogState.pending_loaded(socket, tag, result)
+
+  def handle_info({{:approval_workflow_response, _seq, _scope, _id} = tag, result}, socket),
+    do: ApprovalDialogState.workflow_response(socket, tag, result)
+
+  def handle_info({{:model_select_loaded, _seq, _target_node}, _result} = msg, socket),
+    do: WorkbenchScope.model_select_loaded(socket, msg)
+
+  def handle_info(
+        {{:session_attached, _seq, _node, _session_id, _stream_seq}, _result} = msg,
+        socket
+      ),
+      do: AttachPipeline.handle_info(socket, msg)
+
+  def handle_info({:node_selected, _node_id} = msg, socket),
+    do: WorkbenchScope.node_selected(socket, msg)
+
+  def handle_info({:remote_connection_status, _target_id, _status} = msg, socket),
+    do: WorkbenchScope.remote_connection_status(socket, msg)
+
+  def handle_info({:directory_picker_result, _picker_id, _result} = msg, socket),
+    do: AttachmentPipeline.handle_info(socket, msg)
 
   # Watch owns sequence gating, registration-time buffering and failed watches.
-  # Always retain its returned socket, even when no display surface is admitted.
-  def handle_info({:agent_delta, agent_id, seq, batch}, socket) do
-    {:noreply, apply_watch_result(Watch.push(socket, agent_id, seq, batch))}
-  end
+  def handle_info({:agent_delta, _agent_id, _seq, _batch} = msg, socket),
+    do: StreamFold.handle_info(socket, msg)
 
-  def handle_info({:agent_stream_closed, agent_id, snapshot, seq}, socket) do
-    {:noreply, apply_watch_result(Watch.closed(socket, agent_id, snapshot, seq))}
-  end
+  def handle_info({:agent_stream_closed, _agent_id, _snapshot, _seq} = msg, socket),
+    do: StreamFold.handle_info(socket, msg)
 
-  def handle_info({:chat_stream_ready, node, seq, agent_id, result}, socket) do
-    {:noreply, apply_watch_result(Watch.ready(socket, node, seq, agent_id, result))}
-  end
+  def handle_info({:chat_stream_ready, _node, _seq, _agent_id, _result} = msg, socket),
+    do: StreamFold.handle_info(socket, msg)
 
-  def handle_info({:DOWN, ref, :process, pid, reason}, socket) do
-    {:noreply, socket |> Watch.down(ref, pid, reason) |> settle_watch_failure()}
-  end
+  def handle_info({:DOWN, _ref, :process, _pid, _reason} = msg, socket),
+    do: StreamFold.handle_info(socket, msg)
 
   def handle_info(_msg, socket) do
     {:noreply, socket}
   end
 
-  # Assign a value only when it differs from what the socket already holds:
-  # a value-equal re-assign still re-renders that subtree, which is what made
-  # the transcript column jitter on every ~75 ms delta batch.
-  defp maybe_assign_changed(socket, _key, new_value, new_value), do: socket
-  defp maybe_assign_changed(socket, key, new_value, _previous), do: assign(socket, key, new_value)
-
-  defp apply_watch_result({:ok, socket, surface}) do
-    socket =
-      case surface do
-        %{snapshot: snapshot} ->
-          socket
-          |> assign(agent_message_count: length(snapshot.messages))
-          |> apply_stream_phase(snapshot.phase)
-
-        _ ->
-          socket
-      end
-
-    socket
-    |> maybe_assign_changed(:transcript, surface.transcript, socket.assigns[:transcript])
-    |> maybe_assign_changed(
-      :thought_process,
-      surface.thought_process,
-      socket.assigns[:thought_process]
-    )
-    |> maybe_assign_changed(:chat_stream_meta, surface.meta, socket.assigns[:chat_stream_meta])
-    |> fold_stream_outcome(surface.outcome)
-    |> apply_terminal_snapshot(surface)
-    |> ChatState.persist()
-  end
-
-  defp apply_watch_result({:error, socket, _reason}), do: settle_watch_failure(socket)
-  defp apply_watch_result({_status, socket}), do: socket
-
-  # Closed snapshots deliberately have no synthetic delta outcome: lifecycle
-  # and final status come from the authoritative snapshot, after its transcript.
-  defp apply_terminal_snapshot(socket, %{snapshot: %{phase: :done} = snapshot}) do
-    socket =
-      case Map.get(snapshot, :status) do
-        status when status in @terminal_statuses ->
-          assign(socket, chat_task_status: status)
-
-        _ ->
-          socket
-      end
-
-    socket
-    |> assign(chat_status: :ended, queued_echoes: [])
-    |> finalize_bubble()
-  end
-
-  defp apply_terminal_snapshot(socket, _surface), do: socket
-
-  defp settle_watch_failure(socket) do
-    # Only the registry's absent-session verdict proves the session has ended.
-    # Other :not_found reasons include timeout, unsupported watch and missing
-    # PubSub: keep the last coherent surface/phase and offer explicit reattach.
-    # Failed ownership stays intact, so an independent attach cannot resurrect
-    # the session or replace cached text/reasoning, in either arrival order.
-    case Watch.failure(socket.assigns) do
-      {:not_found, :session_not_found} ->
-        socket
-        |> assign(
-          chat_status: :ended,
-          chat_task_status: nil,
-          queued_echoes: [],
-          transcript: Transcript.finalize_streaming(socket.assigns[:transcript])
-        )
-        |> ChatState.persist()
-
-      _ ->
-        socket
-    end
-  end
-
-  defp apply_stream_phase(socket, :awaiting_input), do: fold_stream_outcome(socket, :yield)
-
-  defp apply_stream_phase(socket, phase)
-       when phase in [:starting, :running, :cancelling, :finalizing] do
-    assign(socket,
-      chat_status: if(phase == :cancelling, do: :cancelling, else: :running),
-      chat_task_status: if(phase == :starting, do: :running, else: phase)
-    )
-  end
-
-  defp apply_stream_phase(socket, :done),
-    do: assign(socket, chat_status: :ended, queued_echoes: [])
-
-  defp apply_stream_phase(socket, _phase), do: socket
-
-  # The outcome a delta batch reported: a yield parks the session (idle, waiting
-  # for input), a finish ends it, and anything else terminal-looking fails it.
-  defp fold_stream_outcome(socket, nil), do: socket
-
-  defp fold_stream_outcome(socket, :yield) do
-    assign(socket, chat_status: :idle, chat_task_status: :awaiting_input, queued_echoes: [])
-  end
-
-  defp fold_stream_outcome(socket, {:finished, :completed}) do
-    assign(socket, chat_status: :ended, chat_task_status: :completed, queued_echoes: [])
-  end
-
-  defp fold_stream_outcome(socket, {:finished, status}) when status in @terminal_statuses do
-    assign(socket, chat_status: :ended, chat_task_status: status, queued_echoes: [])
-  end
-
-  defp fold_stream_outcome(socket, _outcome) do
-    assign(socket, chat_status: :ended, chat_task_status: :failed, queued_echoes: [])
-  end
-
-  # The composer send path and the one-shot finalize block live in
-  # `EvoDashWeb.HomeLive.SendPath`; these thin delegations keep every call site
-  # (handle_event / handle_info / task-event handlers) unchanged.
+  # The composer send path lives in `EvoDashWeb.HomeLive.SendPath`; these thin
+  # delegations keep every call site (handle_event / handle_info) unchanged.
   defp send_chat(socket, text), do: SendPath.send_chat(socket, text)
+
   defp send_draft(socket, text, policy), do: SendPath.send_draft(socket, text, policy)
-
-  defp message_count_grew?(socket, changed_fields),
-    do: SendPath.message_count_grew?(socket, changed_fields)
-
-  defp drop_echoes(socket), do: assign(socket, queued_echoes: [])
-
-  defp finalize_streaming(socket, text), do: SendPath.finalize_streaming(socket, text)
-  defp finalize_terminal(socket, task), do: SendPath.finalize_terminal(socket, task)
-  defp clear_task_refs(socket), do: SendPath.clear_task_refs(socket)
-
-  def async_lookup_agent(socket, node_override \\ nil) do
-    task_id = socket.assigns[:chat_task_id]
-    node = node_override || socket.assigns[:current_node] || node()
-    seq = socket.assigns[:chat_fetch_seq] + 1
-    stream_seq = socket.assigns[:stream_attach_seq]
-    pid = self()
-
-    Task.Supervisor.start_child(TaskSupervisor, fn ->
-      agents = SafeCall.run(fn -> NodeContext.list_agents(node) end, [])
-      agent = AgentStream.find_root_agent(agents, task_id)
-      send(pid, {:chat_agent_lookup, node, seq, task_id, stream_seq, agent})
-    end)
-
-    assign(socket, chat_fetch_seq: seq)
-  end
-
-  defp async_fetch_history(socket, node_override \\ nil) do
-    agent_id = socket.assigns[:chat_agent_id]
-    node = node_override || socket.assigns[:current_node] || node()
-    seq = socket.assigns[:chat_fetch_seq] + 1
-    stream_seq = socket.assigns[:stream_attach_seq]
-    pid = self()
-
-    runner =
-      Application.get_env(:evo_dash, :home_agent_history_runner, &NodeContext.get_agent_history/2)
-
-    Task.Supervisor.start_child(TaskSupervisor, fn ->
-      result =
-        SafeCall.run(fn -> runner.(node, agent_id) end, [])
-
-      send(pid, {:chat_history_loaded, node, seq, agent_id, stream_seq, result})
-    end)
-
-    assign(socket, chat_fetch_seq: seq)
-  end
-
-  defp async_fetch_task(socket, node_override \\ nil) do
-    task_id = socket.assigns[:chat_task_id]
-    node = node_override || socket.assigns[:current_node] || node()
-    seq = socket.assigns[:chat_task_fetch_seq] + 1
-    pid = self()
-
-    Task.Supervisor.start_child(TaskSupervisor, fn ->
-      task = SafeCall.run(fn -> NodeContext.get_task_lite(node, task_id) end, nil)
-      send(pid, {:chat_task_loaded, node, seq, task_id, task})
-    end)
-
-    assign(socket, chat_task_fetch_seq: seq)
-  end
-
-  defp handle_task_event(socket, task_id, status, node) do
-    if NodeAware.event_from_current_node?(socket.assigns, node) and
-         task_id == socket.assigns[:chat_task_id] do
-      if interactive_session?(socket) do
-        session_task_event(socket, status)
-      else
-        one_shot_task_event(socket, status)
-      end
-    else
-      socket
-    end
-  end
-
-  defp session_task_event(socket, status) do
-    socket =
-      cond do
-        Watch.closed?(socket) ->
-          socket
-
-        status in @terminal_statuses ->
-          socket =
-            socket
-            |> assign(chat_task_status: status, chat_status: :ended, queued_echoes: [])
-            |> finalize_bubble()
-
-          # Pending and failed watches still own the surface. Detaching here
-          # invalidates the silent finish's final snapshot (or loses a finish
-          # still in flight); keep cached text if that snapshot is unavailable.
-          if Watch.stream_active?(socket) do
-            socket
-          else
-            socket
-            |> Watch.detach()
-            |> async_fetch_history(socket.assigns[:chat_node])
-          end
-
-        status == :cancelling ->
-          # No more text is coming, but the session is still alive: finalize the
-          # bubble and KEEP the watcher.
-          socket
-          |> assign(chat_task_status: :cancelling, chat_status: :cancelling)
-          |> finalize_bubble()
-
-        status in [:running, :pending, :finalizing] ->
-          assign(socket, chat_task_status: status)
-
-        true ->
-          socket
-      end
-
-    ChatState.persist(socket)
-  end
-
-  # The terminal half of an interactive session: the in-flight assistant bubble
-  # is CLOSED (an empty placeholder is dropped) so it never stays stuck
-  # "streaming" with no writer left.
-  defp finalize_bubble(socket) do
-    assign(socket, transcript: Transcript.close_streaming(socket.assigns[:transcript]))
-  end
-
-  defp one_shot_task_event(socket, status) do
-    socket =
-      case status do
-        :completed ->
-          async_fetch_task(assign(socket, chat_task_status: :completed))
-
-        :cancelled ->
-          async_fetch_task(assign(socket, chat_task_status: :cancelled))
-
-        :failed ->
-          socket
-          |> assign(chat_task_status: :failed)
-          |> finalize_streaming(gettext("The task failed."))
-          |> clear_task_refs()
-
-        :running ->
-          socket = assign(socket, chat_task_status: :running)
-
-          if socket.assigns[:chat_agent_id] == nil do
-            async_lookup_agent(socket)
-          else
-            socket
-          end
-
-        :cancelling ->
-          assign(socket, chat_task_status: :cancelling, chat_status: :cancelling)
-
-        :pending ->
-          assign(socket, chat_task_status: :pending)
-
-        :finalizing ->
-          assign(socket, chat_task_status: :finalizing)
-
-        _ ->
-          socket
-      end
-
-    ChatState.persist(socket)
-  end
-
-  defp handle_task_deleted(socket, task_id, node) do
-    if NodeAware.event_from_current_node?(socket.assigns, node) and
-         task_id == socket.assigns[:chat_task_id] do
-      if interactive_session?(socket) do
-        socket
-        |> assign(
-          chat_task_id: nil,
-          chat_task_status: nil,
-          chat_status: :ended,
-          queued_echoes: []
-        )
-        |> ChatState.persist()
-      else
-        socket
-        |> finalize_streaming(gettext("The conversation was deleted."))
-        |> clear_task_refs()
-        |> ChatState.persist()
-      end
-    else
-      socket
-    end
-  end
-
-  defp reset_chat(socket) do
-    # Keep the serial registration worker and the generation advanced by detach;
-    # older loader results must stay obsolete even after a later chat reset.
-    socket
-    |> Uploads.cancel_all()
-    |> TaskPicker.reset()
-    |> Watch.detach()
-    |> assign(
-      transcript: Transcript.new(),
-      chat_draft: "",
-      draft_edited?: false,
-      chat_status: :idle,
-      chat_task_id: nil,
-      chat_agent_id: nil,
-      agent_message_count: nil,
-      chat_task_status: nil,
-      thought_process: [],
-      chat_node: nil,
-      chat_fetch_seq: 0,
-      chat_task_fetch_seq: 0,
-      raw_entry_ids: MapSet.new(),
-      session_id: nil,
-      current_session_id: nil,
-      session_mode: nil,
-      queued_echoes: [],
-      pending_attachments: Attachments.clear(),
-      approval_context: nil,
-      session_attach_pending?: false,
-      approval_dialog_open: false,
-      approval_dialog_index: 0,
-      workspace_open: false,
-      workspace_loading: false,
-      workspace_error: nil,
-      workspace_projects: [],
-      workspace_workspaces: [],
-      workspace_expanded: MapSet.new(),
-      workspace_seq: socket.assigns.workspace_seq + 1
-    )
-    |> ApprovalWorkflow.init()
-  end
-
-  ## Approval review dialog -------------------------------------------------
-  #
-  # `approval_dialog_open` / `approval_dialog_index` are LOCAL VIEW state: the
-  # requests themselves belong to ApprovalWorkflow, and every decision still
-  # travels through it as the request id plus a whitelisted decision. The
-  # helpers below only keep the cursor sane as the request list changes.
-
-  defp pending_approvals(socket), do: socket.assigns[:pending_approvals] || []
-
-  # A genuinely NEW live request (never a recovery snapshot) surfaces the review
-  # dialog when it is not already open, so the user is asked in place instead of
-  # having to notice a banner. When it IS open, only the cursor is re-synced.
-  defp auto_open_approval_dialog(socket) do
-    if socket.assigns[:approval_dialog_open] do
-      sync_approval_dialog(socket)
-    else
-      open_approval_dialog(socket)
-    end
-  end
-
-  defp open_approval_dialog(socket) do
-    case pending_approvals(socket) do
-      [] ->
-        assign(socket, approval_dialog_open: false, approval_dialog_index: 0)
-
-      _ ->
-        assign(socket,
-          approval_dialog_open: true,
-          approval_dialog_index:
-            clamp_dialog_index(socket.assigns[:approval_dialog_index], socket)
-        )
-    end
-  end
-
-  defp sync_approval_dialog(socket) do
-    case pending_approvals(socket) do
-      [] ->
-        assign(socket, approval_dialog_open: false, approval_dialog_index: 0)
-
-      _ ->
-        assign(socket,
-          approval_dialog_index:
-            clamp_dialog_index(socket.assigns[:approval_dialog_index], socket)
-        )
-    end
-  end
-
-  defp step_approval_dialog(socket, step) do
-    case pending_approvals(socket) do
-      [] ->
-        assign(socket, approval_dialog_open: false, approval_dialog_index: 0)
-
-      requests ->
-        count = length(requests)
-        index = clamp_dialog_index(socket.assigns[:approval_dialog_index], socket)
-        assign(socket, approval_dialog_index: integer_mod(index + step, count))
-    end
-  end
-
-  defp clamp_dialog_index(index, socket) do
-    count = length(pending_approvals(socket))
-
-    cond do
-      count == 0 -> 0
-      not is_integer(index) or index < 0 -> 0
-      index >= count -> count - 1
-      true -> index
-    end
-  end
-
-  defp integer_mod(value, count) when count > 0 do
-    rem(rem(value, count) + count, count)
-  end
-
-  def maybe_recover_approvals(socket) do
-    context =
-      Map.take(socket.assigns, [
-        :chat_id,
-        :assistant_conversation_id,
-        :current_node_id,
-        :current_node,
-        :chat_node,
-        :chat_task_id,
-        :chat_agent_id
-      ])
-
-    if connected?(socket) and !socket.assigns.session_attach_pending? and
-         context != socket.assigns[:approval_context] do
-      socket
-      |> assign(approval_context: context)
-      |> recover_approvals()
-    else
-      socket
-    end
-  end
-
-  defp recover_approvals(socket) do
-    if connected?(socket), do: ApprovalWorkflow.recover(socket), else: socket
-  end
-
-  defp start_new_chat(socket) do
-    socket =
-      if connected?(socket) do
-        id = standalone_chat_id(socket.assigns.assistant_client_id)
-        assign(socket, chat_id: id, assistant_conversation_id: id)
-      else
-        socket
-      end
-
-    socket
-    |> reset_chat()
-    |> assign(workbench_draft: nil, workbench_draft_key: nil)
-    |> ChatState.persist()
-    |> TaskTracking.refresh()
-  end
-
-  defp standalone_chat_id(client) when is_binary(client), do: System.unique_integer([:positive])
-
-  defp standalone_chat_id(nil) do
-    id = ChatHistory.new_chat()
-    ChatHistory.prune(10)
-    id
-  end
-
-  defp assistant_client_id(socket) do
-    if connected?(socket) do
-      case get_connect_params(socket)["guide_client_id"] do
-        id when is_binary(id) and byte_size(id) in 1..128 -> id
-        _ -> nil
-      end
-    end
-  end
-
-  defp new_workbench_draft(socket) do
-    id = System.unique_integer([:positive])
-
-    socket
-    |> reset_chat()
-    |> assign(chat_id: id, assistant_conversation_id: id)
-  end
-
-  defp attach_chat(socket, params) do
-    if connected?(socket) and is_nil(socket.assigns.chat_id) do
-      if params["session"] || params["wb_draft"] do
-        new_workbench_draft(socket)
-      else
-        attach_default_chat(socket)
-      end
-    else
-      socket
-    end
-  end
-
-  defp attach_default_chat(%{assigns: %{assistant_client_id: client}} = socket)
-       when is_binary(client) do
-    key = ChatState.draft_key(socket.assigns)
-
-    if connected?(socket) do
-      case key && ChatHistory.get_draft(key) do
-        %{chat_id: id} = state ->
-          socket |> restore_chat(id, state) |> assign(model_selection_restore: state)
-
-        _ ->
-          start_new_chat(socket)
-      end
-    else
-      socket
-    end
-  end
-
-  defp attach_default_chat(socket) do
-    if connected?(socket) do
-      id = ChatHistory.current_chat_id() || ChatHistory.new_chat()
-      state = ChatHistory.get_state(id) || %{}
-
-      socket
-      |> restore_chat(id, state)
-      |> assign(model_selection_restore: state)
-    else
-      socket
-    end
-  end
-
-  defp restore_chat(socket, id, state) do
-    socket
-    |> assign(ChatState.restore(state))
-    |> assign(
-      chat_id: id,
-      draft_edited?: state[:draft_edited?] == true,
-      assistant_conversation_id: state[:assistant_conversation_id] || id
-    )
-    |> reconcile_chat()
-  end
-
-  defp reconcile_chat(socket) do
-    if socket.assigns[:chat_status] in [:running, :cancelling] and
-         socket.assigns[:chat_task_id] != nil do
-      socket = async_fetch_task(socket, socket.assigns[:chat_node])
-
-      if socket.assigns[:chat_agent_id] != nil do
-        async_fetch_history(socket, socket.assigns[:chat_node])
-      else
-        async_lookup_agent(socket, socket.assigns[:chat_node])
-      end
-    else
-      socket
-    end
-  end
-
-  defp stale?(socket, node, seq) do
-    node != socket.assigns[:current_node] or seq != socket.assigns[:chat_fetch_seq]
-  end
 
   # Best-effort unwatch on page teardown. The REAL reaper is the session's own
   # monitor on the LiveView pid (a `:DOWN` removes the watcher set entry), so a

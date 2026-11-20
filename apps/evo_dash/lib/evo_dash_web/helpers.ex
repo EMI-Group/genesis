@@ -833,7 +833,7 @@ defmodule EvoDashWeb.Helpers do
   def mode_info_message(_), do: ""
 
   # ---------------------------------------------------------------------------
-  # Config Status Badge
+  # Config Status
   # ---------------------------------------------------------------------------
 
   @doc """
@@ -846,61 +846,6 @@ defmodule EvoDashWeb.Helpers do
   def config_status do
     EvoGit.Config.config_status()
   end
-
-  @doc """
-  Renders a status badge for configuration completeness.
-
-  Takes a map with `:ok?` (boolean) and `:missing` (list of atoms) keys, as
-  returned by `EvoGit.Config.config_status/0`.
-
-  Returns a HEEx fragment via `~H`.
-
-  ## Examples
-
-      config_status_badge(%{ok?: true, missing: []})
-      #=> green badge with "All configured"
-
-      config_status_badge(%{ok?: false, missing: [:llm_model, :api_key]})
-      #=> warning card listing missing items
-  """
-  attr(:status, :map, required: true)
-
-  def config_status_badge(assigns) do
-    ~H"""
-    <%= if @status.ok? do %>
-      <div class="bg-success/10 border border-success/20 rounded-xl p-4 flex items-center gap-3">
-        <.icon name="hero-check-circle" class="size-5 text-success shrink-0" />
-        <div>
-          <p class="font-semibold text-success">{gettext("All configured")}</p>
-          <p class="text-xs text-success/90">
-            {gettext("All critical configuration values are set")}
-          </p>
-        </div>
-      </div>
-    <% else %>
-      <div class="bg-warning/10 border border-warning/20 rounded-xl p-4">
-        <h3 class="font-semibold text-warning flex items-center gap-2 mb-2">
-          <.icon name="hero-exclamation-triangle" class="size-5" /> {gettext("Missing Configuration")}
-        </h3>
-        <div class="flex flex-wrap gap-2">
-          <%= for item <- @status.missing do %>
-            <span class="badge badge-warning badge-sm">
-              <.icon name="hero-x-mark" class="size-3" />
-              {format_config_item(item)}
-            </span>
-          <% end %>
-        </div>
-      </div>
-    <% end %>
-    """
-  end
-
-  defp format_config_item(:llm_model), do: gettext("LLM Model")
-  defp format_config_item(:api_key), do: gettext("API Key")
-  defp format_config_item(:github_username), do: gettext("GitHub Username")
-
-  defp format_config_item(item),
-    do: Atom.to_string(item) |> String.replace("_", " ") |> String.capitalize()
 
   # ---------------------------------------------------------------------------
   # Modal Component

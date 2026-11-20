@@ -89,8 +89,12 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   check, no `newly_created` flag. Leftovers from a previous run (crash-retry
   race) are destroyed first.
 
-  Returns `{:ok, worktree_path}` on success or `{:error, reason}`. Git error
-  tuples are handled explicitly — this function never raises.
+  Returns `{:ok, worktree_path}` on success or `{:error, reason}` — ALWAYS the
+  outer `:error` tag, with one reason per failure class:
+  `{:error, {:worktree_create_failed, msg}}`, `{:error,
+  {:worktree_prepare_failed, detail}}` (the prepare step's own error shape,
+  carried through unchanged) or `{:error, {:agent_state_missing, agent_id}}`.
+  Git error tuples are handled explicitly — this function never raises.
   """
   @spec prepare_new_worktree(
           pos_integer(),
@@ -130,12 +134,15 @@ defmodule EvoGit.AgentScheduler.Worktrees do
         Logger.error("AgentScheduler: Failed to create worktree #{worktree_path}: #{msg}")
         {:error, {:worktree_create_failed, msg}}
 
-      {:error, {:worktree_prepare_failed, _} = error} ->
+      # The prepare step answers the FINAL error shape already
+      # (`{:error, {:worktree_prepare_failed, detail}}`), so it is re-tagged
+      # nowhere: bind the reason and keep the outer `:error` tag.
+      {:error, {:worktree_prepare_failed, _} = reason} ->
         Logger.error(
-          "AgentScheduler: Failed to prepare worktree #{worktree_path}: #{inspect(error)}"
+          "AgentScheduler: Failed to prepare worktree #{worktree_path}: #{inspect(reason)}"
         )
 
-        error
+        {:error, reason}
 
       :error ->
         {:error, {:agent_state_missing, agent_id}}
@@ -484,11 +491,12 @@ defmodule EvoGit.AgentScheduler.Worktrees do
 
         {:ok, commit_sha}
       else
-        # Guard failures arrive in the FINAL error shape already — log and pass
-        # through unchanged (no double wrapping).
-        {:error, {:worktree_prepare_failed, _} = error} ->
-          Logger.error("AgentScheduler: Failed to prepare worktree #{wt}: #{inspect(error)}")
-          error
+        # Guard failures arrive in the FINAL error shape already — log and
+        # re-emit it with its outer `:error` tag (no double wrapping; the bare
+        # inner pair never escapes this function).
+        {:error, {:worktree_prepare_failed, _} = reason} ->
+          Logger.error("AgentScheduler: Failed to prepare worktree #{wt}: #{inspect(reason)}")
+          {:error, reason}
 
         {:error, {_tag, _output} = error} ->
           Logger.error("AgentScheduler: Failed to prepare worktree #{wt}: #{inspect(error)}")

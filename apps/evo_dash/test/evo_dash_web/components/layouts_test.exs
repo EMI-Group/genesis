@@ -85,6 +85,122 @@ defmodule EvoDashWeb.LayoutsTest do
     end
   end
 
+  describe "app/1 — Active Tasks ListEnter wiring" do
+    # The `ListEnter` hook (assets/js/hooks/list_enter.js) owns the shared
+    # insertion animation. Its markup half is: ONE hook on the LIST WRAPPER
+    # (morphdom keeps the wrapper — and therefore the hook's baseline — mounted
+    # while rows come and go), a NONEMPTY scope naming the viewed NODE only (the
+    # list is cross-project, so a project must never enter the scope), and one
+    # stable task-id key per row.
+    test "the rows wrapper mounts ListEnter with the local node as a nonempty scope" do
+      html =
+        render_app(
+          running_tasks: [
+            task(id: "t1", status: :running, project_path: "/home/user/proj", objective: "One")
+          ]
+        )
+
+      wrapper = html |> parse() |> active_tasks_rows_wrapper()
+      assert Floki.attribute(wrapper, "data-list-enter-scope") == ["sidebar|local"]
+    end
+
+    test "a remote node scopes the list to that node, so a node change re-seeds the baseline" do
+      html =
+        render_app(
+          current_node_id: "target-7",
+          running_tasks: [
+            task(id: "t1", status: :running, project_path: "/home/user/proj", objective: "One")
+          ]
+        )
+
+      wrapper = html |> parse() |> active_tasks_rows_wrapper()
+      assert Floki.attribute(wrapper, "data-list-enter-scope") == ["sidebar|target-7"]
+    end
+
+    test "every row is keyed by its task id — never by its href, sub-line or label" do
+      html =
+        render_app(
+          running_tasks: [
+            session_task(id: "s-1", status: :awaiting_input, objective: "Session one"),
+            task(
+              id: "t-run",
+              status: :running,
+              project_path: "/home/user/proj",
+              objective: "Running"
+            )
+          ],
+          pending_tasks: [
+            task(
+              id: "t-done",
+              status: :completed,
+              project_path: "/home/user/proj",
+              objective: "Done"
+            )
+          ]
+        )
+
+      # Sessions group first, then the project group's live row before its
+      # finished one.
+      assert row_keys(html) == ["s-1", "t-run", "t-done"]
+
+      # The SAME task keeps its key when its status changes (here live →
+      # reviewable, which changes href, sub-line and title): a status change
+      # must never replay the entrance animation.
+      live = row_keys(render_app(running_tasks: [task_entry("t-run", :running)]))
+      reviewable = row_keys(render_app(running_tasks: [task_entry("t-run", :completed)]))
+      assert live == ["t-run"]
+      assert reviewable == ["t-run"]
+
+      # … and a task that becomes an interactive session (running →
+      # :awaiting_input) keeps it too, because session rows use the same key.
+      session = row_keys(render_app(running_tasks: [task_entry("t-run", :awaiting_input, true)]))
+      assert session == ["t-run"]
+    end
+
+    test "keys are unique per render, one per row, and the group headers stay unkeyed" do
+      html =
+        render_app(
+          running_tasks: [
+            session_task(id: "s-1", status: :awaiting_input, objective: "Session one"),
+            task(
+              id: "a1",
+              status: :running,
+              project_path: "/home/user/alpha",
+              objective: "A one"
+            ),
+            task(id: "b1", status: :running, project_path: "/home/user/Beta", objective: "B one")
+          ],
+          pending_tasks: [
+            task(
+              id: "a2",
+              status: :completed,
+              project_path: "/home/user/alpha",
+              objective: "A two"
+            )
+          ]
+        )
+
+      keys = row_keys(html)
+      # One key per rendered row and no duplicates: the hook keeps only the FIRST
+      # element per key, so a duplicate would silently drop a row. Uniqueness is
+      # structural — `session_tasks/2` keeps interactive entries only while
+      # `group_tasks_by_project/2` rejects them, and the feed's running/pending
+      # partitions are disjoint by status (`:completed` vs the live set).
+      assert length(keys) == sidebar_task_links(html)
+      assert length(keys) == length(Enum.uniq(keys))
+
+      tree = parse(html)
+      # Only rows carry a key: the "Sessions"/project group headers do not (and
+      # they stay exactly where they are).
+      keyed = Floki.find(tree, "#workbench-active-tasks [data-list-enter-key]")
+      assert length(keyed) == length(keys)
+
+      for header <- Floki.find(tree, "#workbench-active-tasks div.space-y-1 > div") do
+        assert Floki.attribute(header, "data-list-enter-key") == []
+      end
+    end
+  end
+
   describe "app/1 — paused/pausing tasks stay in the live partition" do
     # The task-level pause pair is NON-terminal: `:pausing` is still working (a
     # pause request drains the agents, wrapper + lease alive) and `:paused` is
@@ -1094,6 +1210,34 @@ defmodule EvoDashWeb.LayoutsTest do
   # An interactive agent session (the summary `session_mode` string).
   defp session_task(attrs) do
     task(Keyword.put(attrs, :session_mode, "interactive"))
+  end
+
+  # The `ListEnter` wrapper: the Active Tasks rows container, never the
+  # Conversations body (which is also a `div.space-y-1`).
+  defp active_tasks_rows_wrapper(tree) do
+    case Floki.find(tree, "#workbench-active-tasks div.space-y-1[phx-hook='ListEnter']") do
+      [wrapper] -> wrapper
+      other -> flunk("expected ONE ListEnter wrapper, got: #{inspect(length(other))}")
+    end
+  end
+
+  # The `data-list-enter-key` of every Active Tasks row, in sidebar order.
+  defp row_keys(html) do
+    html
+    |> parse()
+    |> Floki.find("#workbench-active-tasks [data-sidebar-task-link]")
+    |> Enum.map(fn link ->
+      assert [key] = Floki.attribute(link, "data-list-enter-key")
+      key
+    end)
+  end
+
+  # A minimal project task for the key-stability tests: one id, any status (and
+  # optionally the interactive session marker for the running →
+  # `:awaiting_input` transition).
+  defp task_entry(id, status, session? \\ false) do
+    attrs = [id: id, status: status, project_path: "/home/user/proj", objective: "Objective"]
+    if session?, do: session_task(attrs), else: task(attrs)
   end
 
   # Floki's find/2 + attribute/2 require a parsed tree, not a raw binary.

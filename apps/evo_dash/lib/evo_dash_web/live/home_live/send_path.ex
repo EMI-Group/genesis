@@ -53,6 +53,11 @@ defmodule EvoDashWeb.HomeLive.SendPath do
   # button are disabled in the same state, so this is the defensive backstop for
   def send_draft(socket, text, policy) do
     cond do
+      # Server-side backstop mirroring the composer's disabled Send: a refused
+      # send, or one whose RPC is still in flight, never double-submits.
+      socket.assigns[:send_in_flight] == true ->
+        {:noreply, socket}
+
       ModelSelection.pending_remote?(socket) ->
         {:noreply,
          put_flash(
@@ -150,42 +155,126 @@ defmodule EvoDashWeb.HomeLive.SendPath do
     end
   end
 
-  # is shown as a transient echo (never as a second answer bubble).
+  # and, when the turn is already running, one transient echo (never a second
+  # answer bubble).
+  #
+  # ASYNC + OPTIMISTIC: the user bubble (plus the echo) appears at once and the
+  # RPC runs in `EvoDash.TaskSupervisor` (`EvoDash.SafeCall.start/3`), so the
+  # LiveView keeps processing deltas and timers while the node answers. The
+  # rollback context travels in `send_pending.prev`, so a refused queue send
+  # loses neither the draft nor the staged attachments.
   def queue_session_message(socket, text, attachments, policy) do
     node = socket.assigns[:current_node] || node()
     agent_id = socket.assigns[:session_id]
     queued? = socket.assigns[:chat_status] == :running
+    seq = (socket.assigns[:send_seq] || 0) + 1
+    opts = [assistant_workspace: socket.assigns[:workspace]]
 
-    result =
-      SafeCall.run(fn ->
-        opts = [assistant_workspace: socket.assigns[:workspace]]
-        SessionActions.send_message(node, agent_id, text, attachments, policy, opts)
-      end)
+    prev = %{
+      transcript: socket.assigns[:transcript],
+      chat_draft: socket.assigns[:chat_draft],
+      pending_attachments: socket.assigns[:pending_attachments],
+      chat_status: socket.assigns[:chat_status],
+      queued_echoes: socket.assigns[:queued_echoes]
+    }
 
-    case normalize_send(result) do
-      :ok ->
-        transcript =
-          Transcript.append(socket.assigns[:transcript], Transcript.entry(:user, text))
+    transcript =
+      Transcript.append(socket.assigns[:transcript], Transcript.entry(:user, text))
 
-        transcript =
-          if queued?, do: transcript, else: Transcript.put_streaming_text(transcript, "")
+    transcript =
+      if queued?, do: transcript, else: Transcript.put_streaming_text(transcript, "")
 
-        socket =
-          socket
-          |> assign(
-            transcript: transcript,
-            chat_draft: "",
-            pending_attachments: Attachments.clear(),
-            chat_status: :running
-          )
-          |> ChatState.persist()
-          |> TaskTracking.refresh()
+    socket =
+      socket
+      |> assign(
+        transcript: transcript,
+        chat_draft: "",
+        pending_attachments: Attachments.clear(),
+        chat_status: :running,
+        send_in_flight: true,
+        send_seq: seq,
+        send_pending: %{
+          kind: :message,
+          seq: seq,
+          text: text,
+          policy: policy,
+          queued?: queued?,
+          node: node,
+          session_id: agent_id,
+          prev: prev
+        }
+      )
+      |> ChatState.persist()
 
-        {:noreply, if(queued?, do: push_queued_echo(socket, text), else: socket)}
+    socket = if queued?, do: push_queued_echo(socket, text), else: socket
+
+    case SafeCall.start(self(), {:chat_send_result, seq}, fn ->
+           SessionActions.send_message(node, agent_id, text, attachments, policy, opts)
+         end) do
+      {:ok, _pid} -> {:noreply, socket}
+      {:error, reason} -> {:noreply, apply_send_result(socket, seq, {:error, reason})}
+    end
+  end
+
+  # Settles ONE async send: `result` is the `EvoDash.SafeCall` envelope pushed by
+  # `{:chat_send_result, seq}`. A result whose seq no longer owns the slot (a
+  # newer send, a chat reset, or a node/session move) is dropped — it may not
+  # resurrect a previous chat or leave the composer disabled.
+  def apply_send_result(socket, seq, result) do
+    case socket.assigns[:send_pending] do
+      %{seq: ^seq} = pending ->
+        socket = assign(socket, send_in_flight: false, send_pending: nil)
+
+        if send_superseded?(socket, pending),
+          do: socket,
+          else: dispatch_send_result(socket, pending, result)
+
+      _other ->
+        # A newer send owns the slot (or a reset cleared it): never touch it.
+        socket
+    end
+  end
+
+  defp send_superseded?(socket, pending) do
+    (socket.assigns[:current_node] || node()) != Map.get(pending, :node) or
+      socket.assigns[:session_id] != Map.get(pending, :session_id)
+  end
+
+  defp dispatch_send_result(socket, %{kind: :start} = pending, result) do
+    case result do
+      {:ok, {:ok, agent_id}} ->
+        adopt_session(socket, agent_id, pending.text)
+
+      {:ok, {:error, reason}} ->
+        start_failure(socket, reason, pending)
 
       {:error, reason} ->
-        {:noreply, send_failure(socket, reason)}
+        start_failure(socket, {:transport, reason}, pending)
+
+      {:ok, other} ->
+        start_failure(socket, {:unexpected_start_result, other}, pending)
     end
+  end
+
+  defp dispatch_send_result(socket, %{kind: :message} = pending, result) do
+    case normalize_send(result) do
+      :ok -> send_succeeded(socket, pending)
+      {:error, reason} -> send_failure(socket, reason, pending)
+    end
+  end
+
+  # The accepted send. The user bubble, the reply placeholder and the queued echo
+  # were applied optimistically in `queue_session_message/4`, so this only
+  # re-asserts the settled state and refreshes the agent tracking.
+  defp send_succeeded(socket, _pending) do
+    socket
+    |> assign(
+      chat_draft: "",
+      pending_attachments: Attachments.clear(),
+      chat_status: :running
+    )
+    |> ChatState.persist()
+    |> TaskTracking.refresh()
   end
 
   def normalize_send({:ok, :ok}), do: :ok
@@ -221,6 +310,16 @@ defmodule EvoDashWeb.HomeLive.SendPath do
     end
   end
 
+  # A refused send. The user bubble (and, for a queued send, the echo) were
+  # applied optimistically before the RPC, so the rollback context in
+  # `:send_pending`'s `:prev` restores the exact pre-send transcript, draft and
+  # staged attachments before the failure is reported.
+  def send_failure(socket, reason, pending) do
+    socket
+    |> restore_send(Map.get(pending, :prev))
+    |> send_failure(reason)
+  end
+
   def send_failure(socket, :workspace_changed) do
     put_flash(
       socket,
@@ -250,6 +349,11 @@ defmodule EvoDashWeb.HomeLive.SendPath do
   end
 
   # error — never a silent Auto, never a fallback on a transport error.
+  #
+  # ASYNC + OPTIMISTIC: the user bubble and the empty reply bubble appear at
+  # once and the RPC runs in `EvoDash.TaskSupervisor`, so a slow or remote node
+  # never freezes delta processing. The rollback context travels in
+  # `:send_pending` (see `apply_send_result/3`).
   def start_session_chat(socket, text, attachments, task_opts) do
     node = socket.assigns[:current_node] || node()
 
@@ -262,52 +366,97 @@ defmodule EvoDashWeb.HomeLive.SendPath do
           socket.assigns[:assistant_conversation_id] || socket.assigns[:chat_id]
       )
 
-    case SafeCall.run(fn -> SessionActions.start(node, opts) end) do
-      {:ok, {:ok, agent_id}} ->
-        adopt_session(socket, agent_id, text)
+    seq = (socket.assigns[:send_seq] || 0) + 1
 
-      {:ok, {:error, reason}} ->
-        start_failure(socket, reason, text, task_opts)
-
-      {:error, reason} ->
-        start_failure(socket, {:transport, reason}, text, task_opts)
-
-      {:ok, other} ->
-        start_failure(socket, {:unexpected_start_result, other}, text, task_opts)
-    end
-  end
-
-  def start_failure(socket, reason, text, task_opts) do
-    if SessionActions.session_unavailable?(reason) do
-      {:noreply, fallback_socket} =
-        start_chat(assign(socket, session_mode: :one_shot), text, task_opts)
-
-      {:noreply,
-       put_flash(
-         fallback_socket,
-         :info,
-         gettext(
-           "Interactive sessions are unavailable here. This conversation runs in one-shot mode."
-         )
-       )}
-    else
-      {:noreply,
-       put_flash(
-         socket,
-         :error,
-         gettext("Failed to start the conversation: %{reason}", reason: inspect(reason))
-       )}
-    end
-  end
-
-  def adopt_session(socket, agent_id, text) do
-    node = socket.assigns[:current_node] || node()
-    if key = ChatState.draft_key(socket.assigns), do: EvoDash.ChatHistory.delete_draft(key)
+    prev = %{
+      transcript: socket.assigns[:transcript],
+      chat_draft: socket.assigns[:chat_draft],
+      pending_attachments: socket.assigns[:pending_attachments],
+      chat_status: socket.assigns[:chat_status]
+    }
 
     transcript =
       socket.assigns[:transcript]
       |> Transcript.append(Transcript.entry(:user, text))
       |> Transcript.put_streaming_text("")
+
+    socket =
+      socket
+      |> assign(
+        transcript: transcript,
+        chat_draft: "",
+        pending_attachments: Attachments.clear(),
+        chat_status: :running,
+        chat_node: node,
+        send_in_flight: true,
+        send_seq: seq,
+        send_pending: %{
+          kind: :start,
+          seq: seq,
+          text: text,
+          task_opts: task_opts,
+          node: node,
+          session_id: socket.assigns[:session_id],
+          prev: prev
+        }
+      )
+      |> ChatState.persist()
+
+    case SafeCall.start(self(), {:chat_send_result, seq}, fn ->
+           SessionActions.start(node, opts)
+         end) do
+      {:ok, _pid} -> {:noreply, socket}
+      {:error, reason} -> {:noreply, apply_send_result(socket, seq, {:error, reason})}
+    end
+  end
+
+  def start_failure(socket, reason, %{text: text, task_opts: task_opts} = pending) do
+    if SessionActions.session_unavailable?(reason) do
+      # The optimistic user bubble is already in the transcript, so the one-shot
+      # fallback must NOT append a second copy of the same message.
+      {:noreply, fallback_socket} =
+        start_chat(assign(socket, session_mode: :one_shot), text, task_opts, true)
+
+      put_flash(
+        fallback_socket,
+        :info,
+        gettext(
+          "Interactive sessions are unavailable here. This conversation runs in one-shot mode."
+        )
+      )
+    else
+      put_flash(
+        restore_send(socket, Map.get(pending, :prev)),
+        :error,
+        gettext("Failed to start the conversation: %{reason}", reason: inspect(reason))
+      )
+    end
+  end
+
+  # Roll an optimistic send back: a refused send leaves neither a phantom user
+  # bubble nor a lost draft / attachment set behind, and a refused QUEUED send
+  # also drops the echo it optimistically pushed.
+  defp restore_send(socket, prev) when is_map(prev) do
+    assign(socket,
+      transcript: Map.get(prev, :transcript, socket.assigns[:transcript]),
+      chat_draft: Map.get(prev, :chat_draft, socket.assigns[:chat_draft]),
+      pending_attachments:
+        Map.get(prev, :pending_attachments, socket.assigns[:pending_attachments]),
+      chat_status: Map.get(prev, :chat_status, socket.assigns[:chat_status]),
+      queued_echoes: Map.get(prev, :queued_echoes, socket.assigns[:queued_echoes] || [])
+    )
+  end
+
+  defp restore_send(socket, _prev), do: socket
+
+  def adopt_session(socket, agent_id, _text) do
+    node = socket.assigns[:current_node] || node()
+    if key = ChatState.draft_key(socket.assigns), do: EvoDash.ChatHistory.delete_draft(key)
+
+    # The user bubble was appended optimistically when the send started, so the
+    # adoption keeps THIS transcript: the empty reply placeholder is merely
+    # re-asserted (idempotent — it updates the streaming entry in place).
+    transcript = Transcript.put_streaming_text(socket.assigns[:transcript], "")
 
     socket =
       socket
@@ -335,15 +484,25 @@ defmodule EvoDashWeb.HomeLive.SendPath do
       |> HomeLive.maybe_load_sessions()
       |> TaskTracking.refresh()
 
-    {:noreply,
-     push_patch(socket, to: SessionActions.url(socket.assigns[:current_node_id], agent_id))}
+    # Bare socket by contract: every `SendPath` helper returns a `%Socket{}` and
+    # the `handle_info` clause in `home_live.ex` owns the single `{:noreply, _}`
+    # wrap for the pushed send result.
+    push_patch(socket, to: SessionActions.url(socket.assigns[:current_node_id], agent_id))
   end
 
-  def start_chat(socket, text, task_opts) do
+  # The one-shot `:reflect` fallback. `user_appended?` is true when an
+  # optimistic send already appended the user bubble (the interactive start
+  # refused with a session-unavailable reason), so the message is never
+  # duplicated in the transcript.
+  def start_chat(socket, text, task_opts, user_appended? \\ false) do
     transcript =
-      socket.assigns[:transcript]
-      |> Transcript.append(Transcript.entry(:user, text))
-      |> Transcript.put_streaming_text("")
+      if user_appended? do
+        Transcript.put_streaming_text(socket.assigns[:transcript], "")
+      else
+        socket.assigns[:transcript]
+        |> Transcript.append(Transcript.entry(:user, text))
+        |> Transcript.put_streaming_text("")
+      end
 
     socket =
       assign(socket,

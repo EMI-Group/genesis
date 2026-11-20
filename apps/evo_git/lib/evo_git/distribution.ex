@@ -325,9 +325,9 @@ defmodule EvoGit.Distribution do
         # Set the distribution cookie to match the remote daemon. Must be
         # done after :net_kernel.start succeeds — set_cookie/1 crashes on
         # a non-distributed node (:nonode@nohost). The cookie is read from
-        # the persisted config [node] cookie — the SAME source bootstrap
-        # writes via ensure_cookie! (the target map has no :cookie field;
-        # the old Map.get(target, :cookie) branch was always nil).
+        # the persisted config [node] cookie — the SAME key bootstrap
+        # generates and persists via EvoGit.RemoteConnection.ensure_cookie/0
+        # (the connection target map carries no :cookie field).
         config = EvoGit.Config.resolve()
         cookie = get_in(config, [:node, :cookie])
 

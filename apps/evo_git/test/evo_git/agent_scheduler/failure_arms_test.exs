@@ -12,11 +12,9 @@ defmodule EvoGit.AgentScheduler.FailureArmsTest do
     * `EvoGit.AgentScheduler.Worktrees` with a reaped `Store` row: the producer
       (`assign_and_prepare_worktree/3`) answers
       `{:error, {:worktree_prepare_failed, {:rows_missing, agent_id}}}`, and its
-      only caller (`prepare_new_worktree/5`) surfaces the same reason without
-      raising — as a bare `{:worktree_prepare_failed, {:rows_missing, id}}`,
-      because that caller's else clause binds the REASON rather than the whole
-      error tuple (see the in-test note: a shape defect, reported, `lib/` is
-      out of scope here).
+      only caller (`prepare_new_worktree/5`) surfaces the SAME shape — the
+      outer `:error` tag plus `{:worktree_prepare_failed, reason}` — without
+      raising.
     * the summary-status vocabulary: `EvoGit.AgentScheduler.AgentState.live?/1`
       is the ONE owner of "this agent's session is still alive", so `:done`,
       `:failed` and the unpublished `nil` are NOT live.
@@ -155,17 +153,15 @@ defmodule EvoGit.AgentScheduler.FailureArmsTest do
       File.mkdir_p!(workers)
       worktree_path = Path.join(workers, "wt-#{agent_id}")
 
-      # The caller surfaces the SAME reason without raising — pinned EXACTLY as
-      # it behaves today. NOTE the shape: `prepare_new_worktree/5`'s else clause
-      # binds `error` to the REASON (`{:worktree_prepare_failed, _}`), not to
-      # the whole error tuple, so the returned term DROPS the `:error` tag.
-      # `Session.Setup.request_worktree/2` only matches `{:ok, path}` /
-      # `{:error, reason}`, so in production a reaped-row race reaches it as a
-      # `CaseClauseError` (still a session-fatal error, but not the descriptive
-      # `RuntimeError`). Reported to the source owner; the shape is not matched
-      # with a wildcard, so fixing it flips exactly this assertion.
+      # The caller surfaces the SAME documented reason without raising, WITH
+      # the outer `:error` tag: `prepare_new_worktree/5` binds the REASON
+      # (`{:worktree_prepare_failed, _}`) and re-emits it as
+      # `{:error, reason}` — the ONE failure shape of the worktree-prepare
+      # vocabulary, so `Session.Setup.request_worktree/2` (`{:ok, path}` /
+      # `{:error, reason}`) receives the descriptive error instead of a
+      # `CaseClauseError`.
       assert Worktrees.prepare_new_worktree(agent_id, repo, worktree_path, spec, meta) ==
-               {:worktree_prepare_failed, {:rows_missing, agent_id}}
+               {:error, {:worktree_prepare_failed, {:rows_missing, agent_id}}}
 
       # The pipeline reached the ASSIGN step (it created the worktree) and the
       # error was passed through unchanged — not re-tagged into

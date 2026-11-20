@@ -211,13 +211,6 @@ defmodule EvoGit.VCT.Path do
   @spec last_segment(t() | String.t()) :: String.t() | nil
   def last_segment(path), do: path |> to_segments() |> List.last()
 
-  # LEGACY spelling of `last_segment/1`, kept only because
-  # `test/evo_git/vct/path_test.exs` still pins it. Delete it (with that
-  # test-side rename) once nothing calls it.
-  @doc false
-  @spec name(t() | String.t()) :: String.t() | nil
-  def name(path), do: last_segment(path)
-
   @doc """
   Returns `true` when `a` is a STRICT ancestor (segment prefix) of `b`.
 

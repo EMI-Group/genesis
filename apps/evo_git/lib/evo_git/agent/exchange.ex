@@ -115,9 +115,10 @@ defmodule EvoGit.Agent.Exchange do
 
       # Crash-resume repair runs ONCE, here — before the loop, so the very first
       # LLM call of a resumed run already sees a provider-valid transcript and
-      # the `[RESUME]` notice. It is a no-op for every run that is not a crash
-      # retry (`EvoGit.Agent.Resume.crash_retry?/1`), and it never touches the
-      # system message or the first user message (prompt-cache prefix).
+      # the `[RESUME]` notice. It is a no-op for every run that is not a restored
+      # run (`EvoGit.Agent.Resume.restored_run?/1` — a crash retry OR a task
+      # pause resume), and it never touches the system message or the first user
+      # message (prompt-cache prefix).
       state = EvoGit.Agent.Resume.apply(state)
 
       case loop(state, opts, seams) do
