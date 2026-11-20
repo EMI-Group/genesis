@@ -11,6 +11,7 @@ defmodule EvoGit.Agent.Tools.CancelTask do
   task is hung and must be stopped immediately (all progress lost).
   """
 
+  alias EvoGit.Agent.Tools.Boundary
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
@@ -19,26 +20,17 @@ defmodule EvoGit.Agent.Tools.CancelTask do
   def execute(args, _repo_path, _repo_root) do
     case Shared.fetch_string_arg(args, "task_id") do
       {:ok, task_id} ->
-        case safe_cancel(task_id) do
+        # Cross-GenServer boundary: see `EvoGit.Agent.Tools.Boundary`.
+        case Boundary.run(
+               fn -> EvoGit.TaskRegistry.cancel_task(task_id) end,
+               fn reason -> {:registry_unavailable, reason} end
+             ) do
           :ok -> "Task #{task_id} cancellation requested (graceful)."
           {:error, reason} -> "Error cancelling task #{task_id}: #{describe_error(reason)}"
         end
 
       {:error, message} ->
         message
-    end
-  end
-
-  # Justified try/catch :exit — cross-GenServer boundary. TaskRegistry is a
-  # supervised GenServer; calling it while it is down (or not yet started)
-  # exits the caller with :noproc, which is an exit, not a rescue-able
-  # exception. Catch it and return a descriptive error string so the agent
-  # never crashes on an unavailable registry.
-  defp safe_cancel(task_id) do
-    try do
-      EvoGit.TaskRegistry.cancel_task(task_id)
-    catch
-      :exit, reason -> {:error, {:registry_unavailable, reason}}
     end
   end
 

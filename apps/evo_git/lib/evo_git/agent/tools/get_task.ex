@@ -3,6 +3,7 @@ defmodule EvoGit.Agent.Tools.GetTask do
   Tool for fetching a single task's details from the task registry by id.
   """
 
+  alias EvoGit.Agent.Tools.Boundary
   alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
@@ -14,7 +15,7 @@ defmodule EvoGit.Agent.Tools.GetTask do
   def execute(args, _repo_path, _repo_root) do
     case Shared.fetch_string_arg(args, "task_id") do
       {:ok, task_id} ->
-        case safe_get_task(task_id) do
+        case Boundary.call(EvoGit.TaskRegistry, :get_task, [task_id]) do
           nil -> "Task #{task_id} not found."
           {:error, reason} -> "task system unavailable: #{Failure.format_reason(reason)}"
           task -> format_task(task)
@@ -23,22 +24,6 @@ defmodule EvoGit.Agent.Tools.GetTask do
       {:error, message} ->
         message
     end
-  end
-
-  # --- Task registry call ---
-
-  defp safe_get_task(task_id) do
-    EvoGit.TaskRegistry.get_task(task_id)
-  rescue
-    e ->
-      # Tool boundary: the task system (TaskRegistry GenServer / SQLite store /
-      # scheduler) may be down, or the 30s GenServer.call timeout may fire. A
-      # crash must never kill the agent loop — the LLM gets a readable error
-      # string it can act on instead.
-      {:error, Exception.message(e)}
-  catch
-    :exit, reason ->
-      {:error, inspect(reason)}
   end
 
   # --- Formatting ---

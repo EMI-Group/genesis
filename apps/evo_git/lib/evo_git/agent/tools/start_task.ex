@@ -5,6 +5,7 @@ defmodule EvoGit.Agent.Tools.StartTask do
   task (genesis / evolve / reflect / extract_skills) in the task registry.
   """
 
+  alias EvoGit.Agent.Tools.Boundary
   alias EvoGit.Agent.Tools.Shared
 
   @supported_types ~w(genesis evolve reflect extract_skills)
@@ -49,7 +50,7 @@ defmodule EvoGit.Agent.Tools.StartTask do
         |> maybe_put(:starting_commit, starting_commit)
         |> maybe_put(:model_id, model_id)
 
-      case safe_start_task(task_type, opts) do
+      case Boundary.call(EvoGit.TaskRegistry, :start_task, [task_type, opts]) do
         {:ok, task} -> format_success(task, task_type, objective)
         {:error, reason} -> "Task could not be started: #{inspect(reason)}"
       end
@@ -81,22 +82,6 @@ defmodule EvoGit.Agent.Tools.StartTask do
   defp maybe_put(opts, _key, nil), do: opts
   defp maybe_put(opts, _key, ""), do: opts
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
-
-  # --- Task registry call ---
-
-  defp safe_start_task(task_type, opts) do
-    EvoGit.TaskRegistry.start_task(task_type, opts)
-  rescue
-    e ->
-      # Tool boundary: the task system (TaskRegistry GenServer / SQLite store)
-      # may be down, or the 30s GenServer.call timeout may fire. A crash must
-      # never kill the agent loop — the LLM gets a readable error string it can
-      # act on instead.
-      {:error, Exception.message(e)}
-  catch
-    :exit, reason ->
-      {:error, inspect(reason)}
-  end
 
   # --- Formatting ---
 

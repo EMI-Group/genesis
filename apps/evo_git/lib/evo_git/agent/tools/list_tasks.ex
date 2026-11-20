@@ -5,6 +5,7 @@ defmodule EvoGit.Agent.Tools.ListTasks do
   filtered by status.
   """
 
+  alias EvoGit.Agent.Tools.Boundary
   alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
@@ -27,7 +28,7 @@ defmodule EvoGit.Agent.Tools.ListTasks do
   """
   def execute(args, _repo_path, _repo_root) do
     with {:ok, statuses} <- fetch_statuses(args) do
-      case safe_list_tasks(statuses) do
+      case Boundary.call(EvoGit.TaskRegistry, :list_tasks_summary, [statuses]) do
         tasks when is_list(tasks) -> format_tasks(tasks)
         {:error, reason} -> "task system unavailable: #{Failure.format_reason(reason)}"
       end
@@ -75,23 +76,6 @@ defmodule EvoGit.Agent.Tools.ListTasks do
 
   defp unknown_status_error(status) do
     "Unknown status #{inspect(status)}; valid statuses: #{Enum.join(@valid_statuses, ", ")}"
-  end
-
-  # --- Task registry call ---
-
-  defp safe_list_tasks(statuses) do
-    EvoGit.TaskRegistry.list_tasks_summary(statuses)
-  rescue
-    e ->
-      # Tool boundary: the task system (TaskRegistry GenServer / SQLite store /
-      # scheduler) may be down, or the 30s GenServer.call timeout may fire
-      # (handler delegates to a Task; a crashed Task leaves the caller waiting
-      # until timeout). A crash must never kill the agent loop — the LLM gets a
-      # readable error string it can act on (retry or report) instead.
-      {:error, Exception.message(e)}
-  catch
-    :exit, reason ->
-      {:error, inspect(reason)}
   end
 
   # --- Formatting ---
