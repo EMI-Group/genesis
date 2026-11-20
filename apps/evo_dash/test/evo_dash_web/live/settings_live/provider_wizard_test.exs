@@ -22,89 +22,12 @@
 # from the `:config_dir_fun` seam (`EvoDash.Test.ConfigDir.isolate!/1`,
 # installed by `test_helper.exs`), never from a BEAM-global `XDG_CONFIG_HOME`
 # write.
-# A per-test stand-in for `EvoDash.ChatGPTLogin` (the SIWC flow module),
-# injected through `EvoDashWeb.LLMSetup.ChatGPTSignIn.login_module/0`'s
-# CALL-TIME `$callers` seam: `Phoenix.LiveViewTest` puts the test pid in the
-# mounted view's `$callers`, so `install!/1` seeds the test's OWN process
-# dictionary and nothing here is BEAM-global.
-#
-# The mutable flow state (the answer `begin/2` gives, the queue of answers
-# `status/1` gives, the ids `cancel/1` saw) lives in an Agent the test starts;
-# every call resolves that pid through `$callers` too, because the sign-in
-# boundary calls us from `Task.async`/poll tasks, never only from the view.
-defmodule EvoDashWeb.SettingsLive.ProviderWizardTest.ChatGPTStub do
-  @moduledoc false
-
-  # `begin:` — `{:ok, %{id:, url:, port:}}` or `{:error, reason}`.
-  # `statuses:` — the answer queue; each entry is a value or a zero-arity fun
-  # (an exhausted queue keeps answering `:pending`). A cancelled flow always
-  # answers `:pending`, like a facade that already retired it.
-  def install!(opts) do
-    test_pid = self()
-
-    {:ok, pid} =
-      Agent.start_link(fn ->
-        %{
-          begin: Keyword.fetch!(opts, :begin),
-          statuses: Keyword.get(opts, :statuses, []),
-          cancelled: [],
-          test_pid: test_pid
-        }
-      end)
-
-    Process.put(:chatgpt_login_module, __MODULE__)
-    Process.put(:chatgpt_stub_pid, pid)
-    # Keep the poll cheap; the cap is far beyond any test's lifetime.
-    Process.put(:chatgpt_signin_poll_interval_ms, 5)
-    Process.put(:chatgpt_signin_poll_timeout_ms, 60_000)
-    pid
-  end
-
-  def begin(account, _opts) do
-    Agent.get_and_update(pid!(), fn state ->
-      send(state.test_pid, {:chatgpt_stub, :begin, account})
-      {state.begin, state}
-    end)
-  end
-
-  def status(flow_id) do
-    Agent.get_and_update(pid!(), fn state ->
-      send(state.test_pid, {:chatgpt_stub, :status, flow_id})
-
-      {reply, statuses} =
-        if flow_id in state.cancelled do
-          {:pending, state.statuses}
-        else
-          case state.statuses do
-            [next | rest] -> {resolve(next), rest}
-            [] -> {:pending, []}
-          end
-        end
-
-      {reply, %{state | statuses: statuses}}
-    end)
-  end
-
-  def cancel(flow_id) do
-    Agent.get_and_update(pid!(), fn state ->
-      send(state.test_pid, {:chatgpt_stub, :cancel, flow_id})
-      {:ok, %{state | cancelled: [flow_id | state.cancelled]}}
-    end)
-  end
-
-  defp resolve(next) when is_function(next, 0), do: next.()
-  defp resolve(next), do: next
-
-  defp pid! do
-    Process.get(:chatgpt_stub_pid) ||
-      Enum.find_value(Process.get(:"$callers") || [], fn pid ->
-        case Process.info(pid, :dictionary) do
-          {:dictionary, dictionary} -> Keyword.get(dictionary, :chatgpt_stub_pid)
-          _ -> nil
-        end
-      end)
-  end
-end
+# A per-test stand-in for `EvoDash.ChatGPTLogin` (the SIWC flow module) lives in
+# `test/support/chatgpt_login_stub.ex` (`EvoDash.Test.ChatGPTLoginStub`), injected
+# through `EvoDashWeb.LLMSetup.ChatGPTSignIn.login_module/0`'s CALL-TIME
+# `$callers` seam: `Phoenix.LiveViewTest` puts the test pid in the mounted view's
+# `$callers`, so `install!/1` seeds the test's OWN process dictionary and nothing
+# here is BEAM-global.
 
 # A minimal fake connection manager registered in
 # `EvoGit.RemoteConnection.Registry` under a saved target id, so
@@ -131,7 +54,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
   use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   alias EvoDashWeb.SettingsComponents.ProviderProfiles.Row
-  alias EvoDashWeb.SettingsLive.ProviderWizardTest.ChatGPTStub
+  alias EvoDash.Test.ChatGPTLoginStub, as: ChatGPTStub
   # Load-tolerant budgets for waits on ASYNC settings work (mount load chain,
   # owned config-save receipt). That work runs in supervised tasks on a shared
   # host whose scheduling swings 10-30x (test/CONTEXT.md), so the waits stay
