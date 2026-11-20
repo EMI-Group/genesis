@@ -5,7 +5,8 @@ Owns the EXECUTION of a batch of standard (non-subagent) agent tool calls: seria
 The agent no longer owns concurrency logic: `EvoGit.Agent.ToolDispatch.batch_execute_tools/4,5` resolves ONE `%EvoGit.ToolRuntime.Request{}` (owner identity, repo paths, node path, taskdir, role) and delegates.
 
 ## API Surface
-- `EvoGit.ToolRuntime.execute_batch(indexed_calls, %Request{}) :: [{index, tool_call_id, name, output}]` — the facade; results are SORTED BY INDEX, sanitized but NOT hint-adjusted.
+- `EvoGit.ToolRuntime.execute_batch(indexed_calls, %Request{}) :: [result()]` — the facade; results are SORTED BY INDEX, sanitized but NOT hint-adjusted.
+- The batch result types are declared ONCE, in `EvoGit.ToolRuntime`: `output() :: String.t() | EvoGit.Agent.ToolOutput.t() | nil` (a plain binary for all-text output, a `%ToolOutput{}` when the tool attached media, `nil` for no output) and `result() :: {non_neg_integer(), String.t(), String.t() | nil, output()}` (`index`, `tool_call_id`, the model-facing `name` — `nil` when the call carried none — and the sanitized `output()`); `EvoGit.ToolRuntime.Executor` references those remote types and declares no local duplicate.
 - `EvoGit.ToolRuntime.Request.new(map_or_keyword)` — `%Request{agent_id, task_id, agent_pid, repo_path, repo_root, node_path, taskdir, max_timeout, delegation_level, agent_module, role}`; `role` is `%{repo_less: boolean(), foreign_repos: list(), repo_id: String.t() | nil}`.
 - `Request.new/1` defaults: `max_timeout` = `EvoGit.Agent.DelegationHints.max_tool_timeout/0`, `delegation_level` = `:high`, `role` = `%{repo_less: false, foreign_repos: [], repo_id: nil}`; other fields `nil`.
 - `EvoGit.ToolRuntime.Output.sanitize(result, name, args)` — wrap → `OutputSanitizer.sanitize_and_truncate/3` → `TruncationFeedback.append_truncation_feedback/3` → re-wrap; an all-text output collapses back to a plain binary.
