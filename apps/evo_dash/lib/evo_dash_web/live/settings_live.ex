@@ -552,6 +552,14 @@ defmodule EvoDashWeb.SettingsLive do
   # Old/unscoped responses cannot establish which account or node was tested.
   def handle_info({:llm_test_result, _result}, socket), do: {:noreply, socket}
 
+  # The ONE result of the wizard's in-browser ChatGPT sign-in poll (the tag is
+  # `EvoDashWeb.LLMSetup.ChatGPTSignIn.result_tag/0`; spelled literally because
+  # a pattern cannot call a function). The flow-id stale guard lives with the
+  # wizard state it protects.
+  @impl true
+  def handle_info({:chatgpt_signin_result, flow_id, result}, socket),
+    do: ProviderPanelEvents.chatgpt_signin_result(socket, flow_id, result)
+
   @impl true
   def handle_info({:scheduler_config_updated, node}, socket),
     do: AsyncResults.scheduler_config_updated(socket, node)
@@ -692,7 +700,9 @@ defmodule EvoDashWeb.SettingsLive do
              "remove_provider_peak_hours_row",
              "apply_provider_schedule",
              "undo_provider_schedule",
-             "dismiss_schedule_applied"
+             "dismiss_schedule_applied",
+             "chatgpt_sign_in",
+             "chatgpt_sign_in_cancel"
            ],
       do: ProviderPanelEvents.dispatch(event, params, socket)
 
