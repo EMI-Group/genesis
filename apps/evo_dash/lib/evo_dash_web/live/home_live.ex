@@ -321,6 +321,8 @@ defmodule EvoDashWeb.HomeLive do
       workspace_open: false,
       workspace_path: "",
       workspace_projects: [],
+      workspace_workspaces: [],
+      workspace_expanded: MapSet.new(),
       workspace_error: nil,
       workspace_loading: false,
       workspace_seq: 0,
@@ -727,6 +729,7 @@ defmodule EvoDashWeb.HomeLive do
       |> resolve_session(params["session"], params)
       |> restore_workspace_scope(scope)
       |> open_workbench_draft(params)
+      |> adopt_workbench_scope()
       |> ChatState.persist()
       |> ModelSelection.assign_model_select()
       |> assign(
@@ -740,13 +743,19 @@ defmodule EvoDashWeb.HomeLive do
     {:noreply, socket}
   end
 
+  # `?wb_project=` carries a PATH (the workbench client's only spelling), so a
+  # workbench tab starts PATH-keyed and re-settles onto the VCT point of the
+  # project the mount resolves to (`adopt_workbench_scope/1`).
   defp open_workbench_draft(socket, %{"wb_draft" => draft, "wb_project" => project})
        when is_binary(draft) and byte_size(draft) == 24 and is_binary(project) do
     {node_id, target} = Workspace.scope(socket.assigns)
     key = {node_id, target, project, draft}
 
     cond do
-      socket.assigns[:workbench_draft_key] == key or socket.assigns[:current_session_id] ->
+      socket.assigns[:current_session_id] != nil ->
+        socket
+
+      Workspace.open_tab?(socket.assigns, project, draft) ->
         socket
 
       !connected?(socket) or (node_id && target == node()) ->
@@ -779,6 +788,80 @@ defmodule EvoDashWeb.HomeLive do
 
   defp open_workbench_draft(socket, _), do: socket
 
+  # Adoption: once the mount resolves, the SAME workbench tab moves from its
+  # path spelling onto the VCT-point scope, carrying whatever the legacy
+  # spelling already stored (an unsaved draft OR an older one-shot chat) so a
+  # re-key never orphans work. A chat that already owns a session, or a
+  # streaming turn, is never re-keyed.
+  defp adopt_workbench_scope(socket) do
+    {settled, legacy_keys} =
+      Workspace.settle_workbench_key(socket.assigns, socket.assigns[:workspace])
+
+    cond do
+      is_nil(settled) -> socket
+      is_nil(socket.assigns[:workspace]) -> socket
+      socket.assigns[:current_session_id] != nil -> socket
+      socket.assigns[:chat_status] in [:running, :cancelling] -> socket
+      true -> adopt_workbench_draft(socket, settled, legacy_keys)
+    end
+  end
+
+  defp adopt_workbench_draft(socket, settled, legacy_keys) do
+    keys = Enum.uniq([settled | legacy_keys])
+
+    case find_workbench_chat(keys) do
+      %{chat_id: id} = state ->
+        socket
+        |> reset_chat()
+        |> restore_chat(id, state)
+        |> assign(workbench_draft_key: settled)
+        |> assign(ChatState.restore_selection(state, ModelSelection.selection_scope(socket)))
+        |> ChatState.persist()
+        |> forget_workbench_drafts(legacy_keys)
+
+      nil ->
+        socket
+        |> move_workbench_draft(keys, settled)
+        |> assign(workbench_draft_key: settled)
+    end
+  end
+
+  # A draft adopted onto the VCT point identity must not ALSO linger under its
+  # retired raw-path spelling, or the workbench link would resurrect a twin.
+  defp forget_workbench_drafts(socket, keys) do
+    Enum.each(keys, &ChatHistory.delete_draft({:workbench, &1}))
+    socket
+  end
+
+  defp find_workbench_chat(keys) do
+    Enum.find_value(keys, &ChatHistory.get_draft({:workbench, &1})) ||
+      Enum.find_value(keys, &one_shot_workbench_chat/1)
+  end
+
+  # An unsaved draft keeps its text: it is MOVED onto the settled key and the
+  # abandoned spellings are dropped so no second restore can find a stale copy.
+  defp move_workbench_draft(socket, keys, settled) do
+    case ChatHistory.get_draft({:workbench, settled}) do
+      nil ->
+        case Enum.find_value(keys, &ChatHistory.get_draft({:workbench, &1})) do
+          nil ->
+            socket
+
+          state ->
+            ChatHistory.put_draft({:workbench, settled}, state)
+
+            keys
+            |> Enum.reject(&(&1 == settled))
+            |> Enum.each(&ChatHistory.delete_draft({:workbench, &1}))
+
+            socket
+        end
+
+      _existing ->
+        socket
+    end
+  end
+
   defp one_shot_workbench_chat(key) do
     Enum.find_value(ChatHistory.list_chats(), fn id ->
       case ChatHistory.get_state(id) do
@@ -806,6 +889,16 @@ defmodule EvoDashWeb.HomeLive do
 
   def handle_event("workspace_select", %{"path" => path}, socket),
     do: {:noreply, Workspace.select(socket, path)}
+
+  def handle_event("workspace_pick", %{"point" => point}, socket),
+    do: {:noreply, Workspace.select_workspace(socket, point)}
+
+  def handle_event("workspace_pick", _params, socket), do: {:noreply, socket}
+
+  def handle_event("workspace_expand", %{"point" => point}, socket),
+    do: {:noreply, Workspace.toggle_expanded(socket, point)}
+
+  def handle_event("workspace_expand", _params, socket), do: {:noreply, socket}
 
   def handle_event("assistant_task_picker_open", _, socket),
     do: {:noreply, TaskPicker.load(socket, TaskPicker.view(socket.assigns).query)}
@@ -1389,8 +1482,10 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  def handle_info({{:assistant_workspace_loaded, seq, scope, chat_id, kind}, result}, socket),
-    do: {:noreply, Workspace.apply_result(socket, seq, scope, chat_id, kind, result)}
+  def handle_info({{:assistant_workspace_loaded, seq, scope, chat_id, kind}, result}, socket) do
+    socket = Workspace.apply_result(socket, seq, scope, chat_id, kind, result)
+    {:noreply, if(kind == :list, do: socket, else: adopt_workbench_scope(socket))}
+  end
 
   def handle_info({:assistant_action_reconcile, scope}, socket),
     do: {:noreply, TaskTracking.reconcile(socket, scope)}
@@ -1874,6 +1969,8 @@ defmodule EvoDashWeb.HomeLive do
       workspace_loading: false,
       workspace_error: nil,
       workspace_projects: [],
+      workspace_workspaces: [],
+      workspace_expanded: MapSet.new(),
       workspace_seq: socket.assigns.workspace_seq + 1
     )
     |> ApprovalWorkflow.init()

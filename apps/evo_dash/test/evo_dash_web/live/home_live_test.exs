@@ -4268,7 +4268,7 @@ defmodule EvoDashWeb.HomeLiveTest do
   } do
     session_id = 987_654
     conversation_id = 123_789
-    workspace = %{path: "/tmp/project", node: node(), node_id: nil, name: "project"}
+    workspace = project_selection("/tmp/project")
     attach = parked_attach(session_id)
 
     install_session_seam(:home_session_attach_runner, fn _, ^session_id ->
@@ -4407,7 +4407,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       conn: conn
     } do
       test_pid = self()
-      workspace = %{path: "/tmp/project", node: node(), node_id: nil, name: "project"}
+      workspace = project_selection("/tmp/project")
 
       install_session_seam(:home_session_workspace_send_runner, fn target,
                                                                    agent,
@@ -4493,6 +4493,251 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert has_element?(view, "#workspace-error")
       assert assigns(view).workspace == nil
       assert assigns(view).chat_draft == "unfinished message"
+    end
+
+    test "the picker lists workspaces and expanding one reveals members and missing refs", %{
+      conn: conn
+    } do
+      alpha = mount_test_project!("alpha")
+      beta = mount_test_project!("beta")
+      gone = "vct:///projects/gone-#{System.unique_integer([:positive])}"
+
+      workspace =
+        create_test_workspace!([
+          member_ref(alpha),
+          member_ref(beta),
+          %{"point" => gone}
+        ])
+
+      {:ok, view, _} = live(conn, "/assistant")
+      open_picker(view, workspace.point)
+
+      # Both groups are labelled, and the workspace row states its member count.
+      html = render(view)
+      assert html =~ "Projects"
+      assert html =~ "Workspaces"
+
+      row = workspace_row(html, workspace.point)
+      assert row =~ workspace.name
+      assert row =~ "2 projects"
+      assert row =~ "missing"
+      refute has_element?(view, "#workspace-ws-members-#{dom_id(workspace.point)}")
+
+      expanded = render_click(view, "workspace_expand", %{"point" => workspace.point})
+      members = workspace_members(expanded, workspace.point)
+      # Each resolved member is a selection row carrying its OS path.
+      assert members =~ ~s(phx-value-path="#{alpha.path}")
+      assert members =~ ~s(phx-value-path="#{beta.path}")
+      # The unresolvable ref is REPORTED, never silently dropped.
+      assert members =~ gone
+      assert members =~ "missing on this node"
+
+      # Collapsing it again is pure server state — no refetch.
+      collapsed = render_click(view, "workspace_expand", %{"point" => workspace.point})
+      refute has_element?(view, "#workspace-ws-members-#{dom_id(workspace.point)}")
+      assert collapsed =~ workspace.name
+    end
+
+    test "selecting a workspace scopes to the workspace point and executes in its first member",
+         %{
+           conn: conn
+         } do
+      alpha = mount_test_project!("first")
+      beta = mount_test_project!("second")
+      gone = "vct:///projects/gone-#{System.unique_integer([:positive])}"
+
+      workspace =
+        create_test_workspace!([
+          member_ref(beta),
+          %{"point" => gone},
+          member_ref(alpha)
+        ])
+
+      {:ok, view, _} = live(conn, "/assistant")
+      open_picker(view, workspace.point)
+      render_click(view, "workspace_pick", %{"point" => workspace.point})
+      wait_until(fn -> match?(%{kind: :workspace}, assigns(view).workspace) end)
+
+      selection = assigns(view).workspace
+      # Scope identity is the WORKSPACE point…
+      assert selection.point == workspace.point
+      assert selection.kind == :workspace
+      assert selection.name == workspace.name
+      assert EvoDashWeb.DraftScope.workspace(selection) == workspace.point
+      assert EvoDashWeb.DraftScope.project(selection) == nil
+      # …while the EXECUTION path is the FIRST resolved member in STORED order.
+      assert selection.path == beta.path
+      assert selection.members |> hd() |> Map.fetch!(:path) == beta.path
+      assert Enum.map(selection.missing, &EvoDashWeb.HomeLive.Workspace.member_label/1) == [gone]
+      # Nothing that executes ever receives a `vct:` value.
+      assert EvoDashWeb.DraftScope.path(selection) == beta.path
+
+      # The current block states BOTH identities plus the missing ref.
+      render_click(view, "workspace_toggle")
+      html = render(view)
+
+      current =
+        html |> Floki.parse_document!() |> Floki.find("#workspace-current") |> Floki.text()
+
+      assert current =~ workspace.name
+      assert current =~ beta.path
+      assert current =~ gone
+      assert has_element?(view, "#workspace-toggle[title='#{beta.path}']")
+    end
+
+    test "a workspace with no resolvable member is refused and never substituted", %{
+      conn: conn
+    } do
+      gone = "vct:///projects/gone-#{System.unique_integer([:positive])}"
+      workspace = create_test_workspace!([%{"point" => gone}])
+      test_pid = self()
+
+      install_session_seam(:home_session_start_runner, fn target, opts ->
+        send(test_pid, {:unexpected_session_start, target, opts})
+        {:error, :unexpected_session_start}
+      end)
+
+      {:ok, view, _} = live(conn, "/assistant")
+      open_picker(view, workspace.point)
+      render_click(view, "workspace_pick", %{"point" => workspace.point})
+      wait_until(fn -> assigns(view).workspace_error != nil end)
+
+      # No selection is applied at all — and the error NAMES the missing refs.
+      assert assigns(view).workspace == nil
+      assert assigns(view).workspace_error =~ gone
+
+      render_submit(view, "send_message", %{"message" => "hello"})
+      assert_receive {:unexpected_session_start, _target, opts}
+      assert opts[:assistant_workspace] == nil
+    end
+
+    test "clicking a workspace member selects that project with its own point", %{conn: conn} do
+      alpha = mount_test_project!("member")
+      workspace = create_test_workspace!([member_ref(alpha)])
+
+      {:ok, view, _} = live(conn, "/assistant")
+      open_picker(view, workspace.point)
+      render_click(view, "workspace_expand", %{"point" => workspace.point})
+      alpha_path = alpha.path
+      render_click(view, "workspace_select", %{"path" => alpha.path})
+      wait_until(fn -> match?(%{path: ^alpha_path}, assigns(view).workspace) end)
+
+      selection = assigns(view).workspace
+      assert selection.kind == :project
+      assert selection.point == alpha.point
+      assert selection.path == alpha.path
+      assert selection.members == []
+      assert selection.missing == []
+      assert EvoDashWeb.DraftScope.project(selection) == alpha.point
+      assert EvoDashWeb.DraftScope.workspace(selection) == nil
+    end
+
+    test "a draft saved under the project point is restored from a path-spelled link", %{
+      conn: conn
+    } do
+      alpha = mount_test_project!("spelling")
+      draft = "123456789012345678901234"
+
+      EvoDash.ChatHistory.put_draft({:workbench, {nil, node(), alpha.point, draft}}, %{
+        chat_id: 987_701,
+        chat_draft: "point scoped draft",
+        draft_edited?: true
+      })
+
+      # `?wb_project=` still carries the raw PATH (the workbench client's only
+      # spelling); the point identity wins anyway.
+      {:ok, view, _} = live(conn, "/assistant?" <> workbench_query(alpha.path, draft))
+      wait_until(fn -> assigns(view).chat_draft == "point scoped draft" end)
+      assert EvoDashWeb.HomeLive.Workspace.draft_scope(assigns(view)) == alpha.point
+      assert assigns(view).chat_id == 987_701
+    end
+
+    test "a legacy path-keyed workbench draft is adopted once the mount resolves", %{conn: conn} do
+      alpha = mount_test_project!("legacy")
+      draft = "123456789012345678901234"
+      legacy_key = {nil, node(), alpha.path, draft}
+
+      EvoDash.ChatHistory.put_draft({:workbench, legacy_key}, %{
+        chat_id: 987_702,
+        chat_draft: "legacy path draft",
+        draft_edited?: true
+      })
+
+      {:ok, view, _} = live(conn, "/assistant?" <> workbench_query(alpha.path, draft))
+
+      wait_until(fn ->
+        EvoDashWeb.HomeLive.Workspace.draft_scope(assigns(view)) == alpha.point
+      end)
+
+      assert assigns(view).chat_draft == "legacy path draft"
+      assert assigns(view).chat_id == 987_702
+      # The draft moved onto the point key instead of being orphaned…
+      assert %{chat_draft: "legacy path draft"} =
+               EvoDash.ChatHistory.get_draft({:workbench, {nil, node(), alpha.point, draft}})
+
+      # …and the abandoned path spelling no longer resurrects.
+      assert EvoDash.ChatHistory.get_draft({:workbench, legacy_key}) == nil
+
+      # The workbench link label stays the EXECUTION path.
+      assert EvoDashWeb.HomeLive.Workspace.draft_project(assigns(view)) == alpha.path
+    end
+
+    test "a legacy persisted selection without a point still restores on its own node", %{
+      conn: conn
+    } do
+      alpha = mount_test_project!("restored")
+      id = 987_703
+
+      EvoDash.ChatHistory.put_state(id, %{
+        chat_node: node(),
+        chat_status: :ended,
+        session_mode: :one_shot,
+        transcript: [%{id: "old", role: :user, text: "A conversation", streaming: false}],
+        workspace: %{path: alpha.path, node: node(), node_id: nil, name: alpha.name}
+      })
+
+      {:ok, view, _} = live(conn, "/assistant?session=#{id}")
+      assert assigns(view).workspace.kind == :project
+      assert assigns(view).workspace.point == nil
+      assert assigns(view).workspace.path == alpha.path
+      # A legacy map has no point, so the draft scope is its raw path.
+      assert EvoDashWeb.DraftScope.token(assigns(view).workspace) == alpha.path
+    end
+
+    test "a selection or draft persisted for another node never restores here", %{conn: conn} do
+      alpha = mount_test_project!("isolated")
+      id = 987_704
+
+      EvoDash.ChatHistory.put_state(id, %{
+        chat_node: node(),
+        chat_status: :ended,
+        session_mode: :one_shot,
+        transcript: [%{id: "old", role: :user, text: "Other node", streaming: false}],
+        workspace: %{
+          path: alpha.path,
+          node: node(),
+          node_id: "gone-target",
+          name: alpha.name
+        }
+      })
+
+      {:ok, view, _} = live(conn, "/assistant?session=#{id}")
+      assert assigns(view).workspace == nil
+
+      # A workbench draft keyed for another node is invisible to a local tab.
+      draft = "123456789012345678901234"
+
+      EvoDash.ChatHistory.put_draft({:workbench, {"gone-target", node(), alpha.path, draft}}, %{
+        chat_id: 987_705,
+        chat_draft: "other node draft",
+        draft_edited?: true
+      })
+
+      alpha_path = alpha.path
+      {:ok, other, _} = live(recycle(conn), "/assistant?" <> workbench_query(alpha.path, draft))
+      wait_until(fn -> match?(%{path: ^alpha_path}, assigns(other).workspace) end)
+      assert assigns(other).chat_draft == ""
+      refute assigns(other).chat_id == 987_705
     end
   end
 
@@ -4798,6 +5043,100 @@ defmodule EvoDashWeb.HomeLiveTest do
       history: history
     }
   end
+
+  # ── VCT workspace fixtures ───────────────────────────────────────────
+  # A real project mount on the LOCAL node with a per-test unique directory.
+  # The mount table is run-wide and store-backed, so the point is forgotten in
+  # teardown (while the test's isolated Store is still alive).
+  defp mount_test_project!(basename) do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "assistant-ws-#{basename}-#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(path)
+
+    case EvoDash.NodeContext.mount_project(node(), path, nil) do
+      {:ok, mount} ->
+        on_exit(fn ->
+          EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.forget_project(node(), mount.point) end)
+          File.rm_rf!(path)
+        end)
+
+        mount
+
+      other ->
+        flunk("could not mount #{path}: #{inspect(other)}")
+    end
+  end
+
+  defp create_test_workspace!(members) do
+    name = "assistant-workspace-#{System.unique_integer([:positive])}"
+
+    case EvoGit.VCT.create_workspace(name, members, description: "assistant picker fixture") do
+      {:ok, workspace} ->
+        on_exit(fn -> EvoDash.SafeCall.run(fn -> EvoGit.VCT.forget(workspace.point) end) end)
+        workspace
+
+      other ->
+        flunk("could not create workspace #{name}: #{inspect(other)}")
+    end
+  end
+
+  defp member_ref(mount), do: %{"point" => mount.point, "path" => mount.path}
+
+  # The NORMALIZED selection shape `ChatState.restore/1` produces for a
+  # path-keyed project (no VCT point): what the core receives as
+  # `assistant_workspace`.
+  defp project_selection(path) do
+    %{
+      kind: :project,
+      point: nil,
+      path: path,
+      name: Path.basename(path),
+      node: node(),
+      node_id: nil,
+      members: [],
+      missing: []
+    }
+  end
+
+  defp workbench_query(project, draft),
+    do: URI.encode_query(%{"wb_project" => project, "wb_draft" => draft})
+
+  # Opens the project panel and waits for the async project + workspace load of
+  # THIS test's workspace (bounded poll, never a fixed sleep).
+  defp open_picker(view, workspace_point) do
+    render_click(view, "workspace_toggle")
+
+    wait_until(fn ->
+      assigns = assigns(view)
+
+      assigns.workspace_loading == false and
+        Enum.any?(assigns.workspace_workspaces, &(&1.workspace.point == workspace_point))
+    end)
+
+    render(view)
+  end
+
+  defp workspace_row(html, point) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find(~s([data-workspace-point="#{point}"]))
+    |> Floki.text()
+  end
+
+  # The raw MARKUP of a workspace's expanded member list, so a test can pin the
+  # `phx-value-path` each member row carries (its text alone only shows names).
+  defp workspace_members(html, point) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find("#workspace-ws-members-#{dom_id(point)}")
+    |> Floki.raw_html()
+  end
+
+  defp dom_id(point), do: String.replace(point, ~r/[^A-Za-z0-9_-]+/, "-")
 
   # The attach answer of a PARKED session (`:awaiting_input` → the page maps it
   # to `:idle`, i.e. writable) with no live history to rebuild a transcript from.

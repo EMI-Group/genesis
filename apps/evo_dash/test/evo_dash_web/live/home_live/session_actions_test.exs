@@ -13,6 +13,7 @@ defmodule EvoDashWeb.HomeLive.SessionActionsTest do
   use ExUnit.Case, async: true
 
   alias EvoDashWeb.HomeLive.SessionActions
+  alias EvoDashWeb.HomeLive.Workspace
 
   @agent_module EvoGit.Agents.SelfReflective
 
@@ -42,6 +43,9 @@ defmodule EvoDashWeb.HomeLive.SessionActionsTest do
     end)
   end
 
+  # A LEGACY project selection: an old persisted map with no `:kind`/`:point`.
+  defp project_ref, do: %{path: "/tmp/project", node: node(), node_id: nil, name: "project"}
+
   defp summary(overrides) do
     Map.merge(
       %{agent_module: @agent_module, parent_id: nil, status: :running},
@@ -51,7 +55,9 @@ defmodule EvoDashWeb.HomeLive.SessionActionsTest do
 
   test "sends the exact workspace and input in one atomic runtime call" do
     test_pid = self()
-    workspace = %{path: "/tmp/project", node: node(), node_id: nil, name: "project"}
+    # The boundary NORMALIZES the selection (kind/point/members/missing), so the
+    # exact map handed to the core is the normalized one.
+    workspace = Workspace.normalize(project_ref())
 
     seam(:home_session_workspace_send_runner, fn target, id, message, policy, selected ->
       send(test_pid, {:workspace_send, target, id, message, policy, selected})
@@ -178,7 +184,7 @@ defmodule EvoDashWeb.HomeLive.SessionActionsTest do
     end
 
     test "passes authoritative optional workspace and stable conversation identity" do
-      workspace = %{path: "/tmp/project", node: node(), node_id: nil, name: "project"}
+      workspace = Workspace.normalize(project_ref())
 
       opts =
         SessionActions.session_opts("hi",

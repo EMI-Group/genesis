@@ -10,6 +10,8 @@ defmodule EvoDashWeb.HomeLive.WorkspaceComponent do
       |> assign_new(:workspace_open, fn -> false end)
       |> assign_new(:workspace_path, fn -> "" end)
       |> assign_new(:workspace_projects, fn -> [] end)
+      |> assign_new(:workspace_workspaces, fn -> [] end)
+      |> assign_new(:workspace_expanded, fn -> MapSet.new() end)
       |> assign_new(:workspace_loading, fn -> false end)
       |> assign_new(:workspace_error, fn -> nil end)
 
@@ -54,8 +56,18 @@ defmodule EvoDashWeb.HomeLive.WorkspaceComponent do
         phx-key="Escape"
         class="assistant-menu-panel assistant-project-panel"
       >
-        <div :if={@workspace} class="assistant-project-current">
-          <p class="assistant-project-path">{@workspace.path}</p>
+        <div :if={@workspace} id="workspace-current" class="assistant-project-current">
+          <p class="assistant-menu-label">{current_label(@workspace)}</p>
+          <p id="workspace-current-path" class="assistant-project-path">{@workspace.path}</p>
+          <ul
+            :if={@workspace.missing != []}
+            id="workspace-current-missing"
+            class="assistant-project-path"
+          >
+            <li :for={ref <- @workspace.missing}>
+              {Workspace.member_label(ref)} — {gettext("missing on this node")}
+            </li>
+          </ul>
           <button
             id="workspace-clear"
             type="button"
@@ -65,7 +77,7 @@ defmodule EvoDashWeb.HomeLive.WorkspaceComponent do
           >{gettext("Clear project")}</button>
         </div>
         <div :if={@workspace_projects != []} id="workspace-recent" class="assistant-project-recent">
-          <p class="assistant-menu-label">{gettext("Recent projects")}</p>
+          <p class="assistant-menu-label">{gettext("Projects")}</p>
           <button
             :for={project <- @workspace_projects}
             type="button"
@@ -78,6 +90,81 @@ defmodule EvoDashWeb.HomeLive.WorkspaceComponent do
             <.icon name="hero-folder" class="size-4" /><span class="truncate">{project.name ||
               project.path}</span>
           </button>
+        </div>
+        <div
+          :if={@workspace_workspaces != []}
+          id="workspace-workspaces"
+          class="assistant-project-recent"
+        >
+          <p class="assistant-menu-label">{gettext("Workspaces")}</p>
+          <div
+            :for={entry <- @workspace_workspaces}
+            id={"workspace-ws-" <> dom_id(entry.workspace.point)}
+            data-workspace-point={entry.workspace.point}
+            class="border-t border-base-200 py-1 first:border-0 first:py-0"
+          >
+            <div class="flex items-center gap-1">
+              <button
+                type="button"
+                phx-click="workspace_pick"
+                phx-value-point={entry.workspace.point}
+                disabled={@workspace_locked or @workspace_loading}
+                title={gettext("Use this workspace's first available project")}
+                class="assistant-menu-item min-w-0 flex-1"
+              >
+                <.icon name="hero-rectangle-stack" class="size-4" />
+                <span class="truncate">{entry.workspace.name}</span>
+                <span class="shrink-0 text-xs text-base-content/60">
+                  {gettext("%{count} projects", count: length(entry.members))}
+                </span>
+                <span
+                  :if={entry.missing != []}
+                  class="shrink-0 text-xs text-warning"
+                  title={Enum.map_join(entry.missing, ", ", &Workspace.member_label/1)}
+                >{gettext("missing")}</span>
+              </button>
+              <button
+                type="button"
+                phx-click="workspace_expand"
+                phx-value-point={entry.workspace.point}
+                aria-expanded={to_string(expanded?(@workspace_expanded, entry.workspace.point))}
+                aria-controls={"workspace-ws-members-" <> dom_id(entry.workspace.point)}
+                title={gettext("Show projects")}
+                class="assistant-menu-item shrink-0"
+              >
+                <.icon
+                  name={
+                    if expanded?(@workspace_expanded, entry.workspace.point),
+                      do: "hero-chevron-up",
+                      else: "hero-chevron-down"
+                  }
+                  class="size-4"
+                />
+              </button>
+            </div>
+            <ul
+              :if={expanded?(@workspace_expanded, entry.workspace.point)}
+              id={"workspace-ws-members-" <> dom_id(entry.workspace.point)}
+              class="assistant-project-recent"
+            >
+              <li :for={member <- entry.members}>
+                <button
+                  type="button"
+                  phx-click="workspace_select"
+                  phx-value-path={member.path}
+                  disabled={@workspace_locked or @workspace_loading}
+                  title={member.path}
+                  class="assistant-menu-item"
+                >
+                  <.icon name="hero-folder" class="size-4" /><span class="truncate">{member.name ||
+                    member.path}</span>
+                </button>
+              </li>
+              <li :for={ref <- entry.missing} class="assistant-project-path">
+                {Workspace.member_label(ref)} — {gettext("missing on this node")}
+              </li>
+            </ul>
+          </div>
         </div>
         <.form
           for={@workspace_form}
@@ -109,4 +196,27 @@ defmodule EvoDashWeb.HomeLive.WorkspaceComponent do
     </div>
     """
   end
+
+  # A workspace selection shows BOTH identities: the workspace it is scoped to
+  # and the concrete project it executes in (its first resolved member).
+  defp current_label(%{kind: :workspace, name: name} = workspace) do
+    gettext("Workspace %{workspace} · %{project}",
+      workspace: name,
+      project: workspace.members |> List.first() |> member_name(workspace.path)
+    )
+  end
+
+  defp current_label(_workspace), do: gettext("Current project")
+
+  defp member_name(%{name: name}, _path) when is_binary(name) and name != "", do: name
+  defp member_name(_member, path), do: Path.basename(path)
+
+  defp expanded?(%MapSet{} = expanded, point), do: MapSet.member?(expanded, point)
+  defp expanded?(_expanded, _point), do: false
+
+  # DOM-safe point spelling: no atom creation, no escaping surprises.
+  defp dom_id(point) when is_binary(point),
+    do: String.replace(point, ~r/[^A-Za-z0-9_-]+/, "-")
+
+  defp dom_id(_point), do: "unknown"
 end

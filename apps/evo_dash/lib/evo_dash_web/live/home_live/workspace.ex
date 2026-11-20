@@ -1,10 +1,39 @@
 defmodule EvoDashWeb.HomeLive.Workspace do
-  @moduledoc "Optional, node-scoped project selection. Selecting a directory reads no project files."
+  @moduledoc """
+  Optional, node-scoped project or VCT-workspace selection.
+
+  Selecting a directory reads no project files. The selection is ONE plain,
+  term-safe map persisted into `EvoDash.ChatHistory`:
+
+      %{
+        kind: :project | :workspace,
+        point: String.t() | nil,      # the VCT point (draft-scope identity)
+        path: String.t(),             # the EXECUTION path, always an OS path
+        name: String.t(),
+        node: node(),
+        node_id: String.t() | nil,
+        members: [%{point: _, path: _, name: _}],
+        missing: [%{point: _, path: _}]
+      }
+
+  A PROJECT selection carries its own mount point and path. A WORKSPACE
+  selection is a pure GROUPING point (`vct:///workspaces/<slug>`, no OS path),
+  so `path` is its FIRST RESOLVED MEMBER's path — the concrete project a task
+  or agent session executes in — while `point` stays the workspace point. A
+  workspace with no resolvable member yields NO selection at all: the missing
+  refs are reported instead of silently substituting another project.
+
+  `point` is a SCOPE identity only. Everything that reaches `mount_project`,
+  `start_task` or an agent-session start takes `path`, never `point`.
+  """
   use Gettext, backend: EvoDashWeb.Gettext
   import Phoenix.Component, only: [assign: 2]
   alias EvoDash.{NodeContext, SafeCall}
+  alias EvoDashWeb.DraftScope
   alias EvoDashWeb.HomeLive.ChatState
   alias EvoDashWeb.ProjectsLive.ProjectFlow
+
+  @workspace_prefix "vct:///workspaces/"
 
   def scope(assigns), do: {assigns[:current_node_id], assigns[:current_node] || node()}
 
@@ -13,22 +42,113 @@ defmodule EvoDashWeb.HomeLive.Workspace do
       assigns[:session_attach_pending?] == true or
         assigns[:chat_status] in [:running, :cancelling]
 
-  def draft_project(%{workbench_draft_key: {_, _, project, _}}) when is_binary(project),
-    do: project
+  @doc """
+  The workbench link label: the EXECUTION path of the open workbench draft.
 
-  def draft_project(_), do: nil
+  The workbench client compares this value with its active project path, so it
+  is always an OS path — a VCT point is never returned. Before the mount
+  resolves, a legacy path-keyed draft key still names the project; a
+  point-keyed one does not (nil).
+  """
+  def draft_project(%{workspace: %{path: path}}) when is_binary(path), do: path
+
+  def draft_project(assigns) do
+    case assigns[:workbench_draft_key] do
+      {_, _, token, _} when is_binary(token) -> if(DraftScope.point?(token), do: nil, else: token)
+      _ -> nil
+    end
+  end
+
+  @doc "The draft-scope token the open workbench draft is keyed by (nil when none)."
+  def draft_scope(%{workbench_draft_key: {_, _, token, _}}) when is_binary(token), do: token
+  def draft_scope(_assigns), do: nil
+
+  @doc """
+  The draft-scope token a selection contributes: its project point, its
+  workspace point, else its raw absolute path (the legacy identity).
+  """
+  def draft_token(selection) do
+    DraftScope.project(selection) || DraftScope.workspace(selection)
+  end
+
+  @doc """
+  Re-settles the open workbench draft key onto the RESOLVED VCT identity.
+
+  Returns `{settled_key, legacy_keys}`. `settled_key` is
+  `{node_id, node, token, draft_id}` with the selection's draft token, and
+  `legacy_keys` are the OTHER spellings the same tab may already be stored
+  under (the raw path a `?wb_project=` link carries).
+
+  Nothing is re-keyed unless the current key already names the resolved
+  selection (by point or by path), so picking a DIFFERENT project in the
+  picker never re-scopes an open workbench tab.
+  """
+  def settle_workbench_key(assigns, selection) do
+    case assigns[:workbench_draft_key] do
+      {node_id, node, token, draft} = key when is_binary(token) and is_binary(draft) ->
+        settled = draft_token(selection)
+        path = DraftScope.path(selection)
+
+        if is_nil(settled) or token not in Enum.reject([settled, path], &is_nil/1) do
+          {key, []}
+        else
+          legacy =
+            [token, path]
+            |> Enum.reject(&(is_nil(&1) or &1 == settled))
+            |> Enum.uniq()
+            |> Enum.map(&{node_id, node, &1, draft})
+
+          {{node_id, node, settled, draft}, legacy}
+        end
+
+      _ ->
+        {nil, []}
+    end
+  end
+
+  @doc """
+  True when the open workbench tab already addresses `project` + `draft`.
+
+  `project` is whatever the `?wb_project=` param carries (a path or a point);
+  the CURRENT selection's token and execution path are accepted aliases, so a
+  re-keyed (point-scoped) tab is never wiped by a repeated path-spelled param.
+  """
+  def open_tab?(assigns, project, draft) do
+    case assigns[:workbench_draft_key] do
+      {node_id, node, token, ^draft} ->
+        scope(assigns) == {node_id, node} and is_binary(token) and
+          same_project?(token, project, assigns[:workspace])
+
+      _ ->
+        false
+    end
+  end
 
   def missing_draft_project?(assigns),
-    do: is_nil(assigns[:workspace]) and is_binary(draft_project(assigns))
+    do: is_nil(assigns[:workspace]) and not is_nil(assigns[:workbench_draft_key])
 
+  @doc """
+  Normalizes a persisted selection (total; nil for anything unusable).
+
+  A map persisted BEFORE VCT points existed carries neither `:kind` nor
+  `:point` and restores as a plain project selection (path token). The path
+  must be absolute for the node, and `members`/`missing` are rebuilt into
+  their stable plain shapes.
+  """
   def normalize(%{path: path, node: target} = workspace)
       when is_binary(path) and is_atom(target) and target not in [nil, true, false] do
     if ProjectFlow.absolute_path_for_node?(target, path) do
+      point = normalize_point(workspace[:point])
+
       %{
+        kind: normalize_kind(workspace[:kind], point),
+        point: point,
         path: path,
         node: target,
         node_id: workspace[:node_id],
-        name: workspace[:name] || Path.basename(path)
+        name: normalize_name(workspace[:name], path),
+        members: normalize_members(workspace[:members]),
+        missing: normalize_missing(workspace[:missing])
       }
     end
   end
@@ -42,11 +162,18 @@ defmodule EvoDashWeb.HomeLive.Workspace do
     end
   end
 
+  @doc """
+  Lists the node's project mounts and its VCT workspaces with members resolved.
+
+  Returns `%{projects: [mount], workspaces: [%{workspace: mount, members:
+  [mount], missing: [ref]}]}`. A workspace whose resolution fails keeps
+  `members: []` and reports every stored member ref as missing — it is never
+  substituted with another project.
+  """
   def list(node_id, target) do
     with :ok <- ready_target(node_id, target),
-         {:ok, projects} when is_list(projects) <-
-           SafeCall.run(fn -> NodeContext.projects(target) end) do
-      {:ok, Enum.filter(projects, &valid_project?(&1, target))}
+         {:ok, projects} <- project_mounts(target) do
+      {:ok, %{projects: projects, workspaces: workspace_entries(target)}}
     else
       _ -> {:error, gettext("Connect to the selected node before choosing a project.")}
     end
@@ -58,8 +185,9 @@ defmodule EvoDashWeb.HomeLive.Workspace do
          true <- ProjectFlow.absolute_path_for_node?(target, path),
          {:ok, true} <- SafeCall.run(fn -> NodeContext.dir?(target, path) end),
          {:ok, {:ok, mount}} <-
-           SafeCall.run(fn -> NodeContext.mount_project(target, path, nil) end) do
-      {:ok, %{path: mount.path, name: mount.name, node: target, node_id: node_id}}
+           SafeCall.run(fn -> NodeContext.mount_project(target, path, nil) end),
+         %{} = selection <- normalize(project_selection(node_id, target, mount)) do
+      {:ok, selection}
     else
       {:error, :unavailable} ->
         {:error, gettext("Connect to the selected node before choosing a project.")}
@@ -90,6 +218,29 @@ defmodule EvoDashWeb.HomeLive.Workspace do
     end
   end
 
+  @doc "Selects a VCT WORKSPACE: its first resolved member becomes the execution path."
+  def select_workspace(socket, point) do
+    if locked?(socket.assigns) or socket.assigns.workspace_loading or not is_binary(point) do
+      socket
+    else
+      load(socket, {:workspace, point})
+    end
+  end
+
+  @doc "Toggles one workspace row's expanded member list (pure view state)."
+  def toggle_expanded(socket, point) when is_binary(point) do
+    expanded = socket.assigns[:workspace_expanded] || MapSet.new()
+
+    expanded =
+      if MapSet.member?(expanded, point),
+        do: MapSet.delete(expanded, point),
+        else: MapSet.put(expanded, point)
+
+    assign(socket, workspace_expanded: expanded)
+  end
+
+  def toggle_expanded(socket, _point), do: socket
+
   def clear(socket) do
     if locked?(socket.assigns) or socket.assigns.workspace_loading do
       socket
@@ -100,10 +251,18 @@ defmodule EvoDashWeb.HomeLive.Workspace do
     end
   end
 
-  def select_mounted(socket, path) do
+  @doc """
+  Resolves a mounted project or workspace by PATH or by VCT POINT.
+
+  An absolute path resolves against the project mounts (a vanished project
+  keeps the "no longer open" error); a project point resolves to that mount; a
+  workspace point resolves to the workspace selection.
+  """
+  def select_mounted(socket, key) do
     case socket.assigns.workspace do
-      %{path: ^path} -> socket
-      _ -> load(socket, {:mounted, path})
+      %{path: ^key} -> socket
+      %{point: ^key} -> socket
+      _ -> load(socket, {:mounted, key})
     end
   end
 
@@ -113,10 +272,13 @@ defmodule EvoDashWeb.HomeLive.Workspace do
       socket = assign(socket, workspace_loading: false)
 
       case {kind, result} do
-        {:list, {:ok, {:ok, projects}}} ->
-          assign(socket, workspace_projects: projects)
+        {:list, {:ok, {:ok, %{projects: projects} = bundle}}} ->
+          assign(socket,
+            workspace_projects: projects,
+            workspace_workspaces: Map.get(bundle, :workspaces) || []
+          )
 
-        {kind, {:ok, {:ok, workspace}}} when kind in [:open, :mounted] ->
+        {loaded, {:ok, {:ok, workspace}}} when loaded in [:open, :mounted, :workspace] ->
           if locked?(socket.assigns) do
             socket
           else
@@ -136,20 +298,32 @@ defmodule EvoDashWeb.HomeLive.Workspace do
     end
   end
 
+  @doc "The display label of a member mount or an unresolved member ref."
+  def member_label(ref) when is_map(ref) do
+    Map.get(ref, :point) || Map.get(ref, "point") ||
+      (Map.get(ref, :path) || Map.get(ref, "path")) || gettext("Unknown project")
+  end
+
+  def member_label(ref) when is_binary(ref) and ref != "", do: ref
+  def member_label(_ref), do: gettext("Unknown project")
+
+  # The token and the param name the same project when they are the same
+  # spelling, or when BOTH belong to the resolved selection's identity family
+  # (its point and its execution path).
+  defp same_project?(token, project, selection) do
+    family =
+      Enum.reject([draft_token(selection), DraftScope.path(selection)], &is_nil/1)
+
+    token == project or (token in family and project in family)
+  end
+
   defp load(socket, operation) do
     {node_id, target} = request_scope = scope(socket.assigns)
     seq = socket.assigns.workspace_seq + 1
-    kind = if operation == :list, do: :list, else: elem(operation, 0)
+    kind = operation_kind(operation)
     tag = {:assistant_workspace_loaded, seq, request_scope, socket.assigns.chat_id, kind}
 
-    result =
-      SafeCall.start(self(), tag, fn ->
-        case operation do
-          :list -> list(node_id, target)
-          {:open, path} -> open(node_id, target, path)
-          {:mounted, path} -> mounted(node_id, target, path)
-        end
-      end)
+    result = SafeCall.start(self(), tag, fn -> run_operation(operation, node_id, target) end)
 
     case result do
       {:ok, _} ->
@@ -160,14 +334,147 @@ defmodule EvoDashWeb.HomeLive.Workspace do
     end
   end
 
-  defp mounted(node_id, target, path) do
-    with {:ok, projects} <- list(node_id, target),
-         %{name: name} <- Enum.find(projects, &match?(%{path: ^path}, &1)) do
-      {:ok, %{path: path, name: name, node: target, node_id: node_id}}
-    else
-      _ -> {:error, gettext("This project is no longer open on the selected node.")}
+  defp run_operation(:list, node_id, target), do: list(node_id, target)
+  defp run_operation({:open, path}, node_id, target), do: open(node_id, target, path)
+  defp run_operation({:mounted, key}, node_id, target), do: mounted(node_id, target, key)
+
+  defp run_operation({:workspace, point}, node_id, target),
+    do: workspace_scope(node_id, target, point)
+
+  defp operation_kind(:list), do: :list
+  defp operation_kind({kind, _argument}), do: kind
+
+  defp mounted(node_id, target, key) when is_binary(key) do
+    cond do
+      workspace_point?(key) -> workspace_scope(node_id, target, key)
+      DraftScope.point?(key) -> mounted_point(node_id, target, key)
+      true -> mounted_path(node_id, target, key)
     end
   end
+
+  defp mounted(_node_id, _target, _key), do: no_longer_open()
+
+  defp mounted_path(node_id, target, path) do
+    with {:ok, projects} <- project_mounts(target),
+         %{} = mount <- Enum.find(projects, &match?(%{path: ^path}, &1)) do
+      {:ok, project_selection(node_id, target, mount)}
+    else
+      _ -> no_longer_open()
+    end
+  end
+
+  defp mounted_point(node_id, target, point) do
+    with {:ok, projects} <- project_mounts(target),
+         %{} = mount <- Enum.find(projects, &(mount_point(&1) == point)) do
+      {:ok, project_selection(node_id, target, mount)}
+    else
+      _ -> no_longer_open()
+    end
+  end
+
+  defp workspace_scope(node_id, target, point) do
+    with :ok <- ready_target(node_id, target),
+         true <- workspace_point?(point),
+         {:ok, {:ok, resolution}} when is_map(resolution) <-
+           SafeCall.run(fn -> NodeContext.workspace_members(target, point) end) do
+      build_workspace_selection(node_id, target, resolve_workspace(target, nil, resolution))
+    else
+      _ -> no_longer_available()
+    end
+  end
+
+  defp build_workspace_selection(node_id, target, entry) do
+    point = mount_point(Map.get(entry, :workspace))
+
+    with true <- is_binary(point) do
+      case entry.members do
+        [first | _] ->
+          {:ok,
+           %{
+             kind: :workspace,
+             point: point,
+             path: first.path,
+             name: mount_name(Map.get(entry, :workspace)),
+             node: target,
+             node_id: node_id,
+             members: entry.members,
+             missing: entry.missing
+           }}
+
+        [] ->
+          {:error, no_member_message(entry.missing)}
+      end
+    else
+      _ -> no_longer_available()
+    end
+  end
+
+  defp project_mounts(target) do
+    with {:ok, projects} when is_list(projects) <-
+           SafeCall.run(fn -> NodeContext.projects(target) end) do
+      {:ok, Enum.filter(projects, &valid_project?(&1, target))}
+    else
+      _ -> {:error, :unavailable}
+    end
+  end
+
+  defp workspace_entries(target) do
+    workspaces =
+      case SafeCall.run(fn -> NodeContext.workspaces(target) end) do
+        {:ok, workspaces} when is_list(workspaces) -> Enum.filter(workspaces, &is_map/1)
+        _ -> []
+      end
+
+    Enum.map(workspaces, fn workspace ->
+      case SafeCall.run(fn -> NodeContext.workspace_members(target, mount_point(workspace)) end) do
+        {:ok, {:ok, resolution}} when is_map(resolution) ->
+          resolve_workspace(target, workspace, resolution)
+
+        _ ->
+          resolve_workspace(target, workspace, nil)
+      end
+    end)
+  end
+
+  # Members resolve IN STORED ORDER; anything the core could not resolve — or
+  # that names a path this node cannot use — is reported, never dropped
+  # silently and never replaced by another project.
+  defp resolve_workspace(target, workspace, resolution) when is_map(resolution) do
+    members = Map.get(resolution, :members) || []
+    {resolved, unusable} = Enum.split_with(List.wrap(members), &valid_project?(&1, target))
+
+    %{
+      workspace: Map.get(resolution, :workspace) || workspace,
+      members: normalize_members(resolved),
+      missing:
+        normalize_missing(
+          List.wrap(Map.get(resolution, :missing)) ++
+            List.wrap(Map.get(resolution, :nested)) ++ unusable
+        )
+    }
+  end
+
+  defp resolve_workspace(_target, workspace, _resolution) do
+    %{
+      workspace: workspace,
+      members: [],
+      missing: normalize_missing(List.wrap(Map.get(workspace, :members)))
+    }
+  end
+
+  defp no_member_message([]), do: gettext("This workspace has no projects.")
+
+  defp no_member_message(missing) do
+    gettext("This workspace has no available project on the selected node. Missing: %{refs}",
+      refs: Enum.map_join(missing, ", ", &member_label/1)
+    )
+  end
+
+  defp no_longer_open(),
+    do: {:error, gettext("This project is no longer open on the selected node.")}
+
+  defp no_longer_available(),
+    do: {:error, gettext("This workspace is no longer available on the selected node.")}
 
   defp ready_target(nil, target) when target == node(), do: :ok
 
@@ -186,4 +493,100 @@ defmodule EvoDashWeb.HomeLive.Workspace do
     do: ProjectFlow.absolute_path_for_node?(target, path)
 
   defp valid_project?(_, _), do: false
+
+  defp project_selection(node_id, target, mount) when is_map(mount) do
+    path = Map.get(mount, :path) || Map.get(mount, "path")
+
+    %{
+      kind: :project,
+      point: mount_point(mount),
+      path: path,
+      name: mount_name(mount),
+      node: target,
+      node_id: node_id,
+      members: [],
+      missing: []
+    }
+  end
+
+  defp project_selection(_node_id, _target, _mount), do: %{}
+
+  defp mount_point(mount) when is_map(mount) do
+    case Map.get(mount, :point) || Map.get(mount, "point") do
+      point when is_binary(point) and point != "" -> point
+      _ -> nil
+    end
+  end
+
+  defp mount_point(_mount), do: nil
+
+  defp mount_name(mount) when is_map(mount) do
+    case Map.get(mount, :name) || Map.get(mount, "name") do
+      name when is_binary(name) and name != "" -> name
+      _ -> mount_point(mount) |> file_name(gettext("Workspace"))
+    end
+  end
+
+  defp mount_name(_mount), do: gettext("Workspace")
+
+  defp file_name(nil, fallback), do: fallback
+  defp file_name(path, _fallback), do: Path.basename(path)
+
+  defp workspace_point?(point),
+    do: is_binary(point) and String.starts_with?(point, @workspace_prefix)
+
+  defp normalize_point(point) when is_binary(point) and point != "", do: point
+  defp normalize_point(_point), do: nil
+
+  defp normalize_kind(kind, _point) when kind in [:workspace, "workspace"], do: :workspace
+  defp normalize_kind(:project, _point), do: :project
+
+  defp normalize_kind(_kind, point),
+    do: if(workspace_point?(point), do: :workspace, else: :project)
+
+  defp normalize_name(name, _path) when is_binary(name) and name != "", do: name
+  defp normalize_name(_name, path), do: Path.basename(path)
+
+  defp normalize_members(members) when is_list(members) do
+    members |> Enum.map(&member_entry/1) |> Enum.reject(&is_nil/1)
+  end
+
+  defp normalize_members(_members), do: []
+
+  defp member_entry(ref) do
+    case normalize_ref(ref) do
+      %{path: path} = entry when is_binary(path) ->
+        Map.put(entry, :name, ref_name(ref) || Path.basename(path))
+
+      _ ->
+        nil
+    end
+  end
+
+  defp normalize_missing(refs) when is_list(refs) do
+    refs
+    |> Enum.map(&normalize_ref/1)
+    |> Enum.reject(&(is_nil(&1) or (is_nil(&1.point) and is_nil(&1.path))))
+  end
+
+  defp normalize_missing(_refs), do: []
+
+  defp normalize_ref(ref) when is_map(ref) do
+    %{
+      point: normalize_point(Map.get(ref, :point) || Map.get(ref, "point")),
+      path: normalize_point(Map.get(ref, :path) || Map.get(ref, "path"))
+    }
+  end
+
+  defp normalize_ref(ref) when is_binary(ref) and ref != "", do: %{point: nil, path: ref}
+  defp normalize_ref(_ref), do: nil
+
+  defp ref_name(ref) when is_map(ref) do
+    case Map.get(ref, :name) || Map.get(ref, "name") do
+      name when is_binary(name) and name != "" -> name
+      _ -> nil
+    end
+  end
+
+  defp ref_name(_ref), do: nil
 end
