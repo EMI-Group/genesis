@@ -79,17 +79,24 @@ defmodule EvoDashWeb.HomeLive do
     assigns =
       assigns
       |> assign_new(:workspace, fn -> nil end)
+      # Seeded by the global on-mount hooks (`NodeAware` seeds the node
+      # bookkeeping, `Appearance` the accent), so these are no-ops in the real
+      # mount path and cover a direct template render with a partial assign map.
+      |> assign_new(:remote_targets, fn -> [] end)
+      |> assign_new(:connection_statuses, fn -> %{} end)
+      |> assign_new(:accent_color, fn -> "blue" end)
       |> assign(:draft_project, Workspace.draft_project(assigns))
       |> assign(:stream_error, Watch.failure(assigns))
       |> assign(:approval_host, ApprovalWorkflow.notification_host(assigns))
+      |> assign(:approval_strip_open, approval_strip_open?(assigns))
 
     ~H"""
     <EvoDashWeb.Layouts.app
       flash={@flash}
       current_page={:assistant}
       current_node_id={@current_node_id}
-      remote_targets={assigns[:remote_targets] || []}
-      connection_statuses={assigns[:connection_statuses] || %{}}
+      remote_targets={@remote_targets}
+      connection_statuses={@connection_statuses}
       workbench_project={(@workspace && @workspace.path) || @draft_project}
       workbench_git_project={@workspace && @workspace.path}
       workbench_draft={assigns[:workbench_draft]}
@@ -104,7 +111,7 @@ defmodule EvoDashWeb.HomeLive do
       desktop_quit_confirm={@desktop_quit_confirm}
       update_status={@update_status}
       guide={@guide}
-      accent_color={assigns[:accent_color] || "blue"}
+      accent_color={@accent_color}
     >
       <div id="assistant-surface" class="assistant-surface h-full min-h-0 w-full">
         <div class={[
@@ -176,7 +183,6 @@ defmodule EvoDashWeb.HomeLive do
                 <.message_list
                   transcript={@transcript}
                   chat_task_status={@chat_task_status}
-                  thought_process={@thought_process}
                   raw_entry_ids={@raw_entry_ids}
                   stream_meta={@chat_stream_meta}
                   stream_unavailable={@stream_error != nil}
@@ -191,14 +197,15 @@ defmodule EvoDashWeb.HomeLive do
              or being resolved never reflows the transcript column (the
              historical cause of the chat "shaking" at the end of a turn).
              Decisions happen in the single-request dialog below, opened from
-             the strip's Review button or automatically for a NEW live request. -->
+             the strip's Review button or automatically for a NEW live request.
+             The strip stays MOUNTED and collapses through the shared
+             `motion-collapse-grid` helper (`data-motion-open`), so showing and
+             hiding it both animate instead of jumping the column. -->
           <div
             id="assistant-notifications"
             phx-hook="BrowserNotifications"
-            class={[
-              "flex h-10 shrink-0 items-center",
-              (@transcript == [] or @chat_status == :ended) and @pending_approvals == [] and "hidden!"
-            ]}
+            class="motion-collapse-grid shrink-0"
+            data-motion-open={to_string(@approval_strip_open)}
             data-approval-request-ids={Jason.encode!(@approval_host.request_ids)}
             data-approval-scope={@approval_host.scope}
             data-notification-label-unsupported={gettext("Notifications unavailable")}
@@ -208,29 +215,34 @@ defmodule EvoDashWeb.HomeLive do
             data-notification-label-requesting={gettext("Requesting notification permission…")}
             data-notification-label-error={gettext("Notifications failed — review approvals here")}
           >
-            <div class="min-w-0 flex-1">
-              {EvoDashWeb.HomeLive.ApprovalDialog.approval_bar(assigns)}
-            </div>
-            <!-- Permission is requested only by this explicit user control.
-               The end slot shares the approval strip's reserved height. -->
-            <div class="flex shrink-0 items-center gap-1 pr-3 sm:pr-4">
-              <button
-                type="button"
-                data-enable-notifications
-                class="btn btn-ghost btn-xs btn-square"
-                aria-label={gettext("Enable notifications")}
-                title={gettext("Enable notifications")}
-              >
-                <.icon name="hero-bell" class="size-3.5" />
-              </button>
-              <span
-                data-notification-status
-                role="status"
-                aria-label={gettext("Notification permission status")}
-                class="max-w-16 truncate text-[10px] text-base-content/60 sm:max-w-24"
-              >
-                {gettext("Notifications not enabled")}
-              </span>
+            <!-- The grid helper collapses/expands its DIRECT children only, and
+               animates grid rows — never a raw height — so the whole visible
+               strip lives in this one `h-10` child. -->
+            <div class="flex h-10 items-center">
+              <div class="min-w-0 flex-1">
+                {EvoDashWeb.HomeLive.ApprovalDialog.approval_bar(assigns)}
+              </div>
+              <!-- Permission is requested only by this explicit user control.
+                 The end slot shares the approval strip's reserved height. -->
+              <div class="flex shrink-0 items-center gap-1 pr-3 sm:pr-4">
+                <button
+                  type="button"
+                  data-enable-notifications
+                  class="btn btn-ghost btn-xs btn-square"
+                  aria-label={gettext("Enable notifications")}
+                  title={gettext("Enable notifications")}
+                >
+                  <.icon name="hero-bell" class="size-3.5" />
+                </button>
+                <span
+                  data-notification-status
+                  role="status"
+                  aria-label={gettext("Notification permission status")}
+                  class="max-w-16 truncate text-[10px] text-base-content/60 sm:max-w-24"
+                >
+                  {gettext("Notifications not enabled")}
+                </span>
+              </div>
             </div>
           </div>
           <%= if @approval_dialog_open do %>
@@ -270,6 +282,15 @@ defmodule EvoDashWeb.HomeLive do
     """
   end
 
+  # The notification/approval strip is VISIBLE once the conversation has content
+  # (or while a request is pending). It stays MOUNTED either way so the shared
+  # `motion-collapse-grid` helper can animate both directions instead of the
+  # transcript column snapping by 40 px when the strip un-hides.
+  defp approval_strip_open?(assigns) do
+    not ((assigns[:transcript] == [] or assigns[:chat_status] == :ended) and
+           (assigns[:pending_approvals] || []) == [])
+  end
+
   alias EvoDashWeb.HomeLive.Uploads
 
   @impl true
@@ -306,6 +327,13 @@ defmodule EvoDashWeb.HomeLive do
           socket
           |> assign(base_assigns())
           |> assign(assistant_client_id: assistant_client_id(socket))
+          # The node bookkeeping and the accent are seeded by the global
+          # on-mount hooks that ran BEFORE this mount; these keep the template's
+          # explicit `@remote_targets` / `@connection_statuses` / `@accent_color`
+          # reads total even if a hook were skipped.
+          |> assign_new(:remote_targets, fn -> [] end)
+          |> assign_new(:connection_statuses, fn -> %{} end)
+          |> assign_new(:accent_color, fn -> "blue" end)
           |> ApprovalWorkflow.init()
           |> Uploads.init(&handle_upload_progress/3)
 
@@ -348,6 +376,15 @@ defmodule EvoDashWeb.HomeLive do
       queued_echoes: [],
       session_attach_seq: 0,
       session_attach_pending?: false,
+      # Async send / stop control state. `send_in_flight` blocks a second
+      # submit, `send_seq` is the monotonic staleness guard for
+      # `{:chat_send_result, seq}` and `send_pending` carries the optimistic
+      # send's rollback context; `stop_seq` guards `{:chat_stop_result, …}` and
+      # `{:chat_finish_result, …}` the same way.
+      send_in_flight: false,
+      send_seq: 0,
+      send_pending: nil,
+      stop_seq: 0,
       # Push-only delta stream state (`EvoDashWeb.HomeLive.Watch`): the
       # subscribed agent + its seeded `%Delta{}` (nil until the registration
       # snapshot lands), that snapshot's turn meta, and the monotonic attach seq.
@@ -1131,32 +1168,41 @@ defmodule EvoDashWeb.HomeLive do
 
   defp stop_reply(socket) do
     target = socket.assigns[:current_node] || node()
+    session_id = socket.assigns[:session_id]
+    seq = socket.assigns[:stop_seq] + 1
 
     runner =
       Application.get_env(:evo_dash, :home_session_stop_runner, &NodeContext.stop_current_turn/2)
 
-    case SafeCall.run(fn -> runner.(target, socket.assigns[:session_id]) end) do
-      {:ok, :ok} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :info,
-           gettext("Stopping this reply. Background development tasks continue.")
-         )}
+    socket = assign(socket, stop_seq: seq)
 
-      {:ok, {:error, reason}} ->
-        {:noreply, stop_flash(socket, reason)}
-
-      {:error, reason} ->
-        {:noreply, stop_flash(socket, reason)}
+    # ASYNC: the node answers through `{:chat_stop_result, …}`, so a busy or
+    # remote node no longer freezes the page mid-stop.
+    case SafeCall.start(self(), {:chat_stop_result, seq, target, session_id}, fn ->
+           runner.(target, session_id)
+         end) do
+      {:ok, _pid} -> {:noreply, socket}
+      {:error, reason} -> {:noreply, stop_flash(socket, reason)}
     end
   end
 
   defp finish_chat(socket, fun, assigns, reload?) do
-    case SafeCall.run(fun) do
-      {:ok, {:error, reason}} -> {:noreply, stop_flash(socket, reason)}
+    target = socket.assigns[:current_node] || node()
+    task_id = socket.assigns[:chat_task_id]
+    seq = socket.assigns[:stop_seq] + 1
+
+    socket = assign(socket, stop_seq: seq)
+
+    # ASYNC, same contract as `stop_reply/1`: the success mutation and the
+    # `reload?` decision ride the tagged result so they apply to the socket as
+    # it is when the answer lands (never to a stale captured one).
+    case SafeCall.start(
+           self(),
+           {:chat_finish_result, seq, target, task_id, assigns, reload?},
+           fun
+         ) do
+      {:ok, _pid} -> {:noreply, socket}
       {:error, reason} -> {:noreply, stop_flash(socket, reason)}
-      {:ok, _ok} -> {:noreply, stop_ok(socket, assigns, reload?)}
     end
   end
 
@@ -1419,11 +1465,13 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   def handle_info(:node_aware_reload_tasks, socket) do
+    # The sidebar Conversations load for THIS event is owned by
+    # `EvoDashWeb.LiveHooks.NodeAware` (its `{:cont, socket}` already spawns the
+    # same node's `SessionList` load), so the page must not ask a second time.
     socket =
       socket
       |> NodeAware.reload_tasks()
       |> NodeAware.clear_task_reload_pending()
-      |> maybe_load_sessions()
 
     {:noreply, socket}
   end
@@ -1480,6 +1528,58 @@ defmodule EvoDashWeb.HomeLive do
     else
       {:noreply, finalize_terminal(socket, task)}
     end
+  end
+
+  # The async send / stop / cancel answers. Each result carries its own
+  # monotonic generation plus the identity it was issued for, so a superseded
+  # answer is DROPPED instead of mutating a different chat — and a dropped
+  # answer never leaves the composer disabled (`SendPath.apply_send_result/3`
+  # clears the in-flight flag for the send it belongs to).
+  def handle_info({{:chat_send_result, seq}, result}, socket) do
+    {:noreply, SendPath.apply_send_result(socket, seq, result)}
+  end
+
+  def handle_info({{:chat_stop_result, seq, node, session_id}, result}, socket) do
+    socket =
+      if stale_control?(socket, seq, node) or session_id != socket.assigns[:session_id] do
+        socket
+      else
+        case result do
+          {:ok, :ok} ->
+            put_flash(
+              socket,
+              :info,
+              gettext("Stopping this reply. Background development tasks continue.")
+            )
+
+          {:ok, {:error, reason}} ->
+            stop_flash(socket, reason)
+
+          {:error, reason} ->
+            stop_flash(socket, reason)
+
+          _other ->
+            socket
+        end
+      end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({{:chat_finish_result, seq, node, task_id, assigns, reload?}, result}, socket) do
+    socket =
+      if stale_control?(socket, seq, node) or task_id != socket.assigns[:chat_task_id] do
+        socket
+      else
+        case result do
+          {:ok, {:error, reason}} -> stop_flash(socket, reason)
+          {:error, reason} -> stop_flash(socket, reason)
+          {:ok, _ok} -> stop_ok(socket, assigns, reload?)
+          _other -> socket
+        end
+      end
+
+    {:noreply, socket}
   end
 
   def handle_info({{:assistant_workspace_loaded, seq, scope, chat_id, kind}, result}, socket) do
@@ -1971,7 +2071,14 @@ defmodule EvoDashWeb.HomeLive do
       workspace_projects: [],
       workspace_workspaces: [],
       workspace_expanded: MapSet.new(),
-      workspace_seq: socket.assigns.workspace_seq + 1
+      workspace_seq: socket.assigns.workspace_seq + 1,
+      # Advance BOTH control generations and drop the in-flight send context, so
+      # a result from the previous chat is provably stale and can never re-enable
+      # or mutate this one.
+      send_in_flight: false,
+      send_pending: nil,
+      send_seq: socket.assigns.send_seq + 1,
+      stop_seq: socket.assigns.stop_seq + 1
     )
     |> ApprovalWorkflow.init()
   end
@@ -2187,6 +2294,12 @@ defmodule EvoDashWeb.HomeLive do
 
   defp stale?(socket, node, seq) do
     node != socket.assigns[:current_node] or seq != socket.assigns[:chat_fetch_seq]
+  end
+
+  # A stop / cancel answer is stale when a newer control action was issued or
+  # the viewed node moved out from under it.
+  defp stale_control?(socket, seq, node) do
+    seq != socket.assigns[:stop_seq] or node != (socket.assigns[:current_node] || node())
   end
 
   # Best-effort unwatch on page teardown. The REAL reaper is the session's own

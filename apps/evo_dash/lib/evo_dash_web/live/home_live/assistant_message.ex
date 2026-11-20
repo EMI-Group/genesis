@@ -149,8 +149,14 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                   <span class="help-caret ml-0.5 inline-block h-4 w-[3px] rounded-full bg-primary align-[-3px]"></span>
                 <% else %>
                   <%= if @raw do %>
-                    <!-- Per-message raw view: the plain (HTML-escaped) source text. -->
-                    <span class="whitespace-pre-wrap">{entry_text(@entry)}</span>
+                    <!-- Per-message raw view: the plain (HTML-escaped) source text.
+                       Carries the SAME `motion-panel motion-panel-open` pair as
+                       the Markdown branch so toggling fades both directions, and
+                       keeps `md-content` OFF so a raw entry is never styled as
+                       rendered Markdown. -->
+                    <span class="motion-panel motion-panel-open min-w-0 break-words whitespace-pre-wrap">{entry_text(
+                      @entry
+                    )}</span>
                   <% else %>
                     <!-- Finalized assistant text renders as Markdown — same helper
                        + call pattern as the tasks/review pages. Always-safe
