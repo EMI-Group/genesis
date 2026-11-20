@@ -95,7 +95,7 @@ The core DELETES an agent's ETS rows (and its `evogit-agent-*` branch) when it r
 
 ### Commit view markup (contract boundary)
 
-The view is rendered by `EvoDashWeb.AgentsComponents.CommitGraphView.commit_graph_view/1` (called FULLY QUALIFIED in `agents_live.html.heex`; attrs `repos` / `selected_id` / `loading` / `error` / `node_key`), fed `repos={@commit_graph}`, `selected_id={@selected_agent_id}`, `loading={@commit_graph_loading}`, `error={@commit_graph_error}` and `node_key={@current_node_id || "local"}`.
+The view is rendered by `EvoDashWeb.AgentsComponents.CommitGraphView.commit_graph_view/1` (called FULLY QUALIFIED from `EvoDashWeb.AgentsLive.TreePanel.tree_panel/1`; attrs `repos` / `selected_id` / `loading` / `error` / `node_key`), fed `repos={@commit_graph}`, `selected_id={@selected_agent_id}`, `loading={@commit_graph_loading}`, `error={@commit_graph_error}` and `node_key={@current_node_id || "local"}`.
 The contract boundary: this builder owns ONLY the view model (`repo_key`/`repo_dom_id`/`repo_name` + `nodes` + `edges` + `agents`); every DOM id, element, tooltip, legend chip and client-side hook belongs to the renderer — see `../../components/agents_components/CONTEXT.md`.
 
 ### Commit-graph colors
