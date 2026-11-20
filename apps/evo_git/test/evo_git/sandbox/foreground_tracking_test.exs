@@ -7,10 +7,11 @@ defmodule EvoGit.Sandbox.ForegroundTrackingTest do
   the disabled `bash -c` path under `MIX_ENV=test`) against REAL child
   processes, so they assert what a tracked execution actually carries:
 
-    * the tracked record gets a non-nil `os_pid` (POSIX/Windows backends) or a
-      non-nil `unit` (the systemd-run backend), i.e. the previous "degraded
-      pid-less foreground execution" gap is closed, and that identity STAYS on
-      the terminal record;
+    * the tracked record attaches a REAL `os_pid` (POSIX/Windows backends) or a
+      REAL `unit` (the systemd-run backend) WHILE the child is alive — the OS
+      pid is only readable through an open port, so a foreground child that
+      exits before the pid is read legitimately keeps no OS identity — and that
+      identity STAYS on the terminal record afterwards;
     * the record settles ITSELF when the sandbox layer observes the OS exit
       status, so it is already `:completed` (with its real `exit_code` and
       `reason: :exited`) by the time `run_with_partial/7` returns;
@@ -47,6 +48,20 @@ defmodule EvoGit.Sandbox.ForegroundTrackingTest do
                 else: false
 
   defp uniq, do: System.unique_integer([:positive])
+
+  # A unique scratch dir for a fixture SCRIPT and its release file. Never used
+  # as a child's `cwd`: a subprocess chdir'ing into an ExUnit-style fixture dir
+  # is unsafe elsewhere in this suite, so `cwd` stays `System.tmp_dir!()`.
+  defp fixture_dir! do
+    dir = Path.join(System.tmp_dir!(), "foreground_tracking_#{uniq()}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+    dir
+  end
+
+  # POSIX single-quoting, so a fixture path can never break out of the script
+  # line that tests for it.
+  defp sh_quote(value), do: "'" <> String.replace(value, "'", "'\\''") <> "'"
 
   # Starts an ISOLATED manager and points the calling process at it.
   defp isolated_manager! do
@@ -138,27 +153,72 @@ defmodule EvoGit.Sandbox.ForegroundTrackingTest do
 
   describe "foreground execution tracking" do
     test "a real command attaches a real OS pid/unit and settles itself on exit" do
-      isolated_manager!()
+      manager = isolated_manager!()
 
-      {:ok, id} = ProcessManager.track(:tool_call, %{tool: "bash", command: "echo hello"})
+      # The OS pid is readable ONLY while the port is open, so a child that
+      # exits before the read is honest but unobservable. This fixture holds the
+      # child alive (a bounded wait for a release file, then `echo hello`) until
+      # the test has asserted its identity, instead of racing a microseconds-long
+      # `echo hello` whose pid window closes under host load.
+      dir = fixture_dir!()
+      trigger = Path.join(dir, "release")
+      script = Path.join(dir, "barrier.sh")
 
-      assert {:ok, output, 0} =
-               Sandbox.run_with_partial(
-                 System.tmp_dir!(),
-                 "bash",
-                 ["-c", "echo hello"],
-                 nil,
-                 10_000,
-                 nil,
-                 execution_id: id
-               )
+      File.write!(script, """
+      for ((i = 0; i < 200; i++)); do
+        [ -e #{sh_quote(trigger)} ] && break
+        sleep 0.05
+      done
+      echo hello
+      """)
 
+      {:ok, id} = ProcessManager.track(:tool_call, %{tool: "bash", command: "#{script}"})
+
+      # The spawned process starts with an EMPTY process dictionary, so it must
+      # install the same manager seam itself for the attach to reach this
+      # test's isolated registry.
+      task =
+        Task.async(fn ->
+          Process.put(:evogit_process_manager_server, manager)
+
+          Sandbox.run_with_partial(
+            System.tmp_dir!(),
+            "bash",
+            [script],
+            nil,
+            30_000,
+            nil,
+            execution_id: id
+          )
+        end)
+
+      on_exit(fn ->
+        # Release the barrier so a failed run never leaves the child behind (its
+        # loop is bounded anyway); the task itself is LINKED to this test
+        # process and dies with it.
+        File.write!(trigger, "")
+      end)
+
+      # The identity is attached WHILE the child is alive, and it really is a
+      # LIVE OS process, not a remembered number.
+      execution = await_handle(id)
+      assert {:pid, os_pid} = os_identity(execution)
+      assert execution.status == :running
+
+      unless EvoGit.Platform.windows?() do
+        assert EvoGit.ProcessManager.Control.Posix.alive?(Handle.posix(os_pid))
+      end
+
+      # Release the barrier: the child ends normally (`echo hello`, exit 0).
+      File.write!(trigger, "")
+
+      assert {:ok, output, 0} = Task.await(task, 10_000)
       assert output =~ "hello"
 
       # THE regression this suite exists for: the handle is NOT pid-less, and a
       # command that already exited keeps its OS identity on the terminal record.
       execution = await_terminal(id)
-      assert os_identity(execution) != nil
+      assert {:pid, ^os_pid} = os_identity(execution)
       assert execution.kind == :tool_call
 
       # The sandbox layer OBSERVES the OS exit status, so it settles the record
@@ -167,6 +227,11 @@ defmodule EvoGit.Sandbox.ForegroundTrackingTest do
       assert execution.status == :completed
       assert execution.exit_code == 0
       assert execution.reason == :exited
+
+      unless EvoGit.Platform.windows?() do
+        # The child genuinely exited; the identity outlived it.
+        assert await_dead(Handle.posix(os_pid))
+      end
 
       # A later, coarser finish (the executor's) is a no-op on the settled record:
       # it never clears the exit code it did not observe.
