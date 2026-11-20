@@ -66,6 +66,100 @@ function safeHref(value) {
     (/^\/(projects|tasks|assistant)$/.test(url.pathname) || url.pathname.startsWith("/review/"))
 }
 
+// --- Workbench: pure sync probe --------------------------------------------
+// Decides whether `sync()` — the shell sweep — has to re-run after a LiveView
+// patch. `#app-layout` is the hook's element, so EVERY patch anywhere in the
+// shell reaches `updated()`: a streaming assistant delta, an Active Tasks
+// refresh, one history row's status label. `sync()` is a set of full-subtree
+// `querySelectorAll` walks plus per-row writes (the tab rail, every project
+// row's windows, every history row's current marker, the panel states, the
+// sidebar widths, the Git label, the create menu), so running it per patch made
+// list CONTENT updates pay for the whole shell.
+//
+// So `updated()` probes first: it builds the plain `state` object described
+// below with property reads only (no `querySelectorAll`, no geometry), and
+// `workbenchSyncNeeded` compares it with the state recorded after the last
+// sweep. Everything here is DOM-free, so the planner is directly testable
+// (hooks/workbench.test.cjs slices this block).
+
+// The dataset fields `captureTab()` derives the current tab from — its key,
+// href and title. A navigation that changes ANY of them must sweep, because the
+// tab rail, the per-row current markers and the preview handoff all follow the
+// current tab.
+const SYNC_DATASET_KEYS = [
+  "workbenchNode", "workbenchProject", "workbenchTask", "workbenchSession",
+  "workbenchDraft", "workbenchDraftProject", "workbenchPage",
+  "workbenchGitBranch", "workbenchStartingCommit",
+]
+
+// One normalised string per input: `undefined`, `null` and a missing field all
+// read the same, so no probe result depends on key order or on `dataset` vs a
+// hand-built object.
+function probeText(value) {
+  return value === undefined || value === null ? "" : String(value)
+}
+
+// One workbench/sidebar list's shape: its name, child count, and the head and
+// tail row identities (property reads, never a sweep).
+//
+// WHY count + head + tail is sufficient: the project sidebar list is
+// RECENCY-ordered — a mounted project is inserted (or moved) at the HEAD — and
+// the ONE `[data-workbench-item]` list (`#workbench-history-rows`) is PAGED, so
+// a page is appended at the TAIL and a filter/kind change replaces the whole
+// list. A mid-list-only change that leaves count, head and tail identical
+// therefore cannot occur. The only hook-owned state on a history row is its
+// current marker, which derives from {kind, item id}, so a row that is neither
+// head nor tail can only become current by being re-rendered as part of a NEW
+// list (which moves the head or the count).
+function probeListShape(list) {
+  if (!list) return ["", "", "", ""]
+  return [probeText(list.name), probeText(list.count),
+    probeText(list.head), probeText(list.tail)]
+}
+
+// Everything `sync()` reads, as one comparable string: the layout dataset, the
+// Git pane's own inputs (the diff title that creates the diff tab, the branch
+// label, and the scope `syncGitStatus` refreshes on), the sidebar flags
+// `syncEmptyState` reads, the two JS-written re-render markers, and the list
+// shapes.
+//
+// THE RESET MARKERS: `applyAccent` writes `data-accent-color` on this hook's
+// element (the server renders the configured accent too, so the two differ
+// exactly when localStorage carries an override — and when they do not differ,
+// re-applying is a no-op), while `renderTabs` / `renderProjectWindows` write
+// `data-signature` on the tab rail and on each project's window container (the
+// server never renders it). The rail and the window containers are
+// `phx-update="ignore"`, so LiveView leaves an existing one alone in place — a
+// MISSING marker therefore means a NEW element (a re-rendered header, a project
+// row the async side list just added), which is exactly the case the sweep has
+// to repaint.
+function syncStateSignature(state) {
+  if (!state) return ""
+  const data = state.dataset || {}
+  const git = state.git || {}
+  const lists = Array.isArray(state.lists) ? state.lists : []
+  return JSON.stringify([
+    SYNC_DATASET_KEYS.map(key => probeText(data[key])),
+    probeText(git.diff), probeText(git.head), probeText(git.scope),
+    probeText(git.target),
+    probeText(state.projectsLoading), probeText(state.historyEmpty),
+    probeText(state.accent), probeText(state.tabsMarked), state.windowsMarked === true,
+    lists.map(probeListShape),
+  ])
+}
+
+// The planner `updated()` uses. `applied` is the state recorded at the end of
+// the last sweep, so it is `undefined` until `mounted()`'s unconditional first
+// `sync()` — a first mount is always dirty, exactly like `sidebar_collapse.js`.
+// Total: a missing state is "nothing to fix" and never throws.
+function workbenchSyncNeeded(state, applied) {
+  if (!state) return false
+  if (!applied) return true
+  return syncStateSignature(state) !== syncStateSignature(applied)
+}
+// Workbench hook: the DOM half below only READS those inputs and executes the
+// sweep — every decision stays in the pure block above.
+
 const Workbench = {
   mounted() {
     this.tabs = read(sessionStorage, TAB_KEY, [])
@@ -208,12 +302,18 @@ const Workbench = {
     this.media.addEventListener("change", this.onResize)
     window.addEventListener("phx:page-loading-stop", this.onNavigation)
     window.addEventListener("storage", this.onStorage)
+    // Undefined until the sweep below records it, so the probe reports "dirty"
+    // for this first, unconditional sync (see the pure block at the top).
+    this.appliedSyncState = undefined
     this.sync()
     if (this.projectSidebarNav) this.projectSidebarNav.scrollTop = projectSidebarScrollTop
   },
 
   updated() {
-    this.sync()
+    // Cheap probe FIRST: a patch that only replaced list CONTENT (a streamed
+    // tool delta, a refreshed Active Tasks row, one history label) cannot
+    // change any sync input, and the sweep is O(the whole shell).
+    if (workbenchSyncNeeded(this.syncState(), this.appliedSyncState)) this.sync()
   },
 
   destroyed() {
@@ -236,6 +336,15 @@ const Workbench = {
     window.removeEventListener("storage", this.onStorage)
     for (const key of [...this.panelClose.keys()]) this.clearPanelClose(key)
     for (const key of [...this.panelFrames.keys()]) this.cancelPanelFrame(key)
+    // Release the preview snapshot cache + its shadow-DOM host — but NEVER mid
+    // handoff: `release()` clears a pending handoff, and the overlay host lives
+    // on `document.body`, OUTSIDE this hook's element, precisely so a
+    // project-switch navigation keeps painting the old window while the new one
+    // mounts. Destroying the hook must not yank it. A handoff is in flight
+    // exactly while the body carries `data-workbench-project-switching` (set by
+    // `show()`, cleared by `clear()`/`sync()`); a later mount re-creates the
+    // host, and the pending timer or the next `sync()` clears the marker.
+    if (!document.body.hasAttribute("data-workbench-project-switching")) projectPreview.release()
   },
 
   sync() {
@@ -263,6 +372,60 @@ const Workbench = {
     this.syncGitStatus()
     this.syncGitDiffFocus()
     this.positionCreateMenu()
+    // Record what the shell now reflects — the probe's baseline for the next
+    // patch. Taken at the END, once every marker this sweep writes is in place.
+    this.appliedSyncState = this.syncState()
+  },
+
+  // The probe inputs for `updated()` (see the pure block at the top): property
+  // reads only — one `querySelector` per marker family, `childElementCount` and
+  // `firstElementChild`/`lastElementChild` for each list. No
+  // `querySelectorAll`, no geometry, nothing per-row.
+  syncState() {
+    const el = this.el
+    const data = el.dataset || {}
+    const dataset = {}
+    for (const key of SYNC_DATASET_KEYS) dataset[key] = data[key]
+    const git = el.querySelector("#workbench-git-content")?.dataset || {}
+    const side = el.querySelector("#workbench-projects")?.dataset || {}
+    const history = el.querySelector("#workbench-history-content")
+    const lists = []
+    // The paged history item list. Its children include the optional "Load
+    // more" button, which is why the shape records the raw head/tail children
+    // (a button carries no item id) — any page append or list replacement moves
+    // the count or the tail.
+    const rows = history?.querySelector("#workbench-history-rows")
+    if (rows) {
+      lists.push({
+        name: "items", count: rows.childElementCount,
+        head: rows.firstElementChild?.dataset.itemId,
+        tail: rows.lastElementChild?.dataset.itemId,
+      })
+    }
+    // The recency-ordered project sidebar list: `syncEmptyState` reads whether
+    // it has rows, and every new row brings an unmarked window container.
+    const projectList = el.querySelector(".workbench-project-list")
+    if (projectList) {
+      const path = row => row?.querySelector(".workbench-project-link")?.dataset.workbenchProject
+      lists.push({
+        name: "projects", count: projectList.childElementCount,
+        head: path(projectList.firstElementChild),
+        tail: path(projectList.lastElementChild),
+      })
+    }
+    return {
+      dataset,
+      git: {
+        diff: git.workbenchGitDiff, head: git.workbenchGitHead,
+        scope: git.workbenchGitScope, target: git.workbenchGitTarget,
+      },
+      projectsLoading: side.workbenchProjectsLoading,
+      historyEmpty: history?.dataset.workbenchHistoryEmpty,
+      accent: data.accentColor,
+      tabsMarked: el.querySelector("#workbench-tabs")?.dataset.signature,
+      windowsMarked: !el.querySelector("[data-workbench-project-windows]:not([data-signature])"),
+      lists,
+    }
   },
 
   positionCreateMenu() {
