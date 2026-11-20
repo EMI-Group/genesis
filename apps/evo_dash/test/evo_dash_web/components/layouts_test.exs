@@ -395,6 +395,8 @@ defmodule EvoDashWeb.LayoutsTest do
       tree = parse(html)
 
       refute Floki.text(tree) =~ "Active Tasks"
+      # … and the section is structurally absent, not merely unlabelled.
+      assert Floki.find(tree, "#workbench-active-tasks") == []
       assert conversations_headers(tree) == ["Conversations"]
 
       assert [list] = Floki.find(tree, "#chat-session-list")
@@ -420,6 +422,261 @@ defmodule EvoDashWeb.LayoutsTest do
       assert [body] = Floki.find(tree, "#chat-session-list")
       assert [row] = Floki.find(body, "a[id^='chat-session-']")
       assert Floki.attribute(row, "id") == ["chat-session-3"]
+    end
+  end
+
+  describe "app/1 — Active Tasks is a first-class sidebar section" do
+    # Active Tasks is its OWN sidebar section, never a child of the Tools (or
+    # Conversations) disclosure: a running task stays reachable from every
+    # sidebar page. Asserted structurally (ancestor walk), because "the text
+    # appears somewhere" would also pass for a nested Tools row.
+    test "sits in the sidebar nav, outside the Tools, Conversations and utilities" do
+      html =
+        render_app(
+          current_page: :dashboard,
+          running_tasks: [
+            task(
+              id: "task-1",
+              status: :running,
+              project_path: "/home/user/my-project",
+              objective: "Active task"
+            )
+          ],
+          session_list: [%{id: 3, title: "three", marker: :ended}]
+        )
+
+      tree = parse(html)
+
+      # Exactly ONE Active Tasks section, and it owns EVERY task row on the page.
+      assert [section] = Floki.find(tree, "#workbench-active-tasks")
+      assert [row] = Floki.find(section, "[data-sidebar-task-link]")
+      assert sidebar_task_links(html) == 1
+      assert Floki.attribute(row, "href") == ["/agents"]
+      assert Floki.attribute(row, "title") |> hd() =~ "Active task"
+
+      ancestors = ancestors_where(tree, &has_id?(&1, "workbench-active-tasks"))
+
+      refute Enum.any?(ancestors, &tools_details?/1)
+      refute Enum.any?(ancestors, &has_id?(&1, "workbench-conversations"))
+      refute Enum.any?(ancestors, &has_class?(&1, "workbench-sidebar-utilities"))
+
+      nav = Enum.find(ancestors, &sidebar_nav?/1)
+      assert nav, "Active Tasks must be a descendant of `#sidebar nav`"
+      assert [_aside] = Enum.filter(ancestors, &sidebar_aside?/1)
+
+      # Sidebar order: Active Tasks → Assistant → recent projects → utilities.
+      assert [active, assistant, projects, utilities] = element_children(nav)
+      assert has_id?(active, "workbench-active-tasks")
+      assert match?({"a", _, _}, assistant)
+      assert has_id?(projects, "workbench-projects")
+      assert has_class?(utilities, "workbench-sidebar-utilities")
+
+      # Tools (Agents/Tasks/Processes/System) AND Conversations live inside the
+      # utilities wrapper, i.e. BELOW the shortcuts.
+      assert [tools, conversations] = element_children(utilities)
+      assert tools_details?(tools)
+      assert Floki.find(tools, "a[href='/tasks']") != []
+      assert has_id?(conversations, "workbench-conversations")
+      assert contains?(conversations, "#chat-session-list")
+
+      # The brand still comes first, above the nav, inside the same aside.
+      aside = Enum.find(ancestors, &sidebar_aside?/1)
+      aside_children = element_children(aside)
+      brand = Enum.find(aside_children, &contains?(&1, "img[src='/images/logo.svg']"))
+      assert brand, "the sidebar brand must render"
+
+      assert Enum.find_index(aside_children, &(&1 == brand)) <
+               Enum.find_index(aside_children, &(&1 == nav))
+    end
+  end
+
+  describe "app/1 — recent-project shortcuts" do
+    # `#workbench-projects` is a LiveComponent mounted by the layout, so through
+    # `render_component(&Layouts.app/1, ...)` it renders its DEAD render: the
+    # registry read is a `start_async` that only runs on a connected socket, so
+    # `result` is nil and only the FORCED current project row exists
+    # (`ensure_current_project/4` runs inside `render/1`). The registry-fed list
+    # itself is covered by the `WorkbenchComponent` describe below.
+    test "the active project is a real shortcut row, even with no registry data" do
+      path = "/home/user/my-project"
+
+      html = render_app(current_page: :dashboard, workbench_project: path)
+      tree = parse(html)
+
+      assert [section] = Floki.find(tree, "#workbench-projects")
+      assert_classes(section, ["workbench-projects", "sidebar-label"])
+      assert Floki.attribute(section, "aria-label") == ["Recent projects"]
+      assert Floki.attribute(section, "data-workbench-projects-loading") == ["false"]
+
+      # Shortcuts are first-class: not nested in the utilities disclosures.
+      ancestors = ancestors_where(tree, &has_id?(&1, "workbench-projects"))
+      refute Enum.any?(ancestors, &tools_details?/1)
+      refute Enum.any?(ancestors, &has_id?(&1, "workbench-conversations"))
+      refute Enum.any?(ancestors, &has_class?(&1, "workbench-sidebar-utilities"))
+
+      # Header actions, all inside the section.
+      assert [recent] = Floki.find(section, "#workbench-recent-projects")
+      assert [href] = Floki.attribute(recent, "href")
+      assert href =~ "wb_open=1"
+      assert [_] = Floki.find(section, "#workbench-open-directory")
+      assert [_] = Floki.find(section, "#workbench-new-project")
+
+      # The current project is FORCED into the list with no registry data.
+      assert [row] = Floki.find(section, "[data-workbench-project-row]")
+      assert [link] = Floki.find(row, "a.workbench-row.workbench-project-link")
+
+      assert Floki.attribute(link, "data-workbench-project") == [path]
+      assert Floki.attribute(link, "data-workbench-project-name") == ["my-project"]
+      assert Floki.attribute(link, "data-workbench-node") == [""]
+      assert Floki.attribute(link, "title") == [path]
+      # `patch_links` on the dashboard page: the row is a PATCH destination.
+      assert Floki.attribute(link, "data-phx-link") == ["patch"]
+      assert_classes(link, ~w(workbench-row workbench-project-link is-current))
+      assert Floki.attribute(link, "aria-current") == ["page"]
+      assert Floki.text(link) =~ "my-project"
+
+      # Name first, then the host label of the node the shortcut belongs to.
+      assert [server] = Floki.find(link, ".workbench-project-server")
+      assert Floki.text(server) == "Local"
+      assert [_] = Floki.find(row, "[data-workbench-project-windows]")
+
+      # A project row is a SHORTCUT: no task rows, no create actions …
+      assert Floki.find(section, "[data-sidebar-task-link]") == []
+      assert Floki.find(section, "[data-workbench-new-task]") == []
+      assert Floki.find(section, "[data-workbench-new-conversation]") == []
+
+      # … while the top bar still offers both, so the absence above is real.
+      assert contains?(tree, "#workbench-create [data-workbench-new-task]")
+      assert contains?(tree, "#workbench-create [data-workbench-new-conversation]")
+    end
+  end
+
+  describe "WorkbenchComponent — recent-project list" do
+    # The component's own `render/1` with the exact `result` assign its async
+    # registry read produces (`%{host_id => [projects]}`) — a dead render can
+    # never start that read, so handing the map in is the only way to cover the
+    # real list (cap, recency, forced current row, current-marking rule).
+    test "at most five shortcuts, newest first, unknown timestamps last" do
+      base = ~U[2026-01-01 00:00:00Z]
+      at = fn seconds -> DateTime.add(base, seconds, :second) end
+
+      tree =
+        render_workbench_projects(
+          result: %{
+            nil => [
+              recent_mount("/p/a", at.(3)),
+              recent_mount("/p/b", nil),
+              recent_mount("/p/c", at.(1)),
+              recent_mount("/p/d", at.(5)),
+              recent_mount("/p/e", nil),
+              recent_mount("/p/f", at.(2)),
+              recent_mount("/p/g", at.(4))
+            ]
+          }
+        )
+        |> parse()
+
+      assert length(Floki.find(tree, "[data-workbench-project-row]")) == 5
+      assert project_row_paths(tree) == ["/p/d", "/p/g", "/p/a", "/p/f", "/p/c"]
+
+      # An unknown timestamp sorts LAST, so it never displaces a recent project.
+      refute contains?(tree, "[data-workbench-project='/p/b']")
+      refute contains?(tree, "[data-workbench-project='/p/e']")
+
+      # Nothing is active in this fixture.
+      assert current_row_paths(tree) == []
+      assert Floki.find(tree, ".is-current") == []
+    end
+
+    test "the active project is forced in, named by its basename" do
+      base = ~U[2026-01-01 00:00:00Z]
+
+      tree =
+        render_workbench_projects(
+          project: "/p/current",
+          result: %{nil => [recent_mount("/p/a", base)]}
+        )
+        |> parse()
+
+      assert project_row_paths(tree) == ["/p/current", "/p/a"]
+      assert current_row_paths(tree) == ["/p/current"]
+
+      [current, other] = project_links(tree)
+      # No registry row for it, so the name falls back to `Path.basename/1`.
+      assert Floki.attribute(current, "data-workbench-project-name") == ["current"]
+      assert [server] = Floki.find(current, ".workbench-project-server")
+      assert Floki.text(server) == "Local"
+
+      assert Floki.attribute(current, "aria-current") == ["page"]
+      assert Floki.attribute(other, "aria-current") == []
+      refute has_class?(other, "is-current")
+    end
+
+    test "is-current needs BOTH the node and the path to match" do
+      base = ~U[2026-01-01 00:00:00Z]
+      result = %{nil => [recent_mount("/p/a", base)]}
+
+      # Same path, same (local) host → current.
+      local = render_workbench_projects(project: "/p/a", result: result) |> parse()
+      assert project_row_paths(local) == ["/p/a"]
+      assert current_row_paths(local) == ["/p/a"]
+
+      # Same path, but the viewed node is a different one → NOT current, and
+      # the registry row is not duplicated by the forced-current fallback.
+      remote =
+        render_workbench_projects(project: "/p/a", node_id: "remote-elsewhere", result: result)
+        |> parse()
+
+      assert project_row_paths(remote) == ["/p/a"]
+      assert remote |> project_links() |> hd() |> Floki.attribute("data-workbench-node") == [""]
+      assert current_row_paths(remote) == []
+      assert Floki.find(remote, ".is-current") == []
+    end
+  end
+
+  describe "app/1 — the per-project activity surface is gone" do
+    test "project rows are shortcuts only, with no activity or task surface" do
+      html =
+        render_app(
+          current_page: :dashboard,
+          workbench_project: "/home/user/my-project",
+          running_tasks: [
+            task(
+              id: "task-1",
+              status: :running,
+              project_path: "/home/user/my-project",
+              objective: "Active task"
+            )
+          ],
+          pending_tasks: [
+            task(
+              id: "task-2",
+              status: :pending,
+              project_path: "/home/user/my-project",
+              objective: "Queued task"
+            )
+          ]
+        )
+
+      tree = parse(html)
+
+      # NOT vacuous: a project IS active and the sidebar DOES render task rows.
+      assert [section] = Floki.find(tree, "#workbench-projects")
+      assert [row] = Floki.find(section, "[data-workbench-project-row]")
+      assert has_class?(row, "workbench-project-entry")
+      assert sidebar_task_links(html) == 2
+      assert length(Floki.find(tree, "#workbench-active-tasks [data-sidebar-task-link]")) == 2
+
+      # … yet no per-project activity surface exists anywhere on the page.
+      assert Floki.find(tree, "[data-project-activity-id]") == []
+      assert Floki.find(tree, "[data-project-activity-kind]") == []
+      assert Floki.find(tree, ".workbench-project-activity") == []
+
+      # And no nested task/conversation rows inside the shortcut list.
+      assert Floki.find(section, "[data-sidebar-task-link]") == []
+      assert Floki.find(section, "a[href^='/agents']") == []
+      assert Floki.find(section, "a[href^='/review/']") == []
+      assert Floki.find(section, "#chat-session-list") == []
     end
   end
 
@@ -706,6 +963,104 @@ defmodule EvoDashWeb.LayoutsTest do
 
   # Element children of a parsed Floki node (text nodes dropped).
   defp element_children({_tag, _attrs, children}), do: Enum.reject(children, &is_binary/1)
+
+  # --- workbench chrome helpers ---
+
+  # Renders the sidebar project-shortcut component itself with the assigns
+  # `Layouts.app/1` passes it plus the `result` map its async registry read
+  # produces (`%{host_id => [projects]}`). A dead render never starts that read,
+  # so the registry has to be handed in to exercise the list.
+  defp render_workbench_projects(assigns) do
+    render_component(
+      EvoDashWeb.WorkbenchComponent,
+      Enum.into(assigns, %{id: "workbench-projects", mode: :projects})
+    )
+  end
+
+  # A VCT project mount as the registry read returns it.
+  defp recent_mount(path, last_opened_at) do
+    name = Path.basename(path)
+
+    %EvoGit.VCT.Mount{
+      point: "vct:///projects/" <> name,
+      path: path,
+      name: name,
+      last_opened_at: last_opened_at
+    }
+  end
+
+  defp project_links(tree),
+    do: Floki.find(tree, "[data-workbench-project-row] a.workbench-project-link")
+
+  # The path of every rendered project shortcut, in DOM order.
+  defp project_row_paths(tree) do
+    tree
+    |> project_links()
+    |> Enum.flat_map(&Floki.attribute(&1, "data-workbench-project"))
+  end
+
+  # The paths of the rows marked current (`aria-current="page"`).
+  defp current_row_paths(tree) do
+    tree
+    |> project_links()
+    |> Enum.filter(&(Floki.attribute(&1, "aria-current") == ["page"]))
+    |> Enum.flat_map(&Floki.attribute(&1, "data-workbench-project"))
+  end
+
+  # Ancestor chain (root first) of the FIRST node matching `fun`, found by an
+  # explicit tree walk because Floki exposes no parent accessor. This is what
+  # turns "not nested in Tools" into a structural claim instead of a text check.
+  defp ancestors_where(tree, fun) do
+    case walk_to_match(tree, fun, []) do
+      {:ok, ancestors} -> ancestors
+      :error -> flunk("no node matched the structural search")
+    end
+  end
+
+  defp walk_to_match(nodes, fun, ancestors) when is_list(nodes) do
+    Enum.reduce_while(nodes, :error, fn node, :error ->
+      case walk_to_match(node, fun, ancestors) do
+        {:ok, ancestors} -> {:halt, {:ok, ancestors}}
+        :error -> {:cont, :error}
+      end
+    end)
+  end
+
+  defp walk_to_match(node, fun, ancestors) when is_tuple(node) do
+    if fun.(node) do
+      {:ok, ancestors}
+    else
+      walk_to_match(element_children(node), fun, ancestors ++ [node])
+    end
+  end
+
+  defp walk_to_match(_text_node, _fun, _ancestors), do: :error
+
+  defp has_id?(node, id), do: Floki.attribute(node, "id") == [id]
+
+  defp has_class?(node, class) do
+    node
+    |> Floki.attribute("class")
+    |> Enum.join(" ")
+    |> String.split()
+    |> Enum.member?(class)
+  end
+
+  defp contains?(tree, selector), do: Floki.find(tree, selector) != []
+
+  defp sidebar_nav?(node) do
+    match?({"nav", _, _}, node) and has_class?(node, "workbench-sidebar-nav")
+  end
+
+  defp sidebar_aside?(node), do: match?({"aside", _, _}, node) and has_id?(node, "sidebar")
+
+  # The Tools `<details>`: the `.workbench-tools` disclosure that owns the
+  # Agents/Tasks/Processes/System links. The Conversations disclosure carries
+  # the same class, so it is identified by its own id and by having no links.
+  defp tools_details?(node) do
+    match?({"details", _, _}, node) and has_class?(node, "workbench-tools") and
+      contains?(node, "a[href^='/agents']")
+  end
 
   # Task labels in sidebar order (the truncated label span inside each link).
   defp sidebar_task_labels(html) do
