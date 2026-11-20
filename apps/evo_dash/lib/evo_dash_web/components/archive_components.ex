@@ -135,7 +135,7 @@ defmodule EvoDashWeb.ArchiveComponents do
 
     ~H"""
     <%= if @entries != [] do %>
-      <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+      <div class="animate-detail-enter bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
         <div class="flex items-center justify-between mb-4">
           <h4 class="text-sm font-bold flex items-center gap-2">
             <.icon name="hero-archive-box" class="size-4.5 text-primary-standalone" />
@@ -279,7 +279,7 @@ defmodule EvoDashWeb.ArchiveComponents do
       )
 
     ~H"""
-    <div class="border border-base-200 rounded-xl bg-base-100/60 overflow-hidden">
+    <div class="motion-panel motion-panel-slide motion-panel-open border border-base-200 rounded-xl bg-base-100/60 overflow-hidden">
       <div class="p-4 space-y-3">
         <!-- Agent ID + depth badge -->
         <div class="flex items-center gap-2 flex-wrap">
@@ -315,7 +315,7 @@ defmodule EvoDashWeb.ArchiveComponents do
         <%= case @result_view do %>
           <% {:loaded, preview} -> %>
             <%= if preview.text != "" do %>
-              <div>
+              <div class="motion-panel motion-panel-open">
                 <div class="text-xs text-base-content/60 mb-0.5">{gettext("Result")}</div>
                 <div class="text-sm text-base-content/90 whitespace-pre-wrap break-words">
                   {preview.text}
@@ -332,11 +332,15 @@ defmodule EvoDashWeb.ArchiveComponents do
               </div>
             <% end %>
           <% :loading -> %>
-            <div class="flex items-center gap-2">
-              <span class="loading loading-spinner loading-xs text-base-content/60 shrink-0"></span>
-              <span class="text-xs font-medium text-base-content/70">
+            <%!-- Skeleton (not a spinner) with the block's height reserved, so
+                 the result block does not jump when it lands. The caption stays
+                 as the live status line for assistive tech (the bars are
+                 aria-hidden). --%>
+            <div class="min-h-12" role="status">
+              <EvoDashWeb.Components.Skeleton.row count={2} />
+              <p class="mt-2 text-xs font-medium text-base-content/70">
                 {gettext("Loading result…")}
-              </span>
+              </p>
             </div>
           <% {:error, _reason} -> %>
             <div class="flex items-center gap-2 min-w-0">

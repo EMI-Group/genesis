@@ -132,9 +132,14 @@ defmodule EvoDashWeb.ProcessComponents do
           class="flex min-h-10 w-full cursor-pointer items-center gap-2 rounded-md text-start hover:text-primary-standalone focus-visible:outline-2 focus-visible:outline-primary-standalone"
           {@row_attrs}
         >
+          <%!-- ONE chevron that rotates on expand — a swapped icon would
+               re-mount (no motion), a rotation transitions in place. --%>
           <.icon
-            name={if @expanded, do: "hero-chevron-down", else: "hero-chevron-right"}
-            class="size-4 shrink-0 text-base-content/70"
+            name="hero-chevron-right"
+            class={
+              "size-4 shrink-0 text-base-content/70 transition-transform duration-150 " <>
+                if(@expanded, do: "rotate-90", else: "")
+            }
           />
           <span class="flex min-w-0 flex-1 flex-col gap-0.5">
             <code class="block truncate text-sm" title={@command}>{truncate_string(@command, 90)}</code>
@@ -239,7 +244,7 @@ defmodule EvoDashWeb.ProcessComponents do
       :if={@expanded}
       id={"process-details-#{@id || "unknown"}"}
       role="row"
-      class="block border-b border-base-300/60 bg-base-200/30 xl:table-row"
+      class="motion-panel motion-panel-open block border-b border-base-300/60 bg-base-200/30 xl:table-row"
     >
       <td colspan="12" role="cell" class="block px-4 py-3 xl:table-cell">
         <.execution_details
