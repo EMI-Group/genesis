@@ -135,6 +135,48 @@ defmodule EvoGit.VCT do
           nested: [Mount.member()]
         }
 
+  @typedoc """
+  A canonical VCT point — the formatted `vct:///…` URL.
+
+  The ONE spelling shared by a mount's `point`, a workspace point and a member
+  ref's `point`. A point is a NAMESPACE ADDRESS, never an OS path.
+  """
+  @type point :: EvoGit.VCT.Path.point()
+
+  @typedoc """
+  A workspace member ref exactly as STORED: a STRING-KEYED map carrying
+  `"point"` and `"path"` (both keys present after normalization, at least one
+  non-nil). Order is significant and a member's target need not exist.
+  """
+  @type member_ref :: Mount.member()
+
+  @typedoc """
+  ONE resolved workspace member, flattened for consumers that only display or
+  address it.
+
+    * `:point` — the resolved mount's canonical point (`nil` when the ref
+      resolved by OS path to no mount, which a resolved member cannot be);
+    * `:name` — the resolved mount's display name;
+    * `:path` — the resolved mount's absolute OS path, or `nil`.
+  """
+  @type member_entry :: %{point: point() | nil, name: String.t(), path: String.t() | nil}
+
+  @typedoc """
+  ONE workspace resolved against the CURRENT mount table, with every member
+  flattened into a `t:member_entry/0` — the `workspace_entries/1,2` shape.
+
+    * `:workspace` — the workspace mount itself;
+    * `:members` — the resolved members, in STORED member order;
+    * `:missing` — the STORED refs that resolve to nothing (unexpanded);
+    * `:nested` — the STORED refs naming another workspace (never expanded).
+  """
+  @type workspace_entry :: %{
+          workspace: Mount.t(),
+          members: [member_entry()],
+          missing: [member_ref()],
+          nested: [member_ref()]
+        }
+
   ## Client API
 
   @doc """
@@ -304,6 +346,10 @@ defmodule EvoGit.VCT do
   @doc """
   Resolves a workspace and its members against the CURRENT mount table.
 
+  This is the MOUNT-STRUCT form; `workspace_entries/2` answers the same facts
+  with each member flattened into a `t:member_entry/0`, and
+  `workspace_entries/1` resolves a whole roster in one call.
+
   Accepts:
 
     * a workspace POINT — a `vct:///workspaces/<name>` binary or a
@@ -459,6 +505,78 @@ defmodule EvoGit.VCT do
   @spec vct_path_for(String.t(), String.t()) :: String.t() | nil
   def vct_path_for(repo_root, relative_path),
     do: call({:vct_path_for, repo_root, relative_path}, nil)
+
+  ## Batched reads
+
+  # Two reads a per-item caller would otherwise turn into an N+1: ONE
+  # `GenServer.call` returns a whole workspace roster with its members already
+  # resolved, and ONE returns every VCT path of a repo.
+
+  @doc """
+  Returns EVERY workspace with its members already resolved — one
+  `GenServer.call` for the whole roster, in the same order and through the same
+  rules as `workspaces/1`.
+
+  This is the batched companion of `workspace_members/1`: a roster screen that
+  needs the members of every workspace must NOT call the single-workspace form
+  once per entry.
+
+  ## Options
+
+    * `:limit` — positive integer cap applied to the WORKSPACE list, exactly
+      like `workspaces/1`
+
+  A dead or absent VCT server degrades to `[]`, like every other list read.
+  """
+  @spec workspace_entries(keyword()) :: [workspace_entry()]
+  def workspace_entries(opts \\ []) when is_list(opts),
+    do: call({:workspace_entries, opts}, [])
+
+  @doc """
+  Resolves ONE workspace and its members against the CURRENT mount table — the
+  single-workspace form of `workspace_entries/1`.
+
+  Acceptance and error rules are exactly `workspace_members/1`'s: a workspace
+  POINT (`vct:///workspaces/<name>` binary or `%EvoGit.VCT.Path{}`) or a BARE
+  workspace name, with `{:error, :not_found}` for an absent workspace,
+  `{:error, :not_a_workspace}` for an existing non-workspace mount,
+  `{:error, :invalid_point}` for an unusable key and
+  `{:error, :vct_unavailable}` when no VCT server answers.
+
+  Only the `:members` shape differs: each resolved member is a FLAT
+  `t:member_entry/0` map (`:point`, `:name`, `:path`) instead of a full
+  `%EvoGit.VCT.Mount{}`. Members keep STORED order and `:missing`/`:nested` are
+  the STORED member refs, unexpanded.
+
+  `opts` exists for call-site symmetry with `workspace_entries/1`; no option is
+  currently defined for this form.
+  """
+  @spec workspace_entries(String.t() | VctPath.t(), keyword()) ::
+          {:ok, workspace_entry()}
+          | {:error, :not_found | :not_a_workspace | :invalid_point | :vct_unavailable}
+  def workspace_entries(key, opts) when is_list(opts),
+    do: call({:workspace_entry, key}, {:error, :vct_unavailable})
+
+  @doc """
+  Returns the canonical VCT URL of EVERY path in `relative_paths` inside
+  `repo_root`'s mount — ONE `GenServer.call` for the whole list.
+
+  The containing mount is resolved ONCE for `repo_root` and each relative path
+  is then mapped through `EvoGit.VCT.Table.vct_path_for/2`, so the result
+  carries exactly `length(relative_paths)` entries in INPUT order: `nil` means
+  the repo is unmounted or that path escapes the mount (the same rules as
+  `vct_path_for/2`).
+
+  The list is NEVER shortened: a dead or absent VCT server degrades to one `nil`
+  per input path.
+  """
+  @spec vct_paths_for(String.t(), [String.t()]) :: [String.t() | nil]
+  def vct_paths_for(repo_root, relative_paths) when is_list(relative_paths),
+    do:
+      call(
+        {:vct_paths_for, repo_root, relative_paths},
+        Enum.map(relative_paths, fn _path -> nil end)
+      )
 
   @doc """
   Returns the global context file path (`<vct_dir>/CONTEXT.md`).
@@ -635,8 +753,32 @@ defmodule EvoGit.VCT do
     {:reply, mounts, state}
   end
 
+  # ONE call answers the whole roster: every workspace's members are resolved
+  # against the same in-memory table, so the caller pays no per-workspace round
+  # trip.
+  def handle_call({:workspace_entries, opts}, _from, state) do
+    entries =
+      state.mounts
+      |> Table.workspace_mounts()
+      |> Table.sort_by_recency()
+      |> apply_limit(Keyword.get(opts, :limit))
+      |> Enum.map(&workspace_entry(state.mounts, &1))
+
+    {:reply, entries, state}
+  end
+
+  def handle_call({:workspace_entry, key}, _from, state) do
+    reply =
+      case resolve_workspace(state.mounts, key) do
+        {:ok, resolution} -> {:ok, to_workspace_entry(resolution)}
+        {:error, reason} -> {:error, reason}
+      end
+
+    {:reply, reply, state}
+  end
+
   def handle_call({:workspace_members, key}, _from, state),
-    do: {:reply, resolve_workspace_members(state.mounts, key), state}
+    do: {:reply, resolve_workspace(state.mounts, key), state}
 
   def handle_call({:workspaces_for, project}, _from, state) do
     reply =
@@ -718,15 +860,14 @@ defmodule EvoGit.VCT do
   def handle_call({:mount_for_path, os_path}, _from, state),
     do: {:reply, Table.mount_for_path(state.mounts, os_path), state}
 
-  def handle_call({:vct_path_for, repo_root, relative_path}, _from, state) do
-    reply =
-      case Table.mount_for_path(state.mounts, repo_root) do
-        nil -> nil
-        mount -> Table.vct_path_for(mount, relative_path)
-      end
+  # ONE pass: the containing mount is resolved ONCE, then every relative path is
+  # mapped through the pure `Table.vct_path_for/2` (which answers `nil` for a
+  # `nil` mount or an escaping path).
+  def handle_call({:vct_path_for, repo_root, relative_path}, _from, state),
+    do: {:reply, List.first(vct_paths(state.mounts, repo_root, [relative_path])), state}
 
-    {:reply, reply, state}
-  end
+  def handle_call({:vct_paths_for, repo_root, relative_paths}, _from, state),
+    do: {:reply, vct_paths(state.mounts, repo_root, relative_paths), state}
 
   def handle_call(:global_context_path, _from, state),
     do: {:reply, Path.join(state.vct_dir, @context_file), state}
@@ -964,6 +1105,14 @@ defmodule EvoGit.VCT do
     end
   end
 
+  # The ONE VCT-path derivation pass: the containing mount is resolved for
+  # `repo_root` ONCE and every relative path is then mapped through the pure
+  # `Table.vct_path_for/2`.
+  defp vct_paths(mounts, repo_root, relative_paths) do
+    mount = Table.mount_for_path(mounts, repo_root)
+    Enum.map(relative_paths, fn relative_path -> Table.vct_path_for(mount, relative_path) end)
+  end
+
   defp point_string?(value), do: String.starts_with?(value, "vct:")
 
   ## Workspaces
@@ -987,10 +1136,10 @@ defmodule EvoGit.VCT do
 
   # A workspace is resolved through its POINT (canonicalized), never through an
   # OS path it does not have.
-  defp resolve_workspace_members(mounts, %VctPath{} = point),
-    do: resolve_workspace_members(mounts, VctPath.format(point))
+  defp resolve_workspace(mounts, %VctPath{} = point),
+    do: resolve_workspace(mounts, VctPath.format(point))
 
-  defp resolve_workspace_members(mounts, key) when is_binary(key) do
+  defp resolve_workspace(mounts, key) when is_binary(key) do
     trimmed = String.trim(key)
 
     cond do
@@ -1013,7 +1162,7 @@ defmodule EvoGit.VCT do
     end
   end
 
-  defp resolve_workspace_members(_mounts, _key), do: {:error, :invalid_point}
+  defp resolve_workspace(_mounts, _key), do: {:error, :invalid_point}
 
   defp workspace_row(mounts, point) do
     case Table.find_by_point(mounts, point) do
@@ -1022,15 +1171,31 @@ defmodule EvoGit.VCT do
 
       %Mount{} = mount ->
         if Mount.workspace?(mount),
-          do: {:ok, resolve_workspace_members_of(mounts, mount)},
+          do: {:ok, resolve_members(mounts, mount)},
           else: {:error, :not_a_workspace}
     end
   end
 
+  # ONE member-resolution pass feeds every public shape, so `workspace_members/1`
+  # (mount structs), `workspace_entries/1` and `workspace_entries/2` (flat
+  # `member_entry` maps) can never disagree.
+  defp workspace_entry(mounts, %Mount{} = workspace) do
+    mounts
+    |> resolve_members(workspace)
+    |> to_workspace_entry()
+  end
+
+  defp to_workspace_entry(%{members: members} = resolution) do
+    %{resolution | members: Enum.map(members, &member_entry/1)}
+  end
+
+  defp member_entry(%Mount{} = mount),
+    do: %{point: mount.point, name: mount.name, path: mount.path}
+
   # Every member is resolved IN STORED ORDER; an unresolvable ref keeps its
   # STORED form (it is metadata, not a filesystem probe) and a ref naming
   # another workspace is reported as `nested` instead of being expanded.
-  defp resolve_workspace_members_of(mounts, %Mount{members: members} = workspace) do
+  defp resolve_members(mounts, %Mount{members: members} = workspace) do
     {resolved, missing, nested} =
       members
       |> workspace_member_refs()
