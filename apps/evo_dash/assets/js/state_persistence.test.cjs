@@ -215,6 +215,48 @@ test('a legacy path-keyed draft is adopted once the project gains its VCT point'
     {name: 'restore_state', payload: legacy});
 });
 
+test('a draft written before the VCT point is known is adopted once the point arrives, keeping every saved field', () => {
+  const storage = new Map();
+  const pathKey = 'dashboard_state:["local","/repo"]';
+  // The first frame of a page load has no async VCT mount yet, so its stamp is
+  // the raw path itself — the same value as the state's own project.
+  const page = mount({storage, taskDraftProject: '/repo'});
+  page.prompt.value = 'typed before the point';
+  page.events.persist_state({node: 'local', project: '/repo', task_mode: 'evolve_simple',
+    task_archive: true, task_prompt: 'typed before the point'});
+  const stored = page.read(pathKey);
+  assert.deepEqual(stored, {node: 'local', project: '/repo', task_mode: 'evolve_simple',
+    task_archive: true, task_prompt: 'typed before the point', scope_token: '/repo'});
+
+  page.navigate({taskDraftScope: 'vct:///projects/foo'});
+  assert.deepEqual(JSON.parse(JSON.stringify(page.pushed)),
+    [{name: 'restore_state', payload: stored}]);
+  assert.equal(page.prompt.value, 'typed before the point');
+  assert.equal(page.read(pathKey).task_mode, 'evolve_simple');
+  assert.equal(page.read(pathKey).task_archive, true);
+});
+
+test('a real VCT stamp never matches a different point', () => {
+  const storage = new Map();
+  storage.set('dashboard_state:["local","/repo"]', JSON.stringify({node: 'local',
+    project: '/repo', task_prompt: 'point one draft', scope_token: 'vct:///projects/foo'}));
+
+  // Same project path, different point: the stamp decides, not the path.
+  const page = mount({storage, taskDraftProject: '/repo', taskDraftScope: 'vct:///projects/bar'});
+  assert.equal(page.prompt.value, '');
+  assert.deepEqual(page.pushed, []);
+});
+
+test('a workspace stamp stays separate from the project path draft', () => {
+  const storage = new Map();
+  storage.set('dashboard_state:["local","/repo"]', JSON.stringify({node: 'local',
+    project: '/repo', task_prompt: 'workspace draft', scope_token: 'vct:///workspaces/dev'}));
+
+  const page = mount({storage, taskDraftProject: '/repo'});
+  assert.equal(page.prompt.value, '');
+  assert.deepEqual(page.pushed, []);
+});
+
 test('typing survives the moment a project gains its VCT point', () => {
   const storage = new Map();
   const page = mount({storage, taskDraftProject: '/repo'});

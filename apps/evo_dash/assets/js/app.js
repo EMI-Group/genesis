@@ -621,13 +621,17 @@ const StatePersistence = {
     return {node, project, token, key, legacyKey};
   },
 
-  // A stamped state (a scope_token) must match the token exactly; an unstamped
-  // legacy state falls back to its project path so old drafts stay adoptable.
+  // A scope_token equal to the state's own project path carries no VCT identity
+  // (it was stamped before the server knew the point), so it falls back to the
+  // path match; a real point/workspace stamp must still match exactly. An
+  // unstamped legacy state falls back to its project path too.
   matches(state, scope) {
-    return (state.node || 'local') === scope.node &&
-      (!scope.token || (typeof state.scope_token === 'string' ?
-        state.scope_token === scope.token :
-        Boolean(scope.project) && state.project === scope.project));
+    if ((state.node || 'local') !== scope.node) return false;
+    if (!scope.token) return true;
+    const stamped = typeof state.scope_token === 'string' && state.scope_token !== state.project;
+    return stamped ?
+      state.scope_token === scope.token :
+      Boolean(scope.project) && state.project === scope.project;
   },
 
   read(key) {
