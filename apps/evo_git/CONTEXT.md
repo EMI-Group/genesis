@@ -194,8 +194,7 @@ API chain: `EvoDash.NodeContext` → `RemoteNode.send_agent_message/3` → `Remo
 **Two cancellation actions** (node-aware via `RemoteNode.cancel_task/2` + `force_kill_task/2`):
 - **Graceful cancel** (`TaskRegistry.cancel_task/1`): `:pending` → immediate `:cancelled`; `:running`/`:awaiting_input` → `:cancelling` + `{:cancel, :graceful}` (the session appends a save-work user message through the inbox, records the cancel flag in `:evogit_agent_control`, plus an `:evogit_cancelling_tasks` marker). The loop enters cancel-grace with a **3-turn budget** (a recovery auto-commit first); the final status persists `:cancelled` WITH result/usage/archive **preserved**. `:cancelling` is non-terminal + idempotent and blocks new root spawns (`{:error, :cancelled}`).
 - **Force kill** (`force_kill_task/1`): kills the in-flight exchange worker, stops the session and wrapper, persists **`:failed`** with result nil'd, from `:running`, `:awaiting_input`, `:pausing`, `:paused` and `:cancelling`; `:cancelled` means ONLY gracefully-cancelled tasks.
-- **Task pause** (`pause_task/1`/`resume_task/1`): the NON-terminal `:pausing` (draining, wrapper alive, lease renewed) and `:paused` (resting, resumable IN PLACE through the same task id) — protocol, restart mapping and archive rules: `task_registry/CONTEXT.md`.
-- **Dashboard**: a Cancel button (warning modal) and force kill in the card dropdown, both node-aware; `:cancelling` renders in the busy amber family and `:cancelled` is reviewable.
+- **Task pause** (`pause_task/1`/`resume_task/1`): the NON-terminal `:pausing` (draining, wrapper alive, lease renewed) and `:paused` (resting, resumable IN PLACE through the same task id) — protocol, restart mapping, dashboard buttons and archive rules: `task_registry/CONTEXT.md`.
 
 ## Update-Timing Safety
 
