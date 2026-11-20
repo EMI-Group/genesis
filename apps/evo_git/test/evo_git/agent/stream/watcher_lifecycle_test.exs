@@ -16,7 +16,11 @@ defmodule EvoGit.Agent.Stream.WatcherLifecycleTest do
     monitor on an external pid delivers `:DOWN` exactly like a remote one, so
     this is the local equivalent of a remote consumer ("a monitor on a remote
     pid is a cross-node signal" — `EvoGit.Agent.Stream.Watchers`). Its pushes
-    arrive, and its `:DOWN` closes the gate for the NEXT exchange.
+    arrive, and its `:DOWN` closes the gate for the NEXT exchange. Because the
+    ~75 ms coalescing boundary is load-sensitive, one exchange may publish more
+    than one delta: the pin is that every event (the scripted pair AND the
+    exchange's own `{:yield, …}`) is delivered to the watcher, in order — pinned
+    end-to-end and, deterministically, by a forced two-wave split.
   * **(f) N-agent broadcast budget** — three unwatched sessions broadcast
     nothing on their own topics, and no sequence number is consumed.
 
@@ -109,38 +113,42 @@ defmodule EvoGit.Agent.Stream.WatcherLifecycleTest do
 
       assert_receive {:llm_call, worker, _context}, 2_000
 
-      test_pid = self()
-      topic = Stream.topic(agent_id)
-
-      # The consumer subscribes ITSELF to its own node's PubSub — `register_watcher/2`
-      # deliberately subscribes nothing (a remote consumer has its own node's PubSub).
-      consumer =
-        spawn(fn ->
-          :ok = Phoenix.PubSub.subscribe(EvoGit.PubSub, topic)
-          send(test_pid, {:consumer_subscribed, self()})
-          forward_to(test_pid)
-        end)
-
-      on_exit(fn -> Process.exit(consumer, :kill) end)
-      assert_receive {:consumer_subscribed, ^consumer}, 2_000
-
-      # The registered pid is NEITHER the subscribing caller NOR the test process:
+      # The consumer subscribes ITSELF to its own node's PubSub — and the
+      # registered pid is NEITHER the subscribing caller NOR the test process:
       # exactly the RPC-facing shape. A monitor on an external pid delivers `:DOWN`
       # exactly like a remote one (a remote monitor is a cross-node signal), so this
       # is the local equivalent of the remote-consumer invariant.
+      consumer = spawn_relay_consumer(agent_id)
       refute consumer == self()
       assert {:ok, %Snapshot{}, 0} = Stream.register_watcher(pid, consumer)
       assert Session.watching?(pid) == true
 
       send(worker, {:emit, [{:text, "remote-one"}, {:thinking, "remote-two"}], "remote yield"})
 
-      assert_receive {:consumer_msg, {:agent_delta, ^agent_id, seq, events}}, 2_000
-      assert seq > 0
-      # The scripted pair opens the batch verbatim and in emission order (the SAME
-      # exchange then emits its own `{:turn, …}` and `{:yield, …}` events, which
-      # share the ~75 ms coalescing window).
-      assert Enum.take(events, 2) == [{:text, "remote-one"}, {:thinking, "remote-two"}]
-      assert {:yield, "remote yield"} in events
+      assert_receive {:consumer_msg, {:agent_delta, ^agent_id, first_seq, first_events}}, 2_000
+      assert first_seq > 0
+      # The scripted pair opens the batch verbatim and in emission order.
+      assert Enum.take(first_events, 2) == [{:text, "remote-one"}, {:thinking, "remote-two"}]
+
+      # The SAME exchange then emits its own `{:turn, …}` and `{:yield, …}` events.
+      # They USUALLY share the ~75 ms coalescing window with the pair, but that
+      # boundary is a load-sensitive timing detail: under load the pair can be
+      # flushed on its own and the yield arrives in a LATER delta of the same
+      # exchange. The invariant is that the yield is DELIVERED to the registered
+      # watcher, so accumulate the exchange's deltas in arrival order (bounded,
+      # event-driven) instead of reading a single message.
+      {deltas, yield_delivered?} =
+        collect_consumer_deltas(agent_id, [{first_seq, first_events}], fn deltas ->
+          Enum.any?(deltas, fn {_seq, events} -> {:yield, "remote yield"} in events end)
+        end)
+
+      assert yield_delivered?,
+             "the yield was never delivered to the registered watcher; got deltas: #{inspect(deltas)}"
+
+      # ONE broadcast per flush, so every delta advances the sequence by exactly
+      # one: the deltas this watcher received are contiguous and increasing.
+      seqs = Enum.map(deltas, fn {seq, _events} -> seq end)
+      assert seqs == Enum.to_list(first_seq..List.last(seqs))
 
       assert await_yield(pid, "remote yield") == true
 
@@ -164,6 +172,52 @@ defmodule EvoGit.Agent.Stream.WatcherLifecycleTest do
       refute_receive {:agent_delta, ^agent_id, _seq, _events}, 300
       assert {:ok, %Snapshot{}, seq_after} = Stream.snapshot(pid)
       assert seq_after == seq_before
+    end
+
+    test "an exchange split over TWO coalescing windows still delivers every event",
+         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+      {:ok, pid, _ref} =
+        start_session(dispatch_ctx(agent_id, tmp_dir, llm_call: driver_llm_call(self())))
+
+      assert_receive {:llm_call, worker, _context}, 2_000
+
+      consumer = spawn_relay_consumer(agent_id)
+      assert {:ok, %Snapshot{}, 0} = Stream.register_watcher(pid, consumer)
+      assert Session.watching?(pid) == true
+
+      # The SPLIT is forced, not hoped for: the worker emits the scripted pair and
+      # then PARKS until this process releases the second (empty) wave, so the
+      # ~75 ms window closes with ONLY the pair buffered. The exchange's own
+      # `{:turn, …}` / `{:yield, …}` events are therefore a SECOND delta — the
+      # boundary a loaded host used to produce by accident, and the case that
+      # used to fail because the test read a single message.
+      pair = [{:text, "remote-one"}, {:thinking, "remote-two"}]
+      send(worker, {:emit_waves, [pair, []], "split yield"})
+
+      assert_receive {:consumer_msg, {:agent_delta, ^agent_id, first_seq, first_events}}, 2_000
+      assert first_seq > 0
+      assert first_events == pair
+      refute Enum.any?(first_events, &match?({:yield, _text}, &1))
+
+      send(worker, :next_wave)
+
+      {deltas, yield_delivered?} =
+        collect_consumer_deltas(agent_id, [{first_seq, first_events}], fn deltas ->
+          Enum.any?(deltas, fn {_seq, events} -> {:yield, "split yield"} in events end)
+        end)
+
+      assert yield_delivered?,
+             "the yield was never delivered to the registered watcher; got deltas: #{inspect(deltas)}"
+
+      # More than one batch was really published, and the accumulated events
+      # still open with the scripted pair in emission order, exactly once.
+      assert length(deltas) > 1
+      assert deltas |> Enum.flat_map(fn {_seq, events} -> events end) |> Enum.take(2) == pair
+
+      seqs = Enum.map(deltas, fn {seq, _events} -> seq end)
+      assert seqs == Enum.to_list(first_seq..List.last(seqs))
+
+      assert await_yield(pid, "split yield") == true
     end
   end
 
@@ -228,12 +282,53 @@ defmodule EvoGit.Agent.Stream.WatcherLifecycleTest do
 
   # The remote-style consumer: subscribes in ITS OWN process and forwards every
   # PubSub message to the test, so the test can pin what the topic delivered
-  # without being the watcher.
+  # without being the watcher. `register_watcher/2` deliberately subscribes
+  # nothing — this is what makes the registered pid the RPC-facing shape.
+  defp spawn_relay_consumer(agent_id) do
+    test_pid = self()
+    topic = Stream.topic(agent_id)
+
+    consumer =
+      spawn(fn ->
+        :ok = Phoenix.PubSub.subscribe(EvoGit.PubSub, topic)
+        send(test_pid, {:consumer_subscribed, self()})
+        forward_to(test_pid)
+      end)
+
+    on_exit(fn -> Process.exit(consumer, :kill) end)
+    assert_receive {:consumer_subscribed, ^consumer}, 2_000
+    consumer
+  end
+
   defp forward_to(parent) do
     receive do
       msg ->
         send(parent, {:consumer_msg, msg})
         forward_to(parent)
+    end
+  end
+
+  # One exchange can legitimately publish MORE THAN ONE coalesced delta (the
+  # ~75 ms `EvoGit.Agent.Stream.Batcher` window boundary is load-sensitive), so
+  # a consumer must accumulate an exchange's batches instead of assuming a
+  # single one. `forward_to/1` relays every PubSub message in arrival order, so
+  # this reconstructs exactly what the registered watcher received; `done/1`
+  # decides when the observed invariant has been met and the budget is a
+  # failure-path bound only (no fixed sleep on the success path).
+  defp collect_consumer_deltas(agent_id, acc, done) do
+    do_collect_consumer_deltas(agent_id, acc, done, deadline(30_000))
+  end
+
+  defp do_collect_consumer_deltas(agent_id, acc, done, deadline) do
+    if done.(acc) do
+      {Enum.reverse(acc), true}
+    else
+      receive do
+        {:consumer_msg, {:agent_delta, ^agent_id, seq, events}} ->
+          do_collect_consumer_deltas(agent_id, [{seq, events} | acc], done, deadline)
+      after
+        remaining(deadline) -> {Enum.reverse(acc), false}
+      end
     end
   end
 end
