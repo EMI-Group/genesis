@@ -150,13 +150,23 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                 <% else %>
                   <%= if @raw do %>
                     <!-- Per-message raw view: the plain (HTML-escaped) source text.
-                       Carries the SAME `motion-panel motion-panel-open` pair as
-                       the Markdown branch so toggling fades both directions, and
-                       keeps `md-content` OFF so a raw entry is never styled as
+                       Same structural wrapper as the Markdown branch — one block
+                       `div` carrying the SAME `md-content` class list (plus the
+                       raw-only `whitespace-pre-wrap font-mono text-xs` pair) — so
+                       toggling raw <-> markdown only changes the INNER text
+                       presentation and never the container, its padding or its
+                       block flow. `md-content` here is the layout shell only: the
+                       source is rendered as escaped text (never through Markdown,
+                       never `raw/1`), so it is never interpreted or styled as
                        rendered Markdown. -->
-                    <span class="motion-panel motion-panel-open min-w-0 break-words whitespace-pre-wrap">{entry_text(
-                      @entry
-                    )}</span>
+                    <!-- `phx-no-format` keeps the literal source flush against
+                       the div's tags: under `whitespace-pre-wrap` any
+                       formatter-inserted newline/indent would become visible
+                       leading and trailing whitespace in the shown source. -->
+                    <div
+                      phx-no-format
+                      class="motion-panel motion-panel-open md-content min-w-0 break-words whitespace-pre-wrap font-mono text-xs"
+                    >{entry_text(@entry)}</div>
                   <% else %>
                     <!-- Finalized assistant text renders as Markdown — same helper
                        + call pattern as the tasks/review pages. Always-safe
