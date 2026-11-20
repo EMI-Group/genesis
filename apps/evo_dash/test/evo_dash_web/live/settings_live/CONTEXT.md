@@ -3,14 +3,14 @@
 ## Intent
 
 Focused pure-helper, provider-account panel/wizard and credential-status page contracts live here.
-The nine suites declare 180 tests; every module is `async: true` except the 6 mounted tests of the sync `NavigationLiveTest`.
+The nine suites declare 184 tests; every module is `async: true` except the 6 mounted tests of the sync `NavigationLiveTest`.
 Pure helpers neither mount pages nor start shared services.
 Config-directory isolation is per process (`EvoDash.Test.ConfigDir.isolate!/1` through the `:config_dir_fun` seam), never a BEAM-global `XDG_CONFIG_HOME` write.
 
 ## API Surface
 
-- `provider_profiles_contract_test.exs` — 46, `async: true` (`EvoDashWeb.SettingsLive.ProviderProfilesContractTest`): pure `ProviderProfiles` / `ConfigIO` / `AuthStatus` / detached `ModelProfileEvents` editor boundary (identity, checkbox submissions, default-only model-name helper, `off_peak_holidays` round trip).
-- `model_profile_helpers_test.exs` — 32, `async: true` (`EvoDashWeb.SettingsLive.ModelProfileHelpersTest`): the retained legacy `parse_model_profile_params/2` single-model parser and `generate_profile_id/2`.
+- `provider_profiles_contract_test.exs` — 48, `async: true` (`EvoDashWeb.SettingsLive.ProviderProfilesContractTest`): pure `ProviderProfiles` / `ConfigIO` / `AuthStatus` / detached `ModelProfileEvents` editor boundary (identity, checkbox submissions, default-only model-name helper, `off_peak_holidays` round trip).
+- `model_profile_helpers_test.exs` — 34, `async: true` (`EvoDashWeb.SettingsLive.ModelProfileHelpersTest`): the retained legacy `parse_model_profile_params/2` single-model parser and `generate_profile_id/2`.
 - `config_io_test.exs` — 12, `async: true` (`EvoDashWeb.SettingsLive.ConfigIOTest`): flat-category conversions and the canonical runtime model-options push.
 - `config_save_test.exs` — 6, `async: true` (`EvoDashWeb.SettingsLive.ConfigSaveTest`): the read-verified save receipt of `ConfigSave.save/3`.
 - `auth_status_test.exs` — 33, `async: true` (`EvoDashWeb.SettingsLive.AuthStatusTest`): credential-status classification/render, stale guards, refresh, rendered-editor persistence, the auth save round trip and the wizard auth/model steps.
@@ -82,9 +82,10 @@ Its `auth_mode`/`oauth_file` block pins OAuth-capable versus OAuth-unsupported v
 These compatibility assertions are not canonical provider persistence contracts; the canonical editor path lives in `provider_profiles_contract_test.exs`.
 
 ## JSON object parsing coverage
-`model_profile_helpers_test.exs` pins blank `extra` producing the compact model string, valid object `extra` decoding to a map, and malformed `extra`/`provider_options` error precedence over peak validation, but has no valid-nonobject or already-map input assertions for either field and no explicit blank `provider_options` assertion.
-`provider_profiles_contract_test.exs` pins valid object JSON for both fields at account and nested-model levels, account malformed `extra`, nested nonobject `extra` (`[]`), nested malformed `provider_options`, nested blank clearing back to inheritance, and account already-map `extra` preserved from the existing profile.
-The canonical suite has no explicit account nonobject rejection, nested malformed `extra`, nested nonobject `provider_options`, or direct submitted already-map `provider_options` assertion; map-to-draft-to-parse round trips do not independently prove direct map-input acceptance.
+Both async parser suites exercise the shared `JsonObject` decoder through its real callers rather than duplicating helper-only tests.
+The legacy suite pins exact nonobject errors for arrays, null, booleans, numbers and strings in both fields, malformed-JSON precedence over peak validation, trimmed nil/empty/whitespace omission, and object-valued provider options remaining separate from the compact model spec.
+The canonical suite pins object decoding, malformed/nonobject/whitespace errors for both fields at account and nested-model scope, exact `parse_editor/3` field-path wrapping versus `parse/3` reason unwrapping, direct submitted maps with recursive stringification, and nil/empty clearing of saved overrides.
+Whitespace-only canonical JSON is invalid rather than blank, unlike the legacy caller's trimmed inputs.
 ## Config IO and the runtime push
 
 `config_io_test.exs` pins `:list_of_strings`, `:boolean` and `:float` category conversions, including the absent/blank/scalar delete signal versus an explicit empty list.
@@ -177,8 +178,8 @@ The source failure belongs to the core scheduler owner, outside this leaf test n
 
 ## Focused commands
 
-`mix test apps/evo_dash/test/evo_dash_web/live/settings_live --seed 0` (180 tests) or `--seed 1` runs this directory; naming one file runs just that suite.
-The pure helper slice is `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/config_io_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/model_profile_helpers_test.exs --seed 1` (90 tests).
+`mix test apps/evo_dash/test/evo_dash_web/live/settings_live --seed 0` (184 tests) or `--seed 1` runs this directory; naming one file runs just that suite.
+The pure helper slice is `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/config_io_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/model_profile_helpers_test.exs --seed 1` (94 tests).
 Useful describe filters are `--only 'describe:credential status render (injected result)'`, `--only 'describe:profile save round-trip (auth_mode / oauth_file persistence)'`, `--only 'describe:wizard auth step (provider capability)'` and `--only 'describe:the removed Quick Setup shortcut'`.
 Leaf-subtree or pure-slice success does not establish collective LiveView-directory or broader dashboard-suite success.
 

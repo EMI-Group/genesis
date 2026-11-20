@@ -74,6 +74,27 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
     end
   end
 
+  describe "parse_model_profile_params/2 — JSON objects" do
+    test "rejects valid nonobject JSON with the exact field error" do
+      for field <- ["extra", "provider_options"],
+          raw <- ["[]", "null", "true", "42", ~s("text")] do
+        assert error_for(%{field => raw}) == "#{field}_must_be_object"
+      end
+    end
+
+    test "trims blank inputs and keeps provider options separate from the model spec" do
+      for blank <- [nil, "", " \n\t"] do
+        profile = profile_for(%{"extra" => blank, "provider_options" => blank})
+        assert profile.model == "deepseek:deepseek-v4-pro"
+        refute Map.has_key?(profile, :provider_options)
+      end
+
+      profile = profile_for(%{"provider_options" => ~s( {"enabled":false,"nested":{"n":0}} )})
+      assert profile.model == "deepseek:deepseek-v4-pro"
+      assert profile.provider_options == %{"enabled" => false, "nested" => %{"n" => 0}}
+    end
+  end
+
   describe "parse_model_profile_params/2 — context_window field" do
     test "an absent, blank, or non-numeric value omits the key; an integer string round-trips" do
       for {raw, expected} <- [{:absent, :omit}, {"", :omit}, {"128k", :omit}, {"128000", 128_000}] do
