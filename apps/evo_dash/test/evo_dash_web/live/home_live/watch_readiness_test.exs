@@ -13,6 +13,27 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
   alias EvoGit.AgentScheduler.{AgentState, SchedMeta, Store}
   alias EvoGit.Core.{ContextNode, PhyloGraphNode}
 
+  # Every wait below synchronizes with REAL process work (session start, the
+  # exchange worker, stream readiness, scheduler teardown). The shared host
+  # swings 10-30x under load (see test/CONTEXT.md), so a fixed 1-3 s budget
+  # exits on a loaded machine; the suite convention is the standard async
+  # budget instead (e.g. `home_live_test.exs`'s `@async_wait_budget_ms`).
+  @async_wait_budget_ms 30_000
+
+  # Poll interval of `await_session_phase/3` — non-zero so the loop never spins
+  # hot, tight enough that the residual wait is invisible.
+  @poll_interval_ms 2
+
+  # The fixture's OWN hold guard. Deliberately LARGER than the outer waits it
+  # backs (the setup-held wait PLUS the readiness wait that runs while setup is
+  # still held): a fixture that gave up first would answer
+  # `{:error, :fixture_timeout}` and the test would report a misleading setup
+  # error instead of the real failing assertion.
+  @fixture_hold_timeout_ms @async_wait_budget_ms * 3
+
+  # The worktree-manager release poll (teardown).
+  @manager_release_poll_ms 10
+
   setup do
     old =
       for key <- [
@@ -75,7 +96,7 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
       receive do
         :release_setup -> {:ok, worktree}
       after
-        5000 -> {:error, :fixture_timeout}
+        @fixture_hold_timeout_ms -> {:error, :fixture_timeout}
       end
     end)
 
@@ -122,7 +143,7 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
 
     on_exit(fn ->
       Session.cancel(session, :force)
-      await_manager_release(id, 100)
+      await_manager_release(id)
 
       if original_create == nil,
         do: Application.delete_env(:evo_git, :worktree_create_fun),
@@ -133,7 +154,7 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
       File.rm_rf(root)
     end)
 
-    assert_receive {:setup_held, setup_worker}, 3000
+    assert_receive {:setup_held, setup_worker}, @async_wait_budget_ms
     on_exit(fn -> send(setup_worker, :release_setup) end)
 
     Application.put_env(:evo_dash, :home_agent_watch_runner, fn target, ^id, consumer ->
@@ -151,7 +172,7 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
 
     # The session answers a `:starting` watch with its pre-state snapshot and keeps
     # the registration, so a slow setup no longer defers the dashboard's first cut.
-    assert_receive {:chat_stream_ready, target, token, ^id, result}, 3000
+    assert_receive {:chat_stream_ready, target, token, ^id, result}, @async_wait_budget_ms
     refute_receive :watch_observed_starting, 100
 
     assert {:ok,
@@ -176,7 +197,7 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
     refute_receive {:chat_stream_ready, _, _, ^id, _}, 100
 
     send(setup_worker, :release_setup)
-    assert_receive {:model_entered, model_worker}, 3000
+    assert_receive {:model_entered, model_worker}, @async_wait_budget_ms
     # One registration, one readiness reply: the run continues on the SAME stream.
     refute_receive {:chat_stream_ready, _, _, ^id, _}, 200
 
@@ -196,7 +217,12 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
            )
 
     refute Enum.any?(settled.assigns.transcript, &Map.get(&1, :streaming, false))
-    assert {:ok, %{phase: :awaiting_input}} = Session.inspect(session)
+    # The page parks on the yield DELTA, which the exchange worker publishes
+    # BEFORE it refreshes the commit sha and sends its `{:exchange_finished, …}`
+    # outcome, so the session can legitimately still answer `:running` for a
+    # moment afterwards (a real git read, and a long one under load). Wait for
+    # the outcome with the standard budget, then assert the EXACT snapshot.
+    assert {:ok, %{phase: :awaiting_input}} = await_session_phase(session, :awaiting_input)
     Watch.detach(settled)
   end
 
@@ -214,7 +240,7 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
     Application.put_env(:evo_dash, :home_agent_unwatch_runner, fn _, _, _ -> :ok end)
     socket = socket(id) |> Watch.attach()
     on_exit(fn -> Process.exit(socket.assigns.chat_stream_worker, :kill) end)
-    assert_receive :starting_attempt, 1000
+    assert_receive :starting_attempt, @async_wait_budget_ms
     Watch.detach(socket)
     Process.sleep(100)
     count = :atomics.get(counter, 1)
@@ -237,8 +263,8 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
     logs =
       ExUnit.CaptureLog.capture_log(fn ->
         socket = socket(id) |> Watch.attach()
-        assert_receive {:chat_stream_ready, _, _, ^id, _}, 1000
-        assert_receive :failed_watch_attempt, 1000
+        assert_receive {:chat_stream_ready, _, _, ^id, _}, @async_wait_budget_ms
+        assert_receive :failed_watch_attempt, @async_wait_budget_ms
         refute_receive :failed_watch_attempt, 100
         Process.exit(socket.assigns.chat_stream_worker, :kill)
       end)
@@ -262,10 +288,10 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
     logs =
       ExUnit.CaptureLog.capture_log(fn ->
         socket = socket(id) |> Watch.attach()
-        assert_receive :deadline_watch_attempt, 1000
+        assert_receive :deadline_watch_attempt, @async_wait_budget_ms
 
         assert_receive {:chat_stream_ready, _, _, ^id, {:ok, {:error, {:bad_state, :starting}}}},
-                       1000
+                       @async_wait_budget_ms
 
         refute_receive :deadline_watch_attempt, 100
         Process.exit(socket.assigns.chat_stream_worker, :kill)
@@ -290,9 +316,12 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
 
     Application.put_env(:evo_dash, :home_agent_unwatch_runner, fn _, _, _ -> :ok end)
     socket = socket(id) |> Watch.attach()
-    assert_receive :old_session_starting, 1000
+    assert_receive :old_session_starting, @async_wait_budget_ms
     changed = socket |> Phoenix.Component.assign(session_id: next_id) |> Watch.attach()
-    assert_receive {:chat_stream_ready, _, _, ^next_id, {:ok, {:ok, _, 0}}}, 1000
+
+    assert_receive {:chat_stream_ready, _, _, ^next_id, {:ok, {:ok, _, 0}}},
+                   @async_wait_budget_ms
+
     refute_receive {:chat_stream_ready, _, _, ^id, _}, 100
     Watch.detach(changed)
     Process.exit(socket.assigns.chat_stream_worker, :kill)
@@ -317,11 +346,11 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
         end
       end)
 
-    assert_receive {:readiness_worker, worker}, 1000
-    assert_receive :consumer_starting_attempt, 1000
+    assert_receive {:readiness_worker, worker}, @async_wait_budget_ms
+    assert_receive :consumer_starting_attempt, @async_wait_budget_ms
     monitor = Process.monitor(worker)
     send(consumer, :leave)
-    assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, 1000
+    assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, @async_wait_budget_ms
   end
 
   defp consume_until_idle(socket, id) do
@@ -333,14 +362,48 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
           {:noreply, updated} = EvoDashWeb.HomeLive.handle_info(delta, socket)
           consume_until_idle(updated, id)
       after
-        3000 -> flunk("the real session yield did not settle the assistant spinner")
+        @async_wait_budget_ms ->
+          flunk("the real session yield did not settle the assistant spinner")
       end
     end
   end
 
+  # Polls the session's OWN snapshot (`Session.inspect/2` is a gen_statem call)
+  # until it reports `phase`, and RETURNS that answer — the caller keeps its
+  # exact-match assertion, so this only removes the "has the outcome landed
+  # yet?" race, never the strictness. On timeout the LAST answer is returned and
+  # the assertion fails against it (with the real snapshot in the message).
+  defp await_session_phase(session, phase, timeout \\ @async_wait_budget_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    await_session_phase_loop(session, phase, deadline)
+  end
+
+  defp await_session_phase_loop(session, phase, deadline) do
+    result = Session.inspect(session)
+
+    cond do
+      match?({:ok, %{phase: ^phase}}, result) ->
+        result
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        result
+
+      true ->
+        Process.sleep(@poll_interval_ms)
+        await_session_phase_loop(session, phase, deadline)
+    end
+  end
+
+  defp await_manager_release(id) do
+    await_manager_release(id, div(@async_wait_budget_ms, @manager_release_poll_ms))
+  end
+
   defp await_manager_release(id, attempts) when attempts > 0 do
-    if Map.has_key?(:sys.get_state(EvoGit.AgentScheduler.WorktreeManager).agents, id) do
-      Process.sleep(10)
+    if Map.has_key?(
+         :sys.get_state(EvoGit.AgentScheduler.WorktreeManager, @async_wait_budget_ms).agents,
+         id
+       ) do
+      Process.sleep(@manager_release_poll_ms)
       await_manager_release(id, attempts - 1)
     end
   end
