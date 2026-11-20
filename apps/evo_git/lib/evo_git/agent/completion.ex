@@ -140,10 +140,8 @@ defmodule EvoGit.Agent.Completion do
         Logger.info("Wrote git note for commit #{commit_sha} (ref: evogit, forced)")
         :ok
 
-      {:error, {:conflict, msg}} ->
-        Logger.warning("Failed to write git note for commit #{commit_sha}: #{msg}")
-        {:error, msg}
-
+      # ANY git failure here is best-effort: a note is metadata, never a reason
+      # to fail a completion.
       {:error, {_code, msg}} ->
         Logger.warning("Failed to write git note for commit #{commit_sha}: #{msg}")
         {:error, msg}
