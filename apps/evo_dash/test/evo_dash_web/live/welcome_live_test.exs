@@ -902,7 +902,13 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert_receive {:welcome_test_started, _pid, model, opts}, @runner_start_timeout
       # An OpenAI-compatible custom model resolves to its own struct, not a
       # catalog spec string, so the id is read off its representation.
-      assert inspect(model) =~ "my-model-x"
+      assert {:ok, %LLMDB.Model{id: "my-model-x"} = model} = ReqLLM.model(model)
+
+      assert model.base_url == @custom_base_url
+
+      assert {:ok, :openai_chat_completions, ReqLLM.Providers.OpenAI.ChatAPI, []} =
+               ReqLLM.RequestPlan.openai_surface(model)
+
       assert opts[:reasoning_effort] == :medium
     end
   end

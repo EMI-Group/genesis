@@ -205,6 +205,19 @@ defmodule EvoGit.Config.Schema.ProviderProfiles do
     end
   end
 
+  defp reqllm_model(%{"provider" => "openai_compatible"} = profile, model) do
+    extra = option_keys(profile["extra"] || %{})
+    wire = Map.get(extra, :wire)
+    wire = if is_map(wire), do: wire, else: %{}
+
+    %{
+      provider: :openai,
+      id: model["model"],
+      base_url: profile["base_url"],
+      extra: Map.put(extra, :wire, Map.put(wire, :protocol, "openai_chat"))
+    }
+  end
+
   defp reqllm_model(profile, model) do
     qualified = profile["provider"] <> ":" <> model["model"]
 
