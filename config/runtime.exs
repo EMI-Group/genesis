@@ -1,5 +1,14 @@
 import Config
 
+# Config snapshot validation resolves IANA `timezone` names, and
+# `EvoGit.Config.resolve/0` below builds that snapshot before any application
+# starts — so the database `EvoGit.Application.start/2` installs at boot must
+# be in place here too, otherwise a valid profile timezone validates as
+# ":no_time_zone_database". Idempotent: the boot-time call repeats it.
+if Code.ensure_loaded?(Tz.TimeZoneDatabase) do
+  Calendar.put_time_zone_database(Tz.TimeZoneDatabase)
+end
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration

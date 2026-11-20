@@ -139,6 +139,8 @@ The **3-level configuration system** (resolved at runtime, not via Elixir `Confi
 
 ### Config freshness (RAM snapshot + event-driven reload)
 `EvoGit.Config.resolve/0,1`, `user_config/0`, `credentials/0` and `config_status/0` read ONLY the `EvoGit.Config.Cache` snapshot — one `:persistent_term` entry per config directory with zero `File.stat`/`File.read` on a hit.
+`runtime.exs` installs `Calendar.put_time_zone_database(Tz.TimeZoneDatabase)` (guarded by `Code.ensure_loaded?/1`) at the top of the file, before its first `EvoGit.Config.resolve/0`, because config-snapshot validation runs pre-boot and resolves IANA `timezone` names for `[[llm.providers]]` accounts.
+The install is idempotent and `EvoGit.Application.start/2` repeats it, so boot order never leaves a valid timezone validating as `:no_time_zone_database`.
 A snapshot is built once per directory from the raw TOML bytes (`EvoGit.Config.build_snapshot/1`), then refreshed on exactly two events: `EvoGit.Config.Watcher` (production only, skipped in `:test`) sees a `file_system` event for `config.toml`/`credentials.toml` and schedules one debounced (~150 ms) `Cache.reload/1`, and `save_user_config/1`/`save_credentials/1` reload synchronously before returning (the `/settings` save event).
 A reload stores only when the raw-bytes fingerprint changed, then broadcasts `{:config_reloaded, node, dir, generation}` on the `"config"` PubSub topic; `EvoGit.AgentScheduler.RemoteAPI.reload_config/0` still forces a disk re-read before applying scheduler settings.
 If the file-watch backend is unavailable the watcher logs one warning and keeps serving the snapshot; external edits then require a save or explicit reload.
