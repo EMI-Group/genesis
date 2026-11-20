@@ -20,11 +20,61 @@ defmodule EvoGit.Store.Operations.Pages do
   branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at,
   updated_at, error, session_mode, pause_kind) — `result`/`logs`/`usage` are NEVER selected, so a page
   costs the same whether a row holds 1 kB or 108 MB of `result`. Rows are
-  sorted `ORDER BY started_at DESC` and the page is index-served
-  (`idx_tasks_started_at`, or the matching composite when a filter pins a
-  leading equality column) with no temp B-tree; `total` is a `COUNT(*)` over
-  the SAME WHERE, independent of pagination — and restricted to RENDERABLE
-  rows (see below), so it can never exceed the rows the pages actually yield.
+  sorted `ORDER BY started_at DESC`.
+
+  ## ONE statement: the page carries its own count
+
+  The page used to cost TWO statements — a `COUNT(*)` for `total`, then the
+  page `SELECT` — and each one evaluated the renderability predicate
+  (`json_valid(opts) AND json_type(opts) = 'object'`, i.e. a scan of the
+  multi-megabyte `opts` blob), so a filtered or searched page touched that blob
+  twice per keystroke and `total` described a different statement/snapshot than
+  the rows. The page is now ONE statement carrying a window count:
+
+      SELECT <18 summary columns>, count(*) OVER () AS total
+        FROM tasks
+       WHERE <filters> AND <renderable>
+       ORDER BY started_at DESC
+       LIMIT ? OFFSET ?
+
+  so the predicate is evaluated once per matching row, and `total` is computed
+  from the SAME row set the page is cut from. `total` is read from the FIRST
+  raw row before decoding (`decode_skipping_bad/1` rebuilds its fixed 18-key
+  map, so the extra `:total` key never reaches a caller).
+
+  The trade is stated honestly: SQLite computes `count(*) OVER ()` by spooling
+  the filtered rows through a co-routine, and because the window function must
+  see EVERY matching row it serves `ORDER BY started_at DESC` from a TEMP
+  B-TREE rather than walking `idx_tasks_started_at` (the filter predicates
+  still narrow the scan through their own indexes). ONE pass over the filtered
+  set — with the large `opts` blob evaluated once — beats two passes; the sort
+  key (`started_at`) is small. The query is deliberately NOT weakened to
+  recover an index-served ORDER BY.
+
+  ## The rare empty-page fallback
+
+  An offset at/past the end of the filtered set returns the LAST page instead
+  of an empty one (the same "clamp to the last page" behaviour the dashboard
+  applies today, moved into the read so every caller gets it for free) — with
+  the row total unchanged. The window query alone cannot tell an out-of-range
+  offset from an empty set, so the cheap `COUNT(*)` (same filters, same
+  `where_renderable`) runs ONLY when the page comes back empty AND the
+  requested offset was positive; `last_page_offset/3` then recomputes the
+  offset and the page statement is re-run there. A page at offset 0 that comes
+  back empty means the filtered set IS empty, so `total` is 0 and no count
+  query runs at all.
+
+  ## `total` and the skip boundary agree
+
+  `Summaries.decode_skipping_bad/1` drops a row whose `opts` column cannot be
+  decoded, so a plain `COUNT(*)` would count rows the page refuses to render —
+  `total` would exceed the renderable rows and the LAST page could come back
+  empty. Both the page statement and the fallback count therefore carry
+  `Summaries.where_renderable/1` (SQLite `json_valid`/`json_type`), the SQL
+  twin of that decode rule: a corrupt row is excluded from the total AND from
+  the rendering, so `total`, the page offsets and the rendered rows always
+  agree. The per-row skip stays as the defence for anything SQLite considers
+  renderable but the Codec still rejects.
 
   `opts` accepts the `EvoGit.Store.Operations.Tasks.safe_select_paginated_tasks/2`
   shape — `:limit`, `:offset`, and the filter set — so a caller can switch
@@ -42,18 +92,6 @@ defmodule EvoGit.Store.Operations.Pages do
   an empty one (the same "clamp to the last page" behaviour the dashboard
   applies today, moved into the read so every caller gets it for free) — with
   the row total unchanged.
-
-  ## `total` and the skip boundary agree
-
-  `Summaries.decode_skipping_bad/1` drops a row whose `opts` column cannot be
-  decoded, so a plain `COUNT(*)` would count rows the page refuses to render —
-  `total` would exceed the renderable rows and the LAST page could come back
-  empty. Both the count and the page selection therefore carry
-  `Summaries.where_renderable/1` (SQLite `json_valid`/`json_type`), the SQL
-  twin of that decode rule: a corrupt row is excluded from the total AND from
-  the rendering, so `total`, the page offsets and the rendered rows always
-  agree. The per-row skip stays as the defence for anything SQLite considers
-  renderable but the Codec still rejects.
 
   ## `get_task_lite/2` — the detail view
 
@@ -97,28 +135,35 @@ defmodule EvoGit.Store.Operations.Pages do
       limit = Filters.clamp_page_limit(Keyword.get(opts, :limit))
       requested_offset = Filters.clamp_offset(Keyword.get(opts, :offset))
 
-      # `total` counts only rows the page can actually RENDER: both the count
-      # and the selection carry `Summaries.where_renderable/1` (the SQL twin of
-      # the Codec's opts decode), so a corrupt `opts` row can neither inflate
-      # the total nor push a renderable row onto a later page. Counting rows
-      # the page drops would let the last page come back EMPTY.
-      total =
-        TaskRowRaw
-        |> Filters.where_filters(filters)
-        |> Summaries.where_renderable()
-        |> Repo.aggregate(:count)
+      # ONE statement: the page rows plus `count(*) OVER ()`. Both carry
+      # `Summaries.where_renderable/1` (the SQL twin of the Codec's opts
+      # decode), so a corrupt `opts` row can neither inflate the total nor push
+      # a renderable row onto a later page.
+      {raw_rows, total} =
+        case fetch_page(filters, limit, requested_offset) do
+          [] when requested_offset > 0 ->
+            # Empty page at a positive offset ⇒ the offset is past the end of
+            # the filtered set (the WHERE already excludes unrenderable rows),
+            # so ask for the count ONCE and re-run the page at the last page's
+            # offset. An empty filtered set keeps offset 0 and total 0.
+            case count_renderable(filters) do
+              0 ->
+                {[], 0}
 
-      rows =
-        Summaries.summary_query()
-        |> Filters.where_filters(filters)
-        |> Summaries.where_renderable()
-        |> order_by([t], desc: t.started_at)
-        |> limit(^limit)
-        |> offset(^last_page_offset(requested_offset, limit, total))
-        |> Repo.all()
-        |> Summaries.decode_skipping_bad()
+              total ->
+                {fetch_page(filters, limit, last_page_offset(requested_offset, limit, total)),
+                 total}
+            end
 
-      %{rows: rows, total: total}
+          [] ->
+            # Offset 0 and nothing to render: the filtered set is empty.
+            {[], 0}
+
+          [first | _] = rows ->
+            {rows, first.total}
+        end
+
+      %{rows: Summaries.decode_skipping_bad(raw_rows), total: total}
     end)
   end
 
@@ -131,12 +176,37 @@ defmodule EvoGit.Store.Operations.Pages do
     RepoScope.with_repo(repo, fn ->
       case Repo.one(lite_query(task_id)) do
         nil -> nil
-        row -> row |> lite_columns() |> Codec.decode_task()
+        row -> Codec.decode_raw_row(row)
       end
     end)
   end
 
   ## Private — page helpers
+
+  # The ONE page statement: the canonical summary projection, the shared filter
+  # set, the renderable gate, `started_at DESC`, the page window — and a window
+  # count of the whole filtered set, so `total` always describes exactly the
+  # rows this statement sees.
+  defp fetch_page(filters, limit, offset) do
+    Summaries.summary_query()
+    |> Filters.where_filters(filters)
+    |> Summaries.where_renderable()
+    |> order_by([t], desc: t.started_at)
+    |> select_merge([t], %{total: fragment("count(*) OVER ()")})
+    |> limit(^limit)
+    |> offset(^offset)
+    |> Repo.all()
+  end
+
+  # The fallback count (empty page at a positive offset ONLY): the same filters
+  # and the same renderable gate as `fetch_page/3`, so the last-page redirect
+  # lands on a page that actually renders.
+  defp count_renderable(filters) do
+    TaskRowRaw
+    |> Filters.where_filters(filters)
+    |> Summaries.where_renderable()
+    |> Repo.aggregate(:count)
+  end
 
   # Filter keys may arrive nested under `:filters` (the legacy
   # `safe_select_paginated_tasks/2` shape) and/or at the top level; a top-level
@@ -164,8 +234,10 @@ defmodule EvoGit.Store.Operations.Pages do
   ## Private — lite detail read
 
   # The 20 decode-relevant columns — everything `Operations.Tasks.get_task/2`
-  # decodes. Field list/order mirrors `Codec.task_columns/0` (which is the
-  # positional contract `Codec.decode_task/1` expects, minus `updated_at`).
+  # decodes. Field list/order mirrors `Codec.task_columns/0` (the positional
+  # contract `Codec.task_values/1` + `decode_task/1` expect, minus `updated_at`,
+  # which the decoder never reads); `Codec.decode_raw_row/1` performs both steps
+  # so this read stays field-identical to `get_task/2`.
   defp lite_query(task_id) do
     from(t in TaskRowRaw,
       select: %{
@@ -192,35 +264,5 @@ defmodule EvoGit.Store.Operations.Pages do
       },
       where: t.id == ^task_id
     )
-  end
-
-  # Rebuilds the positional row `Codec.decode_task/1` expects from the map
-  # projection above: the EXACT `Codec.task_columns/0` order (minus
-  # `updated_at`, which the decoder never reads). Reusing the Codec — rather
-  # than re-implementing the per-column decode — is what keeps this read
-  # field-identical to `get_task/2`.
-  defp lite_columns(row) do
-    [
-      row.id,
-      row.type,
-      row.status,
-      row.opts,
-      row.started_at,
-      row.finished_at,
-      row.logs,
-      row.result,
-      row.review_status,
-      row.usage,
-      row.agent_count,
-      row.base_sha,
-      row.commit_sha,
-      row.lease_expires_at,
-      row.model_id,
-      row.project_path,
-      row.branch_name,
-      row.error,
-      row.session_mode,
-      row.pause_kind
-    ]
   end
 end
