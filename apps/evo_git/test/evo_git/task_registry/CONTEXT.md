@@ -99,6 +99,12 @@ Codec intentionally reloads the outer lock key as a string while atomizing `:mod
 The complete subtree passes 365 tests at seeds 0 and 42.
 The explicit missing-provider test in `task_executor_reflect_test.exs` establishes executor admission rejection; implicit-selection tests retain the missing-path reflect runtime route coverage.
 
+## StoreGuard and Pause Cleanup Coverage
+`StoreGuard.read/3` and `write/2` have no direct callback-boundary tests in this subtree; `read_fault_isolation_test.exs` covers absent-server exits through registry APIs, not rescue/throw handling, successful value passthrough or exact exception-versus-catch log details.
+Pause tests exercise registered atom Store names through the isolated fixture, including direct `Pause.resume/4` and `pause_kind_for_restart/2` calls in `agent_state_read_test.exs`, so a pid-only Store typespec would exclude tested callers.
+`agent_state_read_test.exs` supplies an arity-four resume callback returning a live pid, while `pause_test.exs` supplies the registry's arity-four `wrapper_spawn_fun` returning `%Task{}`; these are distinct callback layers and should not be conflated in typing.
+Pause coverage does not directly test a pid-addressed task Store or callback raises, throws, exits and malformed return values.
+
 ## Known Test Gaps
 
 1. **No restart-recovery test for an unowned expired-lease `:running` row.** The `:finalizing` case IS covered (`describe "startup reconciliation of orphaned :finalizing tasks"`, incl. orphaned `:cancelling` → `:cancelled`): seeds a `:finalizing` row + a `:running` control row (both with future leases), restarts the registry, and asserts the orphaned `:finalizing` row → `:failed` (finished_at set, lease cleared, result a binary) while the `:running` row with a valid lease is left untouched (orphaned-`:running` sweeping is the `:lease_sweep` path). Untested: a fresh registry against a `:running` row with a valid lease leaves it untouched (only pinned as the startup-reconciliation control row); expired-lease unowned `:running` rows get swept only by the one-shot sweep 150 s after init (or `{:recheck_task, id}` resolution). The restart/backfill tests only use `:completed` tasks. Closest analogues: `lease_heartbeat_test.exs` (seeds an expired-lease unowned `:running` row and sends `:lease_sweep` DIRECTLY — no restart; the startup sweep is one-shot at `(@lease_duration + 30) * 1000` and never fires during a test run); `store_test.exs` (status field round-trips as atom for all known values incl. `:finalizing`).
