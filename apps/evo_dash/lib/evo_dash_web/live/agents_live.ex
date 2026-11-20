@@ -32,10 +32,12 @@ defmodule EvoDashWeb.AgentsLive do
   alias EvoDash.SafeCall
 
   alias EvoDashWeb.AgentsLive.{
+    AgentList,
     CommitGraph,
     CommitGraphRefresh,
     ContextMeter,
     HistoryGate,
+    Inspector,
     LoadData,
     OptimisticMessages,
     PendingEvents,
@@ -45,7 +47,6 @@ defmodule EvoDashWeb.AgentsLive do
     ToolCallDisplay
   }
 
-  alias EvoDashWeb.ContentText
   alias EvoDashWeb.ModelLabel
 
   # Minimum interval between commit-graph fetches. Refreshes are already coalesced
@@ -198,7 +199,7 @@ defmodule EvoDashWeb.AgentsLive do
       )
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
       |> assign(:current_path, ~p"/agents")
-      |> assign(:requested_agent_id, parse_agent_id(params["agent_id"]))
+      |> assign(:requested_agent_id, Inspector.parse_agent_id(params["agent_id"]))
 
     current_node = socket.assigns.current_node
 
@@ -278,7 +279,7 @@ defmodule EvoDashWeb.AgentsLive do
     # results, so the connected load is safe to start unconditionally.
     socket =
       if connected?(socket) do
-        socket |> maybe_attach_inspector() |> start_async_load()
+        socket |> Inspector.maybe_attach() |> start_async_load()
       else
         socket
       end
@@ -308,7 +309,7 @@ defmodule EvoDashWeb.AgentsLive do
               agents_error: nil,
               previous_node: node
             )
-            |> select_requested_agent()
+            |> Inspector.select_requested()
 
           {:noreply, socket}
 
@@ -461,9 +462,9 @@ defmodule EvoDashWeb.AgentsLive do
     socket =
       cond do
         # A refresh was spawned — its result path already runs
-        # maybe_fetch_selected_history/1, so do not also refetch here.
+        # Inspector.maybe_fetch_selected_history/1, so do not also refetch here.
         needs_refresh? -> spawn_agents_refresh(socket)
-        refetch? -> refetch_selected_history(socket)
+        refetch? -> Inspector.refetch_selected_history(socket)
         true -> socket
       end
 
@@ -475,62 +476,32 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
+  # Inspector stream/history results — ownership, sequencing and the terminal
+  # projection live in EvoDashWeb.AgentsLive.Inspector.
   def handle_info({:inspector_stream_ready, target, token, id, result}, socket) do
-    previous = socket.assigns.inspector_stream
-
-    {:noreply,
-     socket
-     |> StreamWatch.ready(target, token, id, result)
-     |> project_inspector_checkpoint(previous)}
+    {:noreply, Inspector.stream_ready(socket, target, token, id, result)}
   end
 
   def handle_info({:inspector_stream_reconciled, target, token, id, request, result}, socket) do
-    previous = socket.assigns.inspector_stream
-
-    {:noreply,
-     socket
-     |> StreamWatch.reconciled(target, token, id, request, result)
-     |> project_inspector_checkpoint(previous)}
+    {:noreply, Inspector.stream_reconciled(socket, target, token, id, request, result)}
   end
 
   def handle_info({:agent_delta, id, seq, events}, socket) do
-    previous = socket.assigns.inspector_stream
-
-    {:noreply,
-     socket
-     |> StreamWatch.push(id, seq, events)
-     |> project_inspector_checkpoint(previous)}
+    {:noreply, Inspector.stream_push(socket, id, seq, events)}
   end
 
   def handle_info({:agent_stream_closed, id, snapshot, seq}, socket) do
-    previous = socket.assigns.inspector_stream
-
-    {:noreply,
-     socket
-     |> StreamWatch.closed(id, snapshot, seq)
-     |> project_inspector_checkpoint(previous)}
+    {:noreply, Inspector.stream_closed(socket, id, snapshot, seq)}
   end
 
   def handle_info({:DOWN, ref, :process, pid, reason}, socket) do
-    socket = StreamWatch.down(socket, ref, pid, reason)
-    {:noreply, maybe_fetch_selected_history(socket)}
+    {:noreply, Inspector.stream_down(socket, ref, pid, reason)}
   end
 
   @impl true
-  # Async history-fetch result (select_agent / view_full_message / broadcast
-  # refresh paths). `index` is nil for the select/refresh flows and an integer
-  # for the view_full_message safety-net flow (the modal entry is set from the
-  # fetched history at that index).
+  # Async history-fetch result — ownership and stale guards live in Inspector.
   def handle_info({:agent_history_loaded, agent_id, node, seq, token, result, index}, socket) do
-    # Both counters are monotonic: an old result cannot overwrite a snapshot,
-    # a newer reconciliation, or an A→B→A selection on the same node.
-    if seq != socket.assigns.inspector_history_seq or
-         token != socket.assigns.inspector_stream_token or
-         inspector_owns_checkpoint?(socket, agent_id) do
-      {:noreply, socket}
-    else
-      apply_inspector_history(socket, agent_id, node, result, index)
-    end
+    Inspector.apply_history_result(socket, agent_id, node, seq, token, result, index)
   end
 
   # Old unscoped responses have no ownership proof.
@@ -590,10 +561,7 @@ defmodule EvoDashWeb.AgentsLive do
 
   @impl true
   def handle_event("select_agent", %{"id" => id}, socket) do
-    case parse_agent_id(id) do
-      nil -> {:noreply, socket}
-      agent_id -> {:noreply, select_agent(socket, agent_id)}
-    end
+    {:noreply, Inspector.select(socket, id)}
   end
 
   @impl true
@@ -663,104 +631,43 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
+  # Inspector detail-panel events — state transitions live in Inspector.
   def handle_event("retry_inspector_stream", _params, socket) do
-    {:noreply, maybe_attach_inspector(socket)}
+    {:noreply, Inspector.retry_stream(socket)}
   end
 
   def handle_event("retry_inspector_history", _params, socket) do
-    id = socket.assigns.selected_agent_id
-
-    socket =
-      cond do
-        inspector_owns_checkpoint?(socket, id) ->
-          StreamWatch.reconcile(socket)
-
-        is_integer(id) and socket.assigns.inspector_history_error and
-            socket.assigns.history_loading_agent_id != id ->
-          socket
-          |> assign(history_loading_agent_id: id)
-          |> spawn_history_fetch(id, nil)
-
-        true ->
-          socket
-      end
-
-    {:noreply, socket}
+    {:noreply, Inspector.retry_history(socket)}
   end
 
   @impl true
   def handle_event("close_details", _params, socket) do
-    {:noreply,
-     socket
-     |> StreamWatch.detach()
-     |> assign(
-       inspector_history_error: false,
-       history_loading_agent_id: nil,
-       full_message_pending_index: nil,
-       full_message_pending_agent_id: nil,
-       selected_agent_id: nil,
-       selected_history_entry: nil,
-       selected_objective: nil,
-       show_usage: false
-     )}
+    {:noreply, Inspector.close_details(socket)}
   end
 
   @impl true
   def handle_event("toggle_usage", _params, socket) do
-    {:noreply, assign(socket, :show_usage, !socket.assigns.show_usage)}
+    {:noreply, Inspector.toggle_usage(socket)}
   end
 
   @impl true
   def handle_event("view_full_message", %{"index" => index}, socket) do
-    index = String.to_integer(index)
-
-    agent = selected_inspector_agent(socket.assigns)
-
-    if agent && agent.history == [] do
-      # Refresh through the watch's atomic snapshot when it owns this history;
-      # only unwatchable agents use the independent history safety net.
-      socket =
-        if inspector_owns_checkpoint?(socket, agent.id) do
-          socket
-          |> assign(full_message_pending_index: index)
-          |> StreamWatch.reconcile()
-        else
-          socket
-          |> assign(
-            full_message_pending_agent_id: agent.id,
-            history_loading_agent_id: agent.id
-          )
-          |> spawn_history_fetch(agent.id, index)
-        end
-
-      {:noreply, socket}
-    else
-      entry =
-        agent && Enum.at(merged_history(agent, socket.assigns.optimistic_messages), index)
-
-      {:noreply, assign(socket, :selected_history_entry, entry)}
-    end
+    {:noreply, Inspector.view_full_message(socket, index)}
   end
 
   @impl true
   def handle_event("close_message_modal", _params, socket) do
-    {:noreply, assign(socket, selected_history_entry: nil, full_message_pending_index: nil)}
+    {:noreply, Inspector.close_message_modal(socket)}
   end
 
   @impl true
   def handle_event("view_full_objective", _params, socket) do
-    agent = selected_inspector_agent(socket.assigns)
-
-    if agent do
-      {:noreply, assign(socket, :selected_objective, agent.objective)}
-    else
-      {:noreply, socket}
-    end
+    {:noreply, Inspector.view_full_objective(socket)}
   end
 
   @impl true
   def handle_event("close_objective_modal", _params, socket) do
-    {:noreply, assign(socket, :selected_objective, nil)}
+    {:noreply, Inspector.close_objective_modal(socket)}
   end
 
   @impl true
@@ -938,320 +845,14 @@ defmodule EvoDashWeb.AgentsLive do
     :ok
   end
 
-  defp parse_agent_id(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {id, ""} when id > 0 -> id
-      _ -> nil
-    end
-  end
+  # Inspector/template entry points that the (unchanged) template calls as bare
+  # local functions — the implementation lives in EvoDashWeb.AgentsLive.Inspector.
+  defp selected_inspector_agent(assigns), do: Inspector.selected_inspector_agent(assigns)
 
-  defp parse_agent_id(_value), do: nil
+  defp inspector_scope(assigns), do: Inspector.inspector_scope(assigns)
 
-  defp select_requested_agent(%{assigns: %{requested_agent_id: nil}} = socket), do: socket
-
-  defp select_requested_agent(socket) do
-    agent_id = socket.assigns.requested_agent_id
-    socket = assign(socket, :requested_agent_id, nil)
-    select_agent(socket, agent_id)
-  end
-
-  defp select_agent(socket, agent_id) do
-    socket =
-      socket
-      |> assign(
-        selected_agent_id: agent_id,
-        show_usage: false,
-        selected_history_entry: nil,
-        history_loading_agent_id: nil,
-        full_message_pending_index: nil,
-        full_message_pending_agent_id: nil,
-        inspector_history_error: false
-      )
-      |> StreamWatch.attach(agent_id)
-
-    # Lazy-load chat history for the selected agent — asynchronously so the
-    # page never blocks on the (possibly cross-node) history RPC. First
-    # selection always fetches (no last-seen entry in the gate); later
-    # selections fetch only when the message count moved on.
-    agent = Enum.find(socket.assigns.agents, &(&1.id == agent_id))
-
-    if agent && not inspector_owns_checkpoint?(socket, agent_id) &&
-         HistoryGate.need_fetch?(socket.assigns.history_gate, agent_id, agent.message_count) &&
-         socket.assigns.history_loading_agent_id != agent_id do
-      socket
-      |> assign(history_loading_agent_id: agent_id)
-      |> spawn_history_fetch(agent_id, nil)
-    else
-      socket
-    end
-  end
-
-  defp apply_inspector_history(socket, agent_id, target_node, result, index) do
-    if agent_id != socket.assigns.selected_agent_id or target_node != socket.assigns.current_node do
-      {:noreply, handle_dropped_history_result(socket, agent_id, target_node)}
-    else
-      case result do
-        {:ok, entries} ->
-          {:noreply, put_inspector_history(socket, agent_id, entries, index)}
-
-        {:error, _reason} ->
-          {:noreply, fail_inspector_history(socket, agent_id)}
-      end
-    end
-  end
-
-  defp put_inspector_history(socket, agent_id, entries, index) do
-    agents =
-      update_agent_in_list(socket.assigns.agents, agent_id, fn agent ->
-        %{agent | history: entries}
-      end)
-
-    retained_agents =
-      Map.new(socket.assigns.retained_agents, fn
-        {^agent_id, agent} -> {agent_id, %{agent | history: entries}}
-        entry -> entry
-      end)
-
-    agent = Enum.find(agents, &(&1.id == agent_id)) || Map.get(retained_agents, agent_id)
-    count = (agent && agent.message_count) || length(entries)
-
-    # Retain all roles/reasoning and prune only confirmed optimistic messages.
-    optimistic_messages =
-      OptimisticMessages.prune(
-        socket.assigns.optimistic_messages,
-        agent_id,
-        entries,
-        Map.get(socket.assigns.pending_user_messages || %{}, agent_id)
-      )
-
-    socket =
-      assign(socket,
-        agents: agents,
-        retained_agents: retained_agents,
-        history_gate: HistoryGate.record(socket.assigns.history_gate, agent_id, count),
-        history_loading_agent_id: nil,
-        full_message_pending_index: nil,
-        full_message_pending_agent_id: nil,
-        inspector_history_error: false,
-        optimistic_messages: optimistic_messages
-      )
-
-    if is_integer(index),
-      do: assign(socket, :selected_history_entry, Enum.at(entries, index)),
-      else: socket
-  end
-
-  defp maybe_attach_inspector(socket) do
-    case socket.assigns.selected_agent_id do
-      id when is_integer(id) and id > 0 -> StreamWatch.attach(socket, id)
-      _ -> socket
-    end
-  end
-
-  defp detach_absent_inspector(socket) do
-    id = socket.assigns.selected_agent_id
-
-    if socket.assigns.inspector_stream != nil and not StreamWatch.owns?(socket, id) and
-         not Enum.any?(socket.assigns.agents, &(&1.id == id)) do
-      socket
-      |> StreamWatch.detach()
-      |> clear_history_loading_flags(id)
-    else
-      socket
-    end
-  end
-
-  # Failed watches still own the last coherent checkpoint/live pair. Health is
-  # not an ownership test: independent history must wait until detachment.
-  defp inspector_owns_checkpoint?(socket, agent_id), do: StreamWatch.owns?(socket, agent_id)
-
-  defp selected_inspector_agent(assigns) do
-    Enum.find(assigns.agents, &(&1.id == assigns.selected_agent_id)) ||
-      if StreamWatch.owns?(%{assigns: assigns}, assigns.selected_agent_id) do
-        Map.get(assigns.retained_agents, assigns.selected_agent_id)
-      end
-  end
-
-  # A sealed snapshot's explicit status outranks late summaries. Older snapshots
-  # may omit it: let a terminal summary settle the row once, without inferring
-  # success from :done or letting stale updates reopen it.
-  defp preserve_terminal_inspector(socket, agent) do
-    if StreamWatch.terminal?(socket, agent.id) do
-      snapshot = socket.assigns.inspector_stream.snapshot
-      previous = selected_inspector_agent(socket.assigns)
-
-      previous_status = previous && previous.status
-
-      status =
-        Map.get(snapshot, :status) ||
-          if previous_status in [:completed, :failed, :cancelled],
-            do: previous_status,
-            else: agent.status
-
-      agent
-      |> Map.put(:status, status)
-      |> Map.put(:history, messages_to_history_entries(snapshot.messages))
-    else
-      agent
-    end
-  end
-
-  # StreamWatch admits checkpoint messages and activity atomically, including
-  # buffered replay. Project the resulting state in the SAME callback, never
-  # the raw RPC snapshot or an independently fetched history.
-  defp project_inspector_checkpoint(socket, previous) do
-    case socket.assigns.inspector_stream do
-      %{agent_id: id, snapshot: snapshot, state: state, reconciling: reconciling, error: error}
-      when not is_nil(snapshot) ->
-        adopted? =
-          snapshot != Map.get(previous || %{}, :snapshot) or
-            (is_nil(error) and Map.get(previous || %{}, :reconciling, false) and not reconciling)
-
-        if inspector_owns_checkpoint?(socket, id) and adopted? do
-          socket
-          |> assign(inspector_history_seq: socket.assigns.inspector_history_seq + 1)
-          |> put_inspector_history(
-            id,
-            messages_to_history_entries(state.messages),
-            socket.assigns.full_message_pending_index
-          )
-          |> project_terminal_inspector(id)
-        else
-          socket
-        end
-
-      _ ->
-        socket
-    end
-  end
-
-  defp project_terminal_inspector(socket, id) do
-    if StreamWatch.terminal?(socket, id) do
-      assign(socket,
-        agents:
-          update_agent_in_list(
-            socket.assigns.agents,
-            id,
-            &preserve_terminal_inspector(socket, &1)
-          ),
-        retained_agents:
-          Map.new(socket.assigns.retained_agents, fn
-            {^id, agent} -> {id, preserve_terminal_inspector(socket, agent)}
-            entry -> entry
-          end)
-      )
-    else
-      socket
-    end
-  end
-
-  defp inspector_scope(assigns) do
-    snapshot_seq =
-      case assigns.inspector_stream do
-        %{snapshot: snapshot} when not is_nil(snapshot) -> Map.get(snapshot, :seq)
-        _ -> nil
-      end
-
-    Enum.join(
-      [
-        assigns.current_node_id || "local",
-        assigns.current_node,
-        assigns.selected_agent_id,
-        assigns.inspector_stream_token,
-        snapshot_seq || "pending"
-      ],
-      ":"
-    )
-  end
-
-  defp inspector_message_marker(entry, index) do
-    "#{index}-#{:erlang.phash2(entry)}"
-  end
-
-  # Spawns an async history fetch for `agent_id` on the viewed node. `index`
-  # is nil for select/refresh flows, or the clicked entry index for the
-  # view_full_message safety net. The history runner is injectable via the
-  # :agents_history_runner env seam, resolved AT SPAWN TIME (inside the task)
-  # so tests can stub it.
-  defp spawn_history_fetch(socket, agent_id, index) do
-    parent = self()
-    node = socket.assigns.current_node
-    seq = socket.assigns.inspector_history_seq + 1
-    token = socket.assigns.inspector_stream_token
-
-    started =
-      SafeCall.run(fn ->
-        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-          runner =
-            Application.get_env(
-              :evo_dash,
-              :agents_history_runner,
-              &EvoDash.NodeContext.get_agent_history/2
-            )
-
-          # Exit-safe boundary: the history RPC targets a possibly-dead remote
-          # daemon. `SafeCall.run/1` captures an exit (which `rescue` cannot catch)
-          # as an error value, so the result message is always sent and the
-          # history loading flags are always released — by the result handler.
-          result =
-            SafeCall.run(fn -> runner.(node, agent_id) |> messages_to_history_entries() end)
-
-          send(parent, {:agent_history_loaded, agent_id, node, seq, token, result, index})
-        end)
-      end)
-
-    socket = assign(socket, inspector_history_seq: seq)
-
-    case started do
-      {:ok, {:ok, _pid}} -> socket
-      _ -> fail_inspector_history(socket, agent_id)
-    end
-  end
-
-  # Independent fallback failures keep the last checkpoint and expose an
-  # explicit Retry; stream transport errors remain owned by StreamWatch.
-  defp fail_inspector_history(socket, agent_id) do
-    socket = clear_history_loading_flags(socket, agent_id)
-
-    if socket.assigns.selected_agent_id == agent_id do
-      assign(socket, inspector_history_error: true)
-    else
-      socket
-    end
-  end
-
-  # Releases the per-agent history loading flags for `agent_id`, but ONLY when
-  # they still name THAT agent — a newer fetch for another agent keeps its own
-  # flags. Called from the stale-guard of {:agent_history_loaded, ...}, so a
-  # dropped result can never leave a spinner running or block every later
-  # fetch through the overlap guard.
-  defp clear_history_loading_flags(socket, agent_id) do
-    socket
-    |> clear_flag_if_agent(:history_loading_agent_id, agent_id)
-    |> clear_flag_if_agent(:full_message_pending_agent_id, agent_id)
-  end
-
-  # A history result dropped by the stale-guard still releases this agent's
-  # loading flags when it came from the CURRENT node (the selection moved on
-  # while the fetch was in flight). A cross-node result touches NOTHING: the
-  # node-switch reset already cleared the flags, so any flag currently set
-  # belongs to the new node's context and must not be cleared by a stale node's
-  # (colliding per-node) agent id.
-  defp handle_dropped_history_result(socket, agent_id, node) do
-    if node == socket.assigns.current_node do
-      clear_history_loading_flags(socket, agent_id)
-    else
-      socket
-    end
-  end
-
-  defp clear_flag_if_agent(socket, key, agent_id) do
-    if Map.get(socket.assigns, key) == agent_id do
-      assign(socket, key, nil)
-    else
-      socket
-    end
-  end
+  defp inspector_message_marker(entry, index),
+    do: Inspector.inspector_message_marker(entry, index)
 
   # Fetches (or refreshes) the commit graph, but ONLY while the commit-history
   # view is active — the tree view must never trigger a git RPC. Mirrors the
@@ -1526,7 +1127,7 @@ defmodule EvoDashWeb.AgentsLive do
   # fresh message counts into the gate, and (re)triggers a history fetch for
   # the selected agent when its count moved on.
   defp apply_agents_result(socket, agents) do
-    agents = Enum.map(agents, &preserve_terminal_inspector(socket, &1))
+    agents = Enum.map(agents, &Inspector.preserve_terminal(socket, &1))
     current_ids = MapSet.new(agents, & &1.id)
     current_statuses = Map.new(agents, fn a -> {a.id, a.status} end)
 
@@ -1616,8 +1217,8 @@ defmodule EvoDashWeb.AgentsLive do
       history_gate: history_gate,
       retained_agents: retained_agents
     )
-    |> detach_absent_inspector()
-    |> maybe_fetch_selected_history()
+    |> Inspector.detach_absent()
+    |> Inspector.maybe_fetch_selected_history()
     |> maybe_load_commit_graph([])
   end
 
@@ -1633,65 +1234,6 @@ defmodule EvoDashWeb.AgentsLive do
         Map.put(acc, agent.id, Map.put(agent, :ended, true))
       end
     end)
-  end
-
-  # Triggers an async history fetch for the selected agent when the history
-  # gate says the stored history (if any) no longer matches the agent's current
-  # message count. No-op when nothing is selected, the agent is gone, the gate
-  # says the history is current, or a fetch is already in flight.
-  defp maybe_fetch_selected_history(socket) do
-    selected_agent_id = socket.assigns.selected_agent_id
-
-    if selected_agent_id do
-      agent = Enum.find(socket.assigns.agents, &(&1.id == selected_agent_id))
-
-      if agent && not inspector_owns_checkpoint?(socket, selected_agent_id) &&
-           HistoryGate.need_fetch?(
-             socket.assigns.history_gate,
-             selected_agent_id,
-             agent.message_count
-           ) &&
-           socket.assigns.history_loading_agent_id != selected_agent_id do
-        socket
-        |> assign(history_loading_agent_id: selected_agent_id)
-        |> spawn_history_fetch(selected_agent_id, nil)
-      else
-        socket
-      end
-    else
-      socket
-    end
-  end
-
-  # Triggers an async history fetch for the selected agent when the
-  # :message_count carried by the {:agent_updated, ...} broadcast moved on vs
-  # the gate's last-seen entry. Called ONLY when changed_fields contains
-  # :message_count (the contract: it does whenever the agent's context
-  # changed) — the merged agent's count is then the fresh one. No-op when
-  # nothing is selected, the agent is gone, the gate says the history is
-  # current, or a fetch is already in flight.
-  defp refetch_selected_history(socket) do
-    selected_agent_id = socket.assigns.selected_agent_id
-
-    if selected_agent_id do
-      agent = Enum.find(socket.assigns.agents, &(&1.id == selected_agent_id))
-
-      if agent && not inspector_owns_checkpoint?(socket, selected_agent_id) &&
-           HistoryGate.need_fetch?(
-             socket.assigns.history_gate,
-             selected_agent_id,
-             agent.message_count
-           ) &&
-           socket.assigns.history_loading_agent_id != selected_agent_id do
-        socket
-        |> assign(history_loading_agent_id: selected_agent_id)
-        |> spawn_history_fetch(selected_agent_id, nil)
-      else
-        socket
-      end
-    else
-      socket
-    end
   end
 
   # ---------------------------------------------------------------------------
@@ -1769,8 +1311,8 @@ defmodule EvoDashWeb.AgentsLive do
          {:agent_updated, agent_id, changed_fields, _node},
          {socket, needs_refresh?, refetch?}
        ) do
-    # The refetch is gate-checked by refetch_selected_history/1 at the end;
-    # here we only remember whether the selected agent's context moved.
+    # The refetch is gate-checked by Inspector.refetch_selected_history/1 at the
+    # end; here we only remember whether the selected agent's context moved.
     moved? =
       agent_id == socket.assigns.selected_agent_id and
         Keyword.has_key?(changed_fields, :message_count)
@@ -1816,10 +1358,10 @@ defmodule EvoDashWeb.AgentsLive do
   # agent is not yet in our list (a race) — the caller then coalesces a single
   # async full refresh. The selected-agent history refetch is NOT performed
   # here: the flush tracks it across the whole burst and calls
-  # refetch_selected_history/1 at most once at the end.
+  # Inspector.refetch_selected_history/1 at most once at the end.
   defp apply_agent_updated(socket, agent_id, changed_fields) do
     agents = socket.assigns.agents
-    agent_idx = Enum.find_index(agents, fn a -> a.id == agent_id end)
+    agent_idx = Map.get(AgentList.positions(agents), agent_id)
 
     if agent_idx == nil do
       case Map.get(socket.assigns.retained_agents, agent_id) do
@@ -1834,7 +1376,7 @@ defmodule EvoDashWeb.AgentsLive do
             agent =
               retained
               |> Map.merge(handle_special_fields(Map.new(changed_fields)))
-              |> then(&preserve_terminal_inspector(socket, &1))
+              |> then(&Inspector.preserve_terminal(socket, &1))
 
             {:ok,
              assign(
@@ -1861,7 +1403,7 @@ defmodule EvoDashWeb.AgentsLive do
         |> handle_special_fields()
 
       # Merge changed fields into agent
-      agent = agent |> Map.merge(changed_map) |> then(&preserve_terminal_inspector(socket, &1))
+      agent = agent |> Map.merge(changed_map) |> then(&Inspector.preserve_terminal(socket, &1))
 
       # A nil/non-positive threshold delta means "unknown" — keep the row's
       # previous (usable) denominator so a bar can never divide by nil.
@@ -1999,13 +1541,13 @@ defmodule EvoDashWeb.AgentsLive do
       if socket.assigns.selected_agent_id == agent_id and not StreamWatch.owns?(socket, agent_id) do
         socket
         |> StreamWatch.detach()
-        |> clear_history_loading_flags(agent_id)
+        |> Inspector.clear_history_loading_flags(agent_id)
       else
         socket
       end
 
     agents = socket.assigns.agents
-    removed_agent = Enum.find(agents, fn a -> a.id == agent_id end)
+    removed_agent = AgentList.find(agents, agent_id)
 
     if removed_agent == nil do
       socket
@@ -2081,16 +1623,6 @@ defmodule EvoDashWeb.AgentsLive do
     end
   end
 
-  defp update_agent_in_list(agents, agent_id, updater_fn) do
-    idx = Enum.find_index(agents, fn a -> a.id == agent_id end)
-
-    if idx do
-      List.replace_at(agents, idx, updater_fn.(Enum.at(agents, idx)))
-    else
-      agents
-    end
-  end
-
   # Incremental agent registration for BOTH local and remote events. The
   # {:agent_registered, id, summary, node} broadcast carries the agent's
   # summary (the same RemoteAPI.list_agents/0 summary shape
@@ -2120,7 +1652,7 @@ defmodule EvoDashWeb.AgentsLive do
         # Update parent's children if parent_id is set
         agents =
           if new_agent.parent_id do
-            update_agent_in_list(agents, new_agent.parent_id, fn parent ->
+            AgentList.update(agents, new_agent.parent_id, fn parent ->
               children = LoadData.find_children_from_agents(parent.id, agents)
               %{parent | children: children, has_children: length(children) > 0}
             end)
@@ -2231,7 +1763,7 @@ defmodule EvoDashWeb.AgentsLive do
   defp maybe_update_parent_children(agents, nil), do: agents
 
   defp maybe_update_parent_children(agents, parent_id) do
-    update_agent_in_list(agents, parent_id, fn parent ->
+    AgentList.update(agents, parent_id, fn parent ->
       children = LoadData.find_children_from_agents(parent.id, agents)
       %{parent | children: children, has_children: length(children) > 0}
     end)
@@ -2367,95 +1899,6 @@ defmodule EvoDashWeb.AgentsLive do
     do: previous
 
   defp restore_threshold(_previous, socket), do: safe_compression_threshold(socket)
-
-  # Converts native %ReqLLM.Message{} structs into the %{turn, type, data}
-  # entry format the template consumes. The only legitimate conversion here is
-  # extracting display text from the ContentPart list → a single string; all
-  # other fields are passed through as native terms.
-  defp messages_to_history_entries(messages) when is_list(messages) do
-    Enum.map(messages, &message_to_history_entry/1)
-  end
-
-  defp message_to_history_entry(%ReqLLM.Message{} = msg) do
-    %{
-      turn: Map.get(msg.metadata, :turn) || 0,
-      # Wall-clock timestamp stamped by the :evo_git runtime at the source
-      # (Unix-seconds integer or DateTime; absent on historical messages).
-      timestamp: Map.get(msg.metadata, :timestamp),
-      type: Atom.to_string(msg.role),
-      data: %{
-        content:
-          msg.content
-          |> Enum.map(fn part ->
-            case content_part_label(part) do
-              nil -> ContentText.text_of(part)
-              label -> label
-            end
-          end)
-          |> Enum.reject(&is_nil/1)
-          |> Enum.join(),
-        tool_calls: msg.tool_calls,
-        reasoning_details: msg.reasoning_details,
-        tool_name: Map.get(msg.metadata, :tool_name) || msg.name,
-        metadata: msg.metadata
-      }
-    }
-  end
-
-  # Renders a short metadata label for image/audio content parts so multimodal
-  # history isn't blank, e.g. "[image: foo.png]" / "[audio: track.mp3]". Every
-  # other part type (text/image_url/video_url/thinking/unknown) returns nil —
-  # those contribute nothing here; the `nil` branch of the caller then extracts
-  # the part's text via `EvoDashWeb.ContentText.text_of/1`, which yields text
-  # ONLY for `:text` parts (reasoning lives in `:thinking` parts and is excluded
-  # from the response text).
-  # Handles %ReqLLM.Message.ContentPart{} structs and atom/string-keyed maps.
-  # TOTAL: never raises, never touches the part's `data` binary.
-  defp content_part_label(part) when is_map(part) do
-    type = pget(part, :type)
-
-    cond do
-      type in [:image, "image"] -> "[image#{part_name_suffix(part)}]"
-      audio_part?(part, type) -> "[audio#{part_name_suffix(part)}]"
-      true -> nil
-    end
-  end
-
-  defp content_part_label(_part), do: nil
-
-  # Audio rides as type :audio or as type :file with an audio/* media_type
-  # (is_binary guard keeps it total on non-string media_type values).
-  defp audio_part?(_part, type) when type in [:audio, "audio"], do: true
-
-  defp audio_part?(part, type) when type in [:file, "file"] do
-    case pget(part, :media_type) do
-      mt when is_binary(mt) -> String.starts_with?(mt, "audio/")
-      _ -> false
-    end
-  end
-
-  defp audio_part?(_part, _type), do: false
-
-  # ": <filename>" when a filename is available, else "" — never a bare
-  # binary; prefers the real schema `filename` field, falls back to a `name`
-  # key (string or atom) for defensive map shapes.
-  defp part_name_suffix(part) do
-    case pget(part, :filename) || pget(part, :name) do
-      name when is_binary(name) and name != "" -> ": " <> name
-      _ -> ""
-    end
-  end
-
-  # Atom-or-string-key tolerant getter (total on any map shape).
-  defp pget(part, key), do: Map.get(part, key) || Map.get(part, to_string(key))
-
-  # Merges an agent's real history with its pending optimistic user messages
-  # (see OptimisticMessages). Optimistic entries are appended AFTER the real
-  # history (never interleaved), so indices into the base history are unchanged
-  # — callers that look up history entries by index can keep using them.
-  defp merged_history(agent, optimistic_messages) do
-    OptimisticMessages.merge(agent.history || [], Map.get(optimistic_messages || %{}, agent.id))
-  end
 
   # Shared error flash for failed send attempts (nested {:ok, {:error, _}} on
   # the local path and {:error, _} erpc failures both land here).
