@@ -77,6 +77,10 @@ defmodule EvoDashWeb.ProcessComponents do
     command = Format.command_text(execution)
     tool = Format.tool_name(execution)
     id = field(execution, :id)
+    # ONE clock read per row render: every derived label (uptime especially) is
+    # computed ONCE here, so the summary row and its expanded detail row cannot
+    # disagree about the same instant.
+    now = DateTime.utc_now()
 
     assigns =
       assigns
@@ -84,6 +88,12 @@ defmodule EvoDashWeb.ProcessComponents do
       |> assign(:status, status)
       |> assign(:command, command)
       |> assign(:tool, tool)
+      |> assign(:now, now)
+      |> assign(:uptime_label, Format.uptime(execution, now))
+      |> assign(:cpu_label, Format.cpu_label(execution))
+      |> assign(:memory_label, Format.memory_label(execution))
+      |> assign(:exit_label, Format.exit_label(execution))
+      |> assign(:target_label, Format.target_label(execution))
       |> assign(:agent_id, field(execution, :agent_id))
       |> assign(:task_id, field(execution, :task_id))
       |> assign(:runtime, runtime_text(field(execution, :runtime)))
@@ -107,6 +117,7 @@ defmodule EvoDashWeb.ProcessComponents do
     ~H"""
     <tr
       id={"process-row-#{@id || "unknown"}"}
+      data-list-enter-key={@id || "unknown"}
       role="row"
       class={[
         "grid grid-cols-[minmax(0,1fr)_auto] items-center border-b border-base-300/60 last:border-b-0 xl:table-row",
@@ -156,30 +167,30 @@ defmodule EvoDashWeb.ProcessComponents do
       <td
         role="cell"
         class="hidden max-w-28 truncate py-2 font-mono text-xs 2xl:table-cell"
-        title={Format.target_label(@execution)}
+        title={@target_label}
       >
-        {Format.target_label(@execution)}
+        {@target_label}
       </td>
       <td role="cell" class="hidden whitespace-nowrap py-2 text-xs tabular-nums xl:table-cell">
-        {Format.uptime(@execution)}
+        {@uptime_label}
       </td>
       <td
         role="cell"
         class="hidden whitespace-nowrap py-2 text-right text-xs tabular-nums xl:table-cell"
       >
-        {Format.cpu_label(@execution)}
+        {@cpu_label}
       </td>
       <td
         role="cell"
         class="hidden whitespace-nowrap py-2 text-right text-xs tabular-nums xl:table-cell"
       >
-        {Format.memory_label(@execution)}
+        {@memory_label}
       </td>
       <td
         role="cell"
         class="hidden whitespace-nowrap py-2 text-right text-xs tabular-nums xl:table-cell"
       >
-        {Format.exit_label(@execution)}
+        {@exit_label}
       </td>
       <td role="cell" class="px-3 py-1.5 xl:py-2">
         <%!--
@@ -251,6 +262,7 @@ defmodule EvoDashWeb.ProcessComponents do
           execution={@execution}
           agents_link={@agents_link}
           tasks_link={@tasks_link}
+          uptime_label={@uptime_label}
         />
       </td>
     </tr>
@@ -295,6 +307,11 @@ defmodule EvoDashWeb.ProcessComponents do
   attr(:agents_link, :string, default: nil)
   attr(:tasks_link, :string, default: nil)
 
+  attr(:uptime_label, :string,
+    default: nil,
+    doc: "the row's already-computed uptime label; nil recomputes it here (stand-alone use)"
+  )
+
   def execution_details(assigns) do
     execution = assigns.execution
 
@@ -308,6 +325,7 @@ defmodule EvoDashWeb.ProcessComponents do
       |> assign(:backend, backend_text(field(execution, :backend)))
       |> assign(:exit_code, Format.exit_code_label(execution))
       |> assign(:target, Format.target_label(execution))
+      |> assign(:uptime_label, assigns.uptime_label || Format.uptime(execution))
       |> assign(:reason, reason_text(field(execution, :reason)))
       |> assign(:started_at, format_time(field(execution, :started_at)))
       |> assign(:ended_at, format_time(field(execution, :ended_at)))
@@ -336,7 +354,7 @@ defmodule EvoDashWeb.ProcessComponents do
             </div>
           </div>
           <div class="grid gap-1.5 xl:hidden">
-            <.detail_field label={gettext("Uptime")} value={Format.uptime(@execution)} />
+            <.detail_field label={gettext("Uptime")} value={@uptime_label} />
             <.detail_field label={gettext("CPU")} value={Format.cpu_label(@execution)} />
             <.detail_field label={gettext("Memory")} value={Format.memory_label(@execution)} />
           </div>
