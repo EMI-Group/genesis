@@ -9,6 +9,15 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard.TestStep do
 
   import Helpers, only: [clean_string: 1, format_reason: 1]
 
+  # The PUBLIC contract (call-site validation, docs, slots) lives on
+  # `EvoDashWeb.SettingsComponents.ProviderWizard.step_test/1`; these mirror its
+  # declarations for this renderer's own docs. They must stay identical.
+  attr(:test_state, :any, default: :idle)
+  attr(:test_event, :string, default: "test_connection")
+  attr(:skip_event, :string, default: "skip_test")
+  attr(:test_label, :string, default: nil)
+  attr(:skip_label, :string, default: nil)
+
   def step_test(assigns) do
     assigns =
       assigns
