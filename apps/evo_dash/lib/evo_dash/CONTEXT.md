@@ -195,6 +195,10 @@ Text-pipeline error shapes: bare POSIX atom (file read failure), `{:invalid, rea
 `media_type_for/1` maps a normalized lowercase extension to its pinned IANA media type (`nil` when unknown).
 `read_kind/2` returns `{:ok, %{type:, media_type:, bytes:}}`; error shapes: bare POSIX atom, `{:unsupported_extension, ext}`, `{:file_too_large, byte_size}`, `{:unsupported_kind, kind}`.
 `describe_error/2` builds user-ready messages for all error shapes.
+Browser uploads use `upload_name/1` (basename normalization, control-character cleanup and invalid-name rejection), `upload_extensions/0`, and `read_uploaded/2`, which classifies an extensionless temporary file by the sanitized original client filename, rejects unsupported/nonregular/oversized files, and returns either `%{type: "text", name:, text:}` or the existing image/audio byte payload.
+`read/1` intentionally treats unknown extensions, including media extensions, as plain text, whereas `read_uploaded/2` explicitly recognizes image/audio; any shared document-dispatch helper must preserve those distinct outer policies.
+The upload media lookup is rebuilt from fixed module-attribute maps by `upload_media_types/0` on each call, and text/DOCX/PDF dispatch is repeated between `read/1` and `read_uploaded/2`.
+Coverage lives in `test/evo_dash/attached_file_test.exs`, including original-filename upload dispatch and the deliberate `read/1` versus `read_kind/2` distinction; `upload_extensions/0` and the full uploaded-media matrix have no direct tests.
 
 ### `EvoDash.MarkdownRender` (`markdown_render.ex`)
 
