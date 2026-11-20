@@ -195,10 +195,14 @@ defmodule EvoGit.AgentScheduler.SessionLifecycleIntegrationTest do
     assert :counters.get(counter, 1) == 2
 
     # Cleanup boundary: both ETS rows are recycled and every session is gone.
+    # The scheduler's `handle_agent_down` cleanup and the session's `Registry`
+    # unregistration are INDEPENDENT, so the registry condition is part of the
+    # SAME wait (a bare post-wait `Registry.lookup/2` raced the unregistration).
     wait_until(
       fn ->
         not MapSet.member?(sched_meta_ids(), agent_id) and
-          match?(:error, Store.get_agent_state(agent_id))
+          match?(:error, Store.get_agent_state(agent_id)) and
+          Registry.lookup(Session.Registry, agent_id) == []
       end,
       @async_wait_budget_ms
     )
