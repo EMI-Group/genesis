@@ -101,21 +101,7 @@ Tracks the last-seen Genesis version in `version_state.toml` (config dir); defau
 | `foreign_repos/1` | `ForeignRepo` structs |
 
 ### genesis.toml Structure
-```toml
-[worktree]
-script = "..."                 # single fallback script (any OS)
-script.linux = "..."           # OR OS-specific variants (TOML dotted keys)
-script.macos = "..."
-script.windows = "..."
-# Resolution: script.<current_os> → script (fallback) → nil
-
-[commands]
-dev = "npm run dev"            # displayed in dashboard; manually triggered, NOT auto-executed
-
-[foreign_repos.original]
-path = "/Source/original-proj"
-description = "Legacy Project"
-```
+Three tables: `[worktree]` `script` (single fallback) with optional OS-specific variants as TOML dotted keys (`script.linux`/`script.macos`/`script.windows`; resolution `script.<current_os>` → `script` → `nil`), `[commands]` user shortcuts displayed in the dashboard and manually triggered (never auto-executed), and `[foreign_repos.<id>]` with `path` + `description` (+ `writable`/`base_sha`, see below).
 
 ### Foreign repos — schema & machine-binding gotchas
 - **There is NO `[[repos]]`/repo-registry table in `config.toml`**: `Definitions.schemas/0` contains no repo/path key, so `Schema.validate/1` never validates a repository path and `Config.resolve/0` returns no repo list; the only repository configuration is per-repo `genesis.toml` `[foreign_repos.<id>]` (sibling `../project_config.ex`, deliberately NOT Ecto-validated) plus the per-task `:foreign_repos` opt.
