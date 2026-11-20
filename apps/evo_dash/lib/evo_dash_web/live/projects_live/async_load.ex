@@ -242,7 +242,7 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
           end
 
         {skip_foreign_repos?, socket} =
-          if socket.assigns[:resume_foreign_repos_guard] == true and
+          if Map.get(socket.assigns, :resume_foreign_repos_guard, false) and
                Map.has_key?(results, :foreign_repos) do
             {true, assign(socket, :resume_foreign_repos_guard, false)}
           else
@@ -463,6 +463,10 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
 
       %{
         project_config: project_config,
+        # Captured WITH the config so the page's task-broadcast debounce can
+        # skip re-parsing unchanged settings (local File.stat; a remote path
+        # simply answers nil here and keeps the RPC-loaded config).
+        project_config_mtime: Project.project_config_mtime(path),
         worktree_script: worktree_script,
         commands: commands,
         foreign_repos: foreign_repos,

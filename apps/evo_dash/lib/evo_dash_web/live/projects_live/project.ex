@@ -304,6 +304,28 @@ defmodule EvoDashWeb.ProjectsLive.Project do
     EvoGit.PathSuggestions.suggest(value)
   end
 
+  # Mirrors `EvoGit.ProjectConfig.read/1`'s `@config_filename` (the project
+  # config always lives at the repo root).
+  @config_filename "genesis.toml"
+  @doc """
+  The `genesis.toml` mtime for a project root, or nil when the file cannot be
+  stat'ed (no file, an unreadable path, or a REMOTE project whose config lives
+  on the other host).
+
+  The page keeps this beside the parsed config so the task-broadcast debounce
+  can decide CHEAPLY whether re-parsing is necessary — `File.stat/1` is cheap,
+  parsing TOML is not. Pure: no store/registry/RPC call.
+  """
+  @spec project_config_mtime(String.t() | nil) :: term() | nil
+  def project_config_mtime(project_root) when is_binary(project_root) do
+    case File.stat(Path.join(project_root, @config_filename)) do
+      {:ok, %File.Stat{mtime: mtime}} -> mtime
+      {:error, _reason} -> nil
+    end
+  end
+
+  def project_config_mtime(_project_root), do: nil
+
   @doc """
   Loads the project configuration from a `genesis.toml` file in the project root.
   Returns `{config, worktree_script, commands}`.
