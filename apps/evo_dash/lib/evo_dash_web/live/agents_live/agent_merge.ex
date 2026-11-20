@@ -116,7 +116,7 @@ defmodule EvoDashWeb.AgentsLive.AgentMerge do
   Applies a fresh agent list (from the async load or a refresh task): recomputes
   the tracking assigns, carries over still-current histories, records the fresh
   message counts and (re)triggers the selected agent's history fetch.
-  The caller owns the commit-graph refresh (`maybe_load_commit_graph/2`).
+  The caller owns the commit-graph refresh (`CommitGraphState.maybe_load/2`).
   """
   @spec apply_result(Phoenix.LiveView.Socket.t(), [map()]) :: Phoenix.LiveView.Socket.t()
   def apply_result(socket, agents) do
