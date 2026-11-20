@@ -55,6 +55,27 @@ Workbench windows — `dialog.workbench-window[open]` animates in on `showModal(
 Native modals — `dialog_modal.js` sets `data-dialog-state="opening|open|closing"` and defers `close()`, so `dialog.modal[data-dialog-state="closing"]` (+ `::backdrop`) can finally animate out.
 The LAST rule in `motion.css` is the global `prefers-reduced-motion` backstop (`animation-duration`, `animation-iteration-count`, `transition-duration`, `transition-delay` and `scroll-behavior: auto`, all `!important`, on `*, *::before, *::after`); nothing may follow it, and per-component guards elsewhere stay as harmless redundancy.
 
+### `.motion-list-enter` (the one motion class that lives in `app.css`)
+`.motion-list-enter` is the LAST rule in `app.css` and its only consumer is the `ListEnter` hook (`../js/hooks/list_enter.js`), which toggles that single class on newly inserted rows.
+Its animation is `motion-slide-in` with `--motion-base` / `--motion-ease-out` from `motion.css`, so it defines no keyframes of its own and `motion.css`'s global backstop already disables it under reduced motion.
+The class must stay in `app.css`: a `hooks/*.js` class toggle cannot import the motion vocabulary itself, so deleting it as "unused CSS" breaks the hook.
+
+## View transitions (`view_transitions.css`)
+`./view_transitions.css` is imported LAST from `app.css`'s `@import` block — immediately after `./motion.css` and still before the `@source` lines — and owns the browser View Transitions API motion.
+It styles `::view-transition-old` / `::view-transition-new` / `::view-transition-group` for the three named transitions `root`, `page` and `project-swap`.
+Every fade REUSES `motion.css`'s `motion-fade-out` (old) and `motion-fade-in` (new) keyframes with `--motion-base`, `--motion-ease-in` and `--motion-ease-out`; the file defines no keyframes and no literal durations.
+The `::view-transition-group(...)` rules only borrow `animation-duration: var(--motion-base)`, keeping the UA's own size/position morph keyframes so the morph matches the fade instead of outliving it.
+Three sources opt in: a cross-document page load (`<meta name="view-transition" content="same-origin">` in `../lib/evo_dash_web/components/layouts/root.html.heex`), the theme switch in that same file's inline script (which needs only the root pair), and the per-PATCH cross-fade in `../js/app.js`.
+The element names are declared from CSS ONLY, so no markup had to change: `#main-content { view-transition-name: page }` covers BOTH render branches in `../lib/evo_dash_web/components/layouts.ex` (the app shell and the workbench window page), and `#dashboard-root { view-transition-name: project-swap }` covers `../lib/evo_dash_web/live/projects_live.ex`.
+`#dashboard-root` is nested inside `#main-content`, and a named element is excluded from its ancestor's snapshot, so the shell fade and the project-body fade stay independent instead of double-exposing the same pixels.
+A duplicate name (the workbench's cloned `#main-content` in `../js/hooks/workbench_project_preview.js`, or both render branches live at once) makes the browser SKIP that name for that transition — it never errors, and the root fade still runs.
+Never put `view-transition-name` on a fast-changing element: naming an element snapshots its whole subtree twice per transition.
+A `@media (prefers-reduced-motion: reduce)` block sets `animation: none` on all six old/new pseudo-elements and the three groups, because `::view-transition-*` lives in the view-transition pseudo tree and is untouched by `motion.css`'s `*, *::before, *::after` backstop.
+The per-patch cross-fade is gated on NAVIGATION, never on diffs: `app.js` starts `document.startViewTransition` on `phx:page-loading-start` with `detail.kind === "patch"` and resolves its update callback on `phx:page-loading-stop` (LiveView dispatches that stop only AFTER the patch reply has been morphed into the DOM), single-flighted through `transition.finished` and bounded by a 600ms fallback timer for a patch that falls back to a full navigation.
+Stream ticks, form submits and `phx-click` never dispatch that page-loading event pair, so they are never snapshotted.
+The `dom: {onDocumentPatch}` route was verified and rejected (reasoning lives in `app.js`): the patch diff reaches it while the pending link is still set, so `update()` only QUEUES it and the DOM change lands outside the callback — and that callback also sees every event-driven diff.
+A server-initiated `push_patch` dispatches no page-loading events, so it still snaps.
+
 ## Constraints
 Use existing theme tokens and the standalone accent for focus outlines; keep fill/content roles unchanged.
 The workbench right panel (`./workbench.css`, `.workbench-history` = `#workbench-history` + `#workbench-git`) animates `transform` + `opacity` (220ms ease-out) plus — while docked (`min-width: 1280px`) — `flex-basis`/padding, so the center column glides instead of snapping; the drawer range (`max-width: 1279.98px`) slides `translateX(100%)` instead.
@@ -75,11 +96,14 @@ Source ORDER is load-bearing in the capsule panel pair: the `[open]` and `[data-
 ## Known Issues — Motion Coverage
 The non-Assistant legacy history rule still animates every matching row with a 300ms 8px slide and has higher specificity than `.inspector-message-enter` if a row matches both selectors.
 The reduced-motion backstop in `motion.css` bounds every animation/transition duration to `.01ms`, so it neutralizes rather than removes motion definitions and leaves each component's authored timing in place.
+`.task-card-dirty` no longer exists in `app.css` (neither the rule nor the RTL mirror); the paused-family card styling lives in the markup/`task_card_components` utilities, so do not re-add a CSS class of that name.
+`./workbench.css` still styles `.workbench-dialog`, but nothing selects it any more (no `.ex`/`.heex`, no JS hook, no test) — the workbench windows are `dialog.workbench-window`; that block is dead weight kept only because `workbench.css` has a different owner.
 
 ## Validation
 Run `node --test apps/evo_dash/assets/css/assistant_motion.test.cjs` from the repository root for focused source contracts covering opacity-only motion, visible reduced-motion fallbacks, native-dialog transition guards, history exclusions, instant-scroll invariants, the `motion.css` tokens/keyframes/state rules, the last-block reduced-motion backstop and the absence of `transition: all` in `app.css`.
 This dependency-free Node suite is not part of `mix test` or the existing JS-only globs; include `apps/evo_dash/assets/css/*.test.cjs` in any aggregate asset-test command alongside `apps/evo_dash/assets/js/*.test.cjs apps/evo_dash/assets/js/hooks/*.test.cjs`.
 Run `mix tailwind evo_dash` from the repository root to compile the CSS and `git diff --check` for whitespace checks.
+View transitions need browser review, not source assertions: open `/projects`, switch projects and patch-navigate (e.g. `/projects` → `/tasks` on a patched link) in a Chromium-based browser, then repeat under `prefers-reduced-motion: reduce` to confirm the fades disappear and the patch still lands.
 For browser review, check `/assistant` in light/dark themes at narrow and desktop widths, pending/running/restored/ended turns, long URLs, code/tables, nested lists, RTL quotes, multiline composer, keyboard focus and reduced motion.
 Verify the indicator appears only while execution is pending/running, labels remain legible, restored history never enters, and streamed updates do not move the composer or animate scrolling.
 Build and source assertions do not substitute for browser visual validation.
@@ -87,4 +111,5 @@ Build and source assertions do not substitute for browser visual validation.
 ## Routing Table
 There are no child directories.
 `./motion.css` is imported by `./app.css` and owns the shared motion foundation (tokens, keyframes, disclosure/panel/window/dialog state rules, the `JS.hide` exit helpers and the global reduced-motion backstop).
+`./view_transitions.css` is imported by `./app.css` (last, after `./motion.css`) and owns the View Transitions pseudo-element fades plus the `page` / `project-swap` element names; its navigation gate lives in `../js/app.js`.
 `./workbench.css` is imported by `./app.css` and owns the workbench shell (tabs, sidebars, the right panel's state/animation rules, Git pane, dialogs); its state machine lives in `../js/hooks/workbench_panel.js`.
