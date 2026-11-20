@@ -96,7 +96,7 @@ Source ORDER is load-bearing in the capsule panel pair: the `[open]` and `[data-
 ## Known Issues — Motion Coverage
 The non-Assistant legacy history rule still animates every matching row with a 300ms 8px slide and has higher specificity than `.inspector-message-enter` if a row matches both selectors.
 The reduced-motion backstop in `motion.css` bounds every animation/transition duration to `.01ms`, so it neutralizes rather than removes motion definitions and leaves each component's authored timing in place.
-`.task-card-dirty` no longer exists in `app.css` (neither the rule nor the RTL mirror); the paused-family card styling lives in the markup/`task_card_components` utilities, so do not re-add a CSS class of that name.
+Paused-family card styling lives in the markup / `task_card_components` utilities, not in a card CSS class.
 `./workbench.css` still styles `.workbench-dialog`, but nothing selects it any more (no `.ex`/`.heex`, no JS hook, no test) — the workbench windows are `dialog.workbench-window`; that block is dead weight kept only because `workbench.css` has a different owner.
 
 ## Validation
