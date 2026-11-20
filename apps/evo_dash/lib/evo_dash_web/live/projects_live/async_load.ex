@@ -347,9 +347,10 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
 
   @doc """
   The node's VCT WORKSPACE view maps, newest first — one
-  `%{workspace: mount, resolved: [mount], missing: [ref], nested: [ref]}`
-  entry per workspace (see `EvoGit.VCT.workspace_members/1` for the
-  resolution contract).
+  `%{workspace: mount, resolved: [member], missing: [ref], nested: [ref]}`
+  entry per workspace (see `EvoGit.VCT.workspace_entries/1` for the
+  resolution contract; each resolved member is a flat
+  `%{point: point, name: name, path: path}` map).
 
   A workspace is a pure GROUPING point with `path: nil`, so its rows must
   NEVER pass through `filter_absolute_projects/1` (that filter would drop
@@ -357,10 +358,13 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   a `current_node_id` set) returns `[]` — another node's workspaces must never
   render.
 
-  Every workspace is resolved through the node-aware
-  `EvoDash.NodeContext.workspace_members/2`; a failed resolution degrades to
-  the workspace with EVERY stored member ref marked `missing`, which stays
-  honest instead of pretending the group is empty.
+  The WHOLE roster is read in ONE batched call
+  (`EvoDash.NodeContext.workspace_entries/1`) instead of one roster read plus
+  one resolution call per workspace, so a `{:vct_updated, node}` refresh costs
+  a single node round trip. A failed read degrades to `[]`; an entry without
+  resolved members degrades to the workspace with EVERY stored member ref
+  marked `missing`, which stays honest instead of pretending the group is
+  empty.
 
   Callers must run this OUTSIDE the LiveView process (the async load batch
   here, and `ProjectsLive`'s `{:vct_updated, node}` / workspace-create
@@ -370,7 +374,7 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
     if not remote? and is_binary(current_node_id) do
       []
     else
-      node |> workspace_mounts() |> Enum.map(&workspace_view(node, &1))
+      node |> workspace_entries() |> Enum.map(&workspace_view/1)
     end
   end
 
@@ -392,23 +396,28 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
     NodeContext.create_workspace(node, name, members, opts)
   end
 
-  defp workspace_mounts(node) do
-    case EvoDash.SafeCall.run(fn -> NodeContext.workspaces(node) end) do
+  # ONE batched read for the whole roster (members included), so a refresh
+  # never turns into one resolution call per workspace.
+  defp workspace_entries(node) do
+    case EvoDash.SafeCall.run(fn -> NodeContext.workspace_entries(node) end) do
       {:ok, list} when is_list(list) -> list
       _ -> []
     end
   end
 
-  defp workspace_view(node, workspace) do
-    point = Map.get(workspace, :point)
+  # A batched workspace entry → the view map the palette renders. A
+  # malformed entry (no resolved-member list) keeps the workspace and reports
+  # every STORED member ref as missing instead of pretending it is empty.
+  defp workspace_view(entry) do
+    workspace = Map.get(entry, :workspace) || entry
 
-    case EvoDash.SafeCall.run(fn -> NodeContext.workspace_members(node, point) end) do
-      {:ok, {:ok, resolution}} when is_map(resolution) ->
+    case Map.get(entry, :members) do
+      members when is_list(members) ->
         %{
-          workspace: Map.get(resolution, :workspace) || workspace,
-          resolved: list_or_empty(Map.get(resolution, :members)),
-          missing: list_or_empty(Map.get(resolution, :missing)),
-          nested: list_or_empty(Map.get(resolution, :nested))
+          workspace: workspace,
+          resolved: members,
+          missing: list_or_empty(Map.get(entry, :missing)),
+          nested: list_or_empty(Map.get(entry, :nested))
         }
 
       _ ->

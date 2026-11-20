@@ -166,9 +166,11 @@ defmodule EvoDashWeb.HomeLive.Workspace do
   Lists the node's project mounts and its VCT workspaces with members resolved.
 
   Returns `%{projects: [mount], workspaces: [%{workspace: mount, members:
-  [mount], missing: [ref]}]}`. A workspace whose resolution fails keeps
-  `members: []` and reports every stored member ref as missing — it is never
-  substituted with another project.
+  [%{point: point, name: name, path: path}], missing: [ref]}]}` — the whole
+  workspace roster in ONE batched read
+  (`EvoDash.NodeContext.workspace_entries/1`). A workspace without resolved
+  members keeps `members: []` and reports every stored member ref as missing
+  — it is never substituted with another project.
   """
   def list(node_id, target) do
     with :ok <- ready_target(node_id, target),
@@ -418,30 +420,28 @@ defmodule EvoDashWeb.HomeLive.Workspace do
     end
   end
 
+  # ONE batched read for the whole roster — every workspace with its members
+  # already resolved — so the picker never pays one resolution call per
+  # workspace. Each entry is mapped onto the SAME resolution shape
+  # `resolve_workspace/3` already understands.
   defp workspace_entries(target) do
-    workspaces =
-      case SafeCall.run(fn -> NodeContext.workspaces(target) end) do
-        {:ok, workspaces} when is_list(workspaces) -> Enum.filter(workspaces, &is_map/1)
+    entries =
+      case SafeCall.run(fn -> NodeContext.workspace_entries(target) end) do
+        {:ok, entries} when is_list(entries) -> Enum.filter(entries, &is_map/1)
         _ -> []
       end
 
-    Enum.map(workspaces, fn workspace ->
-      case SafeCall.run(fn -> NodeContext.workspace_members(target, mount_point(workspace)) end) do
-        {:ok, {:ok, resolution}} when is_map(resolution) ->
-          resolve_workspace(target, workspace, resolution)
-
-        _ ->
-          resolve_workspace(target, workspace, nil)
-      end
+    Enum.map(entries, fn entry ->
+      resolve_workspace(target, Map.get(entry, :workspace) || entry, entry)
     end)
   end
 
   # Members resolve IN STORED ORDER; anything the core could not resolve — or
   # that names a path this node cannot use — is reported, never dropped
   # silently and never replaced by another project.
-  defp resolve_workspace(target, workspace, resolution) when is_map(resolution) do
-    members = Map.get(resolution, :members) || []
-    {resolved, unusable} = Enum.split_with(List.wrap(members), &valid_project?(&1, target))
+  defp resolve_workspace(target, workspace, %{members: members} = resolution)
+       when is_list(members) do
+    {resolved, unusable} = Enum.split_with(members, &valid_project?(&1, target))
 
     %{
       workspace: Map.get(resolution, :workspace) || workspace,
