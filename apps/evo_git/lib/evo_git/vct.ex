@@ -310,8 +310,8 @@ defmodule EvoGit.VCT do
       `%EvoGit.VCT.Path{}`;
     * a BARE workspace name — a binary with no `vct:` prefix and no path
       separator, matched against a workspace's point segment
-      (`EvoGit.VCT.Path.name/1`) or its display name (the newest wins when
-      several match).
+      (`EvoGit.VCT.Path.last_segment/1`) or its display name (the newest wins
+      when several match).
 
   A point that resolves to an EXISTING non-workspace mount answers
   `{:error, :not_a_workspace}`; a workspace point (or bare name) with no row
@@ -573,7 +573,7 @@ defmodule EvoGit.VCT do
   end
 
   def handle_call({:ensure_mount, point, path, opts}, _from, state) do
-    with {:ok, canonical} <- canonical_point(point),
+    with {:ok, canonical} <- VctPath.canonical(point),
          {:ok, os_path} <- validate_os_path(path),
          {:ok, name} <- extract_name(opts),
          {:ok, ensured, mount, changed?} <-
@@ -810,7 +810,7 @@ defmodule EvoGit.VCT do
 
   defp system_mount(entry) when is_list(entry) or is_map(entry) do
     with point when is_binary(point) <- fetch_entry(entry, :point),
-         {:ok, canonical} <- canonical_point(point),
+         {:ok, canonical} <- VctPath.canonical(point),
          path when is_binary(path) <- fetch_entry(entry, :path),
          {:ok, name} <- system_mount_name(fetch_entry(entry, :name)) do
       {:ok, canonical, path, name}
@@ -884,21 +884,6 @@ defmodule EvoGit.VCT do
   end
 
   defp extract_name(other), do: {:error, {:invalid_name, other}}
-
-  defp canonical_point(%VctPath{segments: segments}) do
-    if Enum.all?(segments, &is_binary/1),
-      do: {:ok, VctPath.format(segments)},
-      else: {:error, :invalid_point}
-  end
-
-  defp canonical_point(point) when is_binary(point) do
-    case VctPath.parse(point) do
-      {:ok, parsed} -> {:ok, VctPath.format(parsed)}
-      {:error, _reason} -> {:error, :invalid_point}
-    end
-  end
-
-  defp canonical_point(_point), do: {:error, :invalid_point}
 
   defp apply_limit(mounts, limit) when is_integer(limit) and limit > 0,
     do: Enum.take(mounts, limit)
@@ -1013,7 +998,7 @@ defmodule EvoGit.VCT do
         {:error, :invalid_point}
 
       point_string?(trimmed) ->
-        with {:ok, point} <- canonical_point(trimmed) do
+        with {:ok, point} <- VctPath.canonical(trimmed) do
           workspace_row(mounts, point)
         end
 
@@ -1086,7 +1071,7 @@ defmodule EvoGit.VCT do
   end
 
   defp workspace_name_match?(%Mount{point: point, name: display}, name),
-    do: VctPath.name(point) == name or display == name
+    do: VctPath.last_segment(point) == name or display == name
 
   defp path_like?(key), do: String.contains?(key, ["/", "\\"])
 
