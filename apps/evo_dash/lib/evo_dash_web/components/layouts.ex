@@ -254,8 +254,17 @@ defmodule EvoDashWeb.Layouts do
             project={@workbench_project}
           />
           <div class="workbench-sidebar-utilities">
+            <%!-- `motion-disclosure` + the DisclosureMotion hook smooth BOTH
+               directions: a native <details> snaps open and shut, and the hook
+               only defers the `open` removal so motion.css can play the exit.
+               `group` exists solely for the summary caret's `group-open:`
+               rotation (motion.css has no rule for it, and the global
+               reduced-motion backstop already neutralizes the transition).
+               The id is required by LiveView on any element carrying phx-hook. --%>
             <details
-              class="workbench-tools"
+              id="workbench-tools"
+              class="workbench-tools motion-disclosure group"
+              phx-hook="DisclosureMotion"
               open={
                 is_nil(@workbench_task) and
                   @current_page in [:agents, :tasks, :processes, :settings, :system]
@@ -264,6 +273,10 @@ defmodule EvoDashWeb.Layouts do
               <summary class="workbench-row">
                 <.icon name="hero-ellipsis-horizontal" class="size-5 shrink-0" />
                 <span class="sidebar-label">{gettext("Tools")}</span>
+                <.icon
+                  name="hero-chevron-right"
+                  class="ml-auto size-3.5 shrink-0 text-base-content/50 transition-transform duration-[var(--motion-base)] ease-[var(--motion-ease-out)] group-open:rotate-90"
+                />
               </summary>
               <.sidebar_nav_link
                 navigate={with_node_param(~p"/agents", @current_node_id)}
@@ -291,12 +304,17 @@ defmodule EvoDashWeb.Layouts do
             </details>
             <details
               id="workbench-conversations"
-              class="workbench-tools"
+              class="workbench-tools motion-disclosure group"
+              phx-hook="DisclosureMotion"
               open={@current_page == :assistant}
             >
               <summary class="workbench-row">
                 <.icon name="hero-chat-bubble-left-right" class="size-5 shrink-0" />
                 <span class="sidebar-label">{gettext("Conversations")}</span>
+                <.icon
+                  name="hero-chevron-right"
+                  class="ml-auto size-3.5 shrink-0 text-base-content/50 transition-transform duration-[var(--motion-base)] ease-[var(--motion-ease-out)] group-open:rotate-90"
+                />
               </summary>
               {EvoDashWeb.HomeLive.SessionList.session_list(assigns)}
             </details>
