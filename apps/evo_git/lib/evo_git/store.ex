@@ -22,7 +22,12 @@ defmodule EvoGit.Store do
       `result`/`opts` rewrites) BEFORE any read or write. Migrating at boot is
       idempotent — a no-op on a fresh or already-current database — so an
       existing user DB is upgraded automatically on first start; a manual
-      `mix migrate.store` is never required for the app to boot.
+      `mix migrate.store` is never required for the app to boot. A migration
+      that could not even take its `:global` lock is NEVER reported as a
+      successful boot: `init/1` stops with
+      `{:store_migration_failed, :migration_lock_unavailable}` (distinct from
+      the `{:failed_to_open_sqlite, reason}` arm) instead of serving a
+      schema-less database.
     * **Operations** — `Operations.Tasks`, `Operations.Lightweight`,
       `Operations.Summaries`, `Operations.Pages`, `Operations.Archives`,
       `Operations.Filters`, `Operations.VctMounts`, `Operations.Safety` own
@@ -59,7 +64,8 @@ defmodule EvoGit.Store do
   | Read | Degraded value |
   |------|----------------|
   | `get_task/2`, `get_task_lite/2`, `get_task_status/2`, `select_task_update_info/2`, `get_agent_archive/3` | `nil` |
-  | `select_task_paths/1`, `select_finished_task_ids/1`, `select_task_ids/2`, `select_running_lease_info/1`, `select_cleanup_info/1,3`, `select_tasks_summary/3,4`, `select_tasks_summary_by_path/4,5`, `select_tasks_changed_since/2`, `list_vct_mounts/1`, `safe_select_all_tasks/1` | `[]` |
+  | `select_task_paths/1`, `select_finished_task_ids/1`, `select_task_ids/2`, `select_running_lease_info/1`, `select_tasks_restart_info/2`, `select_cleanup_info/1,3`, `select_tasks_summary/3,4`, `select_tasks_summary_by_path/4,5`, `select_tasks_changed_since/2`, `list_vct_mounts/1`, `safe_select_all_tasks/1` | `[]` |
+  | `select_task_statuses/2` | `%{}` |
   | `safe_select_paginated_tasks/2` | `{[], 0}` |
   | `select_tasks_page/2` | `%{rows: [], total: 0}` |
   | `list_task_archives/3` | `%{entries: [], total: 0}` |
@@ -516,6 +522,24 @@ defmodule EvoGit.Store do
   end
 
   @doc """
+  Renews the lease of SEVERAL tasks in ONE statement — the batched form of
+  `update_lease_expires_at/3` for the registry's heartbeat tick.
+
+  This is the batched-lease design rule: one heartbeat tick costs ONE status
+  read (`select_task_statuses/2`) plus ONE `UPDATE`, instead of a statement per
+  live task. Deliberately does NOT bump `updated_at` — the 60 s lease heartbeat
+  must never mark tasks dirty. An empty id list is a NO-OP returning `:ok`.
+
+  Returns `:ok`, or `{:error, :disk_full}` for the disk-full write class (the
+  write is retried on the next tick). An UPDATE of a missing id is a
+  successful no-op statement, exactly like `update_lease_expires_at/3`.
+  """
+  @spec renew_leases(store(), [String.t()], integer()) :: :ok | {:error, :disk_full}
+  def renew_leases(store \\ __MODULE__, task_ids, expires_at) do
+    GenServer.call(store, {:renew_leases, task_ids, expires_at}, @call_timeout)
+  end
+
+  @doc """
   Performs a targeted UPDATE of specific columns for a task, avoiding a full
   read-modify-write of the entire row.
 
@@ -550,24 +574,64 @@ defmodule EvoGit.Store do
   end
 
   @doc """
+  Returns the stored status of SEVERAL tasks in ONE read — the batched form of
+  `get_task_status/2`.
+
+  The map holds the ids whose row EXISTS, each mapped to a known status atom or
+  to `{:unknown, raw}` when the row's status text is outside the whitelist
+  (logged by `EvoGit.Store.Codec.decode_status/1`). An ABSENT id is not a key,
+  so callers read `Map.get(map, id, nil)` and keep "present known / present
+  unreadable / absent" distinguishable — the batched read must never collapse a
+  live row into a leaked one. An empty id list is a NO-OP returning `%{}`.
+  Reads only `{id, status}` — no heavy JSON decode.
+  """
+  @spec select_task_statuses(store(), [String.t()]) ::
+          %{optional(String.t()) => atom() | {:unknown, term()}}
+  def select_task_statuses(store \\ __MODULE__, ids) do
+    GenServer.call(store, {:select_task_statuses, ids}, @call_timeout)
+  end
+
+  @doc """
   Returns narrow update info for a single task:
   `%{status: decoded atom, opts: decoded opts, finished_at: decoded datetime,
-  lease_expires_at: raw integer}` (or nil if the row is absent).
+  lease_expires_at: raw integer, project_path: plain string}` (or nil if the
+  row is absent).
 
-  Reads only 4 columns — no heavy JSON fields (logs, result, usage) are
+  Reads only 5 columns — no heavy JSON fields (logs, result, usage) are
   decoded. Used by TaskRegistry.handle_update_status to
-  replace the full `task_get` read-modify-write.
+  replace the full `task_get` read-modify-write. `project_path` is the
+  maintained scalar column (`row_for_task/1` backfills it from `opts[:path]` on
+  every write), so a status-transition caller takes the path without decoding
+  `opts`; `opts` stays in the projection for the callers that still read
+  `opts[:path]`.
   """
   @spec select_task_update_info(store(), String.t()) ::
           %{
             status: atom() | nil,
             opts: keyword() | nil,
             finished_at: DateTime.t() | nil,
-            lease_expires_at: integer() | nil
+            lease_expires_at: integer() | nil,
+            project_path: String.t() | nil
           }
           | nil
   def select_task_update_info(store \\ __MODULE__, task_id) do
     GenServer.call(store, {:select_task_update_info, task_id}, @call_timeout)
+  end
+
+  @doc """
+  Returns ONE narrow restart-classification projection per PRESENT task, for the
+  given ids, in ONE read:
+  `%{id, status, type, opts, pause_kind, project_path}` (absent ids contribute
+  nothing; an empty id list is a NO-OP returning `[]`).
+
+  Only those five columns are read — no `result`/`logs`/`usage` blob — and a
+  row whose `opts` fails to decode is SKIPPED with a `Logger.warning` instead of
+  failing the whole batch. Used by restart/boot reconciliation to classify many
+  tasks without a full-row read each.
+  """
+  @spec select_tasks_restart_info(store(), [String.t()]) :: [map()]
+  def select_tasks_restart_info(store \\ __MODULE__, ids) do
+    GenServer.call(store, {:select_tasks_restart_info, ids}, @call_timeout)
   end
 
   @doc """
@@ -767,6 +831,14 @@ defmodule EvoGit.Store do
         # value. See `offload/5`.
         {:ok, %{repo: repo, name: name, data_dir: data_dir, writer: writer, offloads: %{}}}
 
+      # A migration run that never happened is a FAILED boot, never a healthy
+      # schema-less store: `start_dynamic/2` stopped its boot instance and
+      # answered the bare lock atom. The stop reason is DISTINCT from the
+      # repo-open failure below, so a migration fault can never be read as
+      # "SQLite would not open" (and vice versa).
+      {:error, :migration_lock_unavailable} ->
+        {:stop, {:store_migration_failed, :migration_lock_unavailable}}
+
       {:error, reason} ->
         # Keep the historical stop reason tuple: supervisors and existing
         # tests match on {:failed_to_open_sqlite, reason} for boot failures.
@@ -942,6 +1014,16 @@ defmodule EvoGit.Store do
     end)
   end
 
+  # Batched lease renewal — the SAME write rule as the single-id form: the
+  # Operation issues ONE `UPDATE … WHERE id IN (…)` and never bumps
+  # `updated_at`. Offloaded like every other write.
+  @impl true
+  def handle_call({:renew_leases, task_ids, expires_at}, from, state) do
+    offload_write(from, state, fn ->
+      Operations.Tasks.renew_leases(state.repo, task_ids, expires_at)
+    end)
+  end
+
   # Targeted write — the Operation encodes each column through the Codec
   # (byte-identical SET clauses) and ALWAYS bumps `updated_at`.
   @impl true
@@ -959,9 +1041,23 @@ defmodule EvoGit.Store do
   end
 
   @impl true
+  def handle_call({:select_task_statuses, ids}, from, state) do
+    offload(from, state, "select_task_statuses", %{}, fn ->
+      Operations.Tasks.select_task_statuses(state.repo, ids)
+    end)
+  end
+
+  @impl true
   def handle_call({:select_task_update_info, task_id}, from, state) do
     offload(from, state, "select_task_update_info", nil, fn ->
       Operations.Tasks.select_task_update_info(state.repo, task_id)
+    end)
+  end
+
+  @impl true
+  def handle_call({:select_tasks_restart_info, ids}, from, state) do
+    offload(from, state, "select_tasks_restart_info", [], fn ->
+      Operations.Tasks.select_tasks_restart_info(state.repo, ids)
     end)
   end
 

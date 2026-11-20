@@ -24,10 +24,13 @@ defmodule EvoGit.Store.Operations.Tasks do
   | `clear_tasks/1`                 | store.ex:598 | `:ok`                                                                 |
   | `safe_select_paginated_tasks/2` | store.ex:587 | `{[TaskInfo.t()], total_count}` — bad rows skipped+logged, still counted |
   | `update_lease_expires_at/3`     | store.ex:697 | `:ok` — does NOT bump `updated_at`                                    |
+  | `renew_leases/3`                | —            | `:ok` — ONE batched UPDATE; does NOT bump `updated_at`                |
   | `update_task_columns/3`         | store.ex:713 | `:ok` — ALWAYS bumps `updated_at`                                     |
   | `get_task_status/2`             | store.ex:730 | `atom() \| {:unknown, raw} \| nil`                                    |
+  | `select_task_statuses/2`        | —            | `%{id => atom() \| {:unknown, raw}}` — PRESENT rows only              |
+  | `select_tasks_restart_info/2`   | —            | `[%{id, status, type, opts, pause_kind, project_path}]` — bad rows skipped |
   | `select_task_logs/2`            | —            | REMOVED (dead code: nothing writes logs)                              |
-  | `select_task_update_info/2`     | store.ex:754 | `%{status, opts, finished_at, lease_expires_at} \| nil`               |
+  | `select_task_update_info/2`     | store.ex:754 | `%{status, opts, finished_at, lease_expires_at, project_path} \| nil` |
 
   ## Crash philosophy (inherited from the old `EvoGit.Store` moduledoc)
 
@@ -339,6 +342,36 @@ defmodule EvoGit.Store.Operations.Tasks do
   end
 
   @doc """
+  Renews the lease of SEVERAL tasks in ONE statement — the batched form of
+  `update_lease_expires_at/3` for the registry's heartbeat tick.
+
+  Deliberately does NOT bump `updated_at`, exactly like
+  `update_lease_expires_at/3`: the 60 s heartbeat must never mark tasks dirty
+  (nor touch an index row the dashboard's changed-since reads depend on).
+  An empty id list is a NO-OP returning `:ok` — an empty `WHERE id IN ()` is
+  never emitted. Like `update_lease_expires_at/3` an UPDATE of a missing id is
+  a successful no-op statement, so the return value says nothing about which
+  rows still existed.
+  """
+  @spec renew_leases(pid(), [String.t()], integer()) :: :ok
+  def renew_leases(repo, task_ids, expires_at) when is_list(task_ids) do
+    RepoScope.with_repo(repo, fn ->
+      case task_ids do
+        [] ->
+          :ok
+
+        ids ->
+          Repo.update_all(
+            from(t in TaskRow, where: t.id in ^ids),
+            set: [lease_expires_at: expires_at]
+          )
+
+          :ok
+      end
+    end)
+  end
+
+  @doc """
   Updates only the specified columns of a task — port of the old
   `{:update_task_columns, task_id, columns}` handler (store.ex:713).
 
@@ -407,29 +440,119 @@ defmodule EvoGit.Store.Operations.Tasks do
   end
 
   @doc """
-  Returns the narrow `%{status, opts, finished_at, lease_expires_at}` read (or
-  `nil` when the row is absent) — port of the old `{:select_task_update_info,
-  task_id}` handler (store.ex:754).
+  Returns the stored status of SEVERAL tasks in ONE statement — the batched
+  form of `get_task_status/2` for the registry's lease sweep.
 
-  Reads exactly the 4 columns the TaskRegistry `handle_update_status/6` path
-  needs (stale-guard, preservation, project_path) — no heavy JSON field
-  (`logs`, `result`, `usage`) is decoded. `status` is the
-  decoded atom (nil on unknown), `opts` the decoded keyword list (nil when the
-  column is NULL), `finished_at` the decoded DateTime (nil on corrupt text),
-  `lease_expires_at` the raw unix-ms INTEGER (`Types.UnixMs` loads the bare
-  integer).
+  The result is a MAP keyed by id holding the rows that EXIST:
 
-  ONE typed query projects all four columns — the returned map carries EXACTLY
-  `:status`, `:opts`, `:finished_at` and `:lease_expires_at`, which
-  `EvoGit.TaskRegistry` pattern-matches and its callers depend on (do NOT add
-  columns here).
+    * a known status atom (`EvoGit.Store.Codec.known_statuses/0`),
+    * `{:unknown, raw}` — the row exists but its status text is outside the
+      whitelist (or the cell is not text), logged by
+      `EvoGit.Store.Codec.decode_status/1`.
+
+  An ABSENT id is simply not a key (callers read `Map.get(map, id, nil)`), so
+  the three states "present known / present unreadable / absent" stay
+  distinguishable — the same reason the single-row read uses the RAW wire twin
+  instead of a typed load (which collapses an unrecognized status to `nil`).
+  An empty id list is a NO-OP returning `%{}` (never `WHERE id IN ()`).
   """
-  @spec select_task_update_info(pid(), String.t()) :: %{
-          status: atom() | nil,
-          opts: keyword() | nil,
-          finished_at: DateTime.t() | nil,
-          lease_expires_at: integer() | nil
-        }
+  @spec select_task_statuses(pid(), [String.t()]) ::
+          %{optional(String.t()) => atom() | {:unknown, term()}}
+  def select_task_statuses(repo, ids) when is_list(ids) do
+    RepoScope.with_repo(repo, fn ->
+      case ids do
+        [] ->
+          %{}
+
+        ids ->
+          from(t in TaskRowRaw, select: {t.id, t.status}, where: t.id in ^ids)
+          |> Repo.all()
+          |> Map.new(fn {id, raw} -> {id, Codec.decode_status(raw) || {:unknown, raw}} end)
+      end
+    end)
+  end
+
+  @doc """
+  Returns the narrow restart-classification projection for SEVERAL tasks in ONE
+  statement: `%{id, status, type, opts, pause_kind, project_path}` per PRESENT
+  row (in no particular order; absent ids contribute nothing).
+
+  `status`/`type`/`pause_kind` decode through the same Codec decoders the typed
+  schema's `Types.*` loaders use (`Codec.decode_atom/1` for the two atom-TEXT
+  columns, `Codec.decode_pause_kind/1` for the pause fact), so an unrecognized
+  value decodes to `nil` with the Codec's warning; `opts` decodes through
+  `Codec.decode_opts/1` (nil when the column is NULL). Only these FIVE columns
+  are read — no `result`/`logs`/`usage` blob, and no full-row decode.
+
+  Rows are read through the RAW wire twin and decoded per row inside the shared
+  skip-and-log boundary (`Decoding.decode_skipping_bad/4`): ONE corrupt `opts`
+  cell is skipped with a warning instead of failing the whole batch. An empty
+  id list is a NO-OP returning `[]`.
+  """
+  @spec select_tasks_restart_info(pid(), [String.t()]) :: [
+          %{
+            id: String.t(),
+            status: atom() | nil,
+            type: atom() | nil,
+            opts: keyword() | nil,
+            pause_kind: :clean | :dirty | nil,
+            project_path: String.t() | nil
+          }
+        ]
+  def select_tasks_restart_info(repo, ids) when is_list(ids) do
+    RepoScope.with_repo(repo, fn ->
+      case ids do
+        [] ->
+          []
+
+        ids ->
+          from(t in TaskRowRaw,
+            select: %{
+              id: t.id,
+              status: t.status,
+              type: t.type,
+              opts: t.opts,
+              pause_kind: t.pause_kind,
+              project_path: t.project_path
+            },
+            where: t.id in ^ids
+          )
+          |> Repo.all()
+          |> Decoding.decode_skipping_bad("tasks", & &1.id, &restart_info/1)
+      end
+    end)
+  end
+
+  @doc """
+  Returns the narrow `%{status, opts, finished_at, lease_expires_at,
+  project_path}` read (or `nil` when the row is absent) — port of the old
+  `{:select_task_update_info, task_id}` handler (store.ex:754).
+
+  Reads exactly the 5 columns the TaskRegistry `handle_update_status/6` path
+  needs (stale-guard, preservation, project path) — no heavy JSON field
+  (`logs`, `result`, `usage`) is decoded. `status` is the decoded atom (nil on
+  unknown), `opts` the decoded keyword list (nil when the column is NULL),
+  `finished_at` the decoded DateTime (nil on corrupt text),
+  `lease_expires_at` the raw unix-ms INTEGER (`Types.UnixMs` loads the bare
+  integer) and `project_path` the plain maintained scalar column.
+
+  ONE typed query projects all five columns — the returned map carries EXACTLY
+  `:status`, `:opts`, `:finished_at`, `:lease_expires_at` and
+  `:project_path`, which `EvoGit.TaskRegistry` pattern-matches and its callers
+  depend on. `:opts` stays in the projection (callers still read
+  `opts[:path]`), while `:project_path` is the denormalized scalar that
+  `row_for_task/1` backfills from `opts[:path]` on every write — so a
+  status-transition caller can take the path without decoding `opts` at all.
+  """
+  @spec select_task_update_info(pid(), String.t()) ::
+          %{
+            status: atom() | nil,
+            opts: keyword() | nil,
+            finished_at: DateTime.t() | nil,
+            lease_expires_at: integer() | nil,
+            project_path: String.t() | nil
+          }
+          | nil
   def select_task_update_info(repo, task_id) do
     RepoScope.with_repo(repo, fn ->
       Repo.one(
@@ -438,12 +561,32 @@ defmodule EvoGit.Store.Operations.Tasks do
             status: t.status,
             opts: t.opts,
             finished_at: t.finished_at,
-            lease_expires_at: t.lease_expires_at
+            lease_expires_at: t.lease_expires_at,
+            project_path: t.project_path
           },
           where: t.id == ^task_id
         )
       )
     end)
+  end
+
+  ## Private — narrow projections
+
+  # ONE raw restart-classification row → the atom-keyed map callers consume.
+  # The three atom-TEXT columns go through the SAME Codec decoders their
+  # `Types.*` schema loaders delegate to (`AtomColumn.load` IS
+  # `Codec.decode_atom/1`), and `opts` through `Codec.decode_opts/1` — the
+  # strict decoder that RAISES on corrupt JSON, which is exactly the raise the
+  # caller's `Decoding.decode_skipping_bad/4` boundary turns into a skip.
+  defp restart_info(row) do
+    %{
+      id: row.id,
+      status: Codec.decode_atom(row.status),
+      type: Codec.decode_atom(row.type),
+      opts: Codec.decode_opts(row.opts),
+      pause_kind: Codec.decode_pause_kind(row.pause_kind),
+      project_path: row.project_path
+    }
   end
 
   ## Private — targeted-update SET building
