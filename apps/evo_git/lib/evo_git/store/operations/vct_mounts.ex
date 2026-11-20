@@ -55,13 +55,17 @@ defmodule EvoGit.Store.Operations.VctMounts do
   deterministic `point` ASC tie-break, so the caller's order never depends on
   SQLite's scan order.
 
-  ## Replace-all writes
+  ## Transactional diff writes
 
-  `save/2` is an ATOMIC REPLACE-ALL: one `EvoGit.Repo.transaction/2` (the repo
-  opens with `default_transaction_mode: :immediate`) deletes every row and
-  inserts the supplied list, so a reader sees either the old table or the new
-  one — never a half-written mix. The VCT keeps the authoritative list in
-  memory, so a full replace is the natural write shape.
+  `save/2` RECONCILES the table with the supplied list instead of rebuilding
+  it: one `EvoGit.Repo.transaction/2` with `mode: :immediate` reads the stored
+  points, DELETES only the rows whose point disappeared, and INSERT-OR-REPLACES
+  the supplied rows in place (`ON CONFLICT (point) DO UPDATE`), so a surviving
+  row is never dropped and recreated. Because the whole diff is one
+  transaction, a reader sees either the old table or the new one — never a
+  half-written mix — and an empty list still empties the table. The VCT keeps
+  the authoritative list in memory, so the supplied list is always the DESIRED
+  state, not a patch.
   """
 
   import Ecto.Query
@@ -95,27 +99,63 @@ defmodule EvoGit.Store.Operations.VctMounts do
   end
 
   @doc """
-  REPLACES the whole mount table with `mounts` — `:ok` on success.
+  Reconciles the mount table to the DESIRED state `mounts` — `:ok` on success.
 
-  One immediate transaction: delete every row, then insert the supplied list
-  (an empty list simply leaves the table empty). Disk-full is converted by the
-  store facade's write choke point; every other error re-raises.
+  One immediate transaction performs a DIFF against the stored rows: rows whose
+  point is no longer supplied are deleted, and every supplied row is inserted
+  or replaced (`ON CONFLICT (point) DO UPDATE`). An unchanged mount is
+  therefore one upsert, not a whole-table rewrite, and an empty list simply
+  leaves the table empty. Disk-full is converted by the store facade's write
+  choke point; every other error re-raises.
   """
   @spec save(pid(), [map()]) :: :ok
   def save(repo, mounts) when is_list(mounts) do
     RepoScope.with_repo(repo, fn ->
       {:ok, :ok} =
-        Repo.transaction(fn ->
-          Repo.delete_all(VctMountRow)
+        Repo.transaction(
+          fn ->
+            # Rows are normalized/validated FIRST, so a bad entry (an unusable
+            # `last_opened_at`, a non-list-of-maps `members`) raises before
+            # anything is written and the transaction rolls back untouched.
+            rows = desired_rows(mounts)
+            removed = stored_points() -- Enum.map(rows, & &1.point)
 
-          rows = Enum.map(mounts, &row_from_entry/1)
-          if rows != [], do: Repo.insert_all(VctMountRow, rows)
+            # Deletes run before the upserts, so a re-pointed mount can claim
+            # the OS path the previous owner's row held under the UNIQUE index.
+            if removed != [] do
+              Repo.delete_all(from(m in VctMountRow, where: m.point in ^removed))
+            end
 
-          :ok
-        end)
+            if rows != [] do
+              Repo.insert_all(VctMountRow, rows,
+                on_conflict: :replace_all,
+                conflict_target: :point
+              )
+            end
+
+            :ok
+          end,
+          mode: :immediate
+        )
 
       :ok
     end)
+  end
+
+  ## Private — the desired-state diff
+
+  # One row per POINT: a duplicate point in the input cannot make the upsert
+  # ambiguous, and the LAST occurrence wins (the supplied list is ordered, so
+  # the newest spelling of a mount is the one that is kept).
+  defp desired_rows(mounts) do
+    mounts
+    |> Enum.map(&row_from_entry/1)
+    |> Enum.reduce(%{}, fn row, acc -> Map.put(acc, row.point, row) end)
+    |> Map.values()
+  end
+
+  defp stored_points do
+    Repo.all(from(m in VctMountRow, select: m.point))
   end
 
   ## Private — row ↔ entry
