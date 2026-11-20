@@ -232,6 +232,13 @@ Every session row links to `EvoDashWeb.Helpers.with_node_param(~p"/tasks", @curr
 `task_card/1` therefore never fetches anything itself — `detail` (and its `archive` envelope) is loaded by the owning LiveView, which owns the `retry_task_detail` / `load_task_archive` / `load_more_task_archive` / `load_task_archive_agent_result` events.
 The 18-key summary map, the `detail`/`archive` envelope, field-access rules, detail/error/archive states, multi-repo `repos` rendering, Review-button candidacy and the field-usage audit → `task_card_components/CONTEXT.md`.
 
+## Archive result presentation invariants
+
+`archive_components.ex` and `review_components.ex` own distinct private lazy-result reducers rather than one shared state machine.
+`ArchiveComponents.cached_result_view/2` treats an `:ok` cache without a map entry as `{:error, :not_found}`, while `ReviewComponents.result_view/2` treats an `:ok` cache without an entry as a loaded empty value.
+Both prioritize a result key already present on the archive record, including a nil or empty result, and neither reducer fetches on render.
+Do not unify these reducers as a behavior-preserving cleanup without explicitly deciding and testing the missing-entry difference.
+
 ## Render Cost Map — per card / per pane
 
 Every component here re-executes on EVERY LiveView render (nothing memoizes), so the sites below repeat work per render — all bounded by the caps above.
