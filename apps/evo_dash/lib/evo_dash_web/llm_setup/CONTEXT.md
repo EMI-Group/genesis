@@ -4,8 +4,10 @@
 
 The PURE foundation of the dashboard's LLM-configuration UI, shared by `/welcome` onboarding and `/settings`.
 Four small modules own the facts both surfaces must agree on — the reasoning vocabulary, provider-derived account identity, provider schedule presets/holiday calendars, and the wizard step model — so neither page re-implements (and drifts from) them.
+A fifth module, `ChatGPTSignIn`, owns the ONE Sign in with ChatGPT state/vocabulary and its off-process status poll, so the in-browser sign-in behaves identically on both pages.
 Nothing here renders markup: the components live in `../components/settings_components/provider_wizard.ex`.
-Every module is PURE and TOTAL: no I/O, no catalog lookup at render time beyond the core's own pure tables, no process, no clock, no `try/rescue`, and no raise on `nil`/wrongly-typed input.
+The four fact modules are PURE and TOTAL: no I/O, no catalog lookup at render time beyond the core's own pure tables, no process, no clock, no `try/rescue`, and no raise on `nil`/wrongly-typed input.
+`ChatGPTSignIn` is the deliberate exception: it performs the only I/O here (it drives the flow module and spawns one supervised poll task) and still never raises into a LiveView.
 
 ## API Surface
 
@@ -15,6 +17,7 @@ Every module is PURE and TOTAL: no I/O, no catalog lookup at render time beyond 
 | `EvoDashWeb.LLMSetup.Identity` | `identity.ex` | Provider-DERIVED account `id`/`name` + collision-safe uniqueness. |
 | `EvoDashWeb.LLMSetup.Schedule` | `schedule.ex` | Provider schedule presets (apply/undo/snapshot) + off-peak holiday calendars. |
 | `EvoDashWeb.LLMSetup.Wizard` | `wizard.ex` | The pure wizard step model shared by both pages (order, navigation, gating). |
+| `EvoDashWeb.LLMSetup.ChatGPTSignIn` | `chatgpt_signin.ex` | The shared Sign in with ChatGPT state/vocabulary: flow-module resolver, `begin`/`cancel`/`status`, the off-process poll, and the friendly message mapping. |
 
 ### `Reasoning`
 
@@ -73,6 +76,16 @@ The pins it must hold: `efforts/0` contains exactly the canonical six and never 
 `Schedule` pins the deepseek preset's applied schedule keys, `snapshot/1` returning only pre-existing keys, `undo/2` restoring them and removing preset-introduced ones, `changed?/2` clearing after undo, and the holiday calendar list/options/label/year range.
 `Wizard` pins the six-step order with and without `auth_choice?: false`, clamped `next/2`/`back/2`, `index/2`, the `progress/2` tuples (`{4, 6, 67}`, `{6, 6, 100}`, `{0, total, 0}` for an unknown step) and every `validate/2` gate and reason.
 
+`Wizard` pins the six-step order with and without `auth_choice?: false`, clamped `next/2`/`back/2`, `index/2`, the `progress/2` tuples (`{4, 6, 67}`, `{6, 6, 100}`, `{0, total, 0}` for an unknown step) and every `validate/2` gate and reason.
+### `ChatGPTSignIn`
+`login_module/0` resolves the sign-in flow module AT CALL TIME — `Process.get(:chatgpt_login_module)` → the same key on a `:"$callers"` ancestor → `Application.get_env(:evo_dash, :chatgpt_login, EvoDash.ChatGPTLogin)` — and the default is a bare ATOM, so this module compiles before the flow module exists and a test can stub the flow per process.
+`begin/1` → `{:ok, %{id: binary, url: binary}} | {:error, reason}` (atom- or string-keyed module answers accepted, a blank id/url rejected), `cancel/1` → `:ok | {:error, reason}`, `status/1` → `:pending | {:ok, map} | {:error, reason}`.
+Each of those three runs the resolved module under `EvoDash.SafeCall.run/1` PLUS a bounded window (`call_timeout_ms/0`, 15 s), so a raise/throw/exit/timeout degrades to `{:error, :sign_in_unavailable}` instead of reaching a LiveView.
+`start_poll(flow_id, owner)` spawns exactly ONE `EvoDash.TaskSupervisor` child that polls `status/1` and sends exactly ONE `{:chatgpt_signin_result, flow_id, result}`; it monitors the owner (never sends to a dead consumer) and answers `{:error, :authorization_timeout}` at the cap.
+The resolved module, the poll interval (`:chatgpt_signin_poll_interval_ms`, default 750) and the cap (`:chatgpt_signin_poll_timeout_ms`, default 660_000) are captured in the CALLER, and both settings resolve per-process first (so a test stays `async: true`), then from the app env.
+`message/1` is the ONE friendly vocabulary — `%{kind: :error | :info | :success, text: binary}` — total over every documented reason (`:authorization_denied`, `:plan_not_authorized`, `:reauthorization_required`, `:authorization_timeout`, `:cancelled`, `:superseded`, `:loopback_listener_unavailable`, `:sign_in_unavailable`, `:unreachable`, `:chatgpt_account_alias_in_use`, `:chatgpt_registration_already_installed`, success) plus tuple/`nil`/unknown catch-alls that never render `inspect`.
+`phase/1` → `:ok | :error | :pending`.
+The owning LiveView keeps the state map (`:flow_id`, `:url`, `:phase`, `:reason`) and drops any result whose `flow_id` is not the current one, which is what makes cancel, supersede and a dismissed wizard safe without a second process.
 ## Routing Table
 
 - `../components/settings_components/provider_wizard.ex` → `EvoDashWeb.SettingsComponents.ProviderWizard`, the step components that render these facts.

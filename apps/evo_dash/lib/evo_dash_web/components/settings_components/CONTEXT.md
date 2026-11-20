@@ -135,6 +135,12 @@ A label or value that cleans to `nil` or `""` is treated the same way: `step_don
 A success answer with no usable detail (`{:ok, nil}`, `{:ok, ""}`, a `%{status: :ok}` result without a detail) still renders the "Connection succeeded" box and only omits its detail line, so a detail-less success never reads like an idle step.
 `wizard-progress` and `wizard-step-enter` are styled by `assets/css/app.css`, which disables the enter animation under `prefers-reduced-motion: reduce`.
 
+### ChatGPTAuth (`provider_wizard/chatgpt_auth.ex`)
+`chatgpt_auth/1` is the shared ChatGPT registration control behind both wizards; attrs are `id`, `account`, `accounts`, `change_event`, `refresh_event`, `sign_in_event` (default `"chatgpt_sign_in"`), `cancel_event` (default `"chatgpt_sign_in_cancel"`), `sign_in` (map `:flow_id`, `:url`, `:phase` = `:idle | :waiting | :ok | :error`, `:reason`) and `manual` (boolean).
+Local mode (`manual: false`) offers the primary `#<id>-sign-in` button; `phase: :waiting` renders `#<id>-waiting` with a REAL `#<id>-sign-in-url` link (`target="_blank"`, `rel="noopener noreferrer"`, rendered only when a url exists), the "Waiting for authorization…" status line and `#<id>-sign-in-cancel`; `phase: :error` renders `#<id>-sign-in-error` (`role="alert"`) with the text from `LLMSetup.ChatGPTSignIn.message/1` toned by `kind`.
+Manual mode (`manual: true`) renders no button: `#<id>-manual-hint` carries the `genesis chatgpt login` command plus the one-line reason that a sign-in page can only be completed on the execution-node machine.
+The account select (`#<id>-form` / `#<id>-account`), the "ChatGPT connected" status line and the `#<id>-refresh` "Check connection" button are present in BOTH modes, and `ChatGPTSignIn` owns every message so no raw atom is ever rendered.
+`provider_profiles/wizard_form.ex` threads `wizard.chatgpt_sign_in` / `wizard.chatgpt_sign_in_manual` into it and tolerates both being absent (`%{}` / `false`); `chatgpt_auth_ready?/2` still means "the selected account is a connected registration".
 ## Settings pane layout
 
 The Settings page is a bounded-height two-column layout on md+: `#main-content` is `flex-1 min-h-0`, the settings root is `flex flex-col md:h-full`, warning banners are `shrink-0` siblings, and the sidebar and content columns scroll independently.
