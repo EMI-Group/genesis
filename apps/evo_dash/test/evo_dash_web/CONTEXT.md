@@ -17,6 +17,7 @@ The app-wide Async-Safety Policy, the module census, the mount funnels, the glob
 - `./helpers_blob_preview_test.exs` → `blob_preview/2` and `list_preview/2` render caps
 - `./theme_color_test.exs` → the ONLY file asserting colour VALUES (exact OKLCH strings per mode)
 - `./model_label_test.exs` → the shared `EvoDashWeb.ModelLabel` task/agent model-line derivation
+- `./draft_scope_test.exs` → the shared `EvoDashWeb.DraftScope` draft-scope identity (VCT point beats path, verbatim tokens, `path/1` never returns a `vct:` value, the `dashboard_state` key shape)
 - `./content_text_test.exs` → content-text helpers
 
 ## API Surface — interactive-session coverage map

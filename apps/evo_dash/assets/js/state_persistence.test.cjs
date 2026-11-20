@@ -9,8 +9,8 @@ const app = readFileSync(`${__dirname}/app.js`, 'utf8');
 const hookSource = app.slice(app.indexOf('const StatePersistence = {'),
   app.indexOf('// ClipboardCopy hook:'));
 
-function mount({state, node = 'local', project = '/repo', taskDraftProject, legacyModel,
-  storage = new Map()} = {}) {
+function mount({state, node = 'local', project = '/repo', taskDraftProject, taskDraftScope,
+  legacyModel, storage = new Map()} = {}) {
   if (state !== undefined) storage.set('dashboard_state', JSON.stringify(state));
   const events = {};
   const listeners = {};
@@ -28,7 +28,8 @@ function mount({state, node = 'local', project = '/repo', taskDraftProject, lega
   const hook = vm.runInContext(`${hookSource}\nStatePersistence;`, context);
   Object.assign(hook, {
     el: {
-      dataset: {nodeId: node, project, taskDraftProject, taskMode: 'evolve_simple'},
+      dataset: {nodeId: node, project, taskDraftProject, taskDraftScope,
+        taskMode: 'evolve_simple'},
       querySelector(selector) {
         if (selector === '[name="prompt"]') return prompt;
         if (selector === '[name="model_id"]') return legacyModel;
@@ -166,4 +167,79 @@ test('switching and clearing a task draft preserve the other project', () => {
 
   assert.equal(mount({storage, taskDraftProject: '/a'}).prompt.value, 'project A draft');
   assert.equal(mount({storage, taskDraftProject: '/b'}).prompt.value, '');
+});
+
+test('two VCT points over one path keep separate drafts', () => {
+  const storage = new Map();
+  const first = mount({storage, taskDraftProject: '/repo', taskDraftScope: 'vct:///projects/one'});
+  first.prompt.value = 'draft for point one';
+  first.change('prompt');
+  first.flush();
+  assert.equal(first.read('dashboard_state:["local","vct:///projects/one"]').scope_token,
+    'vct:///projects/one');
+
+  // Same OS path, different point: a different project as far as drafts are concerned.
+  assert.equal(mount({storage, taskDraftProject: '/repo',
+    taskDraftScope: 'vct:///projects/two'}).prompt.value, '');
+  assert.equal(mount({storage, taskDraftProject: '/repo',
+    taskDraftScope: 'vct:///projects/one'}).prompt.value, 'draft for point one');
+});
+
+test('one VCT point restores its draft under a different path spelling', () => {
+  const storage = new Map();
+  const page = mount({storage, taskDraftProject: '/repo', taskDraftScope: 'vct:///projects/foo'});
+  page.prompt.value = 'pointed draft';
+  page.change('prompt');
+  page.flush();
+
+  // A symlink, a second mount or a workspace member: the point wins over the path.
+  const reopened = mount({storage, taskDraftProject: '/repo-symlink',
+    taskDraftScope: 'vct:///projects/foo'});
+  assert.equal(reopened.prompt.value, 'pointed draft');
+  assert.deepEqual(JSON.parse(JSON.stringify(reopened.pushed[0])), {
+    name: 'restore_state',
+    payload: {node: 'local', project: '/repo', task_prompt: 'pointed draft',
+      task_mode: 'evolve_simple', task_node_path: '', task_seeds: '',
+      task_starting_commit: '', scope_token: 'vct:///projects/foo'}
+  });
+});
+
+test('a legacy path-keyed draft is adopted once the project gains its VCT point', () => {
+  const storage = new Map();
+  const legacy = {node: 'local', project: '/repo', task_prompt: 'typed before the point'};
+  storage.set('dashboard_state:["local","/repo"]', JSON.stringify(legacy));
+
+  const page = mount({storage, taskDraftProject: '/repo', taskDraftScope: 'vct:///projects/foo'});
+  assert.equal(page.prompt.value, 'typed before the point');
+  assert.deepEqual(JSON.parse(JSON.stringify(page.pushed[0])),
+    {name: 'restore_state', payload: legacy});
+});
+
+test('typing survives the moment a project gains its VCT point', () => {
+  const storage = new Map();
+  const page = mount({storage, taskDraftProject: '/repo'});
+  page.prompt.value = 'in-flight typing';
+  page.change('prompt');
+  page.navigate({taskDraftScope: 'vct:///projects/foo'});
+
+  // Flushed under the path scope it was typed in, and never cleared from the DOM.
+  assert.equal(page.prompt.value, 'in-flight typing');
+  assert.equal(page.read('dashboard_state:["local","/repo"]').task_prompt, 'in-flight typing');
+});
+
+test('a VCT-scoped draft never restores or persists on another node', () => {
+  const storage = new Map();
+  const remoteA = mount({storage, node: 'remote-a', taskDraftProject: '/repo',
+    taskDraftScope: 'vct:///projects/foo'});
+  remoteA.prompt.value = 'remote A draft';
+  remoteA.change('prompt');
+  remoteA.destroy();
+  const key = 'dashboard_state:["remote-a","vct:///projects/foo"]';
+  const saved = storage.get(key);
+
+  const remoteB = mount({storage, node: 'remote-b', taskDraftProject: '/repo',
+    taskDraftScope: 'vct:///projects/foo'});
+  assert.equal(remoteB.prompt.value, '');
+  remoteB.events.persist_model_selection({node: 'remote-a', model_spec: spec});
+  assert.equal(storage.get(key), saved);
 });

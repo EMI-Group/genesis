@@ -532,7 +532,13 @@ const FilePicker = {
   }
 };
 
-// StatePersistence hook: keeps the task form's draft with its node and project.
+// StatePersistence hook: keeps the task form's draft with its node and project scope.
+//
+// A scope is {node, token}: the viewed node plus the selected project's VCT point
+// (`data-task-draft-scope`, e.g. `vct:///projects/foo`) when the server knows one,
+// else the raw OS path (`data-task-draft-project`), so a path-only project keeps
+// the exact legacy key. Server side: `EvoDashWeb.DraftScope` is the ONE place the
+// token and the key shape are defined.
 const StatePersistence = {
   mounted() {
     this.restore();
@@ -545,7 +551,7 @@ const StatePersistence = {
 
       // The ignored textarea owns the current prompt, including unsaved typing.
       this.flush();
-      this.write(scope.key, {...state, task_prompt: prompt?.value || ''});
+      this.write(scope.key, this.stamp({...state, task_prompt: prompt?.value || ''}, scope));
     });
 
     this.handleEvent("persist_model_selection", ({node, project, model_spec}) => {
@@ -554,17 +560,17 @@ const StatePersistence = {
       const existing = this.read(scope.key);
       if (existing && !this.matches(existing, scope)) return;
 
-      this.write(scope.key, {
+      this.write(scope.key, this.stamp({
         ...(existing || this.saved(scope)), node, model_spec,
         ...(scope.project ? {project: scope.project} : {})
-      });
+      }, scope));
     });
 
     this.handleEvent("clear_prompt", () => {
       const scope = this.scope();
       this.flush();
-      this.write(scope.key, {...this.saved(scope), node: scope.node, task_prompt: '',
-        ...(scope.project ? {project: scope.project} : {})});
+      this.write(scope.key, this.stamp({...this.saved(scope), node: scope.node, task_prompt: '',
+        ...(scope.project ? {project: scope.project} : {})}, scope));
     });
 
     const onFormChange = event => {
@@ -602,16 +608,26 @@ const StatePersistence = {
     this.flush();
   },
 
+  // A path-only project is its own token: same key shape as before this hook
+  // learned about VCT points, so its drafts need no migration.
   scope() {
     const node = this.el.dataset.nodeId || 'local';
     const project = this.el.dataset.taskDraftProject || '';
-    const key = project ? 'dashboard_state:' + JSON.stringify([node, project]) : 'dashboard_state';
-    return {node, project, key};
+    const token = this.el.dataset.taskDraftScope || project;
+    const key = token ? 'dashboard_state:' + JSON.stringify([node, token]) : 'dashboard_state';
+    // The path-keyed entry the same project used before it had a VCT point.
+    const legacyKey = (token && project && token !== project) ?
+      'dashboard_state:' + JSON.stringify([node, project]) : null;
+    return {node, project, token, key, legacyKey};
   },
 
+  // A stamped state (a scope_token) must match the token exactly; an unstamped
+  // legacy state falls back to its project path so old drafts stay adoptable.
   matches(state, scope) {
     return (state.node || 'local') === scope.node &&
-      (!scope.project || state.project === scope.project);
+      (!scope.token || (typeof state.scope_token === 'string' ?
+        state.scope_token === scope.token :
+        Boolean(scope.project) && state.project === scope.project));
   },
 
   read(key) {
@@ -627,9 +643,21 @@ const StatePersistence = {
     sessionStorage.setItem(key, JSON.stringify(state));
   },
 
+  // Every write records the scope it belongs to, so a later restore can tell a
+  // VCT-scoped draft from a legacy path-keyed one.
+  stamp(state, scope) {
+    return scope.token ? {...state, scope_token: scope.token} : state;
+  },
+
+  // Adoption order: the scoped key, the path key this project used before its VCT
+  // point was known, then the un-scoped legacy key.
   saved(scope) {
-    const state = this.read(scope.key) || (scope.project && this.read('dashboard_state'));
-    return state && this.matches(state, scope) ? state : null;
+    for (const key of [scope.key, scope.legacyKey, 'dashboard_state']) {
+      if (!key) continue;
+      const state = this.read(key);
+      if (state && this.matches(state, scope)) return state;
+    }
+    return null;
   },
 
   restore() {
@@ -640,13 +668,22 @@ const StatePersistence = {
     const restoreKey = JSON.stringify([scope.node, scope.key]);
     if (restoreKey === this.restoreKey) return;
     const previous = this.restoreKey;
+    const identity = JSON.stringify([scope.node, scope.project]);
+    const sameIdentity = identity === this.restoreIdentity;
+    // Flush the pending edit under the scope it was typed in BEFORE switching keys,
+    // so a VCT point arriving after the first keystroke never drops the draft.
     this.flush();
     this.restoreKey = restoreKey;
+    this.restoreIdentity = identity;
 
     const state = this.saved(scope);
     if (state) this.pushEvent("restore_state", state);
-    // On an in-place scope change, the ignored textarea may still contain the old draft.
-    if (prompt && (previous || state?.task_prompt)) prompt.value = state?.task_prompt || '';
+    if (!prompt) return;
+    // On an in-place scope change, the ignored textarea may still contain the old
+    // draft: adopt what was saved, else clear it only when the node or project
+    // actually changed (the same project gaining its token keeps the typing).
+    if (state && typeof state.task_prompt === 'string') prompt.value = state.task_prompt;
+    else if (previous && !sameIdentity) prompt.value = '';
   },
 
   flush() {
@@ -654,7 +691,7 @@ const StatePersistence = {
     const {scope, fields} = this.pending;
     clearTimeout(this.saveTimer);
     this.pending = null;
-    this.write(scope.key, {...this.saved(scope), ...fields});
+    this.write(scope.key, this.stamp({...this.saved(scope), ...fields}, scope));
   }
 };
 
