@@ -64,6 +64,8 @@ defmodule EvoDashWeb.WelcomeLive.Steps do
   attr(:key_present, :boolean, default: false)
   attr(:chatgpt, :boolean, default: false)
   attr(:chatgpt_accounts, :map, default: %{})
+  attr(:chatgpt_sign_in, :map, default: %{})
+  attr(:chatgpt_sign_in_manual, :boolean, default: false)
 
   def step_auth_body(assigns) do
     ~H"""
@@ -83,6 +85,8 @@ defmodule EvoDashWeb.WelcomeLive.Steps do
               accounts={@chatgpt_accounts}
               change_event="select_chatgpt_account"
               refresh_event="refresh_chatgpt_setup"
+              sign_in={@chatgpt_sign_in}
+              manual={@chatgpt_sign_in_manual}
             />
           <% @draft["auth_mode"] == "oauth" -> %>
             <p class="text-xs text-base-content/70">
