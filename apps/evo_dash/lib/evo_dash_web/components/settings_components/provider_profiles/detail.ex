@@ -23,6 +23,8 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Detail do
   alias EvoDashWeb.LLMSetup.Identity
   alias EvoDashWeb.SettingsComponents.ProviderProfiles.Row
 
+  alias EvoDashWeb.LLMSetup.ChatGPT
+
   import EvoDashWeb.SettingsComponents.FormFooter, only: [form_footer: 1]
 
   import EvoDashWeb.SettingsComponents.ProviderProfiles.ScheduleEditor,
@@ -61,12 +63,16 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Detail do
     # Auth status belongs to the SAVED credential scope: as soon as the draft
     # changes provider or subscription settings the old status is meaningless.
     same_credential_scope? =
-      Enum.all?(["provider", "oauth_file"], &(value(fields, &1) == value(assigns.profile, &1))) and
+      Enum.all?(
+        ["provider", "oauth_file", "siwc_account"],
+        &(value(fields, &1) == value(assigns.profile, &1))
+      ) and
         oauth?(fields) == oauth?(assigns.profile)
 
     assigns =
       assigns
       |> assign(:fields, fields)
+      |> assign(:chatgpt?, ChatGPT.provider?(value(fields, "provider")))
       |> assign(:models, models)
       |> assign(:default_models, default_models(fields, models))
       |> assign(:auth_status, if(same_credential_scope?, do: assigns.auth_status, else: nil))
@@ -128,11 +134,18 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Detail do
             </select>
             <div :if={oauth_only?(@fields)} id="provider-auth-mode" class="flex min-h-8 items-center">
               <input type="hidden" name="auth_mode" value="oauth" />
-              <span class="badge badge-secondary badge-sm">{gettext("Subscription (OAuth)")}</span>
+              <span class="badge badge-secondary badge-sm">{gettext("Sign in with ChatGPT")}</span>
             </div>
           </div>
           <.profile_field
-            :if={oauth?(@fields)}
+            :if={@chatgpt?}
+            name="siwc_account"
+            label={gettext("ChatGPT account name")}
+            value={ChatGPT.account_name(value(@fields, "siwc_account"))}
+            help={gettext("Use the name passed to genesis chatgpt login --account.")}
+          />
+          <.profile_field
+            :if={oauth?(@fields) and not @chatgpt?}
             name="oauth_file"
             label={gettext("Credential file (optional)")}
             value={value(@fields, "oauth_file")}

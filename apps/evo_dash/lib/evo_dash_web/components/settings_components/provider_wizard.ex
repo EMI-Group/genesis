@@ -273,6 +273,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard do
   attr(:auth_event, :string, default: "select_auth")
   attr(:modes, :list, default: [:api_key, :oauth])
   attr(:oauth_only, :boolean, default: false)
+  attr(:chatgpt, :boolean, default: false)
   slot(:auth_detail)
 
   def step_auth(assigns), do: AuthStep.step_auth(assigns)
@@ -291,6 +292,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard do
   attr(:custom_model_event, :string, default: nil)
   attr(:custom_model_name, :string, default: "custom_model")
   attr(:custom_model_value, :string, default: nil)
+  attr(:allow_custom_model, :boolean, default: true)
 
   def step_model(assigns), do: ModelStep.step_model(assigns)
 

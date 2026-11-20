@@ -21,14 +21,9 @@ defmodule EvoGit.Config.Schema.LLM do
   its `auth_mode` is `"oauth"` / `:oauth`, OR when its model's provider is
   OAuth-only (`EvoGit.Config.LLMCatalog.oauth_only?/1`) — so
   `model = "openai_codex:gpt-5.6-terra"` works with no other configuration.
-  Such a profile's `provider_options` always carry `auth_mode: :oauth` plus the
-  managed `oauth_file`, resolved by `EvoGit.Auth.oauth_file/1` (the profile's
-  own `oauth_file` → `<config_dir>/auth.json`), and the credential is imported
-  lazily from the vendor CLI login at assembly time via
-  `EvoGit.Auth.ensure_credentials/2`.
-  That call is fault-isolated: a missing vendor login never blocks assembly —
-  the request then fails with ReqLLM's own credential message and
-  `EvoGit.Config.config_status/0` reports the login step.
+  ChatGPT profiles carry a `siwc_account` reference. The registered provider
+  resolves tokens from the execution node immediately before inference.
+  Claude OAuth profiles continue to pass their managed `oauth_file` to ReqLLM.
 
   ## Model metadata seam (tests + catalog availability)
 
@@ -523,12 +518,8 @@ defmodule EvoGit.Config.Schema.LLM do
 
   Three branches:
 
-  - **OAuth-only provider** (`EvoGit.Config.LLMCatalog.oauth_only?/1`, e.g.
-    `:openai_codex`) → `[auth_mode: :oauth, oauth_file: <managed file>]`, with a
-    lazy, fault-isolated `EvoGit.Auth.ensure_credentials/2` (the vendor CLI
-    login is imported on first use). This is what makes a call site that holds
-    only a model spec and no profile — `EvoGit.SystemCheck`'s LLM test,
-    `EvoGit.Runtime.PullRequest` — authenticate a subscription model.
+  - **ChatGPT Subscription** (`:openai_codex`) uses the default Genesis SIWC
+    registration when the caller only has a model spec.
   - **Native OpenAI endpoint** → `[store: false]` (via
     `default_provider_options/0`). "Native" means the spec's provider is
     `:openai` AND the spec carries no custom endpoint override (`:base_url` or
@@ -537,9 +528,8 @@ defmodule EvoGit.Config.Schema.LLM do
     so even an empty `extra` map counts as an override).
   - **Everything else** → `[]`.
 
-  `:openai_codex` is deliberately NEVER given `store: false`: it is a
-  Responses-API provider with a completely different provider schema, `store`
-  is not in that schema, and sending it would raise at request time.
+  The ChatGPT adapter sets `store: false` in the request body at its own
+  protocol boundary.
   """
   @spec provider_options_for_model(String.t() | map() | tuple() | nil) :: keyword()
   def provider_options_for_model(model) do
@@ -599,7 +589,11 @@ defmodule EvoGit.Config.Schema.LLM do
   """
   @spec ensure_profile_credentials(map()) :: :ok | {:error, term()}
   def ensure_profile_credentials(profile) when is_map(profile) do
-    ensure_credentials(oauth_provider(profile), oauth_file_for(profile))
+    if chatgpt_profile?(profile) do
+      Auth.ensure_credentials(:openai_codex, siwc_account: siwc_account(profile))
+    else
+      ensure_credentials(oauth_provider(profile), oauth_file_for(profile))
+    end
   end
 
   def ensure_profile_credentials(_profile), do: {:error, :invalid_profile}
@@ -624,6 +618,16 @@ defmodule EvoGit.Config.Schema.LLM do
           {:ok, %{expires: integer() | nil, account_id: String.t() | nil}}
           | {:error, :no_credentials | :invalid_credentials | term()}
   def oauth_credential_status(profile) when is_map(profile) do
+    if chatgpt_profile?(profile) do
+      Auth.credential_status(:openai_codex, siwc_account: siwc_account(profile))
+    else
+      file_credential_status(profile)
+    end
+  end
+
+  def oauth_credential_status(_profile), do: {:error, :no_credentials}
+
+  defp file_credential_status(profile) do
     provider = oauth_provider(profile)
     oauth_file = oauth_file_for(profile)
 
@@ -638,8 +642,6 @@ defmodule EvoGit.Config.Schema.LLM do
       managed_file_error: managed_file_error
     )
   end
-
-  def oauth_credential_status(_profile), do: {:error, :no_credentials}
 
   # The POSIX reason of a write-side credential failure, or nil when the import
   # did not fail that way (`EvoGit.Auth.ensure_credentials/2`).
@@ -657,7 +659,14 @@ defmodule EvoGit.Config.Schema.LLM do
   """
   @spec oauth_file_for(map()) :: String.t()
   def oauth_file_for(profile) when is_map(profile) do
-    Auth.oauth_file(oauth_file: profile_field(profile, :oauth_file))
+    if chatgpt_profile?(profile) do
+      case EvoGit.Auth.ChatGPT.Store.path(siwc_account(profile)) do
+        {:ok, path} -> path
+        {:error, _} -> EvoGit.Auth.ChatGPT.Store.directory()
+      end
+    else
+      Auth.oauth_file(oauth_file: profile_field(profile, :oauth_file))
+    end
   end
 
   # `EvoGit.Auth.ensure_credentials/2` is the designated fault-isolation
@@ -674,6 +683,25 @@ defmodule EvoGit.Config.Schema.LLM do
   # It is cheap — a couple of `File.stat`/`File.read` of small files, no network
   # and no subprocess — and never blocks on a credential failure.
   defp oauth_provider_options(profile) do
+    if chatgpt_profile?(profile) do
+      [siwc_account: siwc_account(profile)]
+    else
+      file_provider_options(profile)
+    end
+  end
+
+  defp chatgpt_profile?(profile) do
+    provider = oauth_provider(profile)
+
+    provider == :openai_codex or
+      (provider == :openai and oauth_auth_mode?(profile_field(profile, :auth_mode)))
+  end
+
+  defp siwc_account(profile) do
+    profile_field(profile, :siwc_account) || EvoGit.Auth.ChatGPT.Store.default_account()
+  end
+
+  defp file_provider_options(profile) do
     oauth_file = oauth_file_for(profile)
     _ = ensure_credentials(oauth_provider(profile), oauth_file)
 
@@ -702,9 +730,8 @@ defmodule EvoGit.Config.Schema.LLM do
 
   `provider_options` is assembled with OAuth awareness:
 
-  - an OAuth profile (see `oauth_profile?/1`) always gets `auth_mode: :oauth`
-    plus its resolved `oauth_file`, so a subscription profile needs no extra
-    configuration;
+  - ChatGPT profiles pass their registration name and use the fixed SIWC
+    request protocol. Claude OAuth profiles pass their resolved `oauth_file`;
   - a user-supplied profile `provider_options` map/keyword list is a PARTIAL
     override on top of those OAuth defaults: its own keys win (an explicit
     `oauth_file:` inside the options is honoured, for instance) while the OAuth
@@ -741,6 +768,19 @@ defmodule EvoGit.Config.Schema.LLM do
     |> maybe_provider_options(profile)
     |> LLMConstraints.filter(model, model_metadata(model))
     |> maybe_api_key(profile)
+    |> with_model_http_options(model)
+  end
+
+  @doc "Apply the subscription transport to a request for a resolved model."
+  def with_model_http_options(options, model) do
+    if provider_from_model(model) == :openai_codex do
+      case EvoGit.Auth.ChatGPT.http_options() do
+        [] -> options
+        http_options -> Keyword.put(options, :req_http_options, http_options)
+      end
+    else
+      options
+    end
   end
 
   # Keep account-specific API keys at the same assembly boundary as generation
@@ -913,12 +953,45 @@ defmodule EvoGit.Config.Schema.LLM do
   end
 
   defp resolve_provider_options(profile) do
+    if chatgpt_profile?(profile) do
+      # The old provider options can point at credentials or endpoints from
+      # before SIWC. Only the named registration controls this route.
+      [siwc_account: siwc_account(profile)]
+    else
+      resolve_file_or_key_provider_options(profile)
+    end
+  end
+
+  defp resolve_file_or_key_provider_options(profile) do
     defaults = if oauth_profile?(profile), do: oauth_provider_options(profile), else: []
 
     case Map.get(profile, :provider_options) do
-      nil -> merge_options(provider_options_for_model(Map.get(profile, :model)), defaults)
-      override -> merge_options(defaults, options_list(override))
+      nil ->
+        merge_options(provider_options_for_model(Map.get(profile, :model)), defaults)
+
+      override ->
+        options = options_list(override)
+
+        options =
+          if oauth_provider(profile) == :openai,
+            do: strip_legacy_openai_auth(options),
+            else: options
+
+        merge_options(defaults, options)
     end
+  end
+
+  defp strip_legacy_openai_auth(options) do
+    Enum.reject(options, fn
+      {key, mode} when key in [:auth_mode, "auth_mode"] ->
+        oauth_auth_mode?(mode)
+
+      {key, _} when is_atom(key) ->
+        Atom.to_string(key) in ~w(oauth_file auth_file access_token chatgpt_account_id)
+
+      {key, _} ->
+        key in ~w(oauth_file auth_file access_token chatgpt_account_id)
+    end)
   end
 
   defp options_list(override) when is_map(override), do: Map.to_list(override)

@@ -364,6 +364,24 @@ defmodule EvoDashWeb.Helpers do
 
   def format_datetime(datetime), do: Calendar.strftime(datetime, "%Y-%m-%d %H:%M")
 
+  @doc "Formats an instant in the dashboard host time zone with its UTC offset."
+  def format_local_datetime(%DateTime{} = datetime) do
+    seconds = DateTime.to_unix(datetime)
+    local = :calendar.system_time_to_local_time(seconds, :second)
+    utc = :calendar.system_time_to_universal_time(seconds, :second)
+
+    offset =
+      :calendar.datetime_to_gregorian_seconds(local) -
+        :calendar.datetime_to_gregorian_seconds(utc)
+
+    hours = div(abs(offset), 3600) |> Integer.to_string() |> String.pad_leading(2, "0")
+    minutes = div(rem(abs(offset), 3600), 60) |> Integer.to_string() |> String.pad_leading(2, "0")
+    sign = if offset < 0, do: "-", else: "+"
+    formatted = local |> NaiveDateTime.from_erl!() |> format_datetime()
+
+    "#{formatted} UTC#{sign}#{hours}:#{minutes}"
+  end
+
   def format_datetime(nil, :time), do: ""
 
   def format_datetime(datetime, :time) when is_binary(datetime) do

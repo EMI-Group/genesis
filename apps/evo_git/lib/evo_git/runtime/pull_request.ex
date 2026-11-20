@@ -149,10 +149,13 @@ defmodule EvoGit.Runtime.PullRequest do
     try do
       context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
 
-      with {:ok, stream_response} <-
-             ReqLLM.stream_text(model, context,
-               provider_options: EvoGit.Config.Schema.LLM.provider_options_for_model(model)
-             ),
+      options =
+        EvoGit.Config.Schema.LLM.with_model_http_options(
+          [provider_options: title_provider_options(model)],
+          model
+        )
+
+      with {:ok, stream_response} <- ReqLLM.stream_text(model, context, options),
            {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
            text <- ReqLLM.Response.text(response) do
         trimmed = String.trim(text)
@@ -177,6 +180,19 @@ defmodule EvoGit.Runtime.PullRequest do
       e ->
         Logger.warning("LLM title generation raised: #{Exception.message(e)}")
         nil
+    end
+  end
+
+  defp title_provider_options(model) do
+    alias EvoGit.Config.Schema
+    alias EvoGit.Config.Schema.LLM
+
+    with :openai_codex <- LLM.provider_from_model(model),
+         {:ok, %{generation_params: params}} <-
+           Schema.resolve_model_spec(EvoGit.Config.resolve(), nil) do
+      Keyword.get(params, :provider_options, [])
+    else
+      _ -> LLM.provider_options_for_model(model)
     end
   end
 

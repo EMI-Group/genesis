@@ -1,20 +1,17 @@
 defmodule EvoGit.Auth.OAuthImport do
   @moduledoc """
-  Imports OAuth credentials from the vendor CLIs' own login files into the
+  Imports Claude OAuth credentials from its CLI login file into the
   managed Genesis OAuth file (`EvoGit.Auth.oauth_file/1`).
 
-  Genesis does not run its own OAuth device flow: the vendor CLI logs in once
-  and writes a credentials file, and Genesis reuses it. The managed file is the
+  The Claude CLI logs in and writes its credentials file. The managed file is the
   SAME JSON document ReqLLM reads and rotates refreshed tokens back into, so
   its shape is ReqLLM-native:
 
-      {"openai-codex": {"type": "oauth", "access": "...", "refresh": "...",
-                        "expires": 1800000000000, "accountId": "..."}}
+      {"anthropic": {"type": "oauth", "access": "...", "refresh": "...",
+                     "expires": 1800000000000}}
 
   ## Sources
 
-    * `:openai_codex` — `$CODEX_HOME/auth.json` when `CODEX_HOME` is set, else
-      `<home>/.codex/auth.json` (written by `codex login`)
     * `:anthropic` — `<home>/.claude/.credentials.json` (written by `claude`)
 
   ## Never clobber fresher credentials
@@ -54,7 +51,7 @@ defmodule EvoGit.Auth.OAuthImport do
   alias EvoGit.Auth
 
   @typedoc "Provider atoms that can be imported from a vendor login file."
-  @type provider :: :openai_codex | :anthropic
+  @type provider :: :anthropic
 
   @typedoc """
   Source-file locations examined for a provider, highest priority first.
@@ -70,13 +67,11 @@ defmodule EvoGit.Auth.OAuthImport do
              | :source_newer_not_required
              | :entry_exists_and_fresh
              | :no_usable_tokens
-             | :auth_mode_not_chatgpt
              | :unsupported_provider}
           | {:error, term()}
 
   @env_token_names %{
-    anthropic: ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN"],
-    openai_codex: []
+    anthropic: ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN"]
   }
 
   # Import error tags that mean "the managed file/path could not be used":
@@ -98,8 +93,6 @@ defmodule EvoGit.Auth.OAuthImport do
   Recognized options (all optional):
 
     * `:home` — overrides the user home directory used to derive the paths
-    * `:codex_home` — overrides the Codex CLI home; passing it explicitly
-      (even as `nil`) bypasses `$CODEX_HOME`
 
   The home directory is read from the default-inert
   `Application.get_env(:evo_git, :auth_home_fun)` (0-arity fun) at CALL time,
@@ -110,7 +103,6 @@ defmodule EvoGit.Auth.OAuthImport do
 
   def sources(provider, opts) when is_list(opts) do
     case Auth.normalize_provider(provider) do
-      :openai_codex -> codex_sources(opts)
       :anthropic -> claude_sources(opts)
       _other -> []
     end
@@ -142,40 +134,6 @@ defmodule EvoGit.Auth.OAuthImport do
   def import(_provider, _opts), do: {:skipped, :unsupported_provider}
 
   @doc """
-  Builds a ReqLLM-native managed entry from the Codex CLI's `auth.json`.
-
-  Accepted source shape:
-
-      {"auth_mode": "chatgpt", "OPENAI_API_KEY": null,
-       "tokens": {"id_token": "...", "access_token": "...",
-                  "refresh_token": "...", "account_id": "..."}}
-
-  `accountId` comes from `tokens.account_id`, falling back to the access
-  token's JWT claim `https://api.openai.com/auth` → `chatgpt_account_id`.
-  `expires` is derived from the access token's `exp` claim (seconds → ms).
-
-  Returns `:error` when the CLI is in an explicit API-key mode (there is no
-  OAuth token to import) and `{:error, :no_access_token}` when the access token
-  is missing or blank. A missing/blank `auth_mode` is accepted because older
-  CLI versions omit it.
-  """
-  @spec parse_codex_auth(map() | String.t()) :: parse_result()
-  def parse_codex_auth(source) do
-    case coerce_source(source) do
-      {:ok, map} ->
-        case build_codex_entry(map) do
-          {:ok, entry} -> {:ok, entry}
-          # An explicit API-key mode means there is no OAuth credential here.
-          {:error, :auth_mode_not_chatgpt} -> :error
-          {:error, reason} -> {:error, reason}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  @doc """
   Builds a ReqLLM-native managed entry from Claude's `.credentials.json`.
 
   Accepted source shape:
@@ -200,8 +158,7 @@ defmodule EvoGit.Auth.OAuthImport do
   Builds the OAuth-without-refresh entry from a provider environment variable.
 
   For `:anthropic` the `CLAUDE_CODE_OAUTH_TOKEN` then `ANTHROPIC_OAUTH_TOKEN`
-  variables are consulted; `:openai_codex` has no env fallback and returns
-  `:error`. The entry carries only `type` and `access`, so ReqLLM uses the
+  variables are consulted. The entry carries only `type` and `access`, so ReqLLM uses the
   token directly and cannot refresh it.
   """
   @spec parse_env_token(atom()) :: {:ok, map()} | :error
@@ -301,22 +258,6 @@ defmodule EvoGit.Auth.OAuthImport do
   def managed_file_failure_reason(_result), do: nil
 
   ## Source paths
-
-  defp codex_sources(opts) do
-    case codex_home(opts) do
-      nil -> [Path.join([home(opts), ".codex", "auth.json"])]
-      dir -> [Path.join(dir, "auth.json")]
-    end
-  end
-
-  # An explicit `:codex_home` (including `nil`/`""`) overrides `$CODEX_HOME`;
-  # `nil` therefore means "the CLI has no custom Codex home".
-  defp codex_home(opts) do
-    case Keyword.fetch(opts, :codex_home) do
-      {:ok, value} -> non_empty_string(value)
-      :error -> non_empty_string(System.get_env("CODEX_HOME"))
-    end
-  end
 
   defp claude_sources(opts) do
     [Path.join([home(opts), ".claude", ".credentials.json"])]
@@ -446,19 +387,6 @@ defmodule EvoGit.Auth.OAuthImport do
     end
   end
 
-  defp build_entry(:openai_codex, source) do
-    case build_codex_entry(source) do
-      {:ok, entry} ->
-        {:ok, entry}
-
-      {:error, :auth_mode_not_chatgpt} ->
-        {:skipped, :auth_mode_not_chatgpt}
-
-      {:error, reason} when reason in [:no_access_token, :no_usable_tokens] ->
-        {:skipped, :no_usable_tokens}
-    end
-  end
-
   defp build_entry(:anthropic, source) do
     case build_claude_entry(source) do
       {:ok, entry} ->
@@ -472,33 +400,6 @@ defmodule EvoGit.Auth.OAuthImport do
   defp build_entry(_provider, _source), do: {:skipped, :unsupported_provider}
 
   ## Entry builders
-
-  defp build_codex_entry(source) do
-    tokens = map_field(source, "tokens")
-    access = non_empty_string(entry_field(tokens, ["access_token"]))
-    refresh = non_empty_string(entry_field(tokens, ["refresh_token"]))
-    account_id = non_empty_string(entry_field(tokens, ["account_id"]))
-    auth_mode = non_empty_string(entry_field(source, ["auth_mode"]))
-
-    cond do
-      not chatgpt_mode?(auth_mode) ->
-        {:error, :auth_mode_not_chatgpt}
-
-      is_nil(access) ->
-        {:error, :no_access_token}
-
-      true ->
-        entry = %{
-          "type" => "oauth",
-          "access" => access,
-          "refresh" => refresh,
-          "expires" => explicit_expiry(source, tokens) || jwt_expires_at(access),
-          "accountId" => account_id || codex_account_id_from_token(access)
-        }
-
-        {:ok, drop_nil(entry)}
-    end
-  end
 
   defp build_claude_entry(source) do
     oauth = map_field(source, "claudeAiOauth")
@@ -525,15 +426,6 @@ defmodule EvoGit.Auth.OAuthImport do
     end
   end
 
-  defp chatgpt_mode?(nil), do: true
-  defp chatgpt_mode?(mode) when is_binary(mode), do: String.downcase(mode) == "chatgpt"
-  defp chatgpt_mode?(_mode), do: false
-
-  defp explicit_expiry(source, tokens) do
-    expiry_value(entry_field(source, ["expires", "expires_at", "expiresAt"])) ||
-      expiry_value(entry_field(tokens, ["expires", "expires_at", "expiresAt"]))
-  end
-
   defp expiry_value(value) when is_integer(value), do: value
   defp expiry_value(value) when is_float(value), do: round(value)
 
@@ -545,13 +437,6 @@ defmodule EvoGit.Auth.OAuthImport do
   end
 
   defp expiry_value(_value), do: nil
-
-  defp codex_account_id_from_token(token) do
-    case jwt_claim(token, "https://api.openai.com/auth") do
-      %{} = auth_claim -> non_empty_string(Map.get(auth_claim, "chatgpt_account_id"))
-      _other -> nil
-    end
-  end
 
   defp map_field(map, key) when is_map(map) do
     case Map.get(map, key) do

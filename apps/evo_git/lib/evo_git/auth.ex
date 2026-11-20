@@ -4,16 +4,14 @@ defmodule EvoGit.Auth do
 
   Genesis authenticates OAuth-backed providers against the SAME managed file
   ReqLLM reads: a JSON object at `auth.json` whose keys are the ReqLLM OAuth
-  provider ids (`"openai-codex"`, `"anthropic"`) and whose values are
+  provider id (`"anthropic"`) and whose values are
   ReqLLM-native entries (`type`/`access`/`refresh`/`expires`/`accountId`).
   ReqLLM refreshes expired entries and rotates the new tokens back into that
   file, so Genesis only has to make sure the file exists and holds usable
   credentials.
 
-  The vendor CLIs already write their own login files (`codex login` writes
-  `~/.codex/auth.json`, `claude` writes `~/.claude/.credentials.json`).
-  `EvoGit.Auth.OAuthImport` imports those into the managed file — see that
-  module for the import rules.
+  Claude credentials are imported by `EvoGit.Auth.OAuthImport`. ChatGPT plan
+  usage uses a separate Genesis-authorized registration.
 
   This module is the public entry point the rest of the runtime codes against:
 
@@ -35,27 +33,23 @@ defmodule EvoGit.Auth do
   render.
   """
 
+  alias EvoGit.Auth.ChatGPT.Store, as: ChatGPTStore
   alias EvoGit.Auth.OAuthImport
 
   # The ONE place the provider → ReqLLM OAuth id mapping lives. The ids are
   # what ReqLLM looks up in the auth file (`oauth_provider_id/0` on each
   # provider module).
   @oauth_provider_ids %{
-    openai_codex: "openai-codex",
     anthropic: "anthropic"
   }
 
-  # Provider atoms that resolve to an OAuth credential. `:openai` is accepted as
-  # an alias for the Codex provider because ReqLLM's OpenAI provider reports the
-  # same OAuth id (`openai-codex`).
   @type oauth_provider :: :openai_codex | :anthropic
 
   @doc """
   Returns the ReqLLM OAuth provider id for a provider atom, or `nil` when the
   provider has no OAuth credential of its own.
 
-  `:openai` is accepted as an alias for `:openai_codex` (ReqLLM's OpenAI
-  provider reports the `"openai-codex"` OAuth id).
+  ChatGPT registrations have their own store and no ReqLLM OAuth file id.
   """
   @spec oauth_provider_id(atom()) :: String.t() | nil
   def oauth_provider_id(provider) when is_atom(provider) do
@@ -135,6 +129,11 @@ defmodule EvoGit.Auth do
   @spec ensure_credentials(atom(), keyword()) :: :ok | {:error, term()}
   def ensure_credentials(provider, opts \\ [])
 
+  def ensure_credentials(provider, opts)
+      when provider in [:openai_codex, :openai] and is_list(opts) do
+    with {:ok, _} <- credential_status(provider, opts), do: :ok
+  end
+
   def ensure_credentials(provider, opts) when is_list(opts) do
     # KEPT (justified): this is the designated fault-isolation boundary. The
     # function runs on the hot provider-option path, so a corrupt vendor file,
@@ -184,6 +183,11 @@ defmodule EvoGit.Auth do
           | {:error, {:managed_file_unwritable, term()}}
   def credential_status(provider, opts \\ [])
 
+  def credential_status(provider, opts)
+      when provider in [:openai_codex, :openai] and is_list(opts) do
+    ChatGPTStore.status(opts[:siwc_account] || ChatGPTStore.default_account())
+  end
+
   def credential_status(provider, opts) when is_list(opts) do
     status =
       case managed_entry(provider, oauth_file(opts)) do
@@ -218,10 +222,7 @@ defmodule EvoGit.Auth do
   def login_instructions(provider, nil) do
     case normalize_provider(provider) do
       :openai_codex ->
-        """
-        Run `codex login` once in a terminal — it writes ~/.codex/auth.json.
-        Genesis imports those credentials on the next run, so no token needs to be copied here.\
-        """
+        "Connect your ChatGPT account with `genesis chatgpt login` on the selected node, then recheck."
 
       :anthropic ->
         """

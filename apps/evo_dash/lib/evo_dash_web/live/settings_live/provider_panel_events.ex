@@ -32,6 +32,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
   import Phoenix.Component, only: [assign: 2, assign: 3]
   import Phoenix.LiveView, only: [put_flash: 3]
 
+  alias EvoDashWeb.LLMSetup.ChatGPT
   alias EvoDashWeb.LLMSetup.Schedule
   alias EvoDashWeb.LLMSetup.Wizard
   alias EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm
@@ -146,20 +147,36 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
     end
   end
 
+  def provider_wizard_change(socket, %{"refresh_chatgpt" => "true"}) do
+    case socket.assigns[:provider_wizard] do
+      %{mode: :account, draft: %{"provider" => "openai_codex"}} = wizard ->
+        {:noreply, assign(socket, :provider_wizard, load_chatgpt_accounts(wizard, socket))}
+
+      _wizard ->
+        {:noreply, socket}
+    end
+  end
+
   def provider_wizard_change(socket, params) when is_map(params) do
     case socket.assigns[:provider_wizard] do
       %{draft: draft} = wizard when is_map(draft) ->
+        previous = draft
+
         draft =
           params
           |> ProviderProfiles.submission(draft)
           |> derive_identity(params, socket.assigns[:file_config])
+          |> reset_chatgpt_selection(previous)
 
         schedule = recompute_wizard_modified(wizard[:schedule], draft)
+        wizard = Map.merge(wizard, %{draft: draft, errors: %{}, schedule: schedule})
 
-        {:noreply,
-         assign(socket,
-           provider_wizard: Map.merge(wizard, %{draft: draft, errors: %{}, schedule: schedule})
-         )}
+        wizard =
+          if draft["provider"] == "openai_codex" and previous["provider"] != draft["provider"],
+            do: load_chatgpt_accounts(wizard, socket),
+            else: wizard
+
+        {:noreply, assign(socket, provider_wizard: wizard)}
 
       _wizard ->
         {:noreply, socket}
@@ -170,7 +187,15 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
 
   @doc "Advances one RENDERED step, clamped to the last step."
   def provider_wizard_next(socket, _params) do
-    {:noreply, move_wizard_step(socket, &Wizard.next/2)}
+    case socket.assigns[:provider_wizard] do
+      %{step: :auth, draft: draft} = wizard ->
+        if WizardForm.chatgpt_auth_ready?(draft, Map.get(wizard, :chatgpt_accounts, %{})),
+          do: {:noreply, move_wizard_step(socket, &Wizard.next/2)},
+          else: wizard_errors(socket, %{"siwc_account" => "chatgpt_login_required"})
+
+      _wizard ->
+        {:noreply, move_wizard_step(socket, &Wizard.next/2)}
+    end
   end
 
   @doc "Goes back one RENDERED step, clamped to the first step."
@@ -193,7 +218,8 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
     case socket.assigns[:provider_wizard] do
       %{draft: draft} = wizard when is_map(draft) ->
         with :ok <- Wizard.validate(:model, draft),
-             model when is_binary(model) and model != "" <- model_value(draft) do
+             model when is_binary(model) and model != "" <- model_value(draft),
+             :ok <- chatgpt_model_available(socket, draft, model) do
           params =
             draft
             |> Map.put("models", [%{"model" => model}])
@@ -206,6 +232,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
 
           save_new_account(socket, parameters(wizard, params))
         else
+          {:error, :chatgpt_model_unavailable} ->
+            wizard_errors(socket, %{"model" => "chatgpt_model_unavailable"})
+
           {:error, _reason} ->
             wizard_errors(socket, %{"model" => "missing_model"})
 
@@ -256,19 +285,23 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
         {:noreply, socket}
 
       profile ->
+        wizard = %{
+          mode: {:model, profile["id"]},
+          step: :model,
+          draft: %{},
+          errors: %{},
+          schedule: @empty_wizard_schedule
+        }
+
+        wizard =
+          if ChatGPT.provider?(profile["provider"]),
+            do: load_chatgpt_accounts(wizard, socket),
+            else: wizard
+
         {:noreply,
          socket
          |> close_editor()
-         |> assign(provider_schedule: empty_schedule())
-         |> assign(
-           provider_wizard: %{
-             mode: {:model, profile["id"]},
-             step: :model,
-             draft: %{},
-             errors: %{},
-             schedule: @empty_wizard_schedule
-           }
-         )}
+         |> assign(provider_schedule: empty_schedule(), provider_wizard: wizard)}
     end
   end
 
@@ -303,7 +336,8 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
     case socket.assigns[:provider_wizard] do
       %{mode: {:model, profile_id}, draft: draft} when is_map(draft) ->
         with model when is_binary(model) and model != "" <- model_value(draft),
-             %{} = profile <- find_profile(socket, profile_id) do
+             %{} = profile <- find_profile(socket, profile_id),
+             :ok <- chatgpt_model_available(socket, profile, model) do
           base = ProviderProfiles.draft(profile)
 
           full_draft =
@@ -328,7 +362,11 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
               wizard_errors(socket, errors)
           end
         else
-          _ -> wizard_errors(socket, %{"model" => "model_id_empty"})
+          {:error, :chatgpt_model_unavailable} ->
+            wizard_errors(socket, %{"model" => "chatgpt_model_unavailable"})
+
+          _ ->
+            wizard_errors(socket, %{"model" => "model_id_empty"})
         end
 
       _wizard ->
@@ -600,6 +638,30 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
     end
   end
 
+  defp load_chatgpt_accounts(wizard, socket) do
+    Map.put(wizard, :chatgpt_accounts, ChatGPT.accounts(socket.assigns[:current_node] || node()))
+  end
+
+  defp reset_chatgpt_selection(draft, previous) do
+    if ChatGPT.provider?(draft["provider"]) and
+         (draft["provider"] != previous["provider"] or
+            draft["siwc_account"] != previous["siwc_account"]) do
+      Map.drop(draft, ~w(model custom_model))
+    else
+      draft
+    end
+  end
+
+  defp chatgpt_model_available(socket, %{"provider" => "openai_codex"} = profile, model) do
+    accounts = ChatGPT.accounts(socket.assigns[:current_node] || node())
+
+    if ChatGPT.available_model?(accounts, profile["siwc_account"], model),
+      do: :ok,
+      else: {:error, :chatgpt_model_unavailable}
+  end
+
+  defp chatgpt_model_available(_socket, _profile, _model), do: :ok
+
   defp derive_identity(draft, params, config) do
     if is_binary(params["provider"]) do
       draft = draft |> Map.drop(["profile_id_new"]) |> Map.put("name", "")
@@ -644,7 +706,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
   defp wizard_errors(socket, errors) when is_map(errors) do
     translated =
       Map.new(errors, fn {key, reason} ->
-        {key, ModelProfileEvents.error_message(reason)}
+        {key, wizard_error_message(reason)}
       end)
 
     wizard = socket.assigns[:provider_wizard] || %{}
@@ -656,6 +718,14 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
 
     {:noreply, put_flash(socket, :error, message)}
   end
+
+  defp wizard_error_message("chatgpt_login_required"),
+    do: gettext("Connect a ChatGPT account before continuing.")
+
+  defp wizard_error_message("chatgpt_model_unavailable"),
+    do: gettext("Choose a model available to this ChatGPT account.")
+
+  defp wizard_error_message(reason), do: ModelProfileEvents.error_message(reason)
 
   defp parameters(wizard, params), do: Map.merge(wizard[:draft] || %{}, params)
 

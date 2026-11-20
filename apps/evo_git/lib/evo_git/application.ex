@@ -14,6 +14,8 @@ defmodule EvoGit.Application do
 
   @impl true
   def start(_type, _args) do
+    ReqLLM.Providers.register!(EvoGit.LLM.ChatGPTResponses)
+
     # Create ETS tables owned by the application process so they survive
     # AgentScheduler crashes/restarts. If a table already exists (e.g., on
     # application restart after a soft crash), creation is a no-op.

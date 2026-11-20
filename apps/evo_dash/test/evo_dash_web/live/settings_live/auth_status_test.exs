@@ -348,7 +348,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       assert outside =~ ~s(id="provider-profile-detail-profile-1")
 
       assert outside |> profile_row(@oauth_only_profile) |> row_identity() ==
-               {@oauth_only_profile, "ChatGPT Codex (OAuth)"}
+               {@oauth_only_profile, "ChatGPT Subscription"}
 
       assert count_occurrences(html, "claude setup-token") ==
                count_occurrences(outside, "claude setup-token")
@@ -970,51 +970,46 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       refute Map.has_key?(persisted, "oauth_file")
     end
 
-    test "an OAuth-only provider is self-describing without any auth_mode form value", %{
-      conn: conn
-    } do
+    test "the ChatGPT wizard saves the selected registration and its model", %{conn: conn} do
+      EvoGit.TestSupport.ChatGPTFixture.seed!("work")
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      html =
-        save_new_profile(view, %{
-          "provider" => "openai_codex",
-          "default_model" => "gpt-5.6-terra",
-          "models" => %{"0" => %{"model" => "gpt-5.6-terra"}}
-        })
+      wizard_provider_step(view, "openai_codex")
+      view |> form("#settings-chatgpt-form", %{"siwc_account" => "work"}) |> render_change()
+      render_hook(view, "provider_wizard_next", %{})
 
-      assert assigns(view).flash == %{"info" => "Provider profile saved."}
-      assert html =~ "Provider profile saved."
+      assert has_element?(view, ~s(button[phx-value-model="gpt-5.6-terra"]))
+      refute has_element?(view, "#wizard-custom-model-form")
+      render_hook(view, "provider_wizard_change", %{"model" => "gpt-5.6-terra"})
 
-      [profile] = current_models(view)
-      assert profile["models"] == [%{"model" => "gpt-5.6-terra"}]
+      advance_wizard_to_save(view)
+      render_hook(view, "provider_wizard_save", %{})
+      await_profile_save(view)
+
+      assert [profile] = persisted_models()
       assert profile["provider"] == "openai_codex"
+      assert profile["siwc_account"] == "work"
       assert profile["default_model"] == "gpt-5.6-terra"
+      assert profile["models"] == [%{"model" => "gpt-5.6-terra"}]
       assert profile["auth_mode"] == "oauth"
+      refute Map.has_key?(profile, "oauth_file")
 
-      assert [persisted] = persisted_models()
-      assert persisted["models"] == profile["models"]
-      assert persisted["auth_mode"] == "oauth"
-      refute Map.has_key?(persisted, "oauth_file")
+      statuses = AuthStatus.statuses([profile], node())
+      assert %{state: :ok, account_id: "work@example.test"} = statuses[profile["id"]]
     end
   end
 
-  # The wizard's auth step is the provider-capability surface. An OAuth-only
-  # provider DROPS that step entirely (subscription is the only choice, so no
-  # API-key option is offered anywhere), while every OAuth-capable or
-  # API-key-only provider keeps the API-key choice.
   describe "wizard auth step (provider capability)" do
-    test "an OAuth-only provider drops the auth step and offers no API-key option", %{
-      conn: conn
-    } do
+    test "ChatGPT requires a registration and offers no API-key option", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       html = wizard_provider_step(view, "openai_codex")
-      refute has_element?(view, "#wizard-step-auth")
-      assert has_element?(view, "#wizard-step-model")
-      # The auth step is SKIPPED, not merely defaulted: 3 steps, now on the 2nd.
-      assert html =~ "Step 2 of 3"
+
+      assert has_element?(view, "#wizard-step-auth")
+      assert has_element?(view, "#settings-chatgpt-refresh")
+      assert has_element?(view, ~s(button[phx-click="provider_wizard_next"][disabled]))
       refute html =~ ~s(phx-value-mode="api_key")
       refute html =~ ~s(phx-value-mode="oauth")
-      refute html =~ "This provider only accepts a subscription login"
+      assert html =~ "genesis chatgpt login"
     end
 
     test "an OAuth-capable provider keeps the API-key choice", %{conn: conn} do

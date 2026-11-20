@@ -25,9 +25,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
   rail is therefore computed by `Wizard.progress/2` / `Wizard.index/2` against
   the steps we ACTUALLY render, not against `Wizard.all_steps/0`.
 
-  `:auth` is dropped when the chosen provider only accepts one auth mode
-  (OAuth-only providers such as `:openai_codex`), matching
-  `Wizard.steps_for/1`'s `auth_choice?: false` shape.
+  The ChatGPT authentication step binds the new provider account to a registration.
 
   ## Events
 
@@ -42,12 +40,14 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
   """
   use EvoDashWeb, :html
 
+  alias EvoDashWeb.LLMSetup.ChatGPT
   alias EvoDashWeb.LLMSetup.Reasoning
   alias EvoDashWeb.LLMSetup.Schedule
   alias EvoDashWeb.LLMSetup.Wizard
   alias EvoDashWeb.SettingsComponents.ProviderProfileFields, as: Fields
   alias EvoDashWeb.SettingsComponents.ProviderProfiles.Row
   alias EvoDashWeb.SettingsComponents.ProviderWizard
+  import EvoDashWeb.SettingsComponents.ProviderWizard.ChatGPTAuth, only: [chatgpt_auth: 1]
 
   # The steps `/settings` renders — `:test` and `:done` stay on `/welcome`.
   @rendered_steps [:provider, :auth, :model, :reasoning_schedule]
@@ -82,14 +82,19 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
       |> assign(:provider, text(draft, "provider"))
       |> assign(:provider_choices, provider_choices())
       |> assign(:oauth_only?, Fields.oauth_only?(draft))
-      |> assign(:models, model_choices(draft))
+      |> assign(:chatgpt?, ChatGPT.provider?(draft["provider"]))
+      |> assign(:chatgpt_accounts, wizard.chatgpt_accounts)
+      |> assign(:models, model_choices(draft, wizard.chatgpt_accounts))
       |> assign(:inventory, list(draft, "reasoning_efforts"))
       |> assign(:default_effort, text(draft, "default_reasoning_effort"))
       |> assign(:holidays, text(draft, "off_peak_holidays"))
       |> assign(:presets, Schedule.presets_for_provider(text(draft, "provider")))
       |> assign(:next_event, if(last?, do: "provider_wizard_save", else: "provider_wizard_next"))
       |> assign(:next_label, if(last?, do: gettext("Save account"), else: gettext("Continue")))
-      |> assign(:next_disabled, next_disabled?(step, draft, assigns.disabled, last?))
+      |> assign(
+        :next_disabled,
+        next_disabled?(step, draft, assigns.disabled, last?, wizard.chatgpt_accounts)
+      )
       |> assign(:wizard_error, wizard_error(wizard.errors))
 
     ~H"""
@@ -127,7 +132,18 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
               selected={text(@draft, "auth_mode")}
               auth_event="provider_wizard_change"
               oauth_only={@oauth_only?}
-            />
+              chatgpt={@chatgpt?}
+            >
+              <:auth_detail :if={@chatgpt?}>
+                <.chatgpt_auth
+                  id="settings-chatgpt"
+                  account={@draft["siwc_account"]}
+                  accounts={@chatgpt_accounts}
+                  change_event="provider_wizard_change"
+                  refresh_event="provider_wizard_change"
+                />
+              </:auth_detail>
+            </ProviderWizard.step_auth>
           <% :model -> %>
             <%!-- The step component owns its own search + custom-model forms, so the
                   step must NOT be wrapped in another form here. --%>
@@ -139,6 +155,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
               model_search_event="provider_wizard_change"
               custom_model_event="provider_wizard_change"
               custom_model={text(@draft, "custom_model")}
+              allow_custom_model={not @chatgpt?}
             />
           <% :reasoning_schedule -> %>
             <form id="provider-wizard-reasoning-form" phx-change="provider_wizard_change">
@@ -180,7 +197,9 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
       |> assign(:profile_id, profile_id)
       |> assign(:slug, Row.slug(profile_id))
       |> assign(:account_name, account_name(profile, profile_id))
-      |> assign(:models, model_choices(merge_provider(profile, draft)))
+      |> assign(:chatgpt?, ChatGPT.provider?(profile["provider"]))
+      |> assign(:models, model_choices(Map.merge(profile, draft), wizard.chatgpt_accounts))
+      |> assign(:wizard_error, wizard_error(wizard.errors))
       |> assign(:can_save?, Wizard.validate(:model, draft) == :ok and not assigns.disabled)
 
     ~H"""
@@ -201,7 +220,9 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
         model_search_event="provider_model_change"
         custom_model_event="provider_model_change"
         custom_model={text(@draft, "custom_model")}
+        allow_custom_model={not @chatgpt?}
       />
+      <p :if={@wizard_error} role="alert" class="mt-2 text-sm text-error">{@wizard_error}</p>
       <div class="mt-5 flex items-center justify-end gap-2">
         <button
           type="button"
@@ -227,20 +248,18 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
   # steps & validation
   # ═══════════════════════════════════════════════════════════════════════════
 
-  # `:auth` exists only when the account may CHOOSE its auth mode: an OAuth-only
-  # provider (or one that already forced `auth_mode`) would render a dead step.
+  # ChatGPT uses the authentication step to select an authorized account.
   #
   # Public so the wizard's owner (`EvoDashWeb.SettingsLive.ProviderPanelEvents`)
   # steps over the SAME list this module renders — one definition, no drift.
   @doc """
   The step list actually rendered for `draft`.
 
-  `:auth` is dropped for an OAuth-only provider, so the owner's Next/Back
-  navigation can never land on a step the user cannot see.
+  The authentication step includes the ChatGPT registration picker.
   """
   @spec rendered_steps(map()) :: [atom()]
   def rendered_steps(draft) do
-    if text(draft, "provider") != "" and Fields.oauth_only?(draft) do
+    if Fields.oauth_only?(draft) and not ChatGPT.provider?(draft["provider"]) do
       List.delete(@rendered_steps, :auth)
     else
       @rendered_steps
@@ -258,13 +277,19 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
     if step in steps, do: step, else: List.first(steps)
   end
 
-  defp next_disabled?(step, draft, disabled, last?) do
+  defp next_disabled?(step, draft, disabled, last?, accounts) do
     cond do
       disabled -> true
+      step == :auth and not chatgpt_auth_ready?(draft, accounts) -> true
       Wizard.validate(step, draft) != :ok -> true
       last? -> Wizard.validate(:model, draft) != :ok
       true -> false
     end
+  end
+
+  def chatgpt_auth_ready?(draft, accounts) do
+    not ChatGPT.provider?(draft["provider"]) or
+      Map.has_key?(accounts, ChatGPT.account_name(draft["siwc_account"]))
   end
 
   defp wizard_error(%{} = errors) when map_size(errors) > 0 do
@@ -282,11 +307,13 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
       mode: Map.get(wizard, :mode) || Map.get(wizard, "mode"),
       step: Map.get(wizard, :step) || Map.get(wizard, "step"),
       draft: Map.get(wizard, :draft) || Map.get(wizard, "draft") || %{},
-      errors: Map.get(wizard, :errors) || Map.get(wizard, "errors") || %{}
+      errors: Map.get(wizard, :errors) || Map.get(wizard, "errors") || %{},
+      chatgpt_accounts: Map.get(wizard, :chatgpt_accounts, %{})
     }
   end
 
-  defp normalize_wizard(_wizard), do: %{mode: nil, step: nil, draft: %{}, errors: %{}}
+  defp normalize_wizard(_wizard),
+    do: %{mode: nil, step: nil, draft: %{}, errors: %{}, chatgpt_accounts: %{}}
 
   defp profile_id({:model, profile_id}) when is_binary(profile_id), do: profile_id
 
@@ -335,11 +362,22 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
     |> Enum.uniq_by(& &1.id)
   end
 
-  defp model_choices(draft) do
-    case catalog_atom(text(draft, "provider")) do
-      nil -> []
-      atom -> Enum.map(EvoGit.Config.LLMCatalog.provider_models(atom), &model_choice/1)
-    end
+  defp model_choices(draft, accounts) do
+    models =
+      case catalog_atom(text(draft, "provider")) do
+        nil -> []
+        :openai_codex -> ChatGPT.model_entries(accounts, draft["siwc_account"])
+        atom -> EvoGit.Config.LLMCatalog.provider_models(atom)
+      end
+
+    models
+    |> Enum.map(&model_choice/1)
+    |> Enum.filter(fn model ->
+      query = text(draft, "query") |> String.downcase()
+
+      String.contains?(String.downcase(model.id), query) or
+        String.contains?(String.downcase(model.label), query)
+    end)
   end
 
   defp model_choice(%{} = model) do
@@ -358,17 +396,6 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.WizardForm do
     |> Enum.flat_map(& &1.provider_atoms)
     |> Enum.find(&(Atom.to_string(&1) == name))
   end
-
-  defp merge_provider(profile, draft) do
-    case text(draft, "provider") do
-      "" -> profile
-      provider -> Map.put(draft, "provider", provider)
-    end
-  end
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # value access (string keys by contract, atom keys tolerated)
-  # ═══════════════════════════════════════════════════════════════════════════
 
   defp text(map, key) do
     case fetch(map, key) do

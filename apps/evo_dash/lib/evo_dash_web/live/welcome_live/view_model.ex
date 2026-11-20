@@ -21,7 +21,7 @@ defmodule EvoDashWeb.WelcomeLive.ViewModel do
 
   import Phoenix.Component, only: [assign: 3]
 
-  alias EvoDashWeb.LLMSetup.{Reasoning, Schedule}
+  alias EvoDashWeb.LLMSetup.{ChatGPT, Reasoning, Schedule}
   alias EvoDashWeb.WelcomeLive.{Presentation, Setup, Wizard}
   alias EvoGit.Config.LLMCatalog, as: Catalog
 
@@ -36,7 +36,13 @@ defmodule EvoDashWeb.WelcomeLive.ViewModel do
     provider_id = provider && Map.get(provider, :id)
     variant_id = Presentation.variant_id(provider, draft["variant"])
     capabilities = Wizard.capabilities(draft)
-    scoped = Setup.provider_models(assigns.flat_models, provider_id, variant_id)
+    chatgpt? = ChatGPT.provider?(provider_id)
+
+    scoped =
+      if chatgpt?,
+        do: Setup.chatgpt_models(assigns.chatgpt_accounts, draft["siwc_account"]),
+        else: Setup.provider_models(assigns.flat_models, provider_id, variant_id)
+
     wire = Presentation.wire_atom(provider, variant_id)
     primary = draft["default_model"]
     primary_entry = Presentation.model_entry(scoped, primary)
@@ -63,6 +69,7 @@ defmodule EvoDashWeb.WelcomeLive.ViewModel do
     |> assign(:variant_options, variant_options(provider, draft))
     |> assign(:auth_modes, Map.get(capabilities, :auth_modes, ["api_key"]))
     |> assign(:oauth_only?, oauth_only?(wire))
+    |> assign(:chatgpt?, chatgpt?)
     |> assign(:login_instructions, Presentation.login_instructions(wire))
     |> assign(
       :model_rows,

@@ -419,6 +419,7 @@ defmodule EvoGit.SystemCheck do
         :provider_options,
         EvoGit.Config.Schema.LLM.provider_options_for_model(model)
       )
+      |> EvoGit.Config.Schema.LLM.with_model_http_options(model)
 
     with {:ok, stream_response} <- ReqLLM.stream_text(model, context, stream_opts),
          {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response) do

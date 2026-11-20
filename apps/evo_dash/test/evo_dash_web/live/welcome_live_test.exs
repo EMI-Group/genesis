@@ -372,28 +372,50 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert has_element?(view, ~s([phx-value-provider="anthropic"][aria-pressed="true"]))
     end
 
-    test "an OAuth-only provider short-circuits to the subscription mode", %{conn: conn} do
+    test "ChatGPT signs in, selects a registration and tests its available model", %{conn: conn} do
       {:ok, view, _html} = start(conn)
-
       pick(view, "openai_codex")
 
-      html = render(view)
-      # No auth choice: the run is provider → model → reasoning → test → done.
-      assert html =~ "Step 2 of 5"
-      assert html =~ "Pick a model"
-      refute has_element?(view, "#wizard-step-auth")
+      assert has_element?(view, "#wizard-step-auth")
+      assert has_element?(view, ~s(button[phx-click="wizard_next"][disabled]))
       refute has_element?(view, "#wizard-api-key")
 
-      view = choose_model(view, :openai_codex)
-      view = next(next(view))
-      html = render_click(view, "skip_test")
+      EvoGit.TestSupport.ChatGPTFixture.seed!("default")
 
-      assert html =~ "Provider and models saved."
+      EvoGit.TestSupport.ChatGPTFixture.seed!("work", %{
+        "models" => [%{"slug" => "work-model", "display_name" => "Work model"}]
+      })
+
+      view |> element("#welcome-chatgpt-refresh") |> render_click()
+      view |> form("#welcome-chatgpt-form", %{"siwc_account" => "work"}) |> render_change()
+      next(view)
+
+      assert has_element?(view, "#wizard-step-model")
+      assert has_element?(view, ~s(button[phx-value-model="openai_codex:work-model"]))
+      refute has_element?(view, ~s(button[phx-value-model="openai_codex:gpt-5.6-terra"]))
+      refute has_element?(view, "#wizard-custom-model-form")
+
+      view
+      |> element(~s(button[phx-value-model="openai_codex:work-model"]))
+      |> render_click()
+
+      next(next(view))
+      render_click(view, "test_connection")
+
+      assert_receive {:welcome_test_started, worker, "openai_codex:work-model", opts},
+                     @runner_start_timeout
+
+      assert opts[:provider_options][:siwc_account] == "work"
+      refute Keyword.has_key?(opts[:provider_options], :access_token)
+      send(worker, {:finish, {:ok, %{response: "Hello"}}})
+
+      assert render_click(view, "skip_test") =~ "Provider and models saved."
       entry = account("openai-codex")
       assert entry["provider"] == "openai_codex"
       assert entry["auth_mode"] == "oauth"
-      assert stored_credentials() =~ "auth_mode" or stored_credentials() == ""
-      refute stored_credentials() =~ "openai_api_key"
+      assert entry["siwc_account"] == "work"
+      assert entry["default_model"] == "work-model"
+      assert stored_credentials() == ""
     end
 
     test "add_another_provider restarts at the provider step", %{conn: conn} do

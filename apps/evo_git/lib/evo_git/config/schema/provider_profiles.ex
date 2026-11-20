@@ -27,7 +27,7 @@ defmodule EvoGit.Config.Schema.ProviderProfiles do
   alias EvoGit.Config.Schema.LLM
   alias EvoGit.Config.Schema.ProviderProfiles.Normalize
 
-  @runtime_keys ~w(id model auth_mode oauth_file api_key_env_var temperature max_tokens reasoning_effort top_p top_k frequency_penalty presence_penalty provider_options context_window concurrency peak_concurrency peak_hours timezone off_peak_days off_peak_holidays)a
+  @runtime_keys ~w(id model auth_mode oauth_file siwc_account api_key_env_var temperature max_tokens reasoning_effort top_p top_k frequency_penalty presence_penalty provider_options context_window concurrency peak_concurrency peak_hours timezone off_peak_days off_peak_holidays)a
   @schedule_keys ~w(concurrency peak_concurrency peak_hours timezone off_peak_days off_peak_holidays)a
 
   @spec provider_profiles(term()) :: [map()]
@@ -207,7 +207,12 @@ defmodule EvoGit.Config.Schema.ProviderProfiles do
 
   defp reqllm_model(profile, model) do
     qualified = profile["provider"] <> ":" <> model["model"]
-    overrides = Map.take(profile, ["base_url", "extra"])
+
+    overrides =
+      if profile["provider"] == "openai_codex",
+        do: %{},
+        else: Map.take(profile, ["base_url", "extra"])
+
     overrides = Map.reject(overrides, fn {_key, value} -> is_nil(value) end)
 
     if map_size(overrides) == 0 do

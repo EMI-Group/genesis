@@ -4,7 +4,7 @@ defmodule EvoGit.Config.Schema.ProviderProfiles.Normalize do
   alias EvoGit.Config.Schema.LLM
 
   @generation_keys ~w(temperature max_tokens reasoning_effort top_p top_k frequency_penalty presence_penalty provider_options)
-  @shared_keys ~w(auth_mode api_key_env_var base_url oauth_file concurrency peak_concurrency peak_hours timezone off_peak_days off_peak_holidays context_window extra)
+  @shared_keys ~w(auth_mode api_key_env_var base_url oauth_file siwc_account concurrency peak_concurrency peak_hours timezone off_peak_days off_peak_holidays context_window extra)
 
   def generation_keys, do: @generation_keys
 
@@ -51,9 +51,14 @@ defmodule EvoGit.Config.Schema.ProviderProfiles.Normalize do
       provider ->
         models = normalize_models(Map.get(profile, "models", []), provider)
 
+        route =
+          if provider == "openai" and auth_mode(profile, provider) == "oauth",
+            do: "openai_codex",
+            else: provider
+
         profile =
           profile
-          |> Map.put("provider", provider)
+          |> Map.put("provider", route)
           |> Map.put("models", models)
           |> Map.put_new("concurrency", 3)
           |> Map.put("auth_mode", auth_mode(profile, provider))

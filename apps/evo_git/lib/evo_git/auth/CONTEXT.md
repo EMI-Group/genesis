@@ -2,14 +2,15 @@
 
 ## Intent
 `EvoGit.Auth.OAuthImport` (`./oauth_import.ex`) imports a vendor CLI's existing OAuth login into the managed Genesis OAuth file that `EvoGit.Auth` (`../auth.ex`) owns and that ReqLLM reads and rotates.
-Genesis deliberately runs NO OAuth device flow: the user logs in once with `codex login` / `claude`, and Genesis reuses that vendor file.
+Genesis authorizes ChatGPT subscriptions directly through SIWC. Claude continues to use its own CLI login file.
 The module is pure file I/O — no network, no subprocess, no GenServer — and it never logs token contents.
+The `siwc_account` provider option is a stable registration reference. `EvoGit.Auth.ChatGPT.Store` owns credentials per execution node, while `EvoGit.LLM.ChatGPTResponses` resolves a current access token at request time and sends official Responses HTTP/SSE.
 
 ## API Surface
 - `sources/2` (provider, opts) → candidate vendor login paths, highest priority first (`[]` for a provider with no OAuth source).
 - `import/2` (provider, opts) → `:imported | {:skipped, reason} | {:error, reason}`; never raises.
 - `managed_file_failure_reason/1` (`@doc false`) → the POSIX reason when the result is a WRITE-side failure of the managed file, else `nil`; it unwraps `{:error, reason}` and maps ONLY the six managed tags (`@managed_file_failure_tags`: `:config_dir_unwritable`, `:temp_file_failed`, `:write_failed`, `:chmod_failed`, `:rename_failed`, `:managed_file_unreadable`) — a missing/unreadable SOURCE, `:invalid_managed_file` and the skip shapes stay `nil`, so "no login to import" can never be mistaken for "the login exists but cannot be stored".
-- `parse_codex_auth/1` / `parse_claude_credentials/1` → `{:ok, entry} | :error | {:error, reason}`; each accepts a decoded map OR the raw JSON string.
+- `parse_claude_credentials/1` → `{:ok, entry} | :error | {:error, reason}`; each accepts a decoded map OR the raw JSON string.
 - `parse_env_token/1` (provider) → `{:ok, %{"type" => "oauth", "access" => token}} | :error`.
 - `env_token/1` (provider) → the provider's env OAuth token or `nil`; values are read at CALL time and blanks are ignored.
 - `jwt_claim/2` / `jwt_expires_at/1` → padding-tolerant base64url payload decode; malformed input → `nil`, never raises.
@@ -17,17 +18,15 @@ The module is pure file I/O — no network, no subprocess, no GenServer — and 
 
 ## Managed File (target)
 `EvoGit.Auth.oauth_file/1` decides the path: an explicit `opts[:oauth_file]` (leading `~` expanded), else `EvoGit.Auth.default_oauth_file/0` (`<config_dir>/auth.json`); it never reads the user config.
-A `[[llm.models]]` profile points at its own file through its `oauth_file` setting, threaded in as `opts[:oauth_file]` by `EvoGit.Config.Schema.LLM.oauth_file_for/1`.
+A `[[llm.providers]]` profile points at its own file through its `oauth_file` setting, threaded in as `opts[:oauth_file]` by `EvoGit.Config.Schema.LLM.oauth_file_for/1`.
 The document is ReqLLM-native JSON keyed by OAuth provider id.
-Shape: `{"openai-codex": {"type": "oauth", "access": "…", "refresh": "…", "expires": 1800000000000, "accountId": "…"}, "anthropic": {…}}` — `expires` is MILLISECONDS since the Unix epoch.
+The `anthropic` entry stores `type`, `access`, optional `refresh`, and optional `expires` in Unix epoch milliseconds.
 `type: "oauth"` plus `access` are the minimum; nil fields are dropped from the written entry.
 Entries for OTHER providers are preserved — the document is merged key-wise, never replaced.
 
 ## Source Files
-- `:openai_codex` — `$CODEX_HOME/auth.json` when `CODEX_HOME` is set, else `<home>/.codex/auth.json`, written by `codex login`; accepted shape `{"auth_mode": "chatgpt", "tokens": {"access_token", "refresh_token", "account_id"}}`.
 - `:anthropic` — `<home>/.claude/.credentials.json`, written by `claude`; accepted shape `{"claudeAiOauth": {"accessToken", "refreshToken", "expiresAt"}}` (`expiresAt` is taken as-is).
-- The Codex `auth_mode` is optional (older CLIs omit it) because a blank value is accepted, while an explicit API-key mode is `:error` (`auth_mode_not_chatgpt`).
-- A missing/blank access token is `{:skipped, :no_usable_tokens}` from `import/2` (`{:error, :no_access_token}` from the parsers).
+- A missing/blank access token is `{:skipped, :no_usable_tokens}` from `import/2` (`{:error, :no_access_token}` from the parser).
 
 ## Freshness Rule (never clobber ReqLLM's rotation)
 ReqLLM refreshes expired credentials and persists the rotated tokens into the managed file, so an import happens ONLY when the managed file has no entry for the provider OR the source file's mtime is NEWER than the managed file's mtime (whole-second posix mtimes).
@@ -48,7 +47,7 @@ A managed PATH that cannot even be READ (a path component is a regular file → 
 An env token is OAuth-without-refresh — ReqLLM uses it directly and cannot rotate it — and it is NEVER written to the managed file.
 
 ## Test Seams
-All seams are default-inert and read at CALL time: `opts[:home]` (user home), `opts[:codex_home]` (an explicit `nil` bypasses `$CODEX_HOME`), `opts[:oauth_file]` (managed file), and the app env `:auth_home_fun` (0-arity fun, falling back to `System.user_home/0`).
+All seams are default-inert and read at CALL time: `opts[:home]` (user home), `opts[:oauth_file]` (managed file), and the app env `:auth_home_fun` (0-arity fun, falling back to `System.user_home/0`).
 Tests are hermetic through those options (temp home + temp managed file); only the env-token coverage mutates real process env and is therefore `async: false` (`test/evo_git/auth/env_token_test.exs`).
 
 ## Constraints

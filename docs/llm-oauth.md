@@ -1,125 +1,53 @@
-# Subscription (OAuth) LLM Support
+# LLM subscriptions
 
-Use a ChatGPT/Codex or Claude Pro/Max subscription login instead of an API key.
-Log in once with the vendor's CLI; Genesis runs **no OAuth flow of its own**.
-Genesis imports the login into a managed file that the LLM client (`ReqLLM`) reads and, when refresh credentials are available, refreshes.
+Genesis supports OpenAI API keys and ChatGPT subscriptions as separate OpenAI provider profiles. Choose **OpenAI** for an API key or **ChatGPT Subscription** to use the eligible models and usage of your ChatGPT plan.
 
-## 1. Log in with the vendor CLI
+## ChatGPT Subscription
 
-### ChatGPT / Codex
+Run the Genesis sign-in command and open the displayed URL in a browser. Grant Genesis permission to use your ChatGPT plan. The command lists the model IDs available to that account.
 
-```bash
-codex login
+```sh
+genesis chatgpt login
+genesis chatgpt status
+genesis chatgpt models
 ```
 
-The CLI writes `~/.codex/auth.json`, or `$CODEX_HOME/auth.json` when `CODEX_HOME` is set.
-Configure the account with `provider = "openai_codex"`.
-This provider is **OAuth-only**: subscription authentication is detected automatically, and it cannot use an API key.
+From a source checkout, run `mix genesis.chatgpt login`. A release without the `genesis` CLI can run its launcher with `eval 'EvoDash.ChatGPTCLI.main(System.argv())' login`.
 
-### Claude Pro/Max
-
-Run `claude` and log in; its refreshable login is stored in `~/.claude/.credentials.json`.
-Configure the account with `provider = "anthropic"` and `auth_mode = "oauth"`.
-
-Alternatively, run `claude setup-token` and export the printed token:
-
-```bash
-export CLAUDE_CODE_OAUTH_TOKEN="<token>"
-# Alternatively:
-export ANTHROPIC_OAUTH_TOKEN="<token>"
-```
-
-Only when no managed Anthropic entry is available does Genesis fall back to `CLAUDE_CODE_OAUTH_TOKEN`, then `ANTHROPIC_OAUTH_TOKEN`.
-Environment tokens are **never persisted and cannot be refreshed**; the token must be available to every Genesis process using it.
-Re-run the vendor login when it expires or when changing accounts.
-
-## 2. Configure provider profiles and model inventory
-
-Accounts are `[[llm.providers]]` profiles: the account `id` and `provider` are separate from the **bare model IDs** in nested `[[llm.providers.models]]` entries.
-The following IDs are **placeholders, not model recommendations**: replace them with models advertised by your provider/setup and available to your subscription plan.
-An explicit nested model inventory is required for backend resolution; `default_model` alone does not register a model.
-See [LLM provider profiles](llm-profiles.md) for full configuration and selection rules.
+In **Welcome** or **Settings → LLM → Provider accounts**, choose **ChatGPT Subscription**. Select **Check connection** after signing in, choose your registration and select from its available models. In Settings, save the account before running **Connection Test**. In Welcome, test the selected model before finishing setup.
 
 ```toml
-[llm]
-default_provider_profile = "codex-subscription"
-
 [[llm.providers]]
-id = "codex-subscription"
+id = "chatgpt-subscription"
 provider = "openai_codex"
-default_model = "REPLACE_WITH_CODEX_MODEL_ID"
-concurrency = 2
-
-[[llm.providers.models]]
-model = "REPLACE_WITH_CODEX_MODEL_ID"
-
-[[llm.providers]]
-id = "claude-subscription"
-provider = "anthropic"
 auth_mode = "oauth"
-default_model = "REPLACE_WITH_CLAUDE_MODEL_ID"
-concurrency = 2
-# Optional account-level override; blank/omitted uses <config_dir>/auth.json:
-# oauth_file = "/absolute/writable/path/auth.json"
-
-[[llm.providers.models]]
-model = "REPLACE_WITH_CLAUDE_MODEL_ID"
+siwc_account = "default"
+default_model = "MODEL_ID_FROM_GENESIS_CHATGPT_MODELS"
+models = ["MODEL_ID_FROM_GENESIS_CHATGPT_MODELS"]
 ```
 
-Authentication, `oauth_file`, endpoint, concurrency and peak/off-peak scheduling belong to the **provider profile** and are shared by its models.
-Nested model entries carry generation, context-window and reasoning-effort overrides.
-OAuth does not change these settings or create separate capacity for each model/effort.
+The provider identifier `openai_codex` is retained so existing profiles and task references can be loaded. On upgrade, sign in through Genesis and select an available model if the previously configured model is missing. Credentials imported from Codex in older versions are not used by this connection. The subscription uses [OpenAI's public Responses endpoint](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference).
 
-## 3. Where credentials live
+For a separate account or workspace, use `genesis chatgpt login --account work` and set `siwc_account = "work"` on its provider profile. Run `genesis chatgpt logout --account work` to disconnect it. The default alias is `default`.
 
-The default managed file is `<config_dir>/auth.json`, next to `config.toml`:
+### Self-hosted Genesis
 
-| Platform | Default path |
-|---|---|
-| Linux | `~/.config/genesis/auth.json` (`$XDG_CONFIG_HOME/genesis/auth.json`) |
-| macOS | `~/Library/Application Support/genesis/auth.json` |
-| Windows | `%APPDATA%\genesis\auth.json` |
+Use the browser on a computer that can reach the loopback sign-in listener. For SSH access, forward the same port on both sides, then start login under the account and configuration directory that run Genesis:
 
-A provider profile's `oauth_file` overrides this path; there is **no global `[llm] oauth_file`** key.
-Leave the override blank to use the managed default, or choose a writable private path.
+```sh
+ssh -t -L 1455:127.0.0.1:1455 user@genesis-host 'genesis chatgpt login'
+```
 
-Import is lazy (when assembling a request), key-wise and atomic.
-Importing Anthropic leaves the Codex entry untouched, and vice versa.
-Genesis imports when the managed entry is missing or the vendor file is newer than the managed file; this mtime guard avoids overwriting ReqLLM's newer token rotations.
-A new managed file gets mode `0600`; an existing file keeps its mode.
-Missing, unreadable or broken credentials produce diagnostic health messages rather than crashing a run.
+Open the displayed URL on the computer running SSH. You can select another port with `--port` if both ends use the same number. Use the normal dashboard address for setup.
 
-The managed file holds **one entry per provider** (`openai-codex`, `anthropic`), not one per profile ID.
-Distinct account IDs do not isolate OAuth credentials.
-A separate `oauth_file` changes the managed destination, but does **not** automatically provide a multi-account vendor-login workflow.
-Treat these files as private secrets; do not share them with a team or hand-edit their client-specific format.
+If the execution host requires an HTTP CONNECT proxy, set `GENESIS_SIWC_HTTPS_PROXY=http://HOST:PORT` for both the Genesis service and the login command. Authorization, model discovery, and subscription inference use that proxy.
 
-## 4. Setup and dashboard
+For a protected credential transfer, complete Genesis login on the browser machine and transfer the selected file from `<config_dir>/chatgpt/account-<alias>.json` using SSH. Keep the staging file private, then run `genesis chatgpt import /path/to/file --account <alias>` on the destination. The destination keeps its own host ID and takes over refresh. Clear the staging copy when the import finishes and use the transferred session only on the destination. [OpenAI self-hosted VM guide](https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms)
 
-### Dashboard
+## Claude Pro/Max
 
-**Settings → LLM → Provider profiles** edits account authentication, the optional `oauth_file` path and model inventory on the node you are viewing.
-Choose **Subscription (OAuth)** for Anthropic; Codex shows a static **Subscription** badge rather than an auth toggle.
-Login status includes vendor login guidance and the managed path; manual refresh re-checks it.
-Status is resolved on the viewed node (remote via RPC), and becomes unknown if that node cannot be reached.
+Run `claude` and sign in. Configure a provider profile with `provider = "anthropic"` and `auth_mode = "oauth"`. Genesis lazily imports the login from `~/.claude/.credentials.json` into the ReqLLM-managed `<config_dir>/auth.json`. Set `oauth_file` on the provider profile if you need a different managed path. Keep it writable and private. Genesis imports when the managed entry is missing or the CLI login file is newer, which preserves newer tokens rotated by ReqLLM.
 
-Quick Setup and Welcome show OAuth login guidance instead of requesting an API key for subscription authentication.
-Welcome is local-only and supports multiple models, a default model and a per-model default-effort dropdown.
-Its blank **Provider default** effort choice leaves the override unset.
+If there is no usable managed entry, Genesis also supports the result of `claude setup-token` through `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_OAUTH_TOKEN`. These environment tokens are used without persistence or refresh.
 
-## 5. Troubleshooting
-
-| Symptom | Meaning / remedy |
-|---|---|
-| No usable subscription login found | Run `codex login` or `claude` on the node using the account, then retry from the dashboard (Welcome or Settings) and run the task again. |
-| `OAuth file not found: <path>` | Check the provider profile's `oauth_file` and vendor login; Genesis must be able to import into the resolved managed path. |
-| Login found, but managed credential file not writable (for example `:erofs`) | The vendor login is fine; point the provider profile's `oauth_file` at a writable private location. Logging in again does not fix a read-only destination. |
-| `401` / expired credentials | Refresh is automatic when a refresh token exists; if it fails, repeat the vendor login. Environment-only tokens must be replaced manually. |
-| `403`, not entitled, unsupported plan or quota error | Check plan access and the selected model. Anthropic can use `auth_mode = "api_key"` with an API key; Codex cannot. For API billing instead of Codex OAuth, configure a different API provider profile. |
-| No API key found despite a Claude login | Set `provider = "anthropic"` and `auth_mode = "oauth"` on that provider profile, then reload configuration. For Codex, set `provider = "openai_codex"`; do not encode the provider in the nested model ID. |
-| Model cannot be resolved | Add its bare ID to `[[llm.providers.models]]` under the intended account; `default_model` alone is insufficient. Use a provider-advertised model available to your plan. |
-| Dashboard cost is zero or looks like token-only billing | Subscription usage is metered by the vendor; Genesis cost figures remain best-effort estimates, not your subscription bill. |
-
-Tokens are never logged; diagnostics include only provider, reason and path.
-Managed writes are atomic, with `0600` for new files and existing permissions preserved for existing files—check those permissions yourself.
-Environment-provided OAuth tokens are never persisted.
+See [LLM provider profiles](llm-profiles.md) for configuration and selection rules.
