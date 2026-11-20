@@ -4,7 +4,7 @@ defmodule EvoGit.VCTWorkspaceRPCTest do
 
     * `EvoGit.AgentScheduler.RemoteAPI` — the direct per-node functions
       (`workspaces/0`, `create_workspace/3`, `workspace_members/1`,
-      `workspaces_for/1`).
+      `workspace_entries/0,1`, `workspaces_for/1`).
     * `EvoGit.RemoteNode` — the node-first wrappers (the local path delegates to
       RemoteAPI; the remote branch is exercised through the unreachable-node
       `call_remote/4` failure path, same pattern as custom_agents_rpc_test.exs
@@ -176,6 +176,52 @@ defmodule EvoGit.VCTWorkspaceRPCTest do
     end
   end
 
+  describe "RemoteAPI.workspace_entries/0,1" do
+    test "resolves every workspace with its members in ONE call", %{tmp_dir: tmp} do
+      start_stack(tmp)
+      a = dir!(Path.join(tmp, "app-a"))
+      b = dir!(Path.join(tmp, "app-b"))
+      {:ok, app_a} = RemoteAPI.mount_project(a, "App A")
+      {:ok, app_b} = RemoteAPI.mount_project(b, nil)
+
+      assert RemoteAPI.workspace_entries() == []
+      assert RemoteAPI.workspace_entries(limit: 5) == []
+
+      assert {:ok, frontend} =
+               RemoteAPI.create_workspace(
+                 "Frontend",
+                 [%{"point" => app_a.point}, %{"point" => "vct:///projects/ghost"}],
+                 description: "Web apps"
+               )
+
+      assert {:ok, backend} =
+               RemoteAPI.create_workspace("Backend", [%{"point" => app_b.point}], [])
+
+      entries = RemoteAPI.workspace_entries()
+
+      assert Enum.sort(Enum.map(entries, & &1.workspace.point)) ==
+               Enum.sort([frontend.point, backend.point])
+
+      # Members arrive FLATTENED (`:point`/`:name`/`:path`) and already resolved.
+      assert %{
+               workspace: %Mount{} = workspace,
+               members: [member],
+               missing: [missing],
+               nested: []
+             } = Enum.find(entries, &(&1.workspace.point == frontend.point))
+
+      assert workspace.description == "Web apps"
+      assert %{point: member_point, name: "App A", path: member_path} = member
+      assert member_point == app_a.point
+      assert member_path == app_a.path
+      assert missing == %{"point" => "vct:///projects/ghost", "path" => nil}
+
+      # `:limit` caps the roster exactly like `workspaces/1`.
+      assert [limited] = RemoteAPI.workspace_entries(limit: 1)
+      assert limited.workspace.point in [frontend.point, backend.point]
+    end
+  end
+
   # ── Degradations: VCT absent ───────────────────────────────────────
 
   describe "RemoteAPI workspace reads with the VCT unavailable" do
@@ -188,6 +234,8 @@ defmodule EvoGit.VCTWorkspaceRPCTest do
 
     test "list reads degrade to []" do
       assert RemoteAPI.workspaces() == []
+      assert RemoteAPI.workspace_entries() == []
+      assert RemoteAPI.workspace_entries(limit: 5) == []
       assert RemoteAPI.workspaces_for("vct:///projects/anything") == []
     end
 
@@ -234,12 +282,24 @@ defmodule EvoGit.VCTWorkspaceRPCTest do
       assert [covered] = RemoteNode.workspaces_for(node(), app_a.point)
       assert covered.point == workspace.point
       assert RemoteNode.workspaces_for(node(), "vct:///projects/uncovered") == []
+
+      # The batched roster carries the same resolved members in one call.
+      assert [entry] = RemoteNode.workspace_entries(node())
+      assert entry.workspace.point == workspace.point
+      assert Enum.map(entry.members, & &1.point) == [app_a.point]
+
+      assert [%{workspace: %Mount{point: limited}}] =
+               RemoteNode.workspace_entries(node(), limit: 1)
+
+      assert limited == workspace.point
     end
 
     test "surface RemoteAPI's degradation on the local path" do
       Process.put(:evogit_vct_server, @absent_vct)
 
       assert RemoteNode.workspaces(node()) == []
+      assert RemoteNode.workspace_entries(node()) == []
+      assert RemoteNode.workspace_entries(node(), limit: 2) == []
       assert RemoteNode.workspaces_for(node(), "vct:///projects/x") == []
       assert RemoteNode.workspace_members(node(), "Group") == {:error, :vct_unavailable}
 
@@ -256,6 +316,8 @@ defmodule EvoGit.VCTWorkspaceRPCTest do
   describe "RemoteNode workspace wrappers on an unreachable remote node" do
     test "list reads degrade to []" do
       assert RemoteNode.workspaces(@fake_remote) == []
+      assert RemoteNode.workspace_entries(@fake_remote) == []
+      assert RemoteNode.workspace_entries(@fake_remote, limit: 1) == []
       assert RemoteNode.workspaces_for(@fake_remote, "vct:///projects/x") == []
     end
 

@@ -1571,12 +1571,15 @@ defmodule EvoGit.RemoteNode do
   `EvoGit.AgentScheduler.RemoteAPI.workspace_members/1` directly. On a remote
   node, routes the call through `:erpc` via `call_remote/4`.
   Returns `{:ok, %{workspace: mount, members: [...], missing: [...], nested:
-  [...]}}`, `{:error, :not_found | :not_a_workspace | :invalid_point}`, or a
-  failed RPC's `{:error, {kind, reason}}`.
+  [...]}}`, `{:error, :not_found | :not_a_workspace | :invalid_point |
+  :vct_unavailable}` (`:vct_unavailable` = the node's VCT server is not
+  running, never a genuinely absent workspace), or a failed RPC's `{:error,
+  {kind, reason}}`.
   """
   @spec workspace_members(node_ref(), term()) ::
           {:ok, EvoGit.VCT.workspace_resolution()}
-          | {:error, :not_found | :not_a_workspace | :invalid_point | error_reason()}
+          | {:error,
+             :not_found | :not_a_workspace | :invalid_point | :vct_unavailable | error_reason()}
   def workspace_members(node, point_or_name) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.workspace_members(point_or_name)
@@ -1606,6 +1609,51 @@ defmodule EvoGit.RemoteNode do
       EvoGit.AgentScheduler.RemoteAPI.workspaces_for(project)
     else
       case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :workspaces_for, [project]) do
+        {:ok, list} when is_list(list) -> list
+        {:ok, _other} -> []
+        {:error, _reason} -> []
+      end
+    end
+  end
+
+  @doc """
+  Lists every Virtual Context Tree WORKSPACE of the given node with its members
+  already resolved.
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.workspace_entries/0`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`.
+  Returns `[EvoGit.VCT.workspace_entry()]`, degrading to `[]` when the remote
+  call fails or returns something else.
+  """
+  @spec workspace_entries(node_ref()) :: [EvoGit.VCT.workspace_entry()]
+  def workspace_entries(node) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.workspace_entries()
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :workspace_entries, []) do
+        {:ok, list} when is_list(list) -> list
+        {:ok, _other} -> []
+        {:error, _reason} -> []
+      end
+    end
+  end
+
+  @doc """
+  Lists every Virtual Context Tree WORKSPACE of the given node with its members
+  already resolved, capped and ordered by `opts` (`:limit`, like
+  `workspaces/1`).
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.workspace_entries/1`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`.
+  Returns `[EvoGit.VCT.workspace_entry()]`, degrading to `[]` when the remote
+  call fails or returns something else.
+  """
+  @spec workspace_entries(node_ref(), keyword()) :: [EvoGit.VCT.workspace_entry()]
+  def workspace_entries(node, opts) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.workspace_entries(opts)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :workspace_entries, [opts]) do
         {:ok, list} when is_list(list) -> list
         {:ok, _other} -> []
         {:error, _reason} -> []

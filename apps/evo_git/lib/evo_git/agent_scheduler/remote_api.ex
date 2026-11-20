@@ -953,15 +953,51 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   point (`vct:///workspaces/<name>`) or a bare workspace name.
   This runs on the REMOTE node when called via `:erpc.call/5`.
   Returns `{:ok, %{workspace: mount, members: [mount], missing: [member_ref],
-  nested: [member_ref]}}`, `{:error, :not_found}` (no such workspace, or the
-  VCT is unavailable), `{:error, :not_a_workspace}` for an existing
-  non-workspace mount or `{:error, :invalid_point}` for an unusable argument.
+  nested: [member_ref]}}`, `{:error, :not_found}` (no such workspace),
+  `{:error, :not_a_workspace}` for an existing non-workspace mount,
+  `{:error, :invalid_point}` for an unusable argument or
+  `{:error, :vct_unavailable}` when the VCT server is not running — which is
+  distinct from a genuinely absent workspace and never reported as
+  `:not_found`.
   """
   @spec workspace_members(term()) ::
           {:ok, EvoGit.VCT.workspace_resolution()}
-          | {:error, :not_found | :not_a_workspace | :invalid_point}
+          | {:error, :not_found | :not_a_workspace | :invalid_point | :vct_unavailable}
   def workspace_members(point_or_name) do
     EvoGit.VCT.workspace_members(point_or_name)
+  end
+
+  @doc """
+  Lists EVERY workspace of the node with its members already resolved.
+  Delegates to `EvoGit.VCT.workspace_entries/1,2` — the batched companion of
+  `workspace_members/1`.
+  This runs on the REMOTE node when called via `:erpc.call/5`, returning native
+  `t:EvoGit.VCT.workspace_entry/0` maps.
+  Returns `[EvoGit.VCT.workspace_entry()]` — each one
+  `%{workspace: mount, members: [member_entry], missing: [member_ref],
+  nested: [member_ref]}` — degrading to `[]` when no workspace exists or the
+  VCT is unavailable. The members of EVERY workspace are already resolved in
+  ONE round trip, so a caller never pays one call per entry.
+  """
+  @spec workspace_entries() :: [EvoGit.VCT.workspace_entry()]
+  def workspace_entries do
+    EvoGit.VCT.workspace_entries()
+  end
+
+  @doc """
+  Lists EVERY workspace of the node with its members already resolved, capped
+  and ordered by `opts`.
+  Delegates to `EvoGit.VCT.workspace_entries/1,2`; `opts` is a keyword list
+  accepting `:limit` (a positive integer cap on the workspace list, exactly
+  like `workspaces/1`).
+  This runs on the REMOTE node when called via `:erpc.call/5`.
+  Returns `[EvoGit.VCT.workspace_entry()]`, degrading to `[]` when no workspace
+  exists or the VCT is unavailable. Every workspace's members come back in that
+  same ONE round trip.
+  """
+  @spec workspace_entries(keyword()) :: [EvoGit.VCT.workspace_entry()]
+  def workspace_entries(opts) when is_list(opts) do
+    EvoGit.VCT.workspace_entries(opts)
   end
 
   @doc """
