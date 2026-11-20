@@ -119,7 +119,7 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
               value={@search_text}
               placeholder={gettext("Filter settings...")}
               phx-change="search"
-              class="input w-full pl-10 pr-9 bg-base-200/50 border-transparent hover:bg-base-200 focus:bg-base-100 transition-all duration-200 rounded-md font-medium text-sm h-10"
+              class="input w-full pl-10 pr-9 bg-base-200/50 border-transparent hover:bg-base-200 focus:bg-base-100 transition-[background-color,box-shadow,border-color] duration-200 rounded-md font-medium text-sm h-10"
             />
           </form>
           <%= if @search_text != "" do %>
@@ -144,7 +144,7 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
             phx-click="select_category"
             phx-value-category={to_string(category)}
             class={[
-              "w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 transition-all duration-200 text-sm font-semibold group relative overflow-hidden",
+              "w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 transition-colors duration-200 text-sm font-semibold group relative overflow-hidden",
               category == @active_category && "bg-primary text-primary-content",
               category != @active_category &&
                 "hover:bg-base-200/70 text-base-content/90 hover:text-base-content",

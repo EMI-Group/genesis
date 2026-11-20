@@ -25,7 +25,16 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
     sessions = build_sessions(running_tasks, pending_tasks, now, node_id)
     groups = build_groups(running_tasks, pending_tasks, now, node_id)
 
-    assigns = assign(assigns, sessions: sessions, groups: groups)
+    # The `ListEnter` hook's SCOPE: the viewed node only. This list is
+    # cross-project (it groups EVERY project of the node), so a project must not
+    # be part of the scope — otherwise a project group appearing would re-seed
+    # the baseline and animate the whole list. The value must be NONEMPTY for the
+    # local node too (an empty scope is deliberately inert in the hook), and a
+    # node change is what makes the hook re-seed instead of animating everything.
+    list_enter_scope = "sidebar|" <> (node_id || "local")
+
+    assigns =
+      assign(assigns, sessions: sessions, groups: groups, list_enter_scope: list_enter_scope)
 
     ~H"""
     <section
@@ -38,7 +47,20 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
         <%!-- zh_CN: 活动任务 --%>
         <span class="sidebar-label">{gettext("Active Tasks")}</span>
       </div>
-      <div class="space-y-1">
+      <%!-- The `ListEnter` hook lives on this WRAPPER, never on a row: morphdom
+           keeps the hook element (and therefore its `seen` baseline) mounted
+           while rows come and go, whereas a hook on a row would remount with
+           every row and forget the baseline. Rows only carry
+           `data-list-enter-key`; the group headers stay unkeyed, and a row that
+           is new in the unchanged scope gets `motion-list-enter` (defined in
+           assets/css/app.css over the motion.css keyframes). The `id` exists
+           only because LiveView refuses a `phx-hook` without one. --%>
+      <div
+        id="workbench-active-tasks-rows"
+        class="space-y-1"
+        phx-hook="ListEnter"
+        data-list-enter-scope={@list_enter_scope}
+      >
         <%!-- Interactive agent sessions live in their OWN group, above
            the per-project one-shot task groups (design record
            docs/agent-runtime-refactor.md §4.9 — sessions never fall
@@ -85,6 +107,7 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
     <.link
       navigate={@row.href}
       data-sidebar-task-link
+      data-list-enter-key={@row.key}
       title={@row.title}
       class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-base-content/80 hover:bg-base-300/70 hover:text-base-content transition-colors group"
     >
@@ -126,6 +149,7 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
       label = task_label(task)
 
       %{
+        key: task_key(task),
         label: label,
         sub_line: sub_line,
         href: href,
@@ -167,6 +191,7 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
       end
 
     %{
+      key: task_key(task),
       label: label,
       sub_line: sub_line,
       href: href,
@@ -175,6 +200,23 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
       title: label <> " — " <> sub_line,
       status_title: status_title
     }
+  end
+
+  # The `ListEnter` ROW key — the task id, never anything derived from the row's
+  # href, sub-line or label: those change when a task moves from running to
+  # `:awaiting_input` or from live to reviewable, and a STATUS change must not
+  # replay the entrance animation. Keys are unique per render because
+  # `session_tasks/2` (interactive only) and `group_tasks_by_project/2`
+  # (interactive rejected) partition the same feed disjointly, and each group
+  # holds one entry per task — so the hook's "first element per key wins" rule
+  # never drops a row. A summary without a usable id simply yields no key (the
+  # row is then ignored by the hook instead of crashing the layout).
+  defp task_key(task) do
+    case Map.get(task, :id) do
+      id when is_binary(id) -> id
+      id when is_integer(id) -> Integer.to_string(id)
+      _id -> nil
+    end
   end
 
   # Extract a display label for a task: objective > prompt > truncated task ID
