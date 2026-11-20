@@ -15,6 +15,11 @@ defmodule EvoDashWeb.WelcomeLiveTest do
   @runner_start_timeout 30_000
   # Load-tolerant budget for the bounded poll that waits for an async result to
   # reach the LiveView. The wait stays bounded and still fails loudly.
+  # EVERY cross-process stub notification in this file is asserted on this
+  # budget, `begin` and `cancel` included: they are emitted from inside the
+  # flow call's own `Task.async` (bounded by the product's 15 s call timeout,
+  # NOT by the event handler that awaits it), so a second-scale budget here
+  # would be a latency assumption rather than a correctness bound.
   @async_wait_budget_ms 30_000
   # `:sys.get_state/2` timeout for `assigns/1`: the LiveView can be starved for
   # seconds on a loaded host, where the 5 s default exits the test.
@@ -24,11 +29,6 @@ defmodule EvoDashWeb.WelcomeLiveTest do
   @custom_key "sk-openai-compatible-test-123"
   # The authorization URL the sign-in stub mints (see the stub module below).
   @sign_in_url "https://auth.example.test/authorize"
-  # Budget for the stub calls the LiveView event handler has ALREADY completed
-  # before returning (`begin`/`cancel`), so their notifications are in flight.
-  # An ASYNC poll tick is waited for on `@async_wait_budget_ms` instead, because
-  # its arrival is one poll interval away.
-  @stub_call_timeout 5_000
 
   setup do
     EvoDash.Test.ConfigDir.isolate!("evogit_welcome_test_config")
@@ -498,9 +498,12 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       view |> element("#welcome-chatgpt-sign-in") |> render_click()
 
-      # The draft has no pick yet, so the store default is signed in.
-      assert_receive {:signin_stub, {:begin, "default"}}, @stub_call_timeout
+      # The rendered waiting state is the observable half of the click; the
+      # stub's `begin` notification is emitted by the flow call's own task, so it
+      # is asserted once that state is there, on the load-tolerant budget.
       assert has_element?(view, "#welcome-chatgpt-waiting")
+      # The draft has no pick yet, so the store default is signed in.
+      assert_receive {:signin_stub, {:begin, "default"}}, @async_wait_budget_ms
       refute has_element?(view, "#welcome-chatgpt-sign-in")
 
       link =
@@ -540,16 +543,19 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       pick(view, "openai_codex")
       view |> element("#welcome-chatgpt-sign-in") |> render_click()
 
-      assert_receive {:signin_stub, {:begin, "default"}}, @stub_call_timeout
       assert has_element?(view, "#welcome-chatgpt-waiting")
+      assert_receive {:signin_stub, {:begin, "default"}}, @async_wait_budget_ms
 
       view |> element("#welcome-chatgpt-sign-in-cancel") |> render_click()
 
-      assert_receive {:signin_stub, {:cancel, "welcome-flow"}}, @stub_call_timeout
+      # The return to the sign-in button is the observable half of the cancel;
+      # the stub's notification rides the flow call's own task, so it is
+      # asserted after that state, on the load-tolerant budget.
       assert assigns(view).chatgpt_sign_in == %{phase: :idle}
+      assert has_element?(view, "#welcome-chatgpt-sign-in")
+      assert_receive {:signin_stub, {:cancel, "welcome-flow"}}, @async_wait_budget_ms
       refute has_element?(view, "#welcome-chatgpt-waiting")
       refute has_element?(view, "#welcome-chatgpt-sign-in-error")
-      assert has_element?(view, "#welcome-chatgpt-sign-in")
 
       # The flow's own terminal result is now stale and must not resurrect the
       # waiting or error state. Wait for the tick that READ it: delivery of that
@@ -570,8 +576,8 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       pick(view, "openai_codex")
       view |> element("#welcome-chatgpt-sign-in") |> render_click()
 
-      assert_receive {:signin_stub, {:begin, "default"}}, @stub_call_timeout
       assert has_element?(view, "#welcome-chatgpt-waiting")
+      assert_receive {:signin_stub, {:begin, "default"}}, @async_wait_budget_ms
       state = assigns(view).chatgpt_sign_in
 
       # Navigating away must close the loopback listener NOW, not leave it to the
@@ -584,8 +590,9 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       GenServer.stop(view.pid)
 
       # `GenServer.stop/1` is synchronous: `terminate/2` has already run, so the
-      # cancel is in this mailbox and the waiting flow is gone.
-      assert_receive {:signin_stub, {:cancel, "welcome-flow"}}, @stub_call_timeout
+      # waiting flow is gone. The cancel call itself rides the flow call's own
+      # task, so its notification is asserted on the load-tolerant budget.
+      assert_receive {:signin_stub, {:cancel, "welcome-flow"}}, @async_wait_budget_ms
 
       # The other phases this page assigns are never treated as waiting, so a
       # terminate after them closes nothing.
@@ -606,7 +613,8 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       {:ok, view, _html} = start(conn)
       pick(view, "openai_codex")
       view |> element("#welcome-chatgpt-sign-in") |> render_click()
-      assert_receive {:signin_stub, {:begin, "default"}}, @stub_call_timeout
+      assert has_element?(view, "#welcome-chatgpt-waiting")
+      assert_receive {:signin_stub, {:begin, "default"}}, @async_wait_budget_ms
 
       Process.put(:signin_stub_statuses, %{"welcome-flow" => {:ok, %{account: "work"}}})
       await(fn -> assigns(view).chatgpt_sign_in == %{phase: :ok} end)
