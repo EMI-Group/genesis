@@ -116,6 +116,7 @@ Model-facing tool names are `read`/`write`/`edit`/`bash`/`web_search` (plus `rg`
 ## Context Tree (`EvoGit.Core.ContextNode`) & VCT metadata
 
 `%EvoGit.Core.ContextNode{}` carries exactly `path` (the in-repo relative `"./…"` string, byte-identical to before), `repo` (the absolute base it expands against), `repo_id` (`"primary"` or a foreign repo id) and `vct_path`.
+`vct_path` is the node's canonical VCT URL (`EvoGit.VCT.vct_path_for/2`, populated by `load/2,3` and therefore by `hierarchy_nodes/2,3`) or `nil` when the repository is unmounted or no VCT server is reachable; it is INTERNAL metadata only — no prompt path, tool argument or CONTEXT.md file label is ever derived from it, and `normalize_relpath/1` is unchanged.
 `vct_path` and a VCT "point" are the SAME value (the canonical `vct:///…` URL) under two spellings: the VCT modules call it a point, while this struct names the field `vct_path`; neither spelling denotes an OS path.
 `build_context/2` prepends the VCT GLOBAL context as the fixed stage label `global/CONTEXT.md` when `<data_dir>/vct/CONTEXT.md` is non-empty after YAML front-matter stripping, ahead of the in-repo stages (`File: ./CONTEXT.md`, `File: ./lib/CONTEXT.md`, …).
 A stage whose CONTEXT.md is absent, blank or front-matter-only is SKIPPED (no empty fenced block is ever rendered), and when nothing renders the result is the location block ALONE with no `# Context Tree` header.
