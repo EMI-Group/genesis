@@ -139,7 +139,7 @@ Explicit invalid selections fail closed before registration; a locked parent sel
 
 ## Multi-Modal Content (objective, tool results, injected messages)
 
-Media (images/audio) rides LLM content parts at THREE sites; wire contract `EvoGit.Attachments` (`attachments.ex`), structured output `EvoGit.Agent.ToolOutput` (`agent/tool_output.ex`) — implementation detail: `agent/` + `store/` + `agent_scheduler/`.
+Media (images/audio) rides LLM content parts at THREE sites; wire contract `EvoGit.Attachments` (`attachments.ex`), structured output `EvoGit.Agent.ToolOutput` — detail: `agent/` + `store/`.
 
 - **Shape + caps**: STRING-keyed `%{"type" => "image"|"audio", "name" => basename, "media_type" => IANA, "data" => base64}`; base64 is MANDATORY at every data-plane boundary because `Store.Codec` Jason-encodes whole opts; decoding happens ONLY at materialization (`Attachments.to_content_parts/2` → `[ContentPart.text(text) | media parts]`, NEVER `ReqLLM.ToolResult`); `Attachments.message/1` is the ONE normalizer; ≤ 4 per message, each ≤ 15 MiB RAW (`EvoGit.Attachments` attributes are the single source); malformed payloads raise `ArgumentError`.
 - **Site 1 — `:attachments` task opt (root-only)**: the ROOT's FIRST user message (`ContextBuilder.build_initial_messages/4`, gated on `parent_id == nil`); Genesis Mode A, both Mode B roots and the Evolve root receive it, Reflect never; `RuntimeOpts` → `Attachments.validate/1`.
