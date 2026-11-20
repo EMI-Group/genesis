@@ -141,11 +141,11 @@ description = "Legacy Project"
 [scheduler]
 default_llm_max_concurrency = 3    # per-account concurrency when unset
 max_tool_concurrency = 8           # default = CPU thread count
-agent_max_retries = 3              # crash-retry limit per agent (min 0)
-max_agent_depth = 8                # subagent recursion depth (min 1)
-max_retries = 15                   # total LLM API retries (min 1)
-max_turns = 128                    # SUB-agent turn cap (min 1)
-max_turns_root = 1000              # ROOT agent turn cap only (min 1)
+agent_max_retries = 3              # crash-retry limit per agent
+max_agent_depth = 8                # subagent recursion DEPTH only
+max_retries = 15                   # total LLM API retries
+max_turns = 128                    # SUB-agent turn cap
+max_turns_root = 1000              # ROOT agent turn cap only
 delegation_hint_threshold = 5      # write calls to a child dir before a nudge (0 disables)
 read_delegation_hint_threshold = 8 # read calls to a child dir before a nudge (0 disables)
 max_tool_timeout = 1_800_000       # ms cap on any agent-requested tool timeout
@@ -163,17 +163,17 @@ github_username = "..."            # PR creation only (optional)
 [sandbox]
 mode = "auto"                      # "auto" | "enabled" | "disabled"
 backend = "auto"                   # "auto" | "systemd" | "bwrap"
-write_paths = []                   # unset/nil = platform defaults; set (incl. []) REPLACES them
+write_paths = []                   # nil = platform defaults; set (incl. []) REPLACES them
 
 [nix]
-enabled = false                    # run tool calls in a cached Nix dev env (needs config-dir flake.nix)
+enabled = false                    # tool calls in a cached Nix dev env (config-dir flake.nix)
 flake_output = nil
 
 [appearance]
-accent_color = "blue"              # blue|teal|green|yellow|orange|red|pink|purple|brown|slate
+accent_color = "blue"              # GNOME palette: blue|teal|green|yellow|orange|red|pink|purple|brown|slate
 
 [data]
-dir = "/abs/path/to/data"          # relocate tasks.sqlite/logs/caches; next boot
+dir = "/abs/path/to/data"          # relocate the runtime data dir; next boot
 
 [tmp]
 mode = "system"                    # "system" | "custom" | "per_repo"
@@ -186,7 +186,7 @@ args = ["start"]
 timeout = 30_000
 diagnostics_timeout = 10_000
 ```
-Per-key types/defaults of all 112 descriptors (19 under `[sandbox]`): `schema/CONTEXT.md`; canonical `[[llm.providers]]` and legacy `[[llm.models]]` syntax plus peak-schedule semantics: `docs/llm-profiles.md`.
+Per-key types/defaults of all 112 descriptors (19 under `[sandbox]`): `schema/CONTEXT.md`; canonical `[[llm.providers]]` / legacy `[[llm.models]]` syntax and peak-schedule semantics: `docs/llm-profiles.md`.
 
 **`[data] dir` relocates the runtime data dir** (`tasks.sqlite`, `agent_state.sqlite`, logs, remote binaries, nix cache, `genesis-source`).
 `EvoGit.Platform.data_dir/0` consults `resolve([:data, :dir])`: a non-empty absolute (or `~`-expanded) value wins; invalid values (nil/empty/non-binary/relative) log a `Logger.warning` and fall back to the OS+env default — it NEVER raises.
