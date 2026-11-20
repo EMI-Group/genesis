@@ -246,8 +246,11 @@ This test node contains no production fix for that source issue.
 
 ## Known Issues
 
-- No known flake remains in this tree's sign-in coverage: the former `welcome_live_test.exs` "cancelling returns to the sign-in button and stops the flow" failure at a 5 s `@stub_call_timeout` budget is fixed by waiting on the observable page state and asserting every stub notification (`begin`/`cancel`/`status`) on `@async_wait_budget_ms`.
+- The former `welcome_live_test.exs` "cancelling returns to the sign-in button and stops the flow" failure at a 5 s `@stub_call_timeout` budget is fixed: `@stub_call_timeout` is gone, every stub notification (`begin`/`cancel`/`status`) is asserted on `@async_wait_budget_ms`, and `begin`/`cancel` are ordered state-first (`#welcome-chatgpt-waiting`, or the return to `#welcome-chatgpt-sign-in` plus `chatgpt_sign_in == %{phase: :idle}`).
   The product's 15 s `ChatGPTSignIn.@call_timeout_ms` remains the only bound on a flow call: if it elapses the page honestly settles into `{:error, :sign_in_unavailable}` and no stub notification is emitted, which the state-first assertion reports as a missing `#welcome-chatgpt-waiting` element instead of a bare "no matching message".
+- OPEN, out of this file's scope (belongs to `./settings_live/`): `settings_live/provider_wizard_test.exs` "a local sign-in waits on a real link and continues with the connected account" can fail at `element("#settings-chatgpt-sign-in-url")` while `#settings-chatgpt-waiting` was just asserted.
+  Its stub answers `[:pending, {:ok, …}]`, so the second poll tick can complete the flow between the `has_element?` check and the following `element/3` read, removing the waiting markup; observed once in a full unloaded `mix test apps/evo_dash/test` run and once under load, and never in `welcome_live_test.exs`.
+  That suite needs the link read from the SAME render that proved the waiting state (or a pending-only stub until the link is asserted); it is reported rather than changed here.
 
 ## Notes for Agents — system page chart assertions
 
