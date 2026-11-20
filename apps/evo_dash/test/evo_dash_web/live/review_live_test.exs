@@ -3131,7 +3131,9 @@ defmodule EvoDashWeb.ReviewLiveMergeTest do
       refute render(view) =~ ~s(id="merge-all-repositories")
 
       render_click(view, "merge_all")
-      html = await_review_action_settled(view)
+      # Settle the action frame; the completion banner is asserted below from a
+      # fresh render taken after the completion's own reload settles.
+      await_review_action_settled(view)
 
       # EXACTLY ONE runner call — for the foreign (change-bearing) repo. The
       # nil-branch primary is skipped entirely, so its nil branch never reaches
@@ -3151,6 +3153,17 @@ defmodule EvoDashWeb.ReviewLiveMergeTest do
       # The aggregate status is persisted by a SEPARATE background action
       # spawned when the last repo settled — poll for it.
       wait_until(fn -> TaskRegistry.get_task(task_id).review_status == :merged end)
+
+      # The PAGE learns about that completion through the "tasks" broadcast that
+      # arms its debounced reload, so the banner must be read from a FRESH render
+      # taken AFTER that reload settles — the html captured above is the
+      # pre-completion page (and a render taken while the reload is in flight is
+      # the transient loading page). Same durable-state pattern as the
+      # :rejected-completes tests below.
+      settle_debounced_task_reload(view)
+      wait_until(fn -> render(view) =~ ~s(id="review-completion-banner") end)
+      html = render(view)
+
       assert html =~ ~s(id="review-completion-banner")
       assert html =~ "All repositories merged."
     end
@@ -3171,12 +3184,22 @@ defmodule EvoDashWeb.ReviewLiveMergeTest do
         ])
 
       render_click(view, "reject", %{"repo_id" => "original"})
-      html = await_review_action_settled(view)
+      # Settle the action frame; the completion banner is asserted below from a
+      # fresh render taken after the completion's own reload settles.
+      await_review_action_settled(view)
 
       # Rejecting the ONLY change-bearing repo completes the review as
       # :rejected — the no-change primary never holds it open.
       refute_redirected(view)
       wait_until(fn -> TaskRegistry.get_task(task_id).review_status == :rejected end)
+
+      # As above: the completion's broadcast arms the page's debounced reload,
+      # so settle it and assert the banner against a FRESH render rather than
+      # the html captured from the action's own (pre-completion) frame.
+      settle_debounced_task_reload(view)
+      wait_until(fn -> render(view) =~ ~s(id="review-completion-banner") end)
+      html = render(view)
+
       assert html =~ ~s(id="review-completion-banner")
       assert html =~ "All repositories rejected."
     end
@@ -6896,6 +6919,12 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
       # ONLY path that invalidates the sidebar hub snapshot.
       wait_until(fn -> TaskRegistry.get_task(task_id).review_status == :merged end)
 
+      # Same durable-state contract as the other completion tests: the
+      # completion's broadcast arms this page's debounced reload, so settle it
+      # and read the banner from a FRESH render (a render taken while that
+      # reload is in flight is the transient loading page).
+      settle_debounced_task_reload(view)
+      wait_until(fn -> render(view) =~ ~s(id="review-completion-banner") end)
       html = render(view)
       assert html =~ ~s(id="review-completion-banner")
       assert html =~ ~s(id="review-completion-back")
