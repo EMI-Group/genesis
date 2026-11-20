@@ -118,14 +118,11 @@ defmodule EvoGit.Agent.Session.DurableRunFactsTest do
     end
   end
 
-  # The ONE rewrite a run's first checkpoint performs.
+  # Seeds ONE run's durable record exactly as the session start path does: the
+  # start snapshot is the run's one full-field write (identity, run facts and the
+  # whole transcript); later turns checkpoint volatile scalars only.
   defp seed!(task_id, agent_id, overrides) do
-    :ok =
-      Persistence.checkpoint(
-        run_state(task_id, agent_id, []),
-        run_state(task_id, agent_id, msgs(2), overrides)
-      )
-
+    :ok = Persistence.initial_snapshot(run_state(task_id, agent_id, msgs(2), overrides))
     AgentState.flush()
     :ok
   end
