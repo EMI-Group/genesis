@@ -31,6 +31,11 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Row do
   attr :expanded?, :boolean, default: false
   attr :auth_status, :any, default: nil
   attr :disabled, :boolean, default: false
+  # Page-owned in-browser ChatGPT sign-in state + the local/remote verdict.
+  # The collapsed row never renders the sign-in control (`details: false`), so
+  # these only have to exist for the shared auth-status component.
+  attr :chatgpt_sign_in, :map, default: %{}
+  attr :chatgpt_sign_in_manual, :boolean, default: false
 
   def profile_row(assigns) do
     id = value(assigns.profile, "id")
@@ -125,7 +130,14 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Row do
           </button>
         </div>
       </div>
-      <.provider_auth_status :if={@oauth?} profile={@profile} status={@auth_status} details={false} />
+      <.provider_auth_status
+        :if={@oauth?}
+        profile={@profile}
+        status={@auth_status}
+        details={false}
+        chatgpt_sign_in={@chatgpt_sign_in}
+        chatgpt_sign_in_manual={@chatgpt_sign_in_manual}
+      />
     </div>
     """
   end

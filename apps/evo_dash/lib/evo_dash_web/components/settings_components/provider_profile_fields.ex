@@ -475,21 +475,36 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
   attr(:status, :any, default: nil)
   attr(:profile, :map, required: true)
   attr(:details, :boolean, default: true)
+  # Page-owned in-browser ChatGPT sign-in state + the local/remote verdict.
+  # TOTAL defaults: every caller (and the collapsed summary row) renders before
+  # the page assigns them.
+  attr(:chatgpt_sign_in, :map, default: %{})
+  attr(:chatgpt_sign_in_manual, :boolean, default: false)
 
   def provider_auth_status(assigns) do
     state = auth_state(assigns.status)
     chatgpt? = provider_atom(assigns.profile) == :openai_codex
+    profile_id = value(assigns.profile, "id")
 
     assigns =
       assigns
       |> assign(:state, state)
       |> assign(:chatgpt?, chatgpt?)
+      |> assign(:profile_id, profile_id)
+      |> assign(:slug, EvoDashWeb.SettingsComponents.ProviderProfiles.Row.slug(profile_id))
       |> assign(:chatgpt_command, chatgpt_login_command(assigns.profile))
       |> assign(:label, auth_label(state, value(assigns.status, "expires", nil), chatgpt?))
       |> assign(:path, value(assigns.status, "oauth_file", value(assigns.profile, "oauth_file")))
       |> assign(
         :instructions,
         value(assigns.status, "login_instructions", login_guidance(assigns.profile))
+      )
+      |> assign(
+        :sign_in,
+        EvoDashWeb.SettingsComponents.ChatGPTSignInPanel.surface_state(
+          assigns.chatgpt_sign_in,
+          {:status, profile_id}
+        )
       )
 
     ~H"""
@@ -511,14 +526,14 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
       <div :if={@details} class="space-y-1 text-xs leading-relaxed text-base-content/70">
         <%= cond do %>
           <% @chatgpt? and @state != :ok -> %>
-            <p>
-              {gettext(
-                "Connect the account on the selected node — sign in there, or run this command on it — then recheck."
-              )}
-            </p>
-            <p>
-              <code>{@chatgpt_command}</code>
-            </p>
+            <EvoDashWeb.SettingsComponents.ChatGPTSignInPanel.sign_in_panel
+              id={"provider-status-" <> @slug <> "-chatgpt"}
+              surface="status"
+              profile_id={@profile_id}
+              manual={@chatgpt_sign_in_manual}
+              sign_in={@sign_in}
+              command={@chatgpt_command}
+            />
           <% @chatgpt? -> %>
             <p :if={value(@status, "account_id") != ""}>{value(@status, "account_id")}</p>
           <% @state == :unwritable -> %>

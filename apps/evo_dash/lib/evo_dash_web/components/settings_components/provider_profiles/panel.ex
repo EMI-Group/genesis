@@ -64,6 +64,10 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Panel do
   attr(:advanced_open, :any, default: nil)
   attr(:wizard, :any, default: nil)
   attr(:schedule, :map, default: %{})
+  # Page-owned in-browser ChatGPT sign-in state + the local/remote verdict
+  # (total defaults; forwarded to every row and the one expanded editor).
+  attr(:chatgpt_sign_in, :map, default: %{})
+  attr(:chatgpt_sign_in_manual, :boolean, default: false)
 
   def provider_profiles_panel(assigns) do
     assigns =
@@ -111,6 +115,8 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Panel do
             expanded?={expanded?(profile, @expanded_id)}
             auth_status={auth_status(@auth_statuses, profile)}
             disabled={@disabled}
+            chatgpt_sign_in={@chatgpt_sign_in}
+            chatgpt_sign_in_manual={@chatgpt_sign_in_manual}
           />
           <Detail.profile_detail
             :if={expanded?(profile, @expanded_id)}
@@ -120,6 +126,8 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Panel do
             auth_status={auth_status(@auth_statuses, profile)}
             advanced_open={@advanced_open}
             schedule={@schedule}
+            chatgpt_sign_in={@chatgpt_sign_in}
+            chatgpt_sign_in_manual={@chatgpt_sign_in_manual}
           />
           <WizardForm.add_model_wizard
             :if={model_wizard_for?(profile, @wizard)}

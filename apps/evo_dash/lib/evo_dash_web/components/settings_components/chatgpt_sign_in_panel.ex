@@ -14,7 +14,8 @@ defmodule EvoDashWeb.SettingsComponents.ChatGPTSignInPanel do
       button; a failure shows the friendly message from
       `EvoDashWeb.LLMSetup.ChatGPTSignIn.message/1`;
     * remote/unsupported (`manual: true`) — no button: the only route is
-      `genesis chatgpt login` on the execution node, plus the one-line reason.
+      `genesis chatgpt login` on the execution node (or the caller's own
+      account-specific `command`), plus the one-line reason.
 
   Every control is `type="button"`: this panel renders INSIDE the provider
   detail `<form>`, so it must never submit. Both actions carry
@@ -43,6 +44,10 @@ defmodule EvoDashWeb.SettingsComponents.ChatGPTSignInPanel do
   attr(:cancel_event, :string, default: "chatgpt_sign_in_cancel")
   attr(:surface, :string, required: true)
   attr(:profile_id, :string, default: nil)
+  # The exact CLI command a manual (remote/unsupported) surface should show —
+  # e.g. an account-specific `genesis chatgpt login --account …`. A nil/blank
+  # value falls back to the plain command.
+  attr(:command, :string, default: nil)
 
   @doc """
   Renders the sign-in surface under the given id prefix.
@@ -59,7 +64,8 @@ defmodule EvoDashWeb.SettingsComponents.ChatGPTSignInPanel do
         sign_in: sign_in,
         message: message,
         message_tone: tone(message),
-        surface: surface_string(assigns.surface)
+        surface: surface_string(assigns.surface),
+        login_command: login_command(assigns.command)
       )
 
     ~H"""
@@ -68,7 +74,7 @@ defmodule EvoDashWeb.SettingsComponents.ChatGPTSignInPanel do
         <p class="text-sm text-base-content/70">
           {gettext("To connect a ChatGPT account, run this command on the execution node.")}
         </p>
-        <p><code>genesis chatgpt login</code></p>
+        <p><code>{@login_command}</code></p>
         <p class="text-xs text-base-content/60">
           {gettext(
             "The dashboard can only open a sign-in page when it runs on the same machine as the execution node."
@@ -192,6 +198,14 @@ defmodule EvoDashWeb.SettingsComponents.ChatGPTSignInPanel do
 
   defp surface_string(value) when is_binary(value), do: value
   defp surface_string(_value), do: ""
+
+  # A caller may hand the panel an account-specific command; anything else
+  # (nil/blank/non-binary) degrades to the plain login command.
+  defp login_command(command) when is_binary(command) do
+    if String.trim(command) == "", do: "genesis chatgpt login", else: command
+  end
+
+  defp login_command(_command), do: "genesis chatgpt login"
 
   defp value(map, key) do
     case Map.fetch(map, key) do

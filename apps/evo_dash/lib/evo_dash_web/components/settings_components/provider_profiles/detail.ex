@@ -21,6 +21,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Detail do
   use EvoDashWeb, :html
 
   alias EvoDashWeb.LLMSetup.Identity
+  alias EvoDashWeb.SettingsComponents.ChatGPTSignInPanel
   alias EvoDashWeb.SettingsComponents.ProviderProfiles.Row
 
   alias EvoDashWeb.LLMSetup.ChatGPT
@@ -55,6 +56,10 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Detail do
   attr :auth_status, :any, default: nil
   attr :advanced_open, :any, default: nil
   attr :schedule, :map, default: %{}
+  # Page-owned in-browser ChatGPT sign-in state + the local/remote verdict.
+  # Both are TOTAL: the detail editor renders before the page assigns them.
+  attr :chatgpt_sign_in, :map, default: %{}
+  attr :chatgpt_sign_in_manual, :boolean, default: false
 
   def profile_detail(assigns) do
     fields = Map.merge(assigns.profile, if(is_map(assigns.draft), do: assigns.draft, else: %{}))
@@ -137,6 +142,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Detail do
               <span class="badge badge-secondary badge-sm">{gettext("Sign in with ChatGPT")}</span>
             </div>
           </div>
+          <%!-- zh_CN: 账户名称 = 本次登录取到的 ChatGPT 账户标识；下方的登录控件就在此节点上完成连接。 --%>
           <.profile_field
             :if={@chatgpt?}
             name="siwc_account"
@@ -144,10 +150,24 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Detail do
             value={ChatGPT.account_name(value(@fields, "siwc_account"))}
             help={
               gettext(
-                "Use the account name you signed in with — or the one passed to genesis chatgpt login --account on the execution node."
+                "The ChatGPT account this profile uses. Sign in below to connect it on this node."
               )
             }
           />
+          <div :if={@chatgpt?} class="min-w-0 space-y-2 sm:col-span-2">
+            <ChatGPTSignInPanel.sign_in_panel
+              id={"provider-detail-" <> @slug <> "-chatgpt"}
+              surface="detail"
+              profile_id={to_string(value(@profile, "id"))}
+              manual={@chatgpt_sign_in_manual}
+              sign_in={
+                ChatGPTSignInPanel.surface_state(
+                  @chatgpt_sign_in,
+                  {:detail, value(@profile, "id")}
+                )
+              }
+            />
+          </div>
           <.profile_field
             :if={oauth?(@fields) and not @chatgpt?}
             name="oauth_file"
@@ -161,7 +181,13 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Detail do
           />
         </div>
         <input :if={not oauth_supported?(@fields)} type="hidden" name="auth_mode" value="api_key" />
-        <.provider_auth_status :if={oauth?(@fields)} status={@auth_status} profile={@fields} />
+        <.provider_auth_status
+          :if={oauth?(@fields)}
+          status={@auth_status}
+          profile={@fields}
+          chatgpt_sign_in={@chatgpt_sign_in}
+          chatgpt_sign_in_manual={@chatgpt_sign_in_manual}
+        />
         <p :if={not oauth?(@fields)} class="text-xs leading-relaxed text-base-content/70">
           {gettext(
             "Configure the provider's API key in the selected node's credentials file or environment. Keys are never displayed or copied into this account form."

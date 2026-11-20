@@ -76,6 +76,12 @@ defmodule EvoDashWeb.SettingsComponents do
   # straight to the provider-account panel. Read totally at the call site, so
   # the page renders before (and without) the live side's assign.
   attr(:auth_statuses, :map, default: %{})
+  # In-browser ChatGPT sign-in state owned by the page
+  # (`%{surface:, flow_id:, url:, phase:, reason:}`) and the local/remote
+  # verdict. Both are TOTAL so the page renders before/without the assigns;
+  # they reach the provider panel, its rows and the expanded account editor.
+  attr(:chatgpt_sign_in, :map, default: %{})
+  attr(:chatgpt_sign_in_manual, :boolean, default: false)
 
   def category_section(assigns) do
     ~H"""
@@ -112,6 +118,8 @@ defmodule EvoDashWeb.SettingsComponents do
               disabled={@disabled}
               wizard={@provider_wizard}
               schedule={@provider_schedule}
+              chatgpt_sign_in={@chatgpt_sign_in}
+              chatgpt_sign_in_manual={@chatgpt_sign_in_manual}
             />
             <%!-- LLM Connection Test --%>
             <div class="mb-6 bg-base-100 rounded-lg border border-base-200 p-4">
