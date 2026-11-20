@@ -704,6 +704,86 @@ defmodule EvoDashWeb.SettingsLiveTest do
     :ok
   end
 
+  # The page renders TWO banners from the same `@config_status`: the settings
+  # card banner (`EvoDashWeb.SettingsLive`, with a call-to-action sentence) and
+  # the fixed bottom-right `EvoDashWeb.Layouts` banner (model-neutral
+  # "Configure now →"). Both list the SAME detail lines from
+  # `EvoDashWeb.ConfigIssues.lines/1`, so these page-wide assertions cover both
+  # surfaces; every string asserted is unique to one surface/variant so the two
+  # banners cannot mask each other.
+  describe "config status banner (warnings + validation errors)" do
+    @neutral_cta "Fix the settings listed above to resolve these issues."
+    @model_cta "Configure your LLM model in the LLM category to resolve these issues."
+
+    test "validation-error-only status shows the formatted error and the neutral call to action",
+         %{conn: conn} do
+      # The real-world motivating report: `ok?: false` with NOTHING missing and
+      # no warnings — a bad provider timezone. The banner used to render a title
+      # with zero detail lines and an unfounded model accusation.
+      status = %{
+        missing: [],
+        warnings: [],
+        ok?: false,
+        validation_errors: [
+          %EvoGit.Config.Schema.ValidationError{
+            key_path: [:llm, :providers, 0, :timezone],
+            message: ~s{invalid timezone: :no_time_zone_database (got "UTC")}
+          }
+        ]
+      }
+
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      html = deliver_node_data(view, nil, config_status: status)
+
+      assert html =~ "Missing Configuration"
+      assert html =~ "llm.providers.0.timezone"
+      assert html =~ "invalid timezone: :no_time_zone_database"
+      assert html =~ @neutral_cta
+      refute html =~ @model_cta
+    end
+
+    test "a missing LLM model keeps the model-specific call to action", %{conn: conn} do
+      status = %{
+        ok?: false,
+        missing: [:llm_model],
+        warnings: ["LLM model is not configured. Set [llm] model in config.toml."],
+        validation_errors: []
+      }
+
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      html = deliver_node_data(view, nil, config_status: status)
+
+      assert html =~ "LLM model is not configured. Set [llm] model in config.toml."
+      assert html =~ @model_cta
+      refute html =~ @neutral_cta
+    end
+
+    test "a healthy status with validation errors renders no banner and no error line", %{
+      conn: conn
+    } do
+      # Bare map entry (no `ValidationError` struct): the formatter tolerates
+      # plain maps with the same keys. `ok?: true` silences BOTH banners, so
+      # neither the title, either call-to-action sentence, nor the formatted
+      # line may appear anywhere in the rendered tree.
+      status = %{
+        ok?: true,
+        missing: [],
+        warnings: [],
+        validation_errors: [
+          %{key_path: [:scheduler, :max_turns], message: "must be a positive integer"}
+        ]
+      }
+
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      html = deliver_node_data(view, nil, config_status: status)
+
+      refute html =~ "Missing Configuration"
+      refute html =~ @neutral_cta
+      refute html =~ @model_cta
+      refute html =~ "scheduler.max_turns"
+    end
+  end
+
   describe "settings search" do
     test "renders the search input inside a form (required for phx-change)", %{conn: conn} do
       {:ok, _view, html} = mount_settings(conn, ~p"/settings")

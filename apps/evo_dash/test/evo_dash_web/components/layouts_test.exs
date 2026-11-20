@@ -508,6 +508,118 @@ defmodule EvoDashWeb.LayoutsTest do
         refute Floki.text(tree) =~ "Should not be displayed"
       end
     end
+
+    # A schema validation error ALONE makes the status `ok?: false` with no
+    # warnings and nothing missing (the real-world "invalid timezone" report).
+    # The banner must render the actual problem instead of an empty list plus
+    # an unfounded accusation that the model is unconfigured.
+    test "validation-error-only status renders the formatted error line and no model blame" do
+      status = %{
+        missing: [],
+        warnings: [],
+        ok?: false,
+        validation_errors: [
+          %EvoGit.Config.Schema.ValidationError{
+            key_path: [:llm, :providers, 0, :timezone],
+            message: ~s{invalid timezone: :no_time_zone_database (got "UTC")}
+          }
+        ]
+      }
+
+      for {node_id, href} <- [{nil, "/settings"}, {"remote-test", "/settings?node=remote-test"}] do
+        tree = render_app(current_node_id: node_id, config_status: status) |> parse()
+
+        assert [banner] = config_warning(tree)
+        assert Floki.find(banner, "p") |> Floki.text() == "Missing Configuration"
+
+        assert Floki.find(banner, "li") |> Enum.map(&Floki.text/1) == [
+                 ~s{llm.providers.0.timezone: invalid timezone: :no_time_zone_database (got "UTC")}
+               ]
+
+        assert [link] = Floki.find(banner, "a")
+        assert Floki.attribute(link, "href") == [href]
+        assert Floki.text(link) == "Configure now →"
+
+        # This banner is model-neutral: neither the settings page's
+        # model-specific call to action nor any other model blame may appear.
+        page_text = Floki.text(tree)
+
+        refute page_text =~
+                 "Configure your LLM model in the LLM category to resolve these issues."
+
+        refute Floki.text(banner) =~ "LLM model"
+      end
+    end
+
+    # Both kinds of problem in one status: warnings stay verbatim and first,
+    # then one line per validation error in core order (the shared
+    # `EvoDashWeb.ConfigIssues.lines/1` contract pinned through the banner).
+    test "warnings and validation errors render in that order" do
+      warnings = ["No API key found.", "Provider endpoint is unreachable."]
+
+      status = %{
+        ok?: false,
+        missing: [],
+        warnings: warnings,
+        validation_errors: [
+          %{key_path: [:llm, :providers, 0, :timezone], message: "invalid timezone"},
+          %EvoGit.Config.Schema.ValidationError{
+            key_path: [:scheduler, :max_turns],
+            message: "must be a positive integer"
+          }
+        ]
+      }
+
+      tree = render_app(config_status: status) |> parse()
+
+      assert [banner] = config_warning(tree)
+
+      assert Floki.find(banner, "li") |> Enum.map(&Floki.text/1) ==
+               warnings ++
+                 [
+                   "llm.providers.0.timezone: invalid timezone",
+                   "scheduler.max_turns: must be a positive integer"
+                 ]
+    end
+
+    test "healthy status with validation errors still renders no warning" do
+      status = %{
+        ok?: true,
+        missing: [],
+        warnings: [],
+        validation_errors: [
+          %EvoGit.Config.Schema.ValidationError{
+            key_path: [:llm, :providers, 0, :timezone],
+            message: "invalid timezone"
+          }
+        ]
+      }
+
+      tree = render_app(config_status: status) |> parse()
+      assert config_warning(tree) == []
+      refute Floki.text(tree) =~ "Missing Configuration"
+      refute Floki.text(tree) =~ "llm.providers.0.timezone"
+    end
+
+    # A status that reports the model itself as missing renders normally, and
+    # this banner still shows only the neutral "Configure now →" link — it
+    # never carries a model-specific call to action, so it does not branch on
+    # `missing` at all.
+    test "missing llm_model status renders the banner without a model call to action" do
+      warnings = ["No API key found."]
+      status = %{ok?: false, missing: [:llm_model], warnings: warnings}
+
+      tree = render_app(config_status: status) |> parse()
+      assert [banner] = config_warning(tree)
+      assert Floki.find(banner, "p") |> Floki.text() == "Missing Configuration"
+      assert Floki.find(banner, "li") |> Enum.map(&Floki.text/1) == warnings
+
+      assert [link] = Floki.find(banner, "a")
+      assert Floki.attribute(link, "href") == ["/settings"]
+      assert Floki.text(link) == "Configure now →"
+
+      refute Floki.text(banner) =~ "LLM model"
+    end
   end
 
   # --- helpers ---
