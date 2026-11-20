@@ -50,8 +50,7 @@ defmodule EvoDashWeb.AgentsLive do
     PendingEvents,
     SendMessage,
     StreamPanel,
-    StreamWatch,
-    ToolCallDisplay
+    StreamWatch
   }
 
   @impl true
