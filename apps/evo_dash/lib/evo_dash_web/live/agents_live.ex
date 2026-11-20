@@ -1,7 +1,6 @@
 defmodule EvoDashWeb.AgentsLive do
   @moduledoc """
   Agent tree inspector.
-
   Renders the recursive agent hierarchy from the scheduler's runtime state with
   chat-history and token/cost usage viewers. Node-aware: reads scheduler state
   via `EvoDash.NodeContext` so it works for both the local BEAM node and a
@@ -12,7 +11,6 @@ defmodule EvoDashWeb.AgentsLive do
   `{:agents_updated, node}`), which are applied incrementally in-memory through
   ONE shared path for local and remote events — foreign-node events are
   dropped.
-
   ALL node-aware data loading is ASYNC: the page load (spawned by
   `handle_params/3` on the CONNECTED mount only), broadcast-triggered
   refreshes, and history fetches run in `EvoDash.TaskSupervisor` children —
@@ -26,31 +24,36 @@ defmodule EvoDashWeb.AgentsLive do
   re-fetched only when its message count changed (see `HistoryGate`).
   A failed page load keeps the last good tree, clears the loading flag and
   records a retry-able `@agents_error` banner.
+
+  The page module only ROUTES: `mount/3`, `handle_params/3` and the
+  `handle_info/2` / `handle_event/2` clauses delegate every state transition,
+  and the work lives in the support modules beside this file —
+  `Loader` (the async page-load / refresh spawners), `AgentMerge` +
+  `PendingEvents` (the coalesced incremental merges), `LoadData` (the
+  node-aware loads), `Inspector` + `StreamWatch` + `AgentList` +
+  `HistoryGate` + `OptimisticMessages` (the selected-agent detail panel and
+  its push stream), `CommitGraphState` + `CommitGraph` +
+  `CommitGraphRefresh` (the temporal commit-history view, its fold state and
+  its throttled fetch), `SendMessage` (the "Send Message" modal flow), plus
+  `TreeView`, `ContextMeter`, `ThresholdCache`, `StreamPanel`,
+  `StreamPresentation`, `StreamLimits`, `RuntimeStream` and `ToolCallDisplay`
+  for the presentation helpers the template renders.
   """
   use EvoDashWeb, :live_view
 
-  alias EvoDash.SafeCall
-
   alias EvoDashWeb.AgentsLive.{
     AgentMerge,
-    CommitGraph,
-    CommitGraphRefresh,
+    CommitGraphState,
     ContextMeter,
     Inspector,
-    LoadData,
-    OptimisticMessages,
+    Loader,
     PendingEvents,
+    SendMessage,
     StreamPanel,
     StreamWatch,
     ToolCallDisplay
   }
 
-  # Minimum interval between commit-graph fetches. Refreshes are already coalesced
-  # by the agent-event flush; this further throttles the (heavier) per-repo git
-  # RPC. A throttled request arms ONE one-shot :commit_graph_tick — never a poll.
-  # The window is read AT CALL TIME via commit_graph_min_interval_ms/0 (the
-  # :agents_live_commit_graph_tick_ms test seam, production default 1000ms) so the
-  # throttle check and the armed tick delay can never diverge.
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
@@ -63,7 +66,7 @@ defmodule EvoDashWeb.AgentsLive do
     current_node = socket.assigns[:current_node] || node()
 
     # No synchronous loads here: handle_params/3 always runs after mount and
-    # kicks off the async page load (start_async_load/1), which populates
+    # kicks off the async page load (Loader.start_page_load/1), which populates
     # agents/config_status/threshold_cache. The initial render (dead render
     # included) shows the loading state via @agents_loading.
     socket =
@@ -208,7 +211,7 @@ defmodule EvoDashWeb.AgentsLive do
         # Node changed (e.g. user switched from Local to a remote target, or
         # vice versa). Clear per-agent selection state, the history gate, and
         # the threshold cache — agent ids and config are per-node. The agent
-        # reload itself happens asynchronously below (start_async_load/1), so
+        # reload itself happens asynchronously below (Loader.start_page_load/1), so
         # the page never blocks on cross-node RPCs.
         socket
         |> assign(
@@ -275,7 +278,7 @@ defmodule EvoDashWeb.AgentsLive do
     # results, so the connected load is safe to start unconditionally.
     socket =
       if connected?(socket) do
-        socket |> Inspector.maybe_attach() |> start_async_load()
+        socket |> Inspector.maybe_attach() |> Loader.start_page_load()
       else
         socket
       end
@@ -284,7 +287,7 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
-  # Async page-load result (spawned by start_async_load/1). Applies the fresh
+  # Async page-load result (spawned by Loader.start_page_load/1). Applies the fresh
   # agents + config status + threshold cache when still current.
   def handle_info({:agents_data_loaded, node, generation, result}, socket) do
     # Stale-guard: drop results from an older load generation or a different
@@ -306,7 +309,7 @@ defmodule EvoDashWeb.AgentsLive do
               previous_node: node
             )
             |> Inspector.select_requested()
-            |> maybe_load_commit_graph([])
+            |> CommitGraphState.maybe_load([])
 
           {:noreply, socket}
 
@@ -401,7 +404,7 @@ defmodule EvoDashWeb.AgentsLive do
             socket
             |> AgentMerge.apply_result(agents)
             |> assign(threshold_cache: threshold_cache)
-            |> maybe_load_commit_graph([])
+            |> CommitGraphState.maybe_load([])
 
           {:noreply, socket}
 
@@ -448,14 +451,15 @@ defmodule EvoDashWeb.AgentsLive do
       case after_flush do
         # A refresh was spawned — its result path already runs
         # Inspector.maybe_fetch_selected_history/1, so do not also refetch here.
-        :refresh -> spawn_agents_refresh(socket)
+        :refresh -> Loader.spawn_refresh(socket)
         :refetch -> Inspector.refetch_selected_history(socket)
         :none -> socket
       end
 
     # A burst of agent commits extends the graph (new dots + moved rings;
-    # throttled/coalesced); no-op unless the commit-history view is active.
-    {:noreply, maybe_load_commit_graph(socket, [])}
+    # throttled/coalesced in CommitGraphState); no-op unless the commit-history
+    # view is active.
+    {:noreply, CommitGraphState.maybe_load(socket, [])}
   end
 
   @impl true
@@ -491,56 +495,14 @@ defmodule EvoDashWeb.AgentsLive do
   def handle_info({:agent_history_loaded, _, _, _, _}, socket), do: {:noreply, socket}
 
   @impl true
-  # Async commit-graph result (spawned by spawn_commit_graph_fetch/1). Applies the
-  # fresh graph when it is the newest fetch for the node being viewed. An error
-  # keeps the last good graph (the view never wedges on a spinner); a PARTIAL
-  # success (≥1 group ok, others failed) is an {:ok, ...} carrying the successful
-  # groups only — the failed groups' lanes still render from the agent set, their
-  # commits just stop at the last fetch.
-  def handle_info({:commit_graph_loaded, node, seq, result}, socket) do
-    if node != socket.assigns.current_node or
-         seq < Map.get(socket.assigns, :commit_graph_seq, 0) do
-      {:noreply, socket}
-    else
-      case result do
-        {:ok, raw_by_repo} ->
-          # Lanes come from the MERGED agent set (live + in-session retained) so
-          # a recycled agent's lane/START-END markers survive; the agent tree
-          # (@agents) is untouched. The fingerprint is re-stored for the agent
-          # set THIS build consumed, so the next fingerprint-gated flush
-          # compares against what was actually rendered.
-          agents = commit_graph_agents(socket)
-
-          {:noreply,
-           assign(socket,
-             commit_graph:
-               CommitGraph.build(raw_by_repo, agents, socket.assigns.commit_fold_expanded),
-             commit_graph_raw: raw_by_repo,
-             commit_graph_loaded: true,
-             commit_graph_loading: false,
-             commit_graph_error: nil,
-             commit_graph_fingerprint: CommitGraphRefresh.fingerprint(agents)
-           )}
-
-        {:error, reason} ->
-          {:noreply,
-           assign(socket,
-             commit_graph_loading: false,
-             commit_graph_error: reason
-           )}
-      end
-    end
-  end
+  # Async commit-graph result (spawned by CommitGraphState). Ownership, the node
+  # + seq stale guards and the partial-success folding live there.
+  def handle_info({:commit_graph_loaded, node, seq, result}, socket),
+    do: CommitGraphState.loaded(socket, node, seq, result)
 
   @impl true
-  # One-shot retry armed by schedule_commit_graph_tick/1 when a refresh request was
-  # throttled: re-attempt with the throttle bypassed so a commit created inside
-  # the throttle window (a new dot, or an agent ring that moved to a fresh tip)
-  # is still reflected. Not periodic — it is armed ONLY by a throttled request.
-  def handle_info(:commit_graph_tick, socket) do
-    socket = assign(socket, :commit_graph_tick_scheduled, false)
-    {:noreply, maybe_load_commit_graph(socket, force: true)}
-  end
+  # One-shot retry armed when a commit-graph refresh request was throttled.
+  def handle_info(:commit_graph_tick, socket), do: CommitGraphState.tick(socket)
 
   @impl true
   def handle_event("select_agent", %{"id" => id}, socket) do
@@ -548,70 +510,24 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
-  # Left-panel view switcher (agent tree / commit history). Only the two literal
-  # values are accepted; anything else is ignored (whitelist, no atom conversion).
-  def handle_event("switch_left_view", %{"view" => "tree"}, socket) do
-    {:noreply, assign(socket, :left_view, :tree)}
-  end
-
-  def handle_event("switch_left_view", %{"view" => "commits"}, socket) do
-    {:noreply, socket |> assign(:left_view, :commits) |> maybe_load_commit_graph(force: true)}
-  end
-
-  def handle_event("switch_left_view", _params, socket), do: {:noreply, socket}
+  # Left-panel view switcher (agent tree / commit history) — only the two literal
+  # values are accepted; anything else is a no-op (see CommitGraphState).
+  def handle_event("switch_left_view", params, socket),
+    do: {:noreply, CommitGraphState.switch_left_view(socket, params["view"])}
 
   @impl true
-  # Commit-history FOLD (collapse/expand). The raw commit data is ALREADY in
-  # @commit_graph_raw, so a fold change only re-runs the pure view-model
-  # assembly in this process — no git RPC, no fetch spawn, no throttle/tick and
-  # no fingerprint consultation. The fold key is whitelisted by shape only (a
-  # binary straight from the rendered gap row — never atomized).
-  def handle_event("toggle_commit_fold", %{"fold-key" => key}, socket) when is_binary(key) do
-    if commit_folds_active?(socket) do
-      expanded = socket.assigns.commit_fold_expanded
-
-      expanded =
-        if MapSet.member?(expanded, key),
-          do: MapSet.delete(expanded, key),
-          else: MapSet.put(expanded, key)
-
-      {:noreply,
-       socket |> assign(:commit_fold_expanded, expanded) |> rebuild_commit_graph_folds()}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  # Odd params (non-binary / missing key) are a no-op.
-  def handle_event("toggle_commit_fold", _params, socket), do: {:noreply, socket}
+  # Commit-history FOLD (collapse/expand) — a pure in-process rebuild from
+  # @commit_graph_raw, never a git RPC (see CommitGraphState).
+  def handle_event("toggle_commit_fold", params, socket),
+    do: {:noreply, CommitGraphState.toggle_fold(socket, params)}
 
   @impl true
-  # Expands EVERY fold of the current raw data. `fold_keys/2` is the builder's
-  # single source of the fold inventory, so the page never guesses key shapes.
-  def handle_event("expand_all_commit_folds", _params, socket) do
-    if commit_folds_active?(socket) do
-      expanded =
-        MapSet.union(
-          socket.assigns.commit_fold_expanded,
-          CommitGraph.fold_keys(socket.assigns.commit_graph_raw, commit_graph_agents(socket))
-        )
-
-      {:noreply,
-       socket |> assign(:commit_fold_expanded, expanded) |> rebuild_commit_graph_folds()}
-    else
-      {:noreply, socket}
-    end
-  end
+  def handle_event("expand_all_commit_folds", _params, socket),
+    do: {:noreply, CommitGraphState.expand_all(socket)}
 
   @impl true
-  def handle_event("collapse_all_commit_folds", _params, socket) do
-    if commit_folds_active?(socket) do
-      {:noreply,
-       socket |> assign(:commit_fold_expanded, MapSet.new()) |> rebuild_commit_graph_folds()}
-    else
-      {:noreply, socket}
-    end
-  end
+  def handle_event("collapse_all_commit_folds", _params, socket),
+    do: {:noreply, CommitGraphState.collapse_all(socket)}
 
   @impl true
   # Inspector detail-panel events — state transitions live in Inspector.
@@ -666,161 +582,28 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
-  def handle_event("open_send_message", %{"id" => id}, socket) do
-    agent_id = String.to_integer(id)
-    {:noreply, assign(socket, send_message_agent_id: agent_id, send_message_text: "")}
-  end
+  def handle_event("open_send_message", %{"id" => id}, socket),
+    do: SendMessage.open(socket, id)
 
   @impl true
-  def handle_event("close_send_message", _params, socket) do
-    {:noreply, assign(socket, send_message_agent_id: nil, send_message_text: "")}
-  end
+  def handle_event("close_send_message", _params, socket), do: SendMessage.close(socket)
 
   @impl true
-  def handle_event("validate_send_message", %{"message" => message}, socket) do
-    {:noreply, assign(socket, :send_message_text, message)}
-  end
+  def handle_event("validate_send_message", %{"message" => message}, socket),
+    do: SendMessage.validate(socket, message)
 
   @impl true
-  def handle_event("send_agent_message", %{"agent_id" => id, "message" => message}, socket) do
-    agent_id = String.to_integer(id)
-    node = socket.assigns.current_node
-
-    # Return shapes (verified): success = {:ok, :ok} (local and remote); a
-    # missing agent surfaces as a NESTED {:ok, {:error, :not_found}} on the
-    # local path (RemoteNode wraps the RemoteAPI result in {:ok, _}); erpc
-    # failures surface as {:error, reason}. Only {:ok, :ok} is a real success —
-    # matching the old {:ok, _} falsely reported success for missing agents.
-    # Deliberately synchronous (the user expects immediate feedback —
-    # optimistic display — and this call is a cheap local/remote store append),
-    # but wrapped in the exit-safe boundary: a GenServer.call timeout / dead
-    # scheduler EXITS its caller, which would crash the page instead of
-    # flashing an error.
-    case send_user_message_safely(node, agent_id, message) do
-      {:ok, :ok} ->
-        optimistic_messages =
-          OptimisticMessages.append(socket.assigns.optimistic_messages, agent_id, message)
-
-        {:noreply,
-         socket
-         |> put_flash(:info, gettext("Message sent to agent"))
-         |> assign(
-           send_message_agent_id: nil,
-           send_message_text: "",
-           optimistic_messages: optimistic_messages
-         )}
-
-      {:ok, {:error, reason}} ->
-        {:noreply, send_message_error_flash(socket, reason)}
-
-      {:error, reason} ->
-        {:noreply, send_message_error_flash(socket, reason)}
-
-      other ->
-        {:noreply, send_message_error_flash(socket, other)}
-    end
-  end
+  # The message is delivered synchronously (the user expects immediate feedback)
+  # but through the exit-safe boundary and the call-time
+  # `:agents_send_message_runner` seam — see EvoDashWeb.AgentsLive.SendMessage.
+  def handle_event("send_agent_message", %{"agent_id" => id, "message" => message}, socket),
+    do: SendMessage.send(socket, id, message)
 
   @impl true
   # Retry button on the page-load error banner: clear the recorded error and
   # re-run the SAME async load (no polling, no auto-retry timer).
-  def handle_event("retry_agents_load", _params, socket) do
-    {:noreply, socket |> assign(:agents_error, nil) |> start_async_load()}
-  end
-
-  # Sends a user message through the exit-safe boundary and FLATTENS
-  # `EvoDash.SafeCall`'s wrapper, so the result keeps its documented shape:
-  # `{:ok, :ok}` (success), `{:ok, {:error, reason}}` (missing agent) or
-  # `{:error, reason}` (RPC / exit failure — a `GenServer.call` timeout lands
-  # here instead of killing the LiveView).
-  # The transport is the call-time seam `:agents_send_message_runner` (the same
-  # default-inert shape as `:agents_history_runner` / `:agents_list_runner`):
-  # `(node, agent_id, message) -> {:ok, :ok} | {:ok, {:error, reason}} |
-  # {:error, reason}`, resolved HERE — at the call site — so a test can drive
-  # `send_agent_message` without the shared `EvoGit.AgentScheduler` GenServer
-  # call (whose production 5 s budget EXITS on a loaded host). Production
-  # behaviour is unchanged: the default is the real node-aware delegate.
-  defp send_user_message_safely(node, agent_id, message) do
-    runner =
-      Application.get_env(
-        :evo_dash,
-        :agents_send_message_runner,
-        &EvoDash.NodeContext.send_user_message/3
-      )
-
-    case SafeCall.run(fn -> runner.(node, agent_id, message) end) do
-      {:ok, value} -> value
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  # ---------------------------------------------------------------------------
-  # Async load machinery
-  # ---------------------------------------------------------------------------
-
-  # Kicks off the async page load (agents + config status + threshold cache).
-  # Sets the loading flag and a fresh generation; the task sends
-  # {:agents_data_loaded, node, gen, result} back, which is stale-guarded by
-  # generation + node in handle_info/2.
-  defp start_async_load(socket) do
-    parent = self()
-    node = socket.assigns.current_node
-    gen = Map.get(socket.assigns, :load_generation, 0) + 1
-    threshold_cache = socket.assigns.threshold_cache
-
-    # A new load supersedes any previous failure: the banner clears as soon as
-    # the retry is in flight.
-    socket = assign(socket, agents_loading: true, load_generation: gen, agents_error: nil)
-
-    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      # Exit-safe boundary: the load RPCs to a possibly-dead remote daemon (or a
-      # node that disconnected mid-flight). `SafeCall.run/1` captures an `exit`
-      # (a GenServer.call timeout / dead target, which `rescue` cannot catch) as
-      # an error VALUE, so the result message is ALWAYS sent and
-      # `agents_loading` can never wedge.
-      result =
-        case SafeCall.run(fn -> LoadData.load(node, threshold_cache) end) do
-          {:ok, {:ok, data}} -> {:ok, data}
-          {:ok, {:error, reason}} -> {:error, reason}
-          {:error, reason} -> {:error, reason}
-          {:ok, other} -> {:error, {:unexpected_load_result, other}}
-        end
-
-      send(parent, {:agents_data_loaded, node, gen, result})
-    end)
-
-    socket
-  end
-
-  # Spawns the shared async agent refresh (used by the {:agents_updated, node}
-  # broadcasts, the {:agent_registered} summary-fallback, and the
-  # {:agent_updated} missing-agent race). Bumps the monotonic :refresh_seq
-  # (never reset); the result is stale-guarded by seq + node in handle_info/2.
-  defp spawn_agents_refresh(socket) do
-    parent = self()
-    node = socket.assigns.current_node
-    seq = Map.get(socket.assigns, :refresh_seq, 0) + 1
-    threshold_cache = socket.assigns.threshold_cache
-
-    socket = assign(socket, :refresh_seq, seq)
-
-    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      # Exit-safe boundary: the refresh RPCs to a possibly-dead remote daemon.
-      # `SafeCall.run/1` turns an exit (which `rescue` cannot catch) into an
-      # error value, so the result message is always sent; the seq stale-guard
-      # drops late/duplicate results and an error keeps the last good tree.
-      result =
-        case SafeCall.run(fn -> LoadData.refresh(node, threshold_cache) end) do
-          {:ok, {agents, cache}} -> {:ok, agents, cache}
-          {:error, reason} -> {:error, reason}
-          {:ok, other} -> {:error, {:unexpected_refresh_result, other}}
-        end
-
-      send(parent, {:agents_refresh_result, seq, node, result})
-    end)
-
-    socket
-  end
+  def handle_event("retry_agents_load", _params, socket),
+    do: {:noreply, Loader.start_page_load(socket)}
 
   @impl true
   def terminate(_reason, socket) do
@@ -836,273 +619,6 @@ defmodule EvoDashWeb.AgentsLive do
 
   defp inspector_message_marker(entry, index),
     do: Inspector.inspector_message_marker(entry, index)
-
-  # Fetches (or refreshes) the commit graph, but ONLY while the commit-history
-  # view is active — the tree view must never trigger a git RPC. Mirrors the
-  # other async loads: the task runs in an EvoDash.TaskSupervisor child (never in
-  # the LiveView process), the runner seam is resolved AT SPAWN TIME (inside the
-  # task), and the result is stale-guarded on a monotonic seq + the viewed node.
-  #
-  # First keeps the rendered graph in sync with the CURRENT agent list (a
-  # newly-spawned child's progress path/ring appears immediately), then
-  # refetches — throttled to commit_graph_min_interval_ms/0; a throttled request
-  # arms a one-shot tick. `force: true` bypasses the throttle AND the
-  # fingerprint gate (first activation, the one-shot tick, a view re-switch).
-  #
-  # FINGERPRINT GATE (fingerprint-gated calls only, i.e. NOT force: true and
-  # the graph is already loaded): a commit-relevance fingerprint of the
-  # temporal view's agent set (CommitGraphRefresh.fingerprint/1 — the grouping
-  # key, task/task_local ids, depth, parent, the base/tip shas and the ended
-  # flag) is compared against the one stored by the last build. UNCHANGED →
-  # the flush was status/token/usage/message-count-only, commit-irrelevant:
-  # skip BOTH the rebuild and the refetch spawn (no git RPC). CHANGED →
-  # rebuild + refetch as before and store the new fingerprint. A fetch already
-  # in flight (@commit_graph_loading) is never skipped-changed: its result
-  # applies through {:commit_graph_loaded, ...}, which re-stores the
-  # fingerprint of the agent set it built from — so the in-flight fetch always
-  # converges and no fetch/result loop can form (a result yielding identical
-  # raw data stores the CURRENT fingerprint; the next flush then compares
-  # equal and skips).
-  defp maybe_load_commit_graph(socket, opts) do
-    if socket.assigns.left_view != :commits do
-      socket
-    else
-      agents = commit_graph_agents(socket)
-      force? = Keyword.get(opts, :force, false) or not socket.assigns.commit_graph_loaded
-
-      # Skip the fingerprint work entirely on the bypass paths.
-      cond do
-        force? ->
-          refresh_commit_graph(socket, agents, force: true, gate: false)
-
-        # A fetch is already in flight: never gate (and never re-spawn) — its
-        # result applies the freshest data and re-stores the fingerprint.
-        socket.assigns.commit_graph_loading ->
-          refresh_commit_graph(socket, agents, force: false, gate: false)
-
-        true ->
-          refresh_commit_graph(socket, agents, force: false, gate: true)
-      end
-    end
-  end
-
-  # Rebuild + (maybe) refetch. `gate: true` compares the agent set's
-  # commit-relevance fingerprint against the stored one and short-circuits on
-  # a match; `gate: false` always rebuilds. `force: true` additionally bypasses
-  # the fetch throttle (view switch / tick fire); `force: false` follows the
-  # throttle/tick rules.
-  defp refresh_commit_graph(socket, agents, force: force?, gate: gate?) do
-    if gate? do
-      fingerprint = CommitGraphRefresh.fingerprint(agents)
-
-      if MapSet.size(fingerprint) > 0 and fingerprint == socket.assigns.commit_graph_fingerprint do
-        # Commit-irrelevant change — the view model would be identical.
-        socket
-      else
-        socket
-        |> rebuild_commit_graph(agents, fingerprint)
-        |> fetch_commit_graph(agents, fingerprint, force?)
-      end
-    else
-      socket
-      |> rebuild_commit_graph(agents, nil)
-      |> fetch_commit_graph(agents, nil, force?)
-    end
-  end
-
-  # Rebuilds @commit_graph from the last fetched raw data + the given agents,
-  # so the overlay (progress paths, ring positions) tracks agents without a
-  # git RPC. A no-op before the first successful fetch. `fingerprint` (nil on
-  # the bypass paths) is stored so the NEXT fingerprint-gated call compares
-  # against what was actually built. The user's fold (collapse/expand) set is
-  # threaded through, so a refresh never resets the fold state.
-  defp rebuild_commit_graph(socket, agents, fingerprint) do
-    if socket.assigns.commit_graph_loaded do
-      assign(socket,
-        commit_graph:
-          CommitGraph.build(
-            socket.assigns.commit_graph_raw,
-            agents,
-            socket.assigns.commit_fold_expanded
-          ),
-        commit_graph_fingerprint: fingerprint || CommitGraphRefresh.fingerprint(agents)
-      )
-    else
-      socket
-    end
-  end
-
-  # Fold events are inert unless the commits view is the ACTIVE view over an
-  # already-fetched graph: there are no gap rows to click and nothing to
-  # re-fold — and critically, they must never start a fetch of their own.
-  defp commit_folds_active?(socket) do
-    socket.assigns.left_view == :commits and socket.assigns.commit_graph_loaded
-  end
-
-  # Rebuilds @commit_graph in place for a FOLD (collapse/expand) change — the
-  # raw commit data is already in memory, so this is pure view-model work: no
-  # git RPC, no fetch spawn, no throttle/fingerprint consultation. A no-op
-  # before the first successful fetch (there is nothing to re-fold).
-  defp rebuild_commit_graph_folds(socket) do
-    if socket.assigns.commit_graph_loaded do
-      assign(socket,
-        commit_graph:
-          CommitGraph.build(
-            socket.assigns.commit_graph_raw,
-            commit_graph_agents(socket),
-            socket.assigns.commit_fold_expanded
-          )
-      )
-    else
-      socket
-    end
-  end
-
-  # Spawns the refetch (or arms the one-shot tick when throttled) and stores
-  # `fingerprint` so the fetch's result path knows which agent set it captured.
-  # `force?` bypasses the throttle (view switch / tick fire).
-  defp fetch_commit_graph(socket, agents, fingerprint, force?) do
-    groups = commit_graph_groups(agents)
-
-    cond do
-      groups == [] ->
-        assign(socket,
-          commit_graph: [],
-          commit_graph_loaded: true,
-          commit_graph_loading: false,
-          commit_graph_fingerprint: fingerprint || CommitGraphRefresh.fingerprint(agents)
-        )
-
-      force? or not commit_graph_throttled?(socket) ->
-        spawn_commit_graph_fetch(socket, fingerprint)
-
-      true ->
-        schedule_commit_graph_tick(socket)
-    end
-  end
-
-  # The agent set the TEMPORAL view is built from: the LIVE agents (@agents)  # MERGED with the in-session RETAINED (ended) agents (@retained_agents),
-  # de-duplicated by id with the LIVE copy winning. Retained agents contribute
-  # lane metadata (and their START/END markers) but never tips, because their
-  # commits already live in the task's durable ref ancestry. The agent TREE
-  # (@agents) is deliberately NOT fed from here.
-  defp commit_graph_agents(socket) do
-    live = socket.assigns.agents
-    live_ids = MapSet.new(live, & &1.id)
-
-    retained =
-      socket.assigns.retained_agents
-      |> Map.values()
-      |> Enum.reject(&MapSet.member?(live_ids, &1.id))
-
-    live ++ retained
-  end
-
-  # Eligible agents' commit ranges grouped for the TASK-scoped commit-graph RPC.
-  # A group is `{repo_key, task_id}` (both binaries — the durable task ref is
-  # per task AND per repo) and carries only the NON-ended agents' tips
-  # (`live_tips`): a retained/ended agent's commits are already in the task's
-  # durable ref ancestry, so it contributes its lane but no tip. Agents lacking
-  # a repo_key, base_commit, current_commit or task_id are skipped. Sorted by
-  # `{repo_key, task_id}` for deterministic task input.
-  defp commit_graph_groups(agents) do
-    agents
-    |> Enum.filter(fn a ->
-      is_binary(Map.get(a, :repo_root)) and is_binary(Map.get(a, :base_commit)) and
-        is_binary(Map.get(a, :current_commit)) and is_binary(Map.get(a, :task_id))
-    end)
-    |> Enum.group_by(fn a -> {Map.get(a, :repo_root), Map.get(a, :task_id)} end)
-    |> Enum.map(fn {{repo_key, task_id}, group} ->
-      live_tips =
-        group
-        |> Enum.reject(&(Map.get(&1, :ended) == true))
-        |> Enum.map(&Map.get(&1, :current_commit))
-        |> Enum.uniq()
-
-      %{repo_key: repo_key, task_id: task_id, live_tips: live_tips}
-    end)
-    |> Enum.sort_by(fn %{repo_key: repo_key, task_id: task_id} -> {repo_key, task_id} end)
-  end
-
-  # The commit-graph minimum interval, resolved AT CALL TIME so both the throttle
-  # check and the armed one-shot tick delay read the same value. The app-env seam
-  # :agents_live_commit_graph_tick_ms lets tests shrink the window; production
-  # behaviour is unchanged (default 1000ms) when it is unset.
-  defp commit_graph_min_interval_ms do
-    Application.get_env(:evo_dash, :agents_live_commit_graph_tick_ms, 1000)
-  end
-
-  # True when the last fetch is inside the minimum interval.
-  defp commit_graph_throttled?(socket) do
-    case socket.assigns.commit_graph_fetched_at do
-      nil -> false
-      at -> System.monotonic_time(:millisecond) - at < commit_graph_min_interval_ms()
-    end
-  end
-
-  # Arms ONE one-shot tick (never a repeating timer) so a throttled refresh is
-  # eventually served. The boolean assign guarantees a single timer per window.
-  defp schedule_commit_graph_tick(socket) do
-    if socket.assigns.commit_graph_tick_scheduled do
-      socket
-    else
-      Process.send_after(self(), :commit_graph_tick, commit_graph_min_interval_ms())
-      assign(socket, :commit_graph_tick_scheduled, true)
-    end
-  end
-
-  # Spawns the async commit-graph fetch: ONE runner call per `{repo_key, task_id}`
-  # group, passing that task's live tips + the limit. The seam
-  # :agents_commit_graph_runner (default &EvoDash.NodeContext.list_task_commit_graph/5)
-  # is resolved AT SPAWN TIME so tests can stub it. The per-group replies are
-  # folded by CommitGraphRefresh.fetch_result/3 with PARTIAL-SUCCESS semantics:
-  # a failing group drops only ITS data (recorded as a
-  # {:commit_graph_repo_failed, {repo_key, task_id}, reply} failure) while the
-  # successful groups still fold into ONE %{repo_key => %{commits, refs}} map —
-  # the keying the pure assembler expects (it groups agents by
-  # `repo_root || repo_id`); {:error, _} surfaces ONLY when EVERY group fails.
-  # The `fingerprint` captured at spawn time rides along as the fetch's
-  # bookkeeping value (see fetch_commit_graph/3).
-  defp spawn_commit_graph_fetch(socket, fingerprint) do
-    parent = self()
-    node = socket.assigns.current_node
-    seq = Map.get(socket.assigns, :commit_graph_seq, 0) + 1
-    groups = commit_graph_groups(commit_graph_agents(socket))
-
-    socket =
-      assign(socket,
-        commit_graph_seq: seq,
-        commit_graph_loading: true,
-        commit_graph_fingerprint: fingerprint,
-        commit_graph_fetched_at: System.monotonic_time(:millisecond),
-        commit_graph_tick_scheduled: false
-      )
-
-    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      runner =
-        Application.get_env(
-          :evo_dash,
-          :agents_commit_graph_runner,
-          &EvoDash.NodeContext.list_task_commit_graph/5
-        )
-
-      # Exit-safe boundary: the commit-graph RPC targets a possibly-dead remote
-      # daemon (or a node that disconnected mid-flight). `SafeCall.run/1`
-      # captures an exit (which `rescue` cannot catch) as an error value, so the
-      # result message is ALWAYS sent and the commit view can never wedge on a
-      # spinner. A folded per-group `{:error, failure}` passes through verbatim
-      # (the renderer's stale-warning strip / first-load error strip).
-      result =
-        case SafeCall.run(fn -> CommitGraphRefresh.fetch_result(groups, runner, node) end) do
-          {:ok, folded_result} -> folded_result
-          {:error, _reason} -> {:error, :commit_graph_fetch_failed}
-        end
-
-      send(parent, {:commit_graph_loaded, node, seq, result})
-    end)
-
-    socket
-  end
 
   defp commit_bg_class(agent) do
     if agent.current_commit != agent.base_commit do
@@ -1123,14 +639,4 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   defp shorten_sha(other), do: other
-
-  # Shared error flash for failed send attempts (nested {:ok, {:error, _}} on
-  # the local path and {:error, _} erpc failures both land here).
-  defp send_message_error_flash(socket, reason) do
-    put_flash(
-      socket,
-      :error,
-      gettext("Failed to send message: %{reason}", reason: inspect(reason))
-    )
-  end
 end
