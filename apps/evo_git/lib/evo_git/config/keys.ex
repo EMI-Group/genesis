@@ -110,7 +110,8 @@ defmodule EvoGit.Config.Keys do
     )
   end
 
-  defp do_stringify(map, drop_nils, tuples, keyword_lists) when is_map(map) and not is_struct(map) do
+  defp do_stringify(map, drop_nils, tuples, keyword_lists)
+       when is_map(map) and not is_struct(map) do
     Enum.reduce(map, %{}, fn {key, value}, acc ->
       value = do_stringify(value, drop_nils, tuples, keyword_lists)
 
