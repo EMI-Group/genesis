@@ -624,6 +624,52 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
              )
   end
 
+  test "JSON object errors retain account and nested editor field paths" do
+    for field <- ["extra", "provider_options"],
+        {raw, reason} <- [
+          {"[]", "#{field}_must_be_object"},
+          {"{", "invalid_#{field}_json"},
+          {" \n\t", "invalid_#{field}_json"}
+        ],
+        scope <- [:account, :model] do
+      {input, path} =
+        case scope do
+          :account ->
+            {Map.put(params(), field, raw), "generation[#{field}]"}
+
+          :model ->
+            {Map.put(params(), "models", [%{"model" => "example", field => raw}]),
+             "models[0][generation][#{field}]"}
+        end
+
+      assert ProviderProfiles.parse_editor(input, "test") == {:error, %{path => reason}}
+      assert ProviderProfiles.parse(input, "test") == {:error, reason}
+    end
+  end
+
+  test "submitted JSON maps are stringified and nil or empty inputs clear overrides" do
+    for field <- ["extra", "provider_options"] do
+      value = %{enabled: false, nested: %{count: 0}}
+      expected = %{"enabled" => false, "nested" => %{"count" => 0}}
+
+      input =
+        params()
+        |> Map.put(field, value)
+        |> Map.put("models", [%{"model" => "example", field => value}])
+
+      assert {:ok, profile} = ProviderProfiles.parse(input, "test")
+      assert profile[field] == expected
+      assert hd(profile["models"])[field] == expected
+
+      for blank <- [nil, ""] do
+        patch = %{field => blank, "models" => [%{"model" => "example", field => blank}]}
+        assert {:ok, cleared} = ProviderProfiles.parse(patch, "test", profile)
+        refute Map.has_key?(cleared, field)
+        refute Map.has_key?(hd(cleared["models"]), field)
+      end
+    end
+  end
+
   test "credential env inputs emit only the canonical key, with canonical presence winning" do
     for input <- [
           %{"api_key_env" => " LEGACY_KEY "},
