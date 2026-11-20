@@ -111,6 +111,9 @@ Configuration guidance distinguishes partial persistence plus RAM-snapshot refre
 Top-level approval registration tests do not establish evaluator authorization, executable-code binding after approval, post-approval lifecycle revalidation, side-effect exactly-once semantics or prevention of late effects; child-owned integration belongs in `agent/` and `agent/tools/`.
 Approval-service restart with pending requests, responder/session authentication, approval-versus-cancel races and durable/redacted audit records remain outside this top-level coverage.
 
+### Remote connection persistence boundaries
+`remote_connections_test.exs` uses per-process config isolation and pins successful `delete/1` removal plus unknown-id refusal (lines 143–150), and successful `touch/1` ISO8601 persistence plus unknown-id refusal (lines 155–169).
+Neither mutation has a persistence-failure regression: there is no forced write error asserting error propagation or preservation of the previous file contents, and the successful save round-trip does not establish these failure contracts.
 ### Managed execution/activity test boundaries
 `tool_runtime_test.exs` directly drives `execute_batch/2` and pins serial-before-parallel ordering, parked simultaneous concurrent tool bodies, unique expensive-invocation permit ownership, cheap bypass under saturation, exact timeout/crash results, request owner/role propagation and per-call execution metadata/backend/terminal facts.
 Its returned results retain `{index, tool_call_id, name, output}`, but its execution-record assertions do not establish a call-id/index correlation or an agent current-call streaming contract.
