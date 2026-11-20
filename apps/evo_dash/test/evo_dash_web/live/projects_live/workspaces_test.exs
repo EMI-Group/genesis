@@ -19,7 +19,9 @@ defmodule EvoDashWeb.ProjectsLive.WorkspacesTest do
   boundaries instead of being refuted page-wide).
   """
 
-  use EvoDashWeb.ConnCase, async: true
+  # ProjectsLive tests clear the process-global VCT registry. A workspace test
+  # must retain its member fixtures until it finishes asserting the projection.
+  use EvoDashWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
 
