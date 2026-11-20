@@ -51,7 +51,15 @@ defmodule EvoGit.Config.Schema.LLMConstraints do
 
   require Logger
 
+  alias EvoGit.Config.Keys
   alias EvoGit.Config.Schema.LLM
+
+  @typedoc """
+  Model metadata as this module consumes it: the documented
+  `%{limits: map(), capabilities: map()}` shape, a raw catalog model struct
+  carrying those two fields, or `nil` when unavailable.
+  """
+  @type metadata :: map() | nil
 
   # ── Declarative constraint table ─────────────────────────────────────────
   #
@@ -172,7 +180,7 @@ defmodule EvoGit.Config.Schema.LLMConstraints do
     layer passes tools separately — so this branch is currently unreachable in
     production; it is implemented so the rule holds if such keys ever appear.)
   """
-  @spec filter(term(), term(), map() | nil) :: term()
+  @spec filter(term(), term(), metadata()) :: term()
   def filter(params, _model, _metadata) when not is_list(params), do: params
 
   def filter(params, model, metadata) do
@@ -297,7 +305,7 @@ defmodule EvoGit.Config.Schema.LLMConstraints do
 
   defp filter_max_tokens(params, model, %{limits: limits}) do
     with {:ok, value} <- Keyword.fetch(params, :max_tokens),
-         limit when is_integer(limit) <- fetch_key(limits, :output),
+         limit when is_integer(limit) <- Keys.get(limits, :output),
          true <- is_integer(value) and value > limit do
       drop_param(
         params,
@@ -352,10 +360,14 @@ defmodule EvoGit.Config.Schema.LLMConstraints do
     end
   end
 
+  # The WIRE-BOUNDARY application of the ONE reasoning-effort ladder
+  # (`EvoGit.Config.Schema.LLM.reasoning_efforts/0` +
+  # `canonical_reasoning_effort/1`): every comparison and wire alias in this
+  # module judges the canonical level, so `"max"` counts as `:xhigh`. The call
+  # is total and explicit (no atom interning); an unknown value keeps its raw
+  # form so the allowlist still rejects it and an unmapped provider leaves it
+  # untouched.
   defp normalize_effort(value) do
-    # `canonical_reasoning_effort/1` is total and explicit (no atom interning);
-    # unknown values keep their raw form so the allowlist still rejects them
-    # and an unmapped provider leaves them untouched.
     LLM.canonical_reasoning_effort(value) || value
   end
 
@@ -390,6 +402,10 @@ defmodule EvoGit.Config.Schema.LLMConstraints do
   end
 
   # ── Shared helpers ───────────────────────────────────────────────────────
+  #
+  # Tolerant key reads are `EvoGit.Config.Keys`'s rule (atom- OR string-keyed
+  # maps, presence-based, never interning an atom): this module uses
+  # `Keys.get/2` rather than carrying its own total copy.
 
   defp drop_params(params, keys, model, reason) do
     Enum.reduce(keys, params, &drop_param(&2, &1, model, reason))
@@ -417,8 +433,8 @@ defmodule EvoGit.Config.Schema.LLMConstraints do
 
   defp capability_enabled?(%{capabilities: capabilities}, key) do
     if is_map(capabilities) and map_size(capabilities) > 0 do
-      case fetch_key(capabilities, key) do
-        %{} = section -> fetch_key(section, :enabled) == true
+      case Keys.get(capabilities, key) do
+        %{} = section -> Keys.get(section, :enabled) == true
         _ -> false
       end
     else
@@ -438,8 +454,8 @@ defmodule EvoGit.Config.Schema.LLMConstraints do
   def normalize_metadata(nil), do: nil
 
   def normalize_metadata(%{} = meta) do
-    limits = to_map(fetch_key(meta, :limits))
-    capabilities = to_map(fetch_key(meta, :capabilities))
+    limits = to_map(Keys.get(meta, :limits))
+    capabilities = to_map(Keys.get(meta, :capabilities))
 
     if map_size(limits) == 0 and map_size(capabilities) == 0 do
       nil
@@ -451,17 +467,6 @@ defmodule EvoGit.Config.Schema.LLMConstraints do
   def normalize_metadata(_other), do: nil
   defp to_map(value) when is_map(value), do: value
   defp to_map(_other), do: %{}
-
-  # Tolerant key read: accepts atom- and string-keyed maps (config-derived data
-  # crosses TOML/JSON boundaries where keys are strings).
-  defp fetch_key(map, key) when is_map(map) do
-    case Map.fetch(map, key) do
-      {:ok, value} -> value
-      :error -> Map.get(map, to_string(key))
-    end
-  end
-
-  defp fetch_key(_map, _key), do: nil
 
   defp model_id(model) when is_binary(model) do
     case String.split(model, ":", parts: 2) do

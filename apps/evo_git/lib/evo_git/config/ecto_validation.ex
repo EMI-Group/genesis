@@ -61,6 +61,9 @@ defmodule EvoGit.Config.EctoValidation do
   """
 
   alias EvoGit.Config.EctoTypes
+  # Tolerant profile-field reads are `EvoGit.Config.Keys`'s rule (atom- OR
+  # string-keyed maps, presence-based, never interning an atom).
+  alias EvoGit.Config.Keys
   alias EvoGit.Config.Schema.ValidationError
 
   @typedoc "Path to a config key as a list of atoms (may contain integer indices)"
@@ -367,6 +370,7 @@ defmodule EvoGit.Config.EctoValidation do
   # Reuse the legacy field adapters for canonical provider profiles without
   # changing legacy messages, ordering, or optional-field behavior.
   @doc false
+  @spec provider_profile_shared_errors(key_path(), map()) :: [ValidationError.t()]
   def provider_profile_shared_errors(path, profile) do
     validators = [
       peak_concurrency: &validate_peak_concurrency/2,
@@ -380,7 +384,7 @@ defmodule EvoGit.Config.EctoValidation do
     ]
 
     Enum.flat_map(validators, fn {key, validate} ->
-      case profile_field(profile, key) do
+      case Keys.get(profile, key) do
         nil -> []
         value -> validate.(path, value)
       end
@@ -389,16 +393,10 @@ defmodule EvoGit.Config.EctoValidation do
 
   # ── Private: Model Profile Validation ─────────────────────────────────
 
-  # Reads a profile field from an atom- or string-keyed map (TOML decoding
-  # may leave string keys). A `case Map.get` (not `||`) distinguishes
-  # "absent" from "present but nil" — nil means the optional field is
-  # unconfigured.
-  defp profile_field(profile, key) do
-    case Map.get(profile, key) do
-      nil -> Map.get(profile, Atom.to_string(key))
-      value -> value
-    end
-  end
+  # Tolerant profile-field reads (an atom- OR string-keyed map, since TOML
+  # decoding may leave string keys) are `EvoGit.Config.Keys`'s rule; the
+  # optional fields below read through `Keys.get/2`, whose `nil` answer covers
+  # both "absent" and "present but nil" — either way the field is unconfigured.
 
   defp validate_model_profile(path, profile) when is_map(profile) do
     id = Map.get(profile, :id) || Map.get(profile, "id")
@@ -452,7 +450,7 @@ defmodule EvoGit.Config.EctoValidation do
 
     # Optional peak-hour concurrency fields. Atom- and string-keyed maps are
     # both possible (TOML decoding may leave string keys).
-    peak_concurrency = profile_field(profile, :peak_concurrency)
+    peak_concurrency = Keys.get(profile, :peak_concurrency)
 
     peak_concurrency_errors =
       if is_nil(peak_concurrency) do
@@ -461,7 +459,7 @@ defmodule EvoGit.Config.EctoValidation do
         validate_peak_concurrency(path, peak_concurrency)
       end
 
-    peak_hours = profile_field(profile, :peak_hours)
+    peak_hours = Keys.get(profile, :peak_hours)
 
     peak_hours_errors =
       if is_nil(peak_hours) do
@@ -471,7 +469,7 @@ defmodule EvoGit.Config.EctoValidation do
       end
 
     # Optional IANA timezone name for the profile's peak-hour windows.
-    timezone = profile_field(profile, :timezone)
+    timezone = Keys.get(profile, :timezone)
 
     timezone_errors =
       if is_nil(timezone) do
@@ -481,7 +479,7 @@ defmodule EvoGit.Config.EctoValidation do
       end
 
     # Optional context window (tokens) for context-compression decisions.
-    context_window = profile_field(profile, :context_window)
+    context_window = Keys.get(profile, :context_window)
 
     context_window_errors =
       if is_nil(context_window) do
@@ -492,7 +490,7 @@ defmodule EvoGit.Config.EctoValidation do
 
     # Optional list of days on which the profile is entirely off-peak (normal
     # concurrency 24/7, every peak_hours window suppressed).
-    off_peak_days = profile_field(profile, :off_peak_days)
+    off_peak_days = Keys.get(profile, :off_peak_days)
 
     off_peak_days_errors =
       if is_nil(off_peak_days) do
@@ -503,7 +501,7 @@ defmodule EvoGit.Config.EctoValidation do
 
     # Optional holiday calendar id: dates in that calendar are entirely
     # off-peak (normal concurrency 24/7, like off_peak_days).
-    off_peak_holidays = profile_field(profile, :off_peak_holidays)
+    off_peak_holidays = Keys.get(profile, :off_peak_holidays)
 
     off_peak_holidays_errors =
       if is_nil(off_peak_holidays) do
@@ -513,7 +511,7 @@ defmodule EvoGit.Config.EctoValidation do
       end
 
     # Optional auth mode for the profile ("api_key" | "oauth"; absent = "api_key").
-    auth_mode = profile_field(profile, :auth_mode)
+    auth_mode = Keys.get(profile, :auth_mode)
 
     auth_mode_errors =
       if is_nil(auth_mode) do
@@ -523,7 +521,7 @@ defmodule EvoGit.Config.EctoValidation do
       end
 
     # Optional per-profile override of the managed OAuth credential file path.
-    oauth_file = profile_field(profile, :oauth_file)
+    oauth_file = Keys.get(profile, :oauth_file)
 
     oauth_file_errors =
       if is_nil(oauth_file) do
