@@ -44,12 +44,10 @@ defmodule EvoDashWeb.AgentsLive do
   alias EvoDashWeb.AgentsLive.{
     AgentMerge,
     CommitGraphState,
-    ContextMeter,
     Inspector,
     Loader,
     PendingEvents,
     SendMessage,
-    StreamPanel,
     StreamWatch
   }
 
@@ -609,33 +607,4 @@ defmodule EvoDashWeb.AgentsLive do
     StreamWatch.detach(socket)
     :ok
   end
-
-  # Inspector/template entry points that the (unchanged) template calls as bare
-  # local functions — the implementation lives in EvoDashWeb.AgentsLive.Inspector.
-  defp selected_inspector_agent(assigns), do: Inspector.selected_inspector_agent(assigns)
-
-  defp inspector_scope(assigns), do: Inspector.inspector_scope(assigns)
-
-  defp inspector_message_marker(entry, index),
-    do: Inspector.inspector_message_marker(entry, index)
-
-  defp commit_bg_class(agent) do
-    if agent.current_commit != agent.base_commit do
-      # Uncommitted changes on this agent's branch — warning-family highlight
-      # (semantic meaning preserved) on the hairline commit chip.
-      "bg-warning/20 border border-warning/30"
-    else
-      "bg-base-200/60 border border-base-300"
-    end
-  end
-
-  defp shorten_sha(sha) when is_binary(sha) do
-    if String.length(sha) > 8 do
-      String.slice(sha, 0, 8) <> "…"
-    else
-      sha
-    end
-  end
-
-  defp shorten_sha(other), do: other
 end
