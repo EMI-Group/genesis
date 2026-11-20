@@ -5,6 +5,12 @@ defmodule EvoGit.AgentStateRetentionTest do
   expired runs (with their chunks), a recently-touched row is never pruned, and
   `delete/3` / `delete_task/2` remove one run / every run of a task.
 
+  The last two cases cover the prune SWEEP's BATCHING: a backlog wider than one
+  batch is retired completely by ONE `prune/1` call, and — because each batch
+  commits its own transaction — a mid-sweep failure leaves the earlier batches
+  committed (the `BEGIN IMMEDIATE` write lock is released between batches
+  instead of being held for the whole post-downtime sweep).
+
   Every case uses its OWN isolated `EvoGit.AgentState` instance started with an
   EXPLICIT `retention_days: 7` start option (never an app-env mutation, so the
   module stays `async: true`) on a per-test SQLite file, addressed through
@@ -322,5 +328,181 @@ defmodule EvoGit.AgentStateRetentionTest do
     assert :ok = AgentState.delete_tasks(["task-a"], store: pid)
     assert :ok = AgentState.delete_tasks(:not_a_list, store: pid)
     flush!(pid)
+  end
+
+  ## 8. prune/1 over a backlog WIDER than one batch
+
+  test "prune/1 retires a backlog wider than one batch in ONE call", %{tmp_dir: tmp_dir} do
+    pid = start_store!(tmp_dir, retention_days: @retention_days)
+    batch = prune_batch_size!()
+    expired = batch + 5
+
+    seed_expired_runs!(pid, "backlog", expired)
+
+    # Unexpired runs written through the REAL store, so the kept side is
+    # asserted through `load/3` rather than raw SQL.
+    for task_id <- ["task-kept-before", "task-kept-after"] do
+      checkpoint!(pid, task_id, 1, rewrite([message(task_id)]))
+    end
+
+    # Guard the FIXTURE: fewer expired runs than one batch would make this a
+    # single-batch case and prove nothing about the loop.
+    assert expired > batch
+    assert count_rows!(pid, "backlog") == expired
+    assert count_chunks_for_task!(pid, "backlog") == expired
+
+    # ONE call retires the WHOLE backlog: a sweep that stopped after its first
+    # bounded batch would answer `batch` and leave `expired - batch` rows.
+    assert {:ok, ^expired} = AgentState.prune(store: pid)
+
+    assert count_rows!(pid, "backlog") == 0
+    assert count_chunks_for_task!(pid, "backlog") == 0
+    assert total_chunk_rows!(pid) == 2
+
+    for task_id <- ["task-kept-before", "task-kept-after"] do
+      assert {:ok, %Record{message_count: 1}} = AgentState.load(task_id, 1, store: pid)
+      assert count_chunks!(pid, task_id, 1) == 1
+    end
+
+    # Nothing is left to sweep, and the count is the documented shape.
+    assert {:ok, 0} = AgentState.prune(store: pid)
+  end
+
+  ## 9. Each batch commits its OWN transaction (the write lock is released)
+
+  test "a mid-sweep failure leaves the earlier batches committed", %{tmp_dir: tmp_dir} do
+    pid = start_store!(tmp_dir, retention_days: @retention_days)
+    batch = prune_batch_size!()
+    expired = batch + 3
+
+    seed_expired_runs!(pid, "backlog", expired)
+
+    # A counting trigger on the chunk DELETE lets exactly ONE full batch
+    # through, then aborts the next one. This is the deterministic way to
+    # observe the per-batch TRANSACTION boundary: if the sweep ran as ONE
+    # transaction, the abort would roll back the first batch too.
+    sql!(pid, "CREATE TABLE prune_probe (deleted INTEGER NOT NULL)", [])
+    sql!(pid, "INSERT INTO prune_probe (deleted) VALUES (0)", [])
+
+    sql!(
+      pid,
+      """
+      CREATE TRIGGER prune_probe_count BEFORE DELETE ON agent_state_chunks
+      BEGIN
+        UPDATE prune_probe SET deleted = deleted + 1;
+      END
+      """,
+      []
+    )
+
+    sql!(
+      pid,
+      """
+      CREATE TRIGGER prune_probe_abort BEFORE DELETE ON agent_state_chunks
+      WHEN (SELECT deleted FROM prune_probe) >= #{batch}
+      BEGIN
+        SELECT RAISE(ABORT, 'prune probe: batch boundary');
+      END
+      """,
+      []
+    )
+
+    # The sweep FAILS mid-loop instead of pretending it retired everything, and
+    # it reports the STORE failure (not a crash, which would answer
+    # `{:error, :store_unavailable}`).
+    assert {:error, {:db_error, _reason}} = AgentState.prune(store: pid)
+
+    # The FIRST batch is committed: exactly one batch width of rows is gone,
+    # and the probe row proves the commit reached the file.
+    assert %{rows: [[^batch]]} = sql!(pid, "SELECT deleted FROM prune_probe", [])
+    assert count_rows!(pid, "backlog") == expired - batch
+    assert count_chunks_for_task!(pid, "backlog") == expired - batch
+
+    # The sweep is idempotent: the next call simply continues where the failed
+    # one stopped, so no row is ever lost or half-deleted.
+    for trigger <- ["prune_probe_abort", "prune_probe_count"] do
+      sql!(pid, "DROP TRIGGER #{trigger}", [])
+    end
+
+    remaining = expired - batch
+    assert {:ok, ^remaining} = AgentState.prune(store: pid)
+    assert count_rows!(pid, "backlog") == 0
+    assert count_chunks_for_task!(pid, "backlog") == 0
+  end
+
+  ## Batching helpers
+
+  # The batch width is a PRIVATE attribute of `EvoGit.AgentState.Store`
+  # (`@prune_batch_size`), so it is read from the source: a widened batch must
+  # widen the seed above, or the cases here would silently degrade into
+  # single-batch runs.
+  defp prune_batch_size! do
+    path = Path.expand("../../../lib/evo_git/agent_state/store.ex", __DIR__)
+
+    case Regex.run(~r/@prune_batch_size\s+(\d[\d_]*)/, File.read!(path)) do
+      [_, digits] -> digits |> String.replace("_", "") |> String.to_integer()
+      nil -> flunk("could not read @prune_batch_size from #{path}")
+    end
+  end
+
+  # Raw seeding for the batching cases: they need hundreds of rows with an
+  # EXACT expiry stamp, and casting that backlog through the store would run
+  # into the writer's mailbox cap for no coverage of what is under test (the
+  # SWEEP, not the write path). One chunk each, so the chunk sweep is asserted
+  # at the same width.
+  #
+  # ONE statement per `@seed_batch` rows: a per-row INSERT would dominate this
+  # file's runtime for 400+ rows. `@seed_batch` keeps a statement at 750
+  # parameters, under SQLite's 999-variable limit.
+  @seed_batch 150
+
+  defp seed_expired_runs!(pid, task_id, count) do
+    stamp = days_ago(10)
+
+    for agent_ids <- Enum.chunk_every(1..count, @seed_batch) do
+      states_values = Enum.map_join(agent_ids, ", ", fn _id -> "(?, ?, 'done', ?, ?, ?)" end)
+
+      states_params =
+        Enum.flat_map(agent_ids, fn agent_id -> [task_id, agent_id, stamp, stamp, stamp] end)
+
+      assert %{num_rows: seeded} =
+               sql!(
+                 pid,
+                 "INSERT INTO agent_states " <>
+                   "(task_id, agent_id, status, created_at, updated_at, completed_at) " <>
+                   "VALUES " <> states_values,
+                 states_params
+               )
+
+      assert seeded == length(agent_ids)
+
+      chunks_values = Enum.map_join(agent_ids, ", ", fn _id -> "(?, ?, 1, 1, ?, ?)" end)
+
+      chunks_params =
+        Enum.flat_map(agent_ids, fn agent_id ->
+          [task_id, agent_id, :erlang.term_to_binary({task_id, agent_id}), stamp]
+        end)
+
+      assert %{num_rows: ^seeded} =
+               sql!(
+                 pid,
+                 "INSERT INTO agent_state_chunks " <>
+                   "(task_id, agent_id, seq, message_count, payload, inserted_at) " <>
+                   "VALUES " <> chunks_values,
+                 chunks_params
+               )
+    end
+  end
+
+  defp count_chunks_for_task!(pid, task_id) do
+    assert %{rows: [[n]]} =
+             sql!(pid, "SELECT COUNT(*) FROM agent_state_chunks WHERE task_id = ?", [task_id])
+
+    n
+  end
+
+  defp total_chunk_rows!(pid) do
+    assert %{rows: [[n]]} = sql!(pid, "SELECT COUNT(*) FROM agent_state_chunks", [])
+    n
   end
 end
