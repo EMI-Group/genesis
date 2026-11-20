@@ -357,12 +357,16 @@ Each call site picks the CONSERVATIVE direction for its own failure mode:
 | `handle_update_status/6` | no write, no broadcast (row gone) | no write, no broadcast (cannot read the row to decide: stale-terminal guard, `:cancelling` map, finished_at/lease preservation) |
 | `set_review_status/2`, `set_review_metadata/3` | silent no-op | no write (never persist blind), no broadcast |
 | `pause_settled?/2` | not settled | **`true`** — the straggler guard stays ON, so a late `{:ok, %Result{}}`/`:DOWN` can never flip a `:pausing`/`:paused` row to `:completed`/`:failed` and clobber the result/usage a resume needs |
-| `persist_paused/3` | drop the ref (the row is gone) | KEEP `task_refs` and log ONE warning, so a later retry can settle a live task |
+| `persist_paused/3` | drop the ref (the row is gone) | drop the ref + ONE warning — the pause is never reported as persisted, and the lease sweep parks a resumable row as a DIRTY pause |
 | `start_task/2` | proceed (a fresh minted id cannot be `:cancelled`) | proceed, for the same reason — refusing would strand a task nothing else could start |
 | `pause/2`, `resume/4` admission | `{:error, :not_found}` | `{:error, :store_unavailable}` (an unreadable row is never "not found") |
 | `{:recheck_task, id}` | no-op | reschedule 30 s later (a periodic watchdog must not disappear on a store blip) |
 | `Restart.classify/2` | nothing classified | nothing classified (rows keep their live status; the sweep later fails them — today's degradation) |
 The review casts removed the tautological `nil ->` / `present when not is_nil(present)` pair: `{:ok, _present}` (including `{:unknown, raw}`, because the row exists) is writable, and the `{:task_updated, task_id, nil, node()}` broadcast fires ONLY inside the arm where `update_task_columns/3` answered `:ok` — a no-op, a missing row and a failed write are not state changes.
+The pause WRAPPER RESULT path reads through `StoreRead.update_info/2` too: `{:paused, info}` → `persist_paused/3` is a decision on the CURRENT row (park it, let a cancel win, bookkeep an already-paused row, discard a lost race), so an outage must not read as "no row".
+`:absent` there drops the `task_refs` entry silently, because a gone row has nothing to persist or broadcast.
+`:unavailable` logs ONE warning naming the task id and drops the same entry: the pause was NOT persisted, so it is never reported as persisted.
+Dropping the ref stops lease renewal, which leaves recovery to the lease sweep — `Lease.leaked?/3` sweeps a `:pausing`/`:running` row with an expired lease, and a resumable one is parked as a DIRTY pause instead of failing.
 ## Heartbeat, Restart Classification & `list_tasks/0` Bound
 `EvoGit.TaskRegistry.Heartbeat.renew(store, task_ids, expires_at) :: :ok` is the WHOLE heartbeat body: `[]` ids is a no-op with no read; otherwise ONE `Store.select_task_statuses/2`, keep the ids whose status passes `Lease.lease_renewable?/1` (`:running | :pending | :cancelling | :awaiting_input | :pausing | {:unknown, raw}` — a row that EXISTS with unreadable status is still renewed; absent rows and terminal statuses are not), return `:ok` WITHOUT a write when nothing is renewable, else ONE `Store.renew_leases/3`.
 `{:error, :disk_full}` logs exactly ONE warning naming the task COUNT (never one per task); `{:error, :store_unavailable}` answers `:ok` (StoreGuard already logged it).

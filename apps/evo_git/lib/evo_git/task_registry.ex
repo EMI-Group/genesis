@@ -2918,13 +2918,14 @@ defmodule EvoGit.TaskRegistry do
   # drain — the ROOT agent only reports `{:paused, info}` once its children have
   # paused, so this single wrapper result closes the whole task.
   defp persist_paused(state, task_id, _info) do
-    case safe_store_read("paused wrapper result select_task_update_info", nil, fn ->
-           EvoGit.Store.select_task_update_info(state.task_store, task_id)
-         end) do
-      %{status: status} when status in [:pausing, :running] ->
+    # THREE-STATE read via `StoreRead` (never a degraded `nil` that would read as
+    # "no row"): the decision below depends on the CURRENT row, and an outage is
+    # not an answer.
+    case StoreRead.update_info(state.task_store, task_id) do
+      {:ok, %{status: status}} when status in [:pausing, :running] ->
         write_paused(state, task_id)
 
-      %{status: :cancelling} ->
+      {:ok, %{status: :cancelling}} ->
         # A cancel that arrived while the drain was in flight WINS (the pause was
         # abandoned scheduler-side). The wrapper is gone, so resolve the row the
         # way the cancellation model does: the normal status path force-maps a
@@ -2937,13 +2938,13 @@ defmodule EvoGit.TaskRegistry do
         update_task_status_with_caller(task_id, :cancelled, nil, [])
         state
 
-      %{status: :paused} ->
+      {:ok, %{status: :paused}} ->
         # Already parked (a duplicated result, or a restart reconciled the row
         # while the wrapper was still finishing): nothing to persist or
         # broadcast.
         finish_paused_bookkeeping(state, task_id)
 
-      %{status: status} ->
+      {:ok, %{status: status}} ->
         # Terminal / `:awaiting_input` — the pause lost a race; never overwrite a
         # resolved row with `:paused`.
         Logger.info(
@@ -2952,7 +2953,26 @@ defmodule EvoGit.TaskRegistry do
 
         %{state | task_refs: Map.delete(state.task_refs, task_id)}
 
-      nil ->
+      :absent ->
+        # The store answered and the row is GONE — nothing to persist, nothing to
+        # broadcast, so the ref is simply dropped.
+        %{state | task_refs: Map.delete(state.task_refs, task_id)}
+
+      :unavailable ->
+        # The store could NOT answer, so this pause is NOT persisted and is never
+        # reported as if it were. Dropping the ref is the conservative direction:
+        # keeping it would hold a live `task_refs` entry this registry can never
+        # settle (every later store answer stays unknown), while dropping it stops
+        # lease renewal — and the lease sweep is the documented recovery path,
+        # parking a RESUMABLE `:pausing`/`:running` row as a DIRTY pause
+        # (`Lease.leaked?/3` + `Restart.classify/2`) and failing only a
+        # non-resumable one.
+        Logger.warning(
+          "TaskRegistry: task #{task_id} reported a PAUSE but the store was unavailable, " <>
+            "so the paused row was NOT persisted; the wrapper ref is dropped and the " <>
+            "lease sweep will park a resumable row as a DIRTY pause"
+        )
+
         %{state | task_refs: Map.delete(state.task_refs, task_id)}
     end
   end

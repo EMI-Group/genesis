@@ -16,7 +16,7 @@ defmodule EvoGit.TaskRegistry.StoreRead do
   | Call site | `:absent` | `:unavailable` |
   |---|---|---|
   | `pause_settled?/2` (straggler guard) | not settled | SETTLED — a late result never flips a `:pausing`/`:paused` row |
-  | `persist_paused/3` | drop the ref (the row is gone) | KEEP the ref + one warning (a later retry can still settle it) |
+  | `persist_paused/3` | drop the ref (the row is gone) | drop the ref + ONE warning (the pause is NOT persisted; the lease sweep parks a resumable row as a dirty pause) |
   | `handle_update_status/6` | no write (the row is gone) | no write (never persist blind) |
   | `set_review_status/metadata` | no write, no broadcast | no write, no broadcast |
   | `start_task/2` (fresh id, cannot be cancelled) | proceed | proceed |
