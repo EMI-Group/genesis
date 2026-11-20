@@ -173,6 +173,15 @@ defmodule EvoDash.ChatHistory do
   end
 
   @doc """
+  The scope used by the zero-arity verbs on THIS BEAM node: `{nil, node()}`.
+
+  Exposed so a caller can tell which pointer it is reading without inventing
+  its own default, and so the scope shape (`{client_id, node}`) is discoverable.
+  """
+  @spec default_scope() :: {client_id() | nil, node()}
+  def default_scope, do: {nil, node()}
+
+  @doc """
   Returns the default scope's current chat id, or `nil` when none is set.
 
   Direct ETS read — no `GenServer` round-trip.
@@ -453,9 +462,6 @@ defmodule EvoDash.ChatHistory do
   end
 
   # --- Private helpers ---
-
-  # The scope of the default (unscoped) client on this BEAM node.
-  defp default_scope, do: {nil, node()}
 
   # A client's pointer scope: browser/tab identity plus the publishing node.
   defp scope(client_id), do: {client_id, node()}
