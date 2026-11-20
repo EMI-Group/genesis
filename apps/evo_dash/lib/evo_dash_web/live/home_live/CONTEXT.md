@@ -277,6 +277,23 @@ The turn meta line under the last assistant bubble (`Delta.meta/0`: `turn`/`tota
 New chat is enabled while `:idle` or `:ended` and clears the draft, per-chat refs, echoes and pending attachments; node switches reset chat state without cancelling the previous session.
 The AssistantComposer hook submits the form on Enter and Shift+Enter keeps the newline, and model selection stays usable during a run but applies to the NEXT session only.
 
+## Settle-aware chat persistence (streaming write coalescing)
+
+`EvoDashWeb.HomeLive.ChatState.persist/1,2` is the ONLY writer of chat state into `EvoDash.ChatHistory`, and it COALESCES writes while a turn is streaming because a delta batch arrives roughly every 75 ms while `ChatHistory.put_state/2` deep-copies the whole transcript + thought process through a GenServer call.
+`build/1` stays the pure, defensive assigns → map extractor and `restore/1` stays the total mount-direction normalizer, so the persisted shape is unchanged in both directions.
+A state is MID-STREAM when any transcript entry carries `streaming: true` (`mid_stream?/1`) and SETTLED otherwise — the settled set is exactly the turn/finish/yield/attach/send/adopt/new-chat lifecycle boundaries, so every authoritative snapshot always reaches the store.
+`write_state?/3` writes when the caller passes `force: true` (`ChatState.persist(socket, force: true)`), when the state is SETTLED, or when at least `@throttle_ms` (1000 ms) has elapsed since this chat's previous write; only a MID-STREAM write inside that window is skipped.
+The last-write marker is a PROCESS-DICTIONARY entry `{ChatState, :last_write, chat_id}` holding a `System.monotonic_time(:millisecond)` stamp (`throttle_elapsed?/1` + `mark_write/1`), never a GenServer, ETS table or `:persistent_term`: `persist/2` only ever runs in the owning LiveView process, so the marker dies with that process (a remounted tab is a fresh process and writes immediately) and a chat switch simply uses a different key.
+The trade-off is bounded and stated in the moduledoc: at most about one second of streamed text can be missing from the cache if a tab closes mid-turn, while the next settled boundary restores the full authoritative state.
+`persist/2` still returns the socket and stays TOTAL (garbage or absent chat state neither raises nor gains a `try/rescue`), and every existing option — notably `clear_empty_draft: true` and the draft / draft-key branches — behaves exactly as before.
+
+## Masked-assign (`assigns[:key] || default`) audit
+
+Every `assigns[:key] || default` read under `home_live/**` was audited for tightening, and NONE was changed because this subtree receives its whole assign map from the out-of-scope page module `../home_live.ex` plus `EvoDashWeb.LiveHooks.NodeAware`, so key presence cannot be proven from inside the package and a `KeyError` would be a real regression.
+`ChatState.build/1` keeps every default deliberately: it is a pure extractor that must also persist a hand-built partial assign map (`transcript`, `thought_process`, `chat_draft`, `chat_status`, `queued_echoes`, `task_action_ids`, `task_action_pending`), and tests persist such maps.
+`Watch` (`chat_stream`, `chat_stream_meta`, `chat_stream_worker`, `chat_stream_worker_monitor`, `stream_attach_seq`, `transcript`, `thought_process`), `SendPath` (`queued_echoes`, `transcript`, `assistant_conversation_id`), `TaskTracking`/`TaskCard` (`task_action_ids`, `task_action_pending`, `task_action_checking`, `task_tracking_seq`, `task_tracking_scope`, `task_tracking_timer`, `task_tracking_loading`, `task_tracking_error`, `tracked_tasks`), `TaskPicker` (`task_picker`), `ApprovalWorkflow` (`pending_approvals`, `approval_responses`, `approval_recovery_new`, `approval_recovery_removed`, `approval_resolved_requests`, `chat_node`), `SessionList` (`session_list`, `session_list_loading`, `session_list_error`, `session_list_seq`, `current_session_id`, `current_page`), `Workspace` (`workspace`, `workspace_expanded`, `workbench_draft_key`, `session_attach_pending?`), `Composer` (`chat_draft`, `provider_profiles`, `model_selections`, `model_spec`), `Uploads` (`pending_attachments`, `chat_upload_scope`) and `ModelSelection` (`current_node`, `current_node_id`) all read keys the page module seeds at mount.
+Making those reads explicit requires `assign_new/3`-seeding each key during the page's mount (that file is outside this package), so the defensive reads stay as the contract and NEW keys read the same masked way.
+
 ## Constraints
 
 - No `try/rescue` around config/core loading; `{:error, …}` tuples from `NodeContext` are the failure channel.

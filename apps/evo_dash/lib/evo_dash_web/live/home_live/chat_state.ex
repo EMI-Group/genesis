@@ -38,6 +38,27 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   direction). Both are total — persisted garbage degrades to safe defaults,
   never raises. `persist/1` is the persist-direction entry point that wraps
   `build/1` + `EvoDash.ChatHistory.put_state/2`.
+
+  ## Settle-aware throttling (`persist/2`)
+
+  The delta stream delivers a batch roughly every 75 ms, and every
+  `EvoDash.ChatHistory.put_state/2` copies the whole transcript + thought
+  process through a GenServer call. `persist/2` therefore COALESCES streaming
+  writes: while the state is mid-stream (an OPEN `streaming: true` assistant
+  bubble is the mid-stream marker) a write is skipped when the previous write
+  for the SAME chat happened less than `@throttle_ms` ago.
+
+  SETTLED states always write — a state with no open streaming bubble is a
+  turn / finish / yield / attach / send / adopt / new-chat boundary, so every
+  authoritative snapshot is persisted. `force: true` always writes too, for
+  call sites that must write regardless. At most ~1 s of streamed text can be
+  lost if a tab closes mid-turn.
+
+  The last-write marker is a PROCESS-DICTIONARY entry
+  (`{__MODULE__, :last_write, chat_id}`): `persist/2` only ever runs in the
+  owning LiveView process, so this needs no GenServer, ETS table or global
+  state, and it dies with that process — a remounted tab is a fresh process
+  and writes immediately, and a chat switch is a different key.
   """
 
   alias EvoDashWeb.HomeLive.Transcript
@@ -59,6 +80,10 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   @chat_statuses [:idle, :running, :cancelling, :awaiting_input, :ended]
   @session_modes [:interactive, :one_shot]
   @max_queued_echoes 20
+
+  # Minimum gap between two MID-STREAM writes of the same chat (see the
+  # moduledoc). Settled states and `force: true` bypass it entirely.
+  @throttle_ms 1000
 
   @doc """
   Builds the persisted state map from the LiveView's assigns.
@@ -94,6 +119,10 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   @doc """
   Persists conversation state. Unsaved browser and workbench drafts keep their
   edits in the temporary draft store until a message or a task starts a conversation.
+
+  Streaming writes are coalesced to at most one per `#{@throttle_ms}` ms per
+  chat; a SETTLED state (no open `streaming: true` transcript entry) and any
+  call with `force: true` write unconditionally. Returns the socket unchanged.
   """
   @spec persist(Phoenix.LiveView.Socket.t(), keyword()) :: Phoenix.LiveView.Socket.t()
   def persist(socket, opts \\ []) do
@@ -104,7 +133,12 @@ defmodule EvoDashWeb.HomeLive.ChatState do
 
       cond do
         is_nil(key) or conversation?(assigns) ->
-          ChatHistory.put_state(assigns.chat_id, build(assigns))
+          state = build(assigns)
+
+          if write_state?(assigns.chat_id, state, opts) do
+            ChatHistory.put_state(assigns.chat_id, state)
+          end
+
           if key, do: ChatHistory.delete_draft(key)
 
         is_nil(assigns[:session_id]) and
@@ -124,6 +158,52 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   end
 
   def edited(socket), do: Phoenix.Component.assign(socket, :draft_edited?, true)
+
+  # Settle-aware write gate: always write a settled state or an explicit
+  # `force: true`, otherwise coalesce streaming writes to one per
+  # `@throttle_ms` per chat. Total — a missing marker means "never written",
+  # which writes immediately.
+  defp write_state?(chat_id, state, opts) do
+    cond do
+      force?(opts) -> mark_write(chat_id)
+      not mid_stream?(state) -> mark_write(chat_id)
+      throttle_elapsed?(chat_id) -> mark_write(chat_id)
+      true -> false
+    end
+  end
+
+  # `:force` is read like the other persist options (`opts[:clear_empty_draft]`)
+  # so a caller may pass a keyword list or map-style access alike; garbage opts
+  # never raise.
+  defp force?(opts) when is_list(opts), do: Keyword.get(opts, :force, false) == true
+  defp force?(_opts), do: false
+
+  # The ONLY mid-stream marker is an OPEN streaming transcript bubble: it exists
+  # exactly between a text chunk and the turn/finish/yield boundary that closes
+  # it, which is what makes "no streaming entry" mean "settled".
+  defp mid_stream?(state) when is_map(state) do
+    case Map.get(state, :transcript) do
+      entries when is_list(entries) -> Enum.any?(entries, &streaming_entry?/1)
+      _entries -> false
+    end
+  end
+
+  defp mid_stream?(_state), do: false
+
+  defp streaming_entry?(%{streaming: true}), do: true
+  defp streaming_entry?(_entry), do: false
+
+  defp throttle_elapsed?(chat_id) do
+    case Process.get({__MODULE__, :last_write, chat_id}) do
+      last when is_integer(last) -> System.monotonic_time(:millisecond) - last >= @throttle_ms
+      _never -> true
+    end
+  end
+
+  defp mark_write(chat_id) do
+    Process.put({__MODULE__, :last_write, chat_id}, System.monotonic_time(:millisecond))
+    true
+  end
 
   def draft_key(%{workbench_draft_key: key}) when not is_nil(key), do: {:workbench, key}
 
