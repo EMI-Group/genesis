@@ -115,19 +115,14 @@ A remote headless daemon (the ONE `genesis_server` per host, distribution enable
 
 ### Push-based event contract (node-identity PubSub)
 
-`:evo_git` broadcasts on `EvoGit.PubSub`; every event carries the **publisher's BEAM node atom** and only a matching viewed node updates the UI — `NodeAware.event_from_current_node?/2`; task events flow through `NodeAware.handle_task_info/2` (300 ms trailing debounce → `:node_aware_reload_tasks`).
+`:evo_git` broadcasts on `EvoGit.PubSub`; every event carries the **publisher's BEAM node atom** and only a matching viewed node updates the UI (`NodeAware.event_from_current_node?/2`), task events flowing through `NodeAware.handle_task_info/2` (300 ms trailing debounce → `:node_aware_reload_tasks`). Event SHAPES are stated ONCE in the root `./CONTEXT.md` table; the dashboard's consumers plus its own details are:
 
-| Topic | Events | Consumers |
-|-------|--------|-----------|
-| `"tasks"` | `{:task_updated, task_id, status, node}` (status `:pending\|:running\|:finalizing\|:cancelling\|:completed\|:failed\|:cancelled`, `nil` for review-only mutations); `{:task_deleted, task_id, node}` | NodeAware, TasksLive, ProjectsLive, ReviewLive, AgentsLive, SettingsLive, SystemLive |
-| `"agents"` | `{:agent_registered, id, summary, node}`, `{:agent_updated, id, changed_fields, node}` (NEVER `:context`; carries `:message_count` when context changed), `{:agent_removed, id, node}`, `{:agents_updated, node}` | AgentsLive; HomeLive (fallback refetch only) |
-| `"agent:<id>"` | `{:agent_delta, agent_id, seq, batch}` — `batch` a LIST of `{:text, bin}` / `{:thinking, bin}` / `{:tool_call, id, name}` / `{:tool_result, id, status}` / `{:turn, map}` / `{:yield, text}` / `{:finished, status}`, coalesced ~75 ms; no replay buffer, no node tag | HomeLive (a watched `/assistant?session=<id>` page subscribes in its own process, dropping `seq <= snapshot.seq`) |
-| `"scheduler_config"` | `{:scheduler_config_updated, node}` | SettingsLive, SystemLive (node-filtered → async reloads) |
-| `"system"` | `{:system_sample, node, seq, sample}` every 3 s: aggregates plus **`llm_slots`** (per-PROVIDER-PROFILE pool `%{used:, waiting:, capacity:}` keyed by account id; `%{}` when the scheduler is dead) and OPTIONAL **`llm_pools`** labels (`%{pool_id => %{label:, models:}}`, read defensively) | SystemLive charts (ring buffer, cap 60) |
-| `"vct"` | `{:vct_updated, node}` | ProjectsLive |
-| `"guides"` | `{:guide_updated, id, %{message, page, selector, dismissible}, node}` | `LiveHooks.Guide` overlay |
-| `"updates"` | `{:update_status, state}` | UpdateStatus hook, SystemLive |
-| `"processes"` | node LAST, per `EvoGit.ProcessManager`: `{:process_started, execution, node}`, `{:process_updated, id, changes, node}`, `{:process_exited, execution, node}`, `{:process_sample, node, seq, [%{id:, status:, stats:}]}` (every 3 s), `{:process_control, id, %{action:, signal:, reason:, actor:, at:}, node}` | ProcessesLive — node-filtered, no polling |
+- `"tasks"` — `{:task_updated, task_id, status, node}` (here also `:awaiting_input`/`:pausing`/`:paused`; `nil` for review-only mutations) and `{:task_deleted, task_id, node}` → NodeAware, TasksLive, ProjectsLive, ReviewLive, AgentsLive, SettingsLive, SystemLive.
+- `"agents"` — `changed_fields` is a KEYWORD LIST (never `:context`; `:message_count` when context changed) → AgentsLive; HomeLive (fallback refetch only).
+- `"agent:<id>"` — coalesced ~75 ms, no replay buffer, no node tag → HomeLive, whose watched `/assistant?session=<id>` page subscribes in its own process and drops `seq <= snapshot.seq`.
+- `"system"` — every 3 s; `llm_slots` keyed by ACCOUNT id (`%{}` when the scheduler is dead) plus OPTIONAL `llm_pools` labels read defensively → SystemLive charts (ring buffer, cap 60).
+- `"processes"` — node LAST, with `{:process_sample, …}` every 3 s → ProcessesLive, node-filtered, no polling.
+- `"scheduler_config"` → SettingsLive, SystemLive (node-filtered → async reloads); `"vct"` → ProjectsLive; `"guides"` → `LiveHooks.Guide`; `"updates"` → UpdateStatus hook + SystemLive.
 
 Subscriber specifics: `lib/CONTEXT.md` (§ PubSub Topics), `live/system_live/CONTEXT.md`, `live_hooks/CONTEXT.md`.
 
