@@ -189,13 +189,6 @@ Prefer approved `Config.update/1` for a targeted change, then explicitly call `A
 
 **Snapshot vs scheduler state:** the runtime config agents use is the `AgentScheduler` GenServer state (`RemoteAPI.get_config/0` reads it, `reload_config/0` forces a snapshot reload and replaces it, `get_config_status/0` reads the snapshot per call for truthful `:missing`/`:warnings`/`:ok?`); `save_user_config/1` refreshes the snapshot but does NOT apply scheduler runtime state (SettingsLive calls `reload_remote_config` but ignores its return, so a reloadable setting can stay unapplied until an explicit reload), and `RemoteConnections` does NOT auto-create an empty `remote_connections.toml` (the file appears only when a target is saved).
 
-## Boot-Time Resolve Cost & Retention
-
-- `resolve/0,1` are `:persistent_term` lookups: the pipeline (defaults + atomized TOML merge → `atomize_enum_values` → `migrate_llm_models` → `Schema.validate/1` over all 112 schemas) runs ONCE per config directory per actual file change inside `build_snapshot/1`; no hot-path read pays for it and no read stats a file.
-- `Watcher.init/1` primes the snapshot at boot through `refresh/1` → `Cache.reload_safely/1` (total, so a raising build cannot crash-loop the watcher) — a fingerprint-diffed no-op when `runtime.exs`'s early `resolve/0` already built it — before every CHILD that reads config; in test the watcher is absent, so the first `Cache.get/0` builds in the calling process.
-- Retention: one snapshot per config dir lives in `:persistent_term` for the BEAM lifetime (parsed TOML maps, resolved map, validation errors — small); `AgentScheduler` independently keeps its selected fields (`model_profiles`, generation params, sandbox/scheduler scalars), and `PeakHourEngine.init`/`SystemSampler` read that state, never the disk.
-- ⚠️ The DOMINANT boot cost is not config resolution: `AgentScheduler.init` → `Schema.LLM.llm_generation_params/1` → `model_metadata/1` → `ReqLLM.model/1` triggers LLMDB's LAZY packaged-catalog load (`priv/llm_db/snapshot.json`, ~11.7 MB, ~10,100 models), whose decoded table is retained in `:persistent_term` for the BEAM lifetime (tests: ~2.5 s). It fires whenever ANY profile carries a `model`; a model-less fresh install pays nothing. Config BEAM code is ~220 KB, lazily loaded, and no schema validation runs at compile time.
-
 ## Test Seam — per-process config dir (`:config_dir_fun`)
 
 - `EvoGit.Platform.config_dir/1` consults the app-env seam `:evo_git, :config_dir_fun` at CALL time before XDG resolution; the seam accepts a zero-arity fun or `{m, f, a}` and the result must be a non-empty binary (garbage falls through, no `try/rescue`).
