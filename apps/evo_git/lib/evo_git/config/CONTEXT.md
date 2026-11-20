@@ -116,7 +116,7 @@ Three tables: `[worktree]` `script` (single fallback) with optional OS-specific 
 | `SOURCE_WORKTREE_PATH` | Parent agent's worktree path (`SOURCE_REPO_PATH` for top-level agents) |
 
 ### Configuration Levels (priority low → high)
-1. **Application defaults** — `Schema.defaults/0` (no model, no username). Three values are DYNAMIC from `EvoGit.Platform.cpu_threads/0` at `Definitions.schemas/0` runtime: `[:scheduler, :max_tool_concurrency]` (= CPU thread count) and both sandbox `:cpu_quota` strings (`"#{cores * 100}%"`), shared by display, reset-to-default and resolution.
+1. **Application defaults** — `Schema.defaults/0` (no model, no username); three values are DYNAMIC from `EvoGit.Platform.cpu_threads/0` (the tool cap = CPU thread count, both sandbox `:cpu_quota` strings `"#{cores * 100}%"`), shared by display, reset-to-default and resolution.
 2. **User config** — `~/.config/genesis/config.toml` (XDG), parsed with `TomlElixir.decode/1`.
 3. **Runtime overrides** — `AgentScheduler` state via `handle_call({:update_config, opts})`; concurrency/retry/turn values are config.toml-only, and model selection is task-level in task opts, never a scheduler override.
 
