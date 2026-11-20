@@ -25,8 +25,9 @@ defmodule EvoDashWeb.HomeLive.Composer do
       boundary), and every model-not-ready state (snapshot still loading,
       snapshot missing, invalid selection, pending/unconnected remote target).
     * `send_blocked?/1` is `compose_disabled?/1` plus a missing model snapshot
-      or a model selection/load error, empty content, an active upload, or a
-      pending project selection. It drives ONLY the actions that need a
+      or a model selection/load error, empty content, an active upload, a
+      pending project selection, or a send already in flight
+      (`:send_in_flight`). It drives ONLY the actions that need a
       resolved model: the Send button and the interrupt-turn button.
     * Send is available for `:idle` / `:running` and hidden while `:cancelling`
       / `:ended`; Stop is visible for `:running` / `:cancelling` and enabled
@@ -70,6 +71,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
   `:attach_unavailable`, `:provider_profiles`, `:model_selections`,
   `:model_spec`, `:model_selection_enabled`, `:model_select_loading`,
   `:model_select_load_error`, `:model_selection_error`, `:model_snapshot`,
+  `:send_in_flight`,
   Optional project selection loading only disables sending, preserving the draft.
   """
   def composer(assigns) do
@@ -414,7 +416,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
       <div
         :for={echo <- @queued_echo_entries}
         id={"chat-queued-echo-#{echo.id}"}
-        class="ml-auto max-w-[85%] rounded-lg border border-dashed border-base-300 bg-base-200/40 px-3 py-1.5 text-sm text-base-content/70"
+        class="motion-panel motion-panel-slide motion-panel-open ml-auto max-w-[85%] rounded-lg border border-dashed border-base-300 bg-base-200/40 px-3 py-1.5 text-sm text-base-content/70"
       >
         <p class="whitespace-pre-wrap break-words">{echo.text}</p>
         <p class="mt-0.5 text-[11px] text-base-content/50">
@@ -448,11 +450,13 @@ defmodule EvoDashWeb.HomeLive.Composer do
 
   # "Sending is blocked" predicate: composing is disabled PLUS the model
   # snapshot/selection is not usable (missing, still loading, invalid, or a
-  # pending remote target whose load failed). Drives ONLY actions that need a
-  # resolved model — the Send button and the interrupt-turn button — never the
-  # textarea.
+  # pending remote target whose load failed), PLUS a send is already in flight
+  # (`:send_in_flight`, seeded by the page) so a refused or queued send can never
+  # be double-submitted. Drives ONLY actions that need a resolved model — the
+  # Send button and the interrupt-turn button — never the textarea.
   defp send_blocked?(assigns) do
-    compose_disabled?(assigns) or assigns[:session_attach_pending?] == true or
+    compose_disabled?(assigns) or assigns[:send_in_flight] == true or
+      assigns[:session_attach_pending?] == true or
       assigns[:workspace_loading] == true or
       Workspace.missing_draft_project?(assigns) or
       assigns[:upload_in_progress] == true or not has_content?(assigns) or

@@ -115,8 +115,9 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
           <% else %>
             <%= if streaming?(@entry) and entry_text(@entry) == "" do %>
               <!-- Empty + streaming: pulsing dots pill (unchanged — never
-                 markdown-rendered). -->
-              <div class="py-2">
+                 markdown-rendered). It fades in through the shared motion
+                 vocabulary: this node mounts once, when the turn starts. -->
+              <div class="motion-panel motion-panel-open py-2">
                 <span class="inline-flex items-center gap-1 rounded-2xl rounded-bl-md bg-base-200/70 px-3 py-2">
                   <span
                     class="size-1.5 rounded-full bg-base-content/50 animate-bounce"
@@ -144,7 +145,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                      Streaming text is NEVER markdown-rendered (a half-rendered
                      stream would flicker) — the render switches to markdown only
                      when the entry is finalized (streaming: false). -->
-                  <span class="whitespace-pre-wrap">{entry_text(@entry)}</span>
+                  <span class="motion-panel motion-panel-open whitespace-pre-wrap">{entry_text(@entry)}</span>
                   <span class="help-caret ml-0.5 inline-block h-4 w-[3px] rounded-full bg-primary align-[-3px]"></span>
                 <% else %>
                   <%= if @raw do %>
@@ -158,7 +159,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                        (see Transcript.with_html/1), so a transcript re-render
                        on every ~75 ms delta batch never re-parses Markdown;
                        the fallback keeps hand-built entries working. -->
-                    <div class="md-content min-w-0 break-words text-[15px] leading-relaxed text-base-content">
+                    <div class="motion-panel motion-panel-open md-content min-w-0 break-words text-[15px] leading-relaxed text-base-content">
                       {raw(rendered_html(@entry))}
                     </div>
                   <% end %>
@@ -169,7 +170,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
           <%= if @thought_process != [] do %>
             <details
               id={"assistant-thought-" <> entry_id(@entry)}
-              class="group mt-3 min-w-0"
+              class="motion-disclosure group mt-3 min-w-0"
               phx-mounted={JS.ignore_attributes("open")}
             >
               <summary class="flex w-fit cursor-pointer select-none items-center gap-1.5 rounded-md py-2 text-xs font-medium text-base-content/60 transition-colors hover:text-base-content focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone">
