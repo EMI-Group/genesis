@@ -153,9 +153,13 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                   <% else %>
                     <!-- Finalized assistant text renders as Markdown — same helper
                        + call pattern as the tasks/review pages. Always-safe
-                       HTML: MDEx render with an HTML-escaped fallback. -->
+                       HTML: MDEx render with an HTML-escaped fallback.
+                       A settled entry carries the rendered HTML in `:html`
+                       (see Transcript.with_html/1), so a transcript re-render
+                       on every ~75 ms delta batch never re-parses Markdown;
+                       the fallback keeps hand-built entries working. -->
                     <div class="md-content min-w-0 break-words text-[15px] leading-relaxed text-base-content">
-                      {raw(EvoDash.MarkdownRender.render(entry_text(@entry)))}
+                      {raw(rendered_html(@entry))}
                     </div>
                   <% end %>
                 <% end %>
@@ -390,6 +394,16 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
 
   defp streaming?(entry), do: Map.get(entry, :streaming) == true
   defp entry_text(entry), do: Map.get(entry, :text) || ""
+
+  # The rendered Markdown HTML for a settled assistant entry: the cache attached
+  # by `Transcript` when the bubble was finalized, else a fresh render (hand-built
+  # entries and legacy persisted transcripts carry no cache).
+  defp rendered_html(entry) do
+    case Map.get(entry, :html) do
+      html when is_binary(html) -> html
+      _html -> EvoDash.MarkdownRender.render(entry_text(entry))
+    end
+  end
 
   # The meta line only makes sense with a turn or a token count to show.
   defp stream_meta?(meta) when is_map(meta) do

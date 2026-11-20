@@ -19,6 +19,14 @@ defmodule EvoDashWeb.HomeLive.Transcript do
   legacy/garbage entries keep their exact shape; it is present whenever the
   input carried one.
 
+  A settled (`streaming: false`) assistant entry with non-empty text MAY also
+  carry `:html` — its Markdown render (`EvoDash.MarkdownRender.render/1`)
+  computed ONCE, when the entry is finalized. The whole chat page re-renders on
+  every ~75 ms delta batch, so without that cache each finalized bubble would
+  re-parse its Markdown on every batch. The key is optional and binary-only:
+  `normalize/1` carries an existing one but never invents it, and a streaming
+  entry NEVER carries one (it renders raw partial text + caret).
+
   All functions are total: `normalize/1` coerces arbitrary (persisted) entry
   data into the current entry shape before it is consumed, so malformed
   entries degrade instead of crashing.
@@ -47,7 +55,8 @@ defmodule EvoDashWeb.HomeLive.Transcript do
           optional(:tool_name) => String.t() | nil,
           optional(:tool_call_id) => term(),
           optional(:tool_status) => tool_status(),
-          optional(:turn) => integer() | nil
+          optional(:turn) => integer() | nil,
+          optional(:html) => String.t()
         }
 
   @type t :: [entry]
@@ -95,7 +104,9 @@ defmodule EvoDashWeb.HomeLive.Transcript do
   Builds an entry with a unique string id.
 
   Options: `:streaming` (default `false`) and `:reasoning` (default `[]`).
-  The text is capped at 8_000 graphemes.
+  The text is capped at 8_000 graphemes. A settled (`streaming: false`)
+  non-empty `:assistant` entry carries the rendered Markdown HTML in `:html`
+  (`with_html/1`), so the render path never re-parses it.
   """
   @spec entry(role, String.t(), keyword()) :: entry
   def entry(role, text, opts \\ []) do
@@ -106,6 +117,7 @@ defmodule EvoDashWeb.HomeLive.Transcript do
       streaming: Keyword.get(opts, :streaming, false) == true,
       reasoning: normalize_reasoning(Keyword.get(opts, :reasoning))
     }
+    |> with_html()
   end
 
   @doc """
@@ -123,7 +135,7 @@ defmodule EvoDashWeb.HomeLive.Transcript do
 
       index ->
         transcript
-        |> List.update_at(index, &Map.put(&1, :text, text))
+        |> List.update_at(index, &put_text(&1, text))
         |> cap_entries()
     end
   end
@@ -143,8 +155,7 @@ defmodule EvoDashWeb.HomeLive.Transcript do
 
       index ->
         transcript
-        |> List.update_at(index, &Map.put(&1, :text, text))
-        |> List.update_at(index, &Map.put(&1, :streaming, false))
+        |> List.update_at(index, &(&1 |> put_text(text) |> settle()))
         |> cap_entries()
     end
   end
@@ -199,7 +210,7 @@ defmodule EvoDashWeb.HomeLive.Transcript do
 
       index ->
         entries
-        |> List.update_at(index, &Map.put(&1, :streaming, false))
+        |> List.update_at(index, &settle/1)
         |> cap_entries()
     end
   end
@@ -228,9 +239,31 @@ defmodule EvoDashWeb.HomeLive.Transcript do
 
           _entry ->
             entries
-            |> List.update_at(index, &Map.put(&1, :streaming, false))
+            |> List.update_at(index, &settle/1)
             |> cap_entries()
         end
+    end
+  end
+
+  @doc """
+  Settles the entry with `id` on its FINAL text: sets `text`, marks it
+  `streaming: false` and attaches the rendered-Markdown cache (`:html`) in ONE
+  pass. Used when an authoritative final text arrives for a bubble that is
+  already known by id (the `{:yield, text}` delta).
+
+  An unmatched id returns the (normalized) transcript unchanged. Total.
+  """
+  @spec put_settled_text(t, term(), String.t()) :: t
+  def put_settled_text(transcript, id, text) do
+    entries = normalize(transcript)
+    text = truncate_entry_text(text)
+
+    case Enum.split_while(entries, &(entry_id(&1) != id)) do
+      {_before, []} ->
+        entries
+
+      {before, [entry | rest]} ->
+        cap_entries(before ++ [entry |> put_text(text) |> settle()] ++ rest)
     end
   end
 
@@ -373,14 +406,60 @@ defmodule EvoDashWeb.HomeLive.Transcript do
         base
       end
 
-    Enum.reduce(@tool_fields, base, fn key, acc ->
-      if field_key?(entry, key) do
-        Map.put(acc, key, normalize_tool_field(key, field_value(entry, key)))
-      else
-        acc
-      end
-    end)
+    normalized =
+      Enum.reduce(@tool_fields, base, fn key, acc ->
+        if field_key?(entry, key) do
+          Map.put(acc, key, normalize_tool_field(key, field_value(entry, key)))
+        else
+          acc
+        end
+      end)
+
+    carry_html(normalized, entry)
   end
+
+  # Carries the rendered-Markdown cache (`:html`) through a normalization pass.
+  # The cache is a pure rendering optimization for a SETTLED, non-empty assistant
+  # bubble: it is never invented here (an entry without one keeps its exact
+  # shape) and it is dropped whenever the entry is not cacheable, so a streaming
+  # or empty bubble can never carry stale HTML.
+  defp carry_html(normalized, entry) do
+    case field_value(entry, :html) do
+      html when is_binary(html) ->
+        if cacheable?(normalized) do
+          Map.put(normalized, :html, html)
+        else
+          normalized
+        end
+
+      _html ->
+        normalized
+    end
+  end
+
+  # A settled, non-empty assistant bubble may carry its rendered Markdown HTML.
+  defp cacheable?(%{role: :assistant, streaming: false, text: text})
+       when is_binary(text) and text != "",
+       do: true
+
+  defp cacheable?(_entry), do: false
+
+  # Attaches (or drops) the rendered-Markdown cache for an entry, so the render
+  # path never re-parses the same settled Markdown on every delta batch.
+  # Every caller builds the entry itself, so this always receives a map.
+  defp with_html(entry) do
+    if cacheable?(entry) do
+      Map.put(entry, :html, EvoDash.MarkdownRender.render(Map.get(entry, :text)))
+    else
+      Map.delete(entry, :html)
+    end
+  end
+
+  # Writes the rendered text of an entry through the Markdown-cache refresh.
+  defp put_text(entry, text), do: entry |> Map.put(:text, text) |> with_html()
+
+  # Settles an entry (no longer streaming) through the Markdown-cache refresh.
+  defp settle(entry), do: entry |> Map.put(:streaming, false) |> with_html()
 
   defp field_key?(entry, key) do
     Map.has_key?(entry, key) or Map.has_key?(entry, Atom.to_string(key))
