@@ -1106,6 +1106,20 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
     poll.(poll)
   end
 
+  # Bounded wait for a RENDERED flash message, returning the last render.
+  #
+  # Only the ASYNC `task_submit` launch bumps `:task_launch_seq`, so
+  # `await_task_launch/2` would time out on a path that never spawns one: the
+  # unconfigured-project guard refuses the submit BEFORE the spawn, and the
+  # GitHub-issue fix starts its task inside the `{:github_fix_result, ...}`
+  # continuation. Those tests await the effect the server actually produces —
+  # the flash it pushes — instead of a launch seq it never sets.
+  def wait_for_flash(view, kind, text) do
+    selector = "#flash-#{kind}"
+    wait_assigns(view, fn _assigns -> has_element?(view, selector, text) end)
+    render(view)
+  end
+
   # Use the real provider-profile TOML boundary, not a forged picker bundle.
   # Two models with different effort defaults expose accidental fallback to the
   # provider default in either task-submission path.
@@ -5790,7 +5804,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # launches successfully (start_task returns {:ok, task}); the spawned
       # wrapper then fails fast in EvoGit.Runtime.Evolution at the invalid
       # node path.
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -5863,9 +5877,19 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       assert has_element?(view, "#task-model-setup")
       assert has_element?(view, "#task-launch-button[disabled]")
 
+      tasks_before = EvoGit.TaskRegistry.list_task_ids()
       render_submit(view, "task_submit", %{"prompt" => "Draft", "mode" => "evolve_simple"})
-      _ = await_task_launch(view)
-      assert has_element?(view, "#flash-error", "Configure a model on this server")
+      # The unconfigured-project guard refuses the submit BEFORE the async
+      # launch is spawned (`LaunchOptions.apply/2` → `:no_task_model`), so no
+      # `:task_launch_seq` bump ever happens and `await_task_launch/2` would
+      # time out. Await the effect the server does produce: its rendered
+      # refusal. (This is the shared "Failed to start task" flash — the
+      # dedicated "Configure a model on this server" wording lives in the async
+      # launch ack, which this pre-spawn guard never reaches.)
+      wait_for_flash(view, :error, "Failed to start task: :no_task_model")
+      assert has_element?(view, "#flash-error", "Failed to start task: :no_task_model")
+      # ...and nothing was enqueued: the refusal happens before any task row.
+      assert EvoGit.TaskRegistry.list_task_ids() -- tasks_before == []
     end
 
     test "a real form submit with no hand-built mode param launches (hidden mode field)", %{
@@ -5889,7 +5913,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       render_click(view, "task_change", %{"mode" => "evolve_simple"})
       assert assigns(view)[:task_mode] == "evolve_simple"
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{prompt: "build me a thing", node_path: "./nonexistent-dir"})
@@ -5930,7 +5954,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # rather than spawning an agent (see make_git_repo!/1).
       make_git_repo!(tmp_dir)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -5961,7 +5985,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       render_click(view, "toggle_persist_agent_state", %{})
       assert assigns(view)[:persist_agent_state?] == false
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6053,7 +6077,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # (make_git_repo!/1) — see "task_submit clears the prompt".
       make_git_repo!(tmp_dir)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6183,7 +6207,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
 
       # Launch an evolve task with a nonexistent node_path — the task launches
       # successfully but the wrapper fails fast at validation.
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6253,7 +6277,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # before any agent dispatch (see "task_submit clears the prompt").
       make_git_repo!(tmp_dir)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6285,7 +6309,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # (make_git_repo!/1) — see "task_submit clears the prompt".
       make_git_repo!(tmp_dir)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6319,7 +6343,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # (make_git_repo!/1) — see "task_submit clears the prompt".
       make_git_repo!(tmp_dir)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6387,7 +6411,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # (make_git_repo!/1) — see "task_submit clears the prompt".
       make_git_repo!(tmp_dir)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6435,7 +6459,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # (make_git_repo!/1) — see "task_submit clears the prompt".
       make_git_repo!(tmp_dir)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6537,7 +6561,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # (make_git_repo!/1) — see "task_submit clears the prompt".
       make_git_repo!(tmp_dir)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
@@ -6635,12 +6659,14 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
         assert assigns(view)[:selected_model_spec] == selection
         render_click(view, "open_github_issues", %{})
         wait_until(view, fn a -> a[:github_issues].status == :ok end)
-        seq = assigns(view)[:task_launch_seq]
         render_click(view, "github_fix_issue", %{"number" => "42"})
 
         # The markdown fetch is async; the modal closes once the fix task starts.
         wait_until(view, fn a -> a[:github_modal_open] == false end)
-        html = await_task_launch(view, seq)
+        # The fix task starts inside the `{:github_fix_result, ...}`
+        # continuation (`ProjectsLive.GitHub.do_start_fix_task/3`), which never
+        # bumps `:task_launch_seq` — await the "task started" flash it pushes.
+        html = wait_for_flash(view, :info, "task started with ID:")
         assert html =~ "task started with ID:"
         refute html =~ "github-issues-modal"
 
@@ -6689,7 +6715,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
 
         seq = assigns(view)[:task_launch_seq]
 
-        html =
+        _html =
           view
           |> element("#task-form")
           |> render_submit(%{
@@ -6724,7 +6750,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       make_git_repo!(tmp_dir)
       await_async_loads(view)
 
-      html =
+      _html =
         view
         |> element("#task-form")
         |> render_submit(%{
