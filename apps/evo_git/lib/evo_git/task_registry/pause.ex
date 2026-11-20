@@ -124,7 +124,7 @@ defmodule EvoGit.TaskRegistry.Pause do
   status + opts, never `result`). An unreadable/NULL status reads as `nil` there
   and falls into the `:not_running` refusal, never `:not_found`.
   """
-  @spec pause(pid(), String.t()) :: pause_result()
+  @spec pause(GenServer.server(), String.t()) :: pause_result()
   def pause(store, task_id) do
     case read_update_info(store, task_id) do
       nil -> {:error, :not_found}
@@ -235,7 +235,12 @@ defmodule EvoGit.TaskRegistry.Pause do
 
   Returns `{:ok, task_ref}` on a successful re-enqueue.
   """
-  @spec resume(pid(), String.t(), atom() | nil, function() | nil) :: resume_result()
+  @spec resume(
+          GenServer.server(),
+          String.t(),
+          atom() | nil,
+          (atom(), keyword(), String.t(), atom() | nil -> Task.t()) | nil
+        ) :: resume_result()
   def resume(store, task_id, server, spawn_fun \\ nil) do
     case read_row(store, task_id) do
       nil ->
@@ -433,7 +438,7 @@ defmodule EvoGit.TaskRegistry.Pause do
 
   def pause_kind_for_restart(_other), do: nil
 
-  @spec pause_kind_for_restart(pid(), String.t()) :: :dirty | nil
+  @spec pause_kind_for_restart(GenServer.server(), String.t()) :: :dirty | nil
   def pause_kind_for_restart(store, task_id) when is_binary(task_id) do
     case read_row(store, task_id) do
       %{id: _id} = task -> pause_kind_for_restart(task)

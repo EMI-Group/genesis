@@ -58,15 +58,7 @@ defmodule EvoGit.TaskRegistry.StoreGuard do
   """
   @spec read(String.t(), term(), (-> term())) :: term()
   def read(op, degraded, fun) when is_binary(op) and is_function(fun, 0) do
-    fun.()
-  rescue
-    exception ->
-      log_failure(op, {:error, exception, __STACKTRACE__})
-      degraded
-  catch
-    kind, reason ->
-      log_failure(op, {kind, reason})
-      degraded
+    invoke(op, degraded, fun)
   end
 
   @doc """
@@ -75,15 +67,20 @@ defmodule EvoGit.TaskRegistry.StoreGuard do
   """
   @spec write(String.t(), (-> term())) :: term() | {:error, :store_unavailable}
   def write(op, fun) when is_binary(op) and is_function(fun, 0) do
+    invoke(op, @degraded_write_error, fun)
+  end
+
+  # This per-call boundary contains store faults, not the registry's own logic.
+  defp invoke(op, degraded, fun) do
     fun.()
   rescue
     exception ->
       log_failure(op, {:error, exception, __STACKTRACE__})
-      @degraded_write_error
+      degraded
   catch
     kind, reason ->
       log_failure(op, {kind, reason})
-      @degraded_write_error
+      degraded
   end
 
   defp log_failure(op, {:error, exception, stacktrace}) do
