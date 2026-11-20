@@ -96,7 +96,8 @@ Catalog suggestions are advisory only: they mark a chip's provenance and never d
 ## Custom tool error normalization
 
 `CustomToolsPanel.error_entry/1` always produces a map because its reason falls back to `inspect/1`, which returns a string even for a missing reason (`"nil"`).
-A missing file and reason therefore renders the unknown-file fallback plus `"nil"`, rather than dropping the entry, and any normalization cleanup must preserve that behavior unless explicitly changing the UI contract.
+A missing file and reason renders the unknown-file fallback plus `"nil"` rather than dropping the entry.
+Error status and entry maps accept atom or string keys, and non-map error entries are ignored.
 
 ## Visual rules
 

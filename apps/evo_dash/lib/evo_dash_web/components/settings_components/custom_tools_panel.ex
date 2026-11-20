@@ -35,7 +35,7 @@ defmodule EvoDashWeb.SettingsComponents.CustomToolsPanel do
       )
       |> assign(
         :errors,
-        assigns.status |> error_entries() |> Enum.map(&error_entry/1) |> Enum.reject(&is_nil/1)
+        assigns.status |> error_entries() |> Enum.map(&error_entry/1)
       )
 
     ~H"""
@@ -203,11 +203,7 @@ defmodule EvoDashWeb.SettingsComponents.CustomToolsPanel do
     file = string_value(field(entry, :file))
     reason = string_value(field(entry, :reason)) || inspect(field(entry, :reason))
 
-    if file == nil and reason == nil do
-      nil
-    else
-      %{file: file, reason: reason}
-    end
+    %{file: file, reason: reason}
   end
 
   defp entry_name(entry), do: string_value(field(entry, :name))
