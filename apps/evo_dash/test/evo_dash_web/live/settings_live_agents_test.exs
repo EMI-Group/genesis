@@ -93,10 +93,22 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
   # LiveView's mailbox — and the trailing `render/1` is a synchronous round-trip
   # that drains it, so every request the test sends afterwards is processed
   # AFTER it and the assertion stays race-free without a fixed sleep.
+  # The mount-time loads are ASYNC (the page paints before either answers), so
+  # the render handed to a test is the POST-load one: the agents editor is a
+  # loading placeholder until then.
   defp mount_settings(conn, url \\ "/settings?category=agents") do
-    {:ok, view, html} = live(conn, url)
-    await_view_async_loads(view)
+    {:ok, view, _seed_html} = live(conn, url)
+    html = await_agents_refresh(view)
     {:ok, view, html}
+  end
+
+  # The custom-agent/tool loads behind the `:agents` category are ASYNC: wait
+  # for THIS view's supervised tasks to leave their supervisor (their `send/2`
+  # has run by then) and re-render so the queued results are applied before the
+  # assertion. No fixed sleep, no weakened assertion.
+  defp await_agents_refresh(view) do
+    await_view_async_loads(view)
+    render(view)
   end
 
   # Bounded poll on "this view owns no live supervised task" (returns
@@ -253,6 +265,9 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
 
       html = save_agent(view, %{})
       assert html =~ "Custom agent saved."
+      # The post-mutation reload is ASYNC — assert the loaded editor, not the
+      # dispatch render.
+      html = await_agents_refresh(view)
       assert html =~ "Code Reviewer"
 
       assert Enum.any?(EvoGit.CustomAgents.list(), &(&1.id == "code_reviewer"))
@@ -273,6 +288,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
         })
 
       assert html =~ "Custom agent saved."
+      html = await_agents_refresh(view)
       assert html =~ "Renamed Reviewer"
 
       [agent] = EvoGit.CustomAgents.list()
@@ -284,6 +300,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       html = render_hook(view, "delete_custom_agent", %{"id" => "code_reviewer"})
 
       assert html =~ "Custom agent deleted."
+      html = await_agents_refresh(view)
       refute html =~ "Renamed Reviewer"
       assert EvoGit.CustomAgents.list() == []
     end
@@ -334,6 +351,8 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
         render_hook(view2, "save_model_selection_script", %{"script" => "this is ( not elixir"})
 
       assert html =~ "Model selection script saved."
+      # The saved script's compile status arrives with the ASYNC reload.
+      html = await_agents_refresh(view2)
       assert html =~ "Script error"
       assert match?({:error, {:compile_error, _}}, assigns(view2).script_status)
 
@@ -352,6 +371,10 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       # constant script must be the quoted string literal `"fast"` (the bare
       # word `fast` is an undefined variable → compile error).
       render_hook(view, "save_model_selection_script", %{"script" => ~s("fast")})
+      # Drain the save's async reload BEFORE the test run, so no late result
+      # can land after (and never touches results — an async refresh leaves the
+      # user-visible test results alone).
+      await_view_async_loads(view)
       html = render_hook(view, "test_model_selection_script", %{})
 
       assert html =~ "Test Results"
@@ -532,6 +555,9 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       {:ok, view, _html} = mount_settings(conn)
 
       save_agent(view, %{"name" => "Tooly", "tools" => ["bogus_tool"]})
+      # The post-save reload is ASYNC — the saved agent must be in the assigns
+      # before the editor can pre-fill from it.
+      await_agents_refresh(view)
 
       html = render_hook(view, "edit_custom_agent", %{"id" => "tooly"})
 
@@ -549,6 +575,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       # schema is env-gated — without a web-search backend it is absent from
       # `Tools.schemas()`, so it is not a built-in tool name in this env.)
       save_agent(view, %{"name" => "Legacy", "tools" => ["read_file", "run_bash"]})
+      await_agents_refresh(view)
 
       html = render_hook(view, "edit_custom_agent", %{"id" => "legacy"})
 

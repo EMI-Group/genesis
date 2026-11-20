@@ -1,6 +1,6 @@
 # SettingsLive Support Modules
 ## Intent and Routing
-`EvoDashWeb.SettingsLive` (`../settings_live.ex`, ~871 lines) is the stateful orchestrator only: `render/1`, `mount/3`, `handle_params/3`, one-line `handle_event/3`/`handle_info/2` routing, `persist_file_config/3,4` and the custom-agent/tool loaders.
+`EvoDashWeb.SettingsLive` (`../settings_live.ex`, ~871 lines) is the stateful orchestrator only: `render/1`, `mount/3`, `handle_params/3`, one-line `handle_event/3`/`handle_info/2` routing, `persist_file_config/3,4` and the two async custom-agent/custom-tool refresh kickers (`refresh_custom_agents/1`, `refresh_custom_tools/1`).
 Everything else lives in this leaf: `Navigation` (category navigation), `PageState` (mount assigns, config scope, node-aware read helpers), `ProviderPanelEvents` (the provider-account surface state machine), `ChatGPTSignInState` (the WHOLE page-level in-browser Sign in with ChatGPT feature shared by the wizard, an account detail and an auth-status row: state machine, socket handlers, post-sign-in side effects, wizard projection and the close-path cancel), `CategoryEvents` (generic categories + the ONE persistence entry point), `LlmTestEvents` (connection tests), `RemoteEvents` + `RemotePanel` (remote-target behaviour and view), `AsyncResults` (every async result and broadcast handler), `ProviderProfiles` + `ModelProfileHelpers` + `ModelProfileEvents` (canonical account transforms and detached editor state), `ConfigIO`, `ConfigSave`, `NodeData`, `AuthStatus`, `CustomAgentEvents` and `SearchEvents`.
 The parent `../settings_live.ex`, `../../components/`, the core schema/runtime and the dashboard tests are sibling-owned integration surfaces, not writable here.
 There are no child directories in this leaf.
@@ -13,11 +13,14 @@ The nav never advertises a category the viewed node will not serve: the displaya
 `handle_params/3` assigns only the last-known filtered map (never the unfiltered one) and seeds through `Navigation.seed/3`, so a gated category cannot become active.
 `select_category` whitelists through `Navigation.category_from_param/2` (an unknown/gated value is a no-op), assigns `active_category`, clears `search_text`/`per_category_errors`, records `category_patch: {ConfigSave.scope(socket), to_string(cat)}` and `push_patch`es to `Navigation.path/2`, so the URL stays the source of truth for the category.
 `PageState.consume_category_patch/2` consumes that marker exactly once, so a category-only navigation neither re-reads config nor cancels an in-flight load.
+The active category pane root is re-keyed `settings-pane-<category>` and carries the existing `wizard-step-enter` class, so every swap mounts a fresh element that replays the shared entrance keyframe (no JS, no new CSS, all other DOM ids and the `?category=` contract unchanged).
 Selecting `:remote_connections` additionally refreshes `remote_targets`/`remote_statuses` from `PageState.safe_list_targets/0` and `safe_connection_statuses/0`.
 ## PageState
 `node_data_tag/0` is the single node-data result tag, and `initial_assigns/1` seeds the whole page: category/schema maps, `file_config`, `config_status`, `scheduler_config`, provider/editor assigns, wizard and schedule assigns, remote assigns and `config_file_exists`.
 `initial_assigns/1` holds the leaf's only direct filesystem call — `File.exists?(EvoGit.Config.config_path())` — feeding the sidebar's "config file does not exist" hint; after a save receipt the parent sets `config_file_exists: true` without touching disk.
 `initial_assigns/1` injects the pseudo-categories `:remote_connections` and `:agents` into `schemas_by_category` with empty schema lists.
+`initial_assigns/1` also seeds the custom-agent/custom-tool LOADING defaults (`custom_agents: []`, `model_selection_script: ""`, `script_status: :ok`, `custom_agents_loading: true`, `custom_tools_status: %{ok: [], errors: []}`, `custom_tools_loading: true`) plus the custom-agent editor assigns, so `mount/3` performs NO cross-node RPC and the page paints immediately.
+Only the CONNECTED mount kicks `refresh_custom_agents/1` and `refresh_custom_tools/1`; the dead render leaves both loading flags true and spawns nothing.
 `start_node_data_load/2` and `invalidate_config_load/1` own the node-data generations; `reset_config_scope/1` and `reconcile_config_scope/1` reset/re-scope config assigns on node changes; `pending_remote_target?/1` reports a requested-but-unconnected remote context.
 `safe_config_status/0`, `safe_list_targets/0` and `safe_connection_statuses/0` are the SafeCall-guarded degraded reads used by mount, saves and category switches.
 `test_config_scope/1` builds the connection-test scope, `nav_node/1` supplies the `?node=` value, and `remote_config_to_file_config/1` normalizes a remote resolved config into the editable file-config shape.
@@ -125,11 +128,14 @@ Pending remote targets cannot start a local connection test.
 Connection tests pass `resolved.model_spec` and `resolved.generation_params` together to `SystemCheck.llm_test` or `RemoteNode.llm_test`; never reconstruct a partial option list.
 Remote tests resolve on the VIEWED node through RPC so OAuth import, managed credential paths and named API-key environment variables are that node's, never the dashboard's.
 ## AsyncResults
-`AsyncResults` owns every async result and broadcast handler the parent routes: `node_data_loaded/5`, `config_saved/2`, `saved_status_loaded/4`, `credentials_saved/3`, `config_load_wait_down/1`, `custom_tools_loaded/3`, `auth_status_loaded/4`, `llm_test_result/4`, `scheduler_config_updated/2`, `node_selected/2`, `remote_connection_status/2`, `remote_connect_result/3`, `bootstrap_complete/3`, `task_info/2` and `reload_tasks/1`.
+`AsyncResults` owns every async result and broadcast handler the parent routes: `node_data_loaded/5`, `config_saved/2`, `saved_status_loaded/4`, `credentials_saved/3`, `config_load_wait_down/1`, `custom_agents_loaded/3`, `custom_tools_loaded/3`, `auth_status_loaded/4`, `llm_test_result/4`, `scheduler_config_updated/2`, `node_selected/2`, `remote_connection_status/2`, `remote_connect_result/3`, `bootstrap_complete/3`, `task_info/2` and `reload_tasks/1`.
 Node-data results are applied once per captured node/generation, replace `schemas_by_category` with the authoritative filtered map and re-resolve the active category against it with the `:llm` fallback.
 Remote config reload unwraps SafeCall's `{:ok, {:ok, config}}` response; a successful write with a failed authoritative refetch remains a saved config with an unavailable-config warning.
 `scheduler_config_updated/2` re-assigns the viewed node's scheduler config and never reloads user config, and `node_selected`/`remote_connection_status` re-scope config and remote assigns.
 `TaskInfo`/`reload_tasks` handlers implement the shared node-filtered `{:task_updated, ...}`/`{:task_deleted, ...}` forwarding plus the 300 ms debounce reload (`EvoDashWeb.LiveHooks.NodeAware`).
+`custom_agents_loaded/3` and `custom_tools_loaded/3` always clear their own loading flag first, then apply the payload only when the result's captured node still matches `current_node`, so a node switch drops a late result without ever wedging the flag.
+`custom_agents_loaded/3` maps `{:ok, %{agents:, model_selection_script:, script_status:}}` into `custom_agents`/`model_selection_script`/`script_status` and degrades every error or unexpected shape to `{[], "", :ok}`, exactly like the former inline loader.
+It deliberately touches ONLY those three assigns, so a late refresh never wipes an open editor's `editing_agent_id`, `script_save_error` or `script_test_results`.
 ## RemoteEvents and RemotePanel
 `RemoteEvents` owns the remote-connection category behaviour: `add_remote_target`, `cancel_edit_remote_target`, `edit_remote_target`, `toggle_remote_advanced`, `remote_form_change`, `save_remote_target`, `delete_remote_target`, `bootstrap_remote_target`, `confirm_bootstrap_restart`, `cancel_bootstrap_restart`, `connect_remote_target`, `disconnect_remote_target` and `retry_remote_connection`.
 Bootstrap progress is `%{stage: nil | 0..4, active: boolean, status: :active | :success | :error, error: term}` and stays in assigns so the panel can render each step.
@@ -187,6 +193,8 @@ Results include `platform_os`/`filtered_schemas_by_category`/`file_config`/`conf
 Local config reads `ConfigIO`/`Config` directly and remote config reads the FULL `get_resolved_config`; `error_results/3` supplies conservative platform/schema/agent/tool values and a visible `remote_config_error`.
 `degraded_config_status/0` is `%{ok?: false, missing: [], warnings: [], validation_errors: []}`.
 Agent fetch tolerates odd shapes, tool fetch normalizes lists and preserves `{:error, reason}`, and remote status failures stay explicit.
+`NodeData.fetch_custom_agents/1` is the PUBLIC normalized reader behind the async refresh: `{:ok, %{agents:, model_selection_script:, script_status:}}` or `{:error, term()}` (`{:error, :unexpected_result}` for an odd payload), and it is the only place the agents shape is normalized.
+`NodeData.fetch_custom_tools_status/1` remains the sole normalizer of the custom-tool status map.
 Platform filtering protects hidden sandbox fields on save; Linux uses the local scheduler sandbox backend through `PageState.sandbox_backend/1` and remote pages use the `PlatformInfo` fallback.
 `NodeData` and `AuthStatus` ignore `start_child` failure, so the always-send guarantee applies only after a successful spawn.
 `AuthStatus.credential_profile/1` adapts canonical or legacy profiles to credential-only `model`/`auth_mode`/`oauth_file` and never includes API secrets.
@@ -201,6 +209,10 @@ Its trailing call-to-action is model-specific only when `:llm_model` is in `miss
 Two remote calls per OAuth account are not deduplicated and unexpected errors degrade the map through the outer SafeCall.
 ## Custom Agents, Tools and Peak Helpers
 `CustomAgentEvents` functions return SOCKETS rather than LiveView tuples and perform SafeCall-guarded local/remote mutations with translated errors and parent-owned refreshes.
+Every post-mutation refresh is ASYNC: a save/delete/script-save/script-test returns the socket after `SettingsLive.refresh_custom_agents/1` and `SettingsLive.refresh_custom_tools/1`, never a blocking RPC.
+Both refreshers spawn one `Task.Supervisor` child under `EvoDash.TaskSupervisor` that sends `{:custom_agents_loaded, node, result}` / `{:custom_tools_loaded, node, result}` back to the LiveView, and each sets its own loading flag so the flag clears in the result handler only.
+They never reset `editing_agent_id`/`script_save_error`/`script_test_results`, so an in-flight refresh cannot disturb an open editor or a just-returned sample test.
+While `custom_agents_loading` is true the parent renders a `#custom-agents-loading` daisyUI `skeleton` placeholder instead of the editor, so the panel never flashes a misleading "no custom agents" empty state.
 Script test reloads the cache and evaluates three sample attr maps via core APIs while retaining per-sample errors.
 The sibling Agents content renders `CustomAgentsEditor` → `CustomToolsPanel` → `ModelSelectionEditor`, with loaded custom-tool names feeding the whitelist chips.
 Peak concurrency is an optional nonnegative integer (0 pauses), timezone is optional, clocks are strict `HH:MM` and start/end must differ.

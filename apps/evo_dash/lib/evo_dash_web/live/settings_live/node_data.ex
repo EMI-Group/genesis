@@ -97,7 +97,7 @@ defmodule EvoDashWeb.SettingsLive.NodeData do
     config
     |> Map.put(:platform_os, platform_os)
     |> Map.put(:filtered_schemas_by_category, filtered_schemas_by_category)
-    |> Map.put(:custom_agents, fetch_custom_agents(node))
+    |> Map.put(:custom_agents, fetch_custom_agents_or_empty(node))
     |> Map.put(:custom_tools_status, fetch_custom_tools_status(node))
   end
 
@@ -191,16 +191,41 @@ defmodule EvoDashWeb.SettingsLive.NodeData do
 
   # Loads the custom-agents data (agent definitions, model-selection script,
   # script compile status) for the given node. Tolerant: any unexpected result
-  # shape degrades to the empty defaults (the LiveView's synchronous
-  # `load_custom_agents_data/1` keeps its strict match for the save flows).
-  defp fetch_custom_agents(node) do
+  # shape degrades to the empty defaults (the caller's `custom_agents_loaded/3`
+  # handler keeps that same degradation).
+  defp fetch_custom_agents_or_empty(node) do
+    case fetch_custom_agents(node) do
+      {:ok, data} -> data
+      {:error, _reason} -> %{agents: [], model_selection_script: "", script_status: :ok}
+    end
+  end
+
+  @doc """
+  Fetches the custom-agents data (agent definitions, model-selection script,
+  script compile status) for the given node, NORMALIZED so the caller can map it
+  straight onto the editor assigns.
+
+  Answers `{:ok, %{agents:, model_selection_script:, script_status:}}` on a
+  readable store and `{:error, reason}` on any transport failure or unexpected
+  payload shape. This is the ONE `SafeCall` boundary for the read: a dead or
+  slow node (an EXIT, which a `rescue` cannot catch) becomes `{:error, reason}`
+  instead of killing the caller.
+  """
+  @spec fetch_custom_agents(node()) ::
+          {:ok, %{agents: [map()], model_selection_script: String.t(), script_status: term()}}
+          | {:error, term()}
+  def fetch_custom_agents(node) do
     case EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.list_custom_agents(node) end) do
       {:ok,
        {:ok, %{agents: agents, model_selection_script: script, script_status: script_status}}} ->
-        %{agents: agents, model_selection_script: script || "", script_status: script_status}
+        {:ok,
+         %{agents: agents, model_selection_script: script || "", script_status: script_status}}
 
-      _ ->
-        %{agents: [], model_selection_script: "", script_status: :ok}
+      {:error, reason} ->
+        {:error, reason}
+
+      _other ->
+        {:error, :unexpected_result}
     end
   end
 

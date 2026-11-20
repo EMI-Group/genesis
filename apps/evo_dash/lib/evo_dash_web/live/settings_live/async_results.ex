@@ -148,6 +148,41 @@ defmodule EvoDashWeb.SettingsLive.AsyncResults do
   end
 
   @doc """
+  The async custom-agents status refresh (node stale-guarded; the loading flag
+  is cleared on every branch so the agents editor's placeholder never sticks).
+
+  A CONFIRMED load maps `{:ok, %{agents:, model_selection_script:,
+  script_status:}}` into the editor assigns and degrades every other shape
+  (`{:error, reason}`, an unexpected payload) exactly like the old synchronous
+  loader: an empty agent list with no script and a healthy `:ok` status. The
+  editor's transient state is deliberately NOT reset here — a stale refresh must
+  never wipe what the user (or a just-completed save) is looking at.
+  """
+  def custom_agents_loaded(socket, requested_node, result) do
+    socket = assign(socket, :custom_agents_loading, false)
+
+    if requested_node != socket.assigns.current_node do
+      {:noreply, socket}
+    else
+      {agents, script, script_status} =
+        case result do
+          {:ok, %{agents: agents, model_selection_script: script, script_status: status}} ->
+            {agents, script, status}
+
+          _error_or_unexpected ->
+            {[], "", :ok}
+        end
+
+      {:noreply,
+       assign(socket,
+         custom_agents: agents,
+         model_selection_script: script || "",
+         script_status: script_status
+       )}
+    end
+  end
+
+  @doc """
   The async custom-tools status refresh (node stale-guarded; the loading flag is
   cleared on every branch so the panel's spinner never sticks).
   """
@@ -392,9 +427,9 @@ defmodule EvoDashWeb.SettingsLive.AsyncResults do
   # Applies the results of the async node-data load (see
   # EvoDashWeb.SettingsLive.NodeData) to the socket: the platform assigns
   # (platform_os + the platform-filtered schemas map), the re-resolved active
-  # category, and the config/agents assigns. Mirrors the assigns that the
-  # pre-async `handle_params/3` + `load_custom_agents_data/1` produced
-  # synchronously. A `:remote_config_error` reason is gettext'd into the same
+  # category, and the config/agents assigns. The node-data load carries the
+  # custom-agent data too, so it settles BOTH loading flags the mount seeds.
+  # A `:remote_config_error` reason is gettext'd into the same
   # user-facing message the old synchronous path showed, so a remote fetch
   # failure still renders the error banner instead of a misleading "No LLM
   # Model Configured" box.
@@ -473,6 +508,7 @@ defmodule EvoDashWeb.SettingsLive.AsyncResults do
       # (several tests build them without it) — default to the empty status.
       custom_tools_status: Map.get(results, :custom_tools_status, %{ok: [], errors: []}),
       custom_tools_loading: false,
+      custom_agents_loading: false,
       editing_agent_id: nil,
       script_save_error: nil,
       script_test_results: []
