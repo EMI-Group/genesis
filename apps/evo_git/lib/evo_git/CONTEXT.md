@@ -136,7 +136,8 @@ The VCT is a pure in-memory namespace: no stage label, mount point or `vct:///` 
 - **Push-only agent streaming**: 🟠 `watch_agent/2` + `watch_snapshot/2` (both return a `%EvoGit.Agent.Stream.Snapshot{}` carrying the session's FULL transcript — same class as `get_agent_history/1`), 🟢 `unwatch_agent/2` (idempotent), and 🟢 delta batches (`{:agent_delta, agent_id, seq, batch}` on `"agent:<id>"` are PUBLISHED via cluster-aware PG2, never RPC-pulled; a consumer drops `seq <= snapshot.seq` and resyncs only via a snapshot) — the CALLER subscribes to the topic on its OWN node before registering, because an `:erpc` worker process is not the caller.
 - A session still in `:starting` serves watch and snapshot through `EvoGit.Agent.Stream.Snapshot.starting/2`, the pre-state snapshot (`phase: :starting`, an empty transcript, turn 0 and the session's live activity), so a consumer can attach before the first turn.
 
-**⚠️ Known spec mismatch — `default_merge_target`**: it returns `{:ok, String.t()}` | `{:error, :no_branch_found}`, but the `RemoteAPI`/`RemoteNode`/`NodeContext` `@spec`s claim `String.t() | {:error, term()}` (the `{:ok, _}` is missing); the runtime value is the wrapped tuple and `ReviewLive` matches `{:ok, name}` — do NOT trust those specs.
+`RemoteNode.default_merge_target/2` specifies `{:ok, String.t()} | {:error, term()}`, matching the wrapped success contract of `Review.default_merge_target/1`.
+`RemoteConnections.delete/1` and `touch/1` specify only `{:error, :not_found}` but also propagate persistence failures from `write_connections/1` and `save/1`; their typespecs and docs omit these write-error outcomes.
 
 ## Windows PowerShell Invocation — `-EncodedCommand`
 
