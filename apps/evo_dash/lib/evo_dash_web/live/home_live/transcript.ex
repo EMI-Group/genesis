@@ -35,12 +35,18 @@ defmodule EvoDashWeb.HomeLive.Transcript do
 
     * at most 200 transcript entries — the NEWEST are kept;
     * at most 8_000 graphemes of `text` per entry (grapheme-safe);
-    * at most 40 reasoning entries per turn (oldest dropped).
+    * at most 40 reasoning entries per turn (oldest dropped);
+    * at most 2_000 graphemes of RENDERED text per LIVE thought entry
+      (`cap_thought_text/1`) — the live stream re-renders every retained
+      thought entry on each ~75 ms delta batch, so its text is capped where it
+      is produced. History-read projections are owned elsewhere and are not
+      capped here.
   """
 
   @max_entries 200
   @max_entry_chars 8_000
   @max_reasoning_entries 40
+  @max_thought_chars 2_000
 
   @type role :: :user | :assistant | :error | :tool
 
@@ -172,25 +178,41 @@ defmodule EvoDashWeb.HomeLive.Transcript do
   empty/non-binary chunk returns the (normalized) transcript unchanged.
   """
   @spec append_streaming_text(t, String.t()) :: t
-  def append_streaming_text(transcript, chunk) when is_binary(chunk) and chunk != "" do
+  def append_streaming_text(transcript, chunk) do
+    transcript
+    |> append_streaming_chunk(chunk)
+    |> elem(0)
+  end
+
+  @doc """
+  `append_streaming_text/2`, answering `{transcript, entry_id}`.
+
+  `entry_id` is the id of the streaming entry the chunk landed in (the freshly
+  opened one included), so the delta reducer can remember the live bubble's
+  identity instead of scanning the whole transcript for it afterwards. It is
+  `nil` when the chunk was not appended (empty/non-binary chunk) or when the
+  targeted entry carries no usable id. Total.
+  """
+  @spec append_streaming_chunk(t, String.t()) :: {t, String.t() | nil}
+  def append_streaming_chunk(transcript, chunk) when is_binary(chunk) and chunk != "" do
     case last_streaming_index(transcript) do
       nil ->
-        append(transcript, entry(:assistant, chunk, streaming: true))
+        entry = entry(:assistant, chunk, streaming: true)
+        {append(transcript, entry), entry.id}
 
       index ->
-        transcript
-        |> List.update_at(index, fn entry ->
-          Map.put(
-            entry,
-            :text,
-            truncate_entry_text(normalize_text(Map.get(entry, :text)) <> chunk)
-          )
-        end)
-        |> cap_entries()
+        entry = Enum.at(transcript, index)
+
+        transcript =
+          transcript
+          |> List.update_at(index, &Map.put(&1, :text, append_text(&1, chunk)))
+          |> cap_entries()
+
+        {transcript, entry_id(Map.get(entry, :id))}
     end
   end
 
-  def append_streaming_text(transcript, _chunk), do: normalize(transcript)
+  def append_streaming_chunk(transcript, _chunk), do: {normalize(transcript), nil}
 
   @doc """
   Marks the last streaming entry as finalized (`streaming: false`), leaving its
@@ -226,8 +248,20 @@ defmodule EvoDashWeb.HomeLive.Transcript do
   """
   @spec close_streaming(t) :: t
   def close_streaming(transcript) do
-    entries = normalize(transcript)
+    transcript
+    |> normalize()
+    |> close_streaming_normalized()
+  end
 
+  @doc """
+  `close_streaming/1` for a transcript the caller already KNOWS is normalized
+  (and capped) — e.g. the `EvoDashWeb.HomeLive.LiveCall` projection, which
+  normalizes exactly once per render. Same result, no second whole-list pass.
+
+  Total: a non-list degrades to `[]`.
+  """
+  @spec close_streaming_normalized(t) :: t
+  def close_streaming_normalized(entries) when is_list(entries) do
     case last_streaming_index(entries) do
       nil ->
         entries
@@ -244,6 +278,8 @@ defmodule EvoDashWeb.HomeLive.Transcript do
         end
     end
   end
+
+  def close_streaming_normalized(_entries), do: []
 
   @doc """
   Settles the entry with `id` on its FINAL text: sets `text`, marks it
@@ -266,6 +302,41 @@ defmodule EvoDashWeb.HomeLive.Transcript do
         cap_entries(before ++ [entry |> put_text(text) |> settle()] ++ rest)
     end
   end
+
+  @doc """
+  Caps entry text at the per-entry 8 000-grapheme limit, grapheme-safe and
+  total (non-binary input degrades to `""`).
+
+  Exposed for the `EvoDashWeb.HomeLive.LiveCall` projection, which writes a
+  live bubble's text into an already-normalized transcript instead of running
+  another whole-list `normalize/1`.
+  """
+  @spec cap_text(term()) :: String.t()
+  def cap_text(text), do: truncate_entry_text(text)
+
+  @doc """
+  Caps ONE live thought-process entry's RENDERED text at #{@max_thought_chars}
+  graphemes, appending an ellipsis marker (`…`) when it had to be cut.
+
+  The live stream keeps up to 40 thought entries per reply and the page
+  re-renders all of them on every ~75 ms delta batch, so untruncated reasoning
+  would dominate the render; CSS alone only hides the overflow. Applied where
+  LIVE thought entries are produced (`EvoDashWeb.HomeLive.LiveCall.thinking_entry/3`);
+  the entry COUNT itself is untouched. History-read projections owned by other
+  modules are deliberately not capped here. Total: a non-binary degrades
+  through the text normalizer, an invalid binary is byte-truncated.
+  """
+  @spec cap_thought_text(term()) :: String.t()
+  def cap_thought_text(text) when is_binary(text) do
+    cond do
+      byte_size(text) <= @max_thought_chars -> text
+      not String.valid?(text) -> binary_part(text, 0, @max_thought_chars)
+      String.length(text) > @max_thought_chars -> String.slice(text, 0, @max_thought_chars) <> "…"
+      true -> text
+    end
+  end
+
+  def cap_thought_text(text), do: cap_thought_text(normalize_text(text))
 
   @doc """
   Builds a non-streaming `:tool` entry for one tool invocation.
@@ -457,6 +528,11 @@ defmodule EvoDashWeb.HomeLive.Transcript do
 
   # Writes the rendered text of an entry through the Markdown-cache refresh.
   defp put_text(entry, text), do: entry |> Map.put(:text, text) |> with_html()
+
+  # Appends a streamed chunk to an entry's text (normalized + 8_000-capped).
+  defp append_text(entry, chunk) do
+    truncate_entry_text(normalize_text(Map.get(entry, :text)) <> chunk)
+  end
 
   # Settles an entry (no longer streaming) through the Markdown-cache refresh.
   defp settle(entry), do: entry |> Map.put(:streaming, false) |> with_html()

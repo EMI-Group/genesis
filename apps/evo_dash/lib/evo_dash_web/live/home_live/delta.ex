@@ -11,12 +11,13 @@ defmodule EvoDashWeb.HomeLive.Delta do
     * `{:activity, projection}` — replaces the current call's text/thinking,
       keyed by its fresh attempt id; retry removes the failed attempt's output;
     * `{:text, chunk}` — appends to the current call and its assistant bubble
-      (`EvoDashWeb.HomeLive.Transcript.append_streaming_text/2`) and recorded as
-      this turn's streamed text;
+      (`EvoDashWeb.HomeLive.Transcript.append_streaming_chunk/2`, which also
+      answers the bubble's id) and recorded as this turn's streamed text;
     * `{:thinking, chunk}` — accumulated in `thinking` and mirrored into ONE
       upserted thought-process entry for the current turn (the bubble text
       excludes reasoning by design, see
-      `EvoDashWeb.HomeLive.Messages.message_text/1`);
+      `EvoDashWeb.HomeLive.Messages.message_text/1`); the bubble's own
+      reasoning list is only rewritten when that bucket actually changed;
     * `{:tool_call, id, name}` — a `:tool` transcript entry appears (`:running`)
       while the streaming bubble stays OPEN, so text arriving after a tool call
       keeps accumulating into the SAME bubble (one bubble per turn);
@@ -40,6 +41,11 @@ defmodule EvoDashWeb.HomeLive.Delta do
   `seq` is the session's monotonic event sequence: reconciliation is
   `EvoGit.Agent.Stream.stale?/2` applied by the CALLER before `apply_batch/5`,
   and `seed/3` records the snapshot's seq/turn when the page attaches.
+
+  These events arrive every ~75 ms, so the fold avoids whole-transcript work
+  where it can: an already-normalized transcript is never re-normalized by the
+  reducer itself, the streaming bubble's id comes back from the append that
+  touched it, and a text-only chunk writes NO reasoning at all.
   """
 
   alias EvoDashWeb.HomeLive.{LiveCall, Transcript}
@@ -57,6 +63,7 @@ defmodule EvoDashWeb.HomeLive.Delta do
           seq: non_neg_integer(),
           turn: non_neg_integer(),
           thinking: String.t(),
+          reasoning_text: String.t(),
           text_in_turn: boolean(),
           text_in_closed_turn: boolean(),
           activity: map() | nil,
@@ -68,6 +75,7 @@ defmodule EvoDashWeb.HomeLive.Delta do
             seq: 0,
             turn: 0,
             thinking: "",
+            reasoning_text: "",
             text_in_turn: false,
             text_in_closed_turn: false,
             activity: nil,
@@ -185,12 +193,17 @@ defmodule EvoDashWeb.HomeLive.Delta do
   end
 
   defp apply_event({:text, chunk}, acc) when is_binary(chunk) and chunk != "" do
-    transcript = Transcript.append_streaming_text(acc.transcript, chunk)
-    id = streaming_id(transcript)
+    # The append answers the bubble it touched, so no second scan is needed to
+    # remember the live entry's identity.
+    {transcript, id} = Transcript.append_streaming_chunk(acc.transcript, chunk)
 
     %{
       acc
-      | delta: %{acc.delta | text_in_turn: true, call_entry_id: id},
+      | delta: %{
+          acc.delta
+          | text_in_turn: true,
+            call_entry_id: id || acc.delta.call_entry_id
+        },
         transcript: transcript
     }
     |> retain_thinking()
@@ -231,6 +244,7 @@ defmodule EvoDashWeb.HomeLive.Delta do
           streaming_id(acc.transcript) ||
             if(acc.delta.text_in_turn, do: acc.delta.call_entry_id),
         thinking: "",
+        reasoning_text: "",
         text_in_closed_turn: acc.delta.text_in_turn == true,
         text_in_turn: false
     }
@@ -274,27 +288,47 @@ defmodule EvoDashWeb.HomeLive.Delta do
 
   defp apply_event(_event, acc), do: acc
 
-  defp streaming_id(transcript) do
-    transcript
-    |> Transcript.normalize()
-    |> Enum.reverse()
-    |> Enum.find_value(fn entry -> if entry.streaming and entry.text != "", do: entry.id end)
+  # The last streaming entry that actually carries text. The reducer's own
+  # transcripts are already normalized (`Transcript.entry/3` built every one of
+  # them), so this scans WITHOUT re-normalizing the list.
+  defp streaming_id(transcript) when is_list(transcript) do
+    Enum.reduce(transcript, nil, fn
+      %{streaming: true, text: text, id: id}, _acc
+      when is_binary(text) and text != "" and is_binary(id) and id != "" ->
+        id
+
+      _entry, acc ->
+        acc
+    end)
   end
+
+  defp streaming_id(_transcript), do: nil
 
   # --- thinking ---
 
   defp retain_thinking(%{delta: %{text_in_turn: false}} = acc), do: acc
 
   defp retain_thinking(acc) do
-    thoughts =
-      if acc.delta.thinking == "",
-        do: [],
-        else: [LiveCall.thinking_entry(acc.delta.turn, acc.delta.thinking)]
+    thinking = acc.delta.thinking
+    id = acc.delta.call_entry_id
 
-    %{
+    # A text-only chunk leaves the bucket untouched, so the bubble's reasoning
+    # list must not be rewritten (that would cost a whole-transcript pass on
+    # every streamed chunk).
+    if id == nil or thinking == acc.delta.reasoning_text do
       acc
-      | transcript: Transcript.put_reasoning(acc.transcript, acc.delta.call_entry_id, thoughts)
-    }
+    else
+      thoughts =
+        if thinking == "",
+          do: [],
+          else: [LiveCall.thinking_entry(acc.delta.turn, thinking)]
+
+      %{
+        acc
+        | delta: %{acc.delta | reasoning_text: thinking},
+          transcript: Transcript.put_reasoning(acc.transcript, id, thoughts)
+      }
+    end
   end
 
   defp upsert_thinking(thought_process, turn, text) do
