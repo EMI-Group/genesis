@@ -56,6 +56,10 @@ defmodule EvoDashWeb.TasksLive do
       remote_targets={assigns[:remote_targets] || []}
       connection_statuses={assigns[:connection_statuses] || %{}}
       workbench_project={assigns[:workbench_project]}
+      workbench_git_project={
+        if @current_node_id || !assigns[:workbench_remote_requested],
+          do: assigns[:workbench_project]
+      }
       workbench_task={assigns[:focused_task_id]}
       workbench_title={assigns[:workbench_title]}
       current_node_name={@current_node_name}

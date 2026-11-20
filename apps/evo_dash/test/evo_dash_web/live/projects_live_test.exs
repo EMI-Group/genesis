@@ -1571,6 +1571,22 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
   end
 
+  test "an unknown explicit remote target cannot activate a local path", %{
+    conn: conn,
+    tmp_dir: tmp_dir
+  } do
+    target = "no-longer-configured"
+    params = %{node: target, project: tmp_dir}
+    {:ok, view, _html} = live(conn, ~p"/projects?#{params}")
+    await_async_loads(view)
+
+    assert assigns(view)[:current_node_id] == target
+    assert assigns(view)[:active_project_path] == nil
+    refute has_element?(view, "#workbench-task-composer")
+    refute has_element?(view, "#workbench-git-toggle")
+    refute Enum.any?(EvoGit.VCT.projects(), &(&1.path == tmp_dir))
+  end
+
   describe "project palette" do
     setup do
       clear_projects()

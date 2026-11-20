@@ -43,6 +43,7 @@ defmodule EvoDashWeb.Layouts do
   attr(:workbench_task, :string, default: nil)
   attr(:workbench_draft, :string, default: nil)
   attr(:workbench_draft_project, :string, default: nil)
+  attr(:workbench_git_project, :string, default: nil)
   attr(:workbench_git_branch, :string, default: nil)
   attr(:workbench_starting_commit, :string, default: nil)
 
@@ -121,11 +122,13 @@ defmodule EvoDashWeb.Layouts do
   end
 
   def app(assigns) do
+    target =
+      EvoDashWeb.WorkbenchComponent.target(assigns.current_node_id, assigns.connection_statuses)
+
     assigns =
-      assign(
-        assigns,
-        :workbench_target,
-        EvoDashWeb.WorkbenchComponent.target(assigns.current_node_id, assigns.connection_statuses)
+      assign(assigns,
+        workbench_target: target,
+        workbench_git_available?: is_binary(assigns.workbench_git_project) and not is_nil(target)
       )
 
     ~H"""
@@ -515,7 +518,7 @@ defmodule EvoDashWeb.Layouts do
               </details>
             </div>
             <button
-              :if={@workbench_project}
+              :if={@workbench_git_available?}
               id="workbench-git-toggle"
               type="button"
               class="workbench-icon-button workbench-git-toggle"
@@ -576,7 +579,7 @@ defmodule EvoDashWeb.Layouts do
              navigation. --%>
               <div id="guide-hook" phx-hook="Guide" />
             </div>
-            <div :if={!@simple_nav && @workbench_project} id="workbench-git-diff-host" />
+            <div :if={!@simple_nav && @workbench_git_available?} id="workbench-git-diff-host" />
           </div>
         </div>
 
@@ -665,7 +668,7 @@ defmodule EvoDashWeb.Layouts do
             id="workbench-git-content"
             node_id={@current_node_id}
             target={@workbench_target}
-            project={@workbench_project}
+            project={@workbench_git_project}
             server={workbench_git_server(assigns)}
           />
         </aside>

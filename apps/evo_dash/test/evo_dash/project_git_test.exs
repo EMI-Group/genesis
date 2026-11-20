@@ -1,8 +1,10 @@
 defmodule EvoDash.ProjectGitTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias EvoDash.ProjectGit
+  alias EvoDashWeb.ProjectGit, as: GitPanel
   alias EvoGit.Adapters.Git
+  alias EvoGit.VCT
 
   setup do
     root = Path.join(System.tmp_dir!(), "workbench-git-#{System.unique_integer([:positive])}")
@@ -12,6 +14,8 @@ defmodule EvoDash.ProjectGitTest do
     File.write!(Path.join(root, "notes.txt"), "main version\n")
     git!(root, ~w(add notes.txt))
     git!(root, ["commit", "-m", "Initial version"])
+    {:ok, mount} = VCT.mount(root)
+    on_exit(fn -> VCT.forget(mount.point) end)
     %{root: root}
   end
 
@@ -104,6 +108,33 @@ defmodule EvoDash.ProjectGitTest do
     assert patch =~ "+main version"
     refute patch =~ "working copy change"
     assert File.read!(Path.join(root, "notes.txt")) == "working copy change\n"
+  end
+
+  test "Git inspection requires an explicitly mounted worktree root", %{root: root} do
+    child = Path.join(root, "nested")
+    File.mkdir!(child)
+    assert {:error, :project_unavailable} = ProjectGit.snapshot(node(), child)
+
+    {:ok, mount} = VCT.mount(child)
+    on_exit(fn -> VCT.forget(mount.point) end)
+    assert {:error, :not_a_repository} = ProjectGit.snapshot(node(), child)
+    assert {:error, :not_a_repository} = ProjectGit.head(node(), child)
+    assert {:ok, %{root: ^root}} = ProjectGit.snapshot(node(), root)
+  end
+
+  test "returning to a project ignores a branch operation from the previous visit", %{root: root} do
+    {:ok, socket} = GitPanel.mount(%Phoenix.LiveView.Socket{})
+    project = %{target: node(), node_id: nil, project: root}
+    {:ok, first_visit} = GitPanel.update(project, socket)
+    {:ok, other_project} = GitPanel.update(%{project | project: Path.dirname(root)}, first_visit)
+    {:ok, current_visit} = GitPanel.update(project, other_project)
+
+    assert {:noreply, ^current_visit} =
+             GitPanel.handle_async(
+               {:start_task, first_visit.assigns.scope, "main"},
+               {:ok, {:ok, "deadbeef"}},
+               current_visit
+             )
   end
 
   defp git!(root, args) do

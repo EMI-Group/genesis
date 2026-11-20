@@ -27,6 +27,9 @@ defmodule EvoDashWeb.ReviewLive do
       remote_targets={assigns[:remote_targets] || []}
       connection_statuses={assigns[:connection_statuses] || %{}}
       workbench_project={@workbench_project}
+      workbench_git_project={
+        if @current_node_id || !assigns[:workbench_remote_requested], do: @workbench_project
+      }
       workbench_task={@task_id}
       workbench_title={assigns[:objective]}
       current_node_name={@current_node_name}
@@ -388,6 +391,7 @@ defmodule EvoDashWeb.ReviewLive do
     socket =
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
+      |> assign(:workbench_remote_requested, params["node"] not in [nil, "", "local"])
       |> assign(:current_path, ~p"/review/#{socket.assigns.task_id}")
       |> assign(:page_title, page_title)
 

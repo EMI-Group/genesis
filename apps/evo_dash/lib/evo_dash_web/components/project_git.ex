@@ -38,17 +38,17 @@ defmodule EvoDashWeb.ProjectGit do
 
   @impl true
   def update(assigns, socket) do
-    scope = {assigns.target, assigns.node_id, assigns.project}
-    changed? = scope != socket.assigns.scope
+    project_scope = {assigns.target, assigns.node_id, assigns.project}
+    changed? = not match?({^project_scope, _}, socket.assigns.scope)
     socket = assign(socket, assigns)
 
     socket =
       if changed? do
-        cached = socket.assigns.snapshots_by_project[scope]
+        cached = socket.assigns.snapshots_by_project[project_scope]
 
         socket
         |> assign(
-          scope: scope,
+          scope: {project_scope, make_ref()},
           head: display_head(get_in(cached, [:snapshot, :branch])),
           snapshot: cached[:snapshot],
           branch: nil,
@@ -152,7 +152,7 @@ defmodule EvoDashWeb.ProjectGit do
     do: {:noreply, assign(socket, head: display_head(head))}
 
   def handle_async(
-        {:snapshot, scope},
+        {:snapshot, {project_scope, _} = scope},
         {:ok, {:ok, snapshot}},
         %{assigns: %{scope: scope}} = socket
       ) do
@@ -165,7 +165,7 @@ defmodule EvoDashWeb.ProjectGit do
      |> assign(
        snapshot: snapshot,
        snapshots_by_project:
-         Map.put(socket.assigns.snapshots_by_project, scope, %{snapshot: snapshot}),
+         Map.put(socket.assigns.snapshots_by_project, project_scope, %{snapshot: snapshot}),
        head: display_head(snapshot[:branch]),
        branch: branch,
        busy: nil,
@@ -174,13 +174,17 @@ defmodule EvoDashWeb.ProjectGit do
      |> load_history()}
   end
 
-  def handle_async({:snapshot, scope}, result, %{assigns: %{scope: scope}} = socket) do
+  def handle_async(
+        {:snapshot, {project_scope, _} = scope},
+        result,
+        %{assigns: %{scope: scope}} = socket
+      ) do
     error = error_message(result)
 
     cache =
       if result == {:ok, {:error, :not_a_repository}},
-        do: Map.put(socket.assigns.snapshots_by_project, scope, %{error: error}),
-        else: Map.delete(socket.assigns.snapshots_by_project, scope)
+        do: Map.put(socket.assigns.snapshots_by_project, project_scope, %{error: error}),
+        else: Map.delete(socket.assigns.snapshots_by_project, project_scope)
 
     {:noreply,
      assign(socket,
@@ -192,28 +196,30 @@ defmodule EvoDashWeb.ProjectGit do
      )}
   end
 
-  def handle_async({:switch, scope}, {:ok, {:ok, _}}, %{assigns: %{scope: scope}} = socket),
-    do: {:noreply, socket |> assign(busy: nil, branch: nil) |> refresh()}
+  def handle_async(
+        {:switch, scope, _branch},
+        {:ok, {:ok, _}},
+        %{assigns: %{scope: scope}} = socket
+      ),
+      do: {:noreply, socket |> assign(busy: nil, branch: nil) |> refresh()}
 
   def handle_async(
-        {:start_task, scope},
+        {:start_task, scope, branch},
         {:ok, {:ok, commit}},
         %{assigns: %{scope: scope}} = socket
       ) do
-    branch = socket.assigns.busy_branch
-
     href =
       WorkbenchComponent.navigation_path("/projects", socket.assigns.node_id,
         project: socket.assigns.project,
         wb_task: "1",
-        wb_git_branch: String.replace_invalid(branch.name),
+        wb_git_branch: String.replace_invalid(branch),
         starting_commit: commit
       )
 
     {:noreply, socket |> assign(busy: nil) |> push_navigate(to: href)}
   end
 
-  def handle_async({operation, scope}, result, %{assigns: %{scope: scope}} = socket)
+  def handle_async({operation, scope, _branch}, result, %{assigns: %{scope: scope}} = socket)
       when operation in [:switch, :start_task],
       do: {:noreply, assign(socket, busy: nil, error: error_message(result))}
 
@@ -317,7 +323,16 @@ defmodule EvoDashWeb.ProjectGit do
     end
   end
 
-  defp refresh(%{assigns: %{busy: nil, target: target, project: project, scope: scope}} = socket)
+  defp refresh(
+         %{
+           assigns: %{
+             busy: nil,
+             target: target,
+             project: project,
+             scope: {project_scope, _} = scope
+           }
+         } = socket
+       )
        when not is_nil(target) and is_binary(project) do
     socket
     |> cancel_async({:head, scope})
@@ -326,7 +341,7 @@ defmodule EvoDashWeb.ProjectGit do
     |> clear_preview()
     |> assign(
       busy: :snapshot,
-      error: get_in(socket.assigns.snapshots_by_project, [scope, :error]),
+      error: get_in(socket.assigns.snapshots_by_project, [project_scope, :error]),
       history: nil
     )
     |> start_async({:snapshot, scope}, fn -> Git.snapshot(target, project) end)
@@ -339,8 +354,8 @@ defmodule EvoDashWeb.ProjectGit do
            socket.assigns,
          %{} = branch <- Enum.find(branches, &(&1.ref == ref)) do
       socket
-      |> assign(busy: operation, busy_branch: branch, error: nil)
-      |> start_async({operation, scope}, fn -> action.(target, root, branch) end)
+      |> assign(busy: operation, error: nil)
+      |> start_async({operation, scope, branch.name}, fn -> action.(target, root, branch) end)
     else
       _ -> socket
     end
@@ -365,6 +380,9 @@ defmodule EvoDashWeb.ProjectGit do
 
   defp error_message({:ok, {:error, :node_unavailable}}),
     do: gettext("Git is unavailable on the selected server.")
+
+  defp error_message({:ok, {:error, :project_unavailable}}),
+    do: gettext("Select a project to see its Git status.")
 
   defp error_message({:ok, {:error, :not_a_repository}}),
     do: gettext("This project does not have a Git repository.")

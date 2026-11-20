@@ -108,6 +108,7 @@ defmodule EvoDashWeb.ProjectsLive do
         remote_targets={assigns[:remote_targets] || []}
         connection_statuses={assigns[:connection_statuses] || %{}}
         workbench_project={workbench_project}
+        workbench_git_project={if workbench_project == @active_project_path, do: @active_project_path}
         workbench_git_branch={@workbench_reconnect_params["wb_git_branch"]}
         workbench_starting_commit={@workbench_reconnect_params["starting_commit"]}
         current_node_name={@current_node_name}
@@ -572,7 +573,9 @@ defmodule EvoDashWeb.ProjectsLive do
     # re-assigns `current_node` — computing it inside the pipe from the outer
     # `socket` variable would read the PRE-assign_node value, so a page load at
     # a connected `?node=` URL would render the error gate on the first pass.
-    socket = EvoDashWeb.LiveHooks.NodeAware.assign_node(socket, params)
+    socket =
+      EvoDashWeb.LiveHooks.NodeAware.assign_node(socket, params, preserve_unresolved?: true)
+
     socket = assign(socket, :current_path, ~p"/projects")
 
     socket = assign(socket, :remote?, socket.assigns.current_node != node())

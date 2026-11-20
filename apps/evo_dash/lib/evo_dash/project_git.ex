@@ -12,11 +12,11 @@ defmodule EvoDash.ProjectGit do
     do: git(node, project, ~w(symbolic-ref --quiet --short HEAD))
 
   def snapshot(node, project) do
-    with {:ok, root} <- repository_root(node, project),
+    with :ok <- verify_repository(node, project),
          {:ok, status} <-
-           git(node, root, ~w(--no-optional-locks status --porcelain=v2 --branch -z -uall)),
+           run_git(node, project, ~w(--no-optional-locks status --porcelain=v2 --branch -z -uall)),
          {:ok, refs} <-
-           git(node, root, [
+           run_git(node, project, [
              "for-each-ref",
              "--format=%(refname)%09%(symref)",
              "refs/heads",
@@ -26,9 +26,9 @@ defmodule EvoDash.ProjectGit do
 
       {:ok,
        Map.merge(snapshot, %{
-         root: root,
+         root: project,
          branches: parse_branches(refs),
-         subject: head_subject(node, root, snapshot[:commit])
+         subject: head_subject(node, project, snapshot[:commit])
        })}
     end
   end
@@ -121,21 +121,33 @@ defmodule EvoDash.ProjectGit do
   defp head_subject(_node, _root, nil), do: nil
 
   defp head_subject(node, root, commit) do
-    case git(node, root, ["show", "-s", "--format=%s", commit]) do
+    case run_git(node, root, ["show", "-s", "--format=%s", commit]) do
       {:ok, subject} -> String.replace_invalid(subject)
       _ -> nil
     end
   end
 
-  defp repository_root(node, project) do
-    case git(node, project, ~w(rev-parse --show-toplevel)) do
-      {:error, {_, "fatal: not a git repository" <> _}} -> {:error, :not_a_repository}
-      result -> result
+  defp verify_repository(node, project)
+       when is_atom(node) and not is_nil(node) and is_binary(project) do
+    if Enum.any?(NodeContext.projects(node), &match?(%{path: ^project}, &1)) do
+      case run_git(node, project, ~w(rev-parse --is-inside-work-tree --show-prefix)) do
+        {:ok, "true"} -> :ok
+        {:error, :node_unavailable} = error -> error
+        _ -> {:error, :not_a_repository}
+      end
+    else
+      {:error, :project_unavailable}
     end
   end
 
-  defp git(node, path, args) do
-    case NodeContext.call_remote(node, Git, :run, [args, path]) do
+  defp verify_repository(_node, _project), do: {:error, :project_unavailable}
+
+  defp git(node, project, args) do
+    with :ok <- verify_repository(node, project), do: run_git(node, project, args)
+  end
+
+  defp run_git(node, project, args) do
+    case NodeContext.call_remote(node, Git, :run, [["-c", "core.fsmonitor=false" | args], project]) do
       {:ok, result} -> result
       {:error, _reason} -> {:error, :node_unavailable}
     end
