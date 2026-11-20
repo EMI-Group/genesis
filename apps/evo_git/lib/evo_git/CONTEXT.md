@@ -268,10 +268,6 @@ Capacity and `llm_pools` come from a BOUNDED `:get_config` call (2s, seam `:syst
 Degradation: scheduler reads go through `safe_scheduler_call/1` (2s bound < the 3s cadence + `catch :exit` — the module's single justified try/catch), a config-refresh failure KEEPS the last totals + pools, and an `llm_slots` failure broadcasts `%{}` with rate-limited warnings; with `scheduler_alive?/0` false the sample carries zero counts/capacities + empty slots/pools.
 Ring buffer: last 60 samples; `get_recent_samples/0` → `{:ok, samples}` | `{:error, :not_found}`; `RemoteAPI.get_recent_system_samples/0` → `{:error, :sampler_down}`.
 
-## Peak/Off-Peak Diagnostics
-
-Peak handling is log-only; `peak_hour_engine_test.exs` pins the fixed-point invariant, and the ordered log lines for a task stuck `:blocked` after a peak window (incl. `LLM slot grant sweep (resume)` with `capacity=N granted=0 waiting_after>0`) are listed in `./agent_scheduler/CONTEXT.md`.
-
 ## Runtime distribution control
 
 `Distribution.enable_runtime/3` pins `:kernel` `inet_dist_listen_min = inet_dist_listen_max = dist_port` UNCONDITIONALLY (before any start attempt) and `epmd_module` to `EvoGit.EpmdDist`, then starts via `start_net_kernel/1`; idempotent for the SAME node name (cookie re-applied), it stops the current distribution first for a DIFFERENT name, validates the `name@host` shape BEFORE atom conversion, and returns the ACTUAL `to_string(node())` through ONE rescue/catch boundary. `disable_runtime/0` stops it when active and leaves the pinned port; `active/0` reports `%{enabled:, node:, dist_port:}`; `enable_for_remote/1` is deliberately NOT delegated — the local dashboard path keeps its fixed `genesis@127.0.0.1` identity, the 9100-9200 listen RANGE and the `[node] cookie`.
