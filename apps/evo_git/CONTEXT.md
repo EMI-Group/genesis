@@ -196,7 +196,7 @@ LLM pools are keyed by immutable `provider_profile_id`, so every model/effort se
 
 Accounts own `peak_concurrency`, `peak_hours`, `off_peak_days`, `off_peak_holidays` and `timezone`, with `peak_concurrency = 0` a hard pause shared by all their models/efforts and exempt from the default-concurrency floor.
 `EvoGit.PeakHours` is the single source of truth for half-open/overnight/day-scoped windows, the off-peak-day rule, wall clocks, validation and transition math: a date is off-peak when its weekday is in `off_peak_days` OR (`off_peak_holidays` names a calendar AND `PeakHours.Holidays.non_working_day?/1`), so a statutory CN holiday, a weekend and a 调休 make-up Saturday resolve through the same predicate.
-`PeakHours.Holidays` is a static 2025-2027 table (extend yearly), NOT a dependency, to avoid `mix.lock`/`mixFodDeps.hash` churn; `PeakHourEngine` prefers canonical profiles, falls back to legacy only when no canonical account exists, and applies one floored concurrency entry per account — API detail (`in_peak?`, `next_transition`, `effective_concurrency`, `ProviderPresets`): `config/` + `agent_scheduler/`.
+`PeakHours.Holidays` is a static 2025-2027 table (extend yearly), NOT a dependency, to avoid `mix.lock`/`mixFodDeps.hash` churn; `PeakHourEngine` prefers canonical profiles, falls back to legacy only when no canonical account exists, and applies one floored concurrency entry per account; `Config.ProviderPresets` ships the built-in presets (DeepSeek off-peak discount, Z.AI GLM coding plan) as pure data — API detail (`in_peak?`, `next_transition`, `effective_concurrency`): `config/` + `agent_scheduler/`.
 
 ## Agent Loop Control Flow + Graceful Task Cancellation
 
