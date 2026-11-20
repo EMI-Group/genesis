@@ -150,22 +150,23 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                 <% else %>
                   <%= if @raw do %>
                     <!-- Per-message raw view: the plain (HTML-escaped) source text.
-                       Same structural wrapper as the Markdown branch — one block
-                       `div` carrying the SAME `md-content` class list (plus the
-                       raw-only `whitespace-pre-wrap font-mono text-xs` pair) — so
-                       toggling raw <-> markdown only changes the INNER text
-                       presentation and never the container, its padding or its
-                       block flow. `md-content` here is the layout shell only: the
-                       source is rendered as escaped text (never through Markdown,
-                       never `raw/1`), so it is never interpreted or styled as
-                       rendered Markdown. -->
+                       A BLOCK `div` (never an inline `span`) carrying the same
+                       `motion-panel` box as the Markdown branch, so toggling
+                       raw <-> markdown never swaps an inline box for a block one
+                       and the transcript cannot jump. The markdown container
+                       class is deliberately ABSENT here: this branch must not
+                       look like — or be detectable as — rendered markdown (the
+                       source is escaped text, never through Markdown, never
+                       `raw/1`). The markdown branch's line-height (1.7) is
+                       mirrored by the raw-only `leading-[1.7]` so both branches
+                       share the same line box. -->
                     <!-- `phx-no-format` keeps the literal source flush against
                        the div's tags: under `whitespace-pre-wrap` any
                        formatter-inserted newline/indent would become visible
                        leading and trailing whitespace in the shown source. -->
                     <div
                       phx-no-format
-                      class="motion-panel motion-panel-open md-content min-w-0 break-words whitespace-pre-wrap font-mono text-xs"
+                      class="motion-panel motion-panel-open min-w-0 break-words whitespace-pre-wrap font-mono text-xs leading-[1.7]"
                     >{entry_text(@entry)}</div>
                   <% else %>
                     <!-- Finalized assistant text renders as Markdown — same helper
