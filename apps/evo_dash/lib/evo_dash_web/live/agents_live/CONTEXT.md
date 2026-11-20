@@ -271,10 +271,30 @@ The purpose is unchanged: `InspectorMessages` animates only newly keyed rows, so
 
 ## Notes for Agents — bounded inspect helpers
 
-`agents_live.html.heex` still renders four `inspect(..., limit: :infinity)` calls (two compact history payloads, two full-message modals).
-`EvoDashWeb.AgentsLive.Render.args/1` and `Render.data/1` are the bounded replacements — `inspect(term, inspect_opts/0)` with `limit: 200`, `printable_limit: 20_000`, `pretty: true`.
+`agents_live.html.heex` renders NO raw `inspect/2` call: all four sites (the tool-call arguments and the fallback data of the compact history row, and the same two in the full-message modal) go through `EvoDashWeb.AgentsLive.Render.args/1` / `Render.data/1`.
+`EvoDashWeb.AgentsLive.Render.args/1` and `Render.data/1` are `inspect(term, inspect_opts/0)` with `limit: 200`, `printable_limit: 20_000`, `pretty: true`.
 The bounds are two-dimensional on purpose: `:limit` caps collection depth/length and `:printable_limit` caps binary content, so neither a huge payload nor a deep nesting can blow up a render.
 `Render` is TOTAL (never raises, no rescue wrapper) and its output is model/user data, so it is never gettext-wrapped.
+
+## Notes for Agents — shared history-entry renderer (`history_entry.ex`)
+
+`EvoDashWeb.AgentsLive.HistoryEntry.history_entry_body/1` is the ONE renderer for a checkpoint entry's body, used by BOTH surfaces: the compact row in the detail panel (`surface={:row}`) and the full-message modal (`surface={:modal}`).
+Required attrs are `:entry` (the history-entry map) and `:surface` (`:row | :modal`); a single private `case @entry.type` covers `"USER_PROMPT"`, `"THOUGHT_CHUNK"`, `"TOOL_CALL_START"`, `"COMPLETE"`, `"ERROR"`, `"RETRY"`, `"RETRY_DISPATCH"`, `"QUEUED"`, `"CONTEXT_TREE"`, the `"system"`/`"user"`/`"assistant"`/`"tool"` message roles and a catch-all.
+The surfaces differ ONLY in bounding, which is exactly what `:surface` encodes: the row truncates the `COMPLETE` result to 500 chars, reasons to 200 and tool/`user`/`system` content to 300/500 with `"..."`/`"\n...[truncated]"` suffixes, while the modal renders the full escaped text (still inside `max-h-[60vh]` scrollers) — the modal never truncates.
+Limits are module attributes read through private accessor functions (`complete_limit/0`, …) because the `~H` template body is invisible to Elixir's attribute-usage tracker.
+DOM ids/classes/attributes live in the template (`agents_live.html.heex`) for the row and the modal frame; the shared body keeps the content-level contract — `data-inspector-reasoning`, `gettext("Thinking")`/`gettext("Response")`, `whitespace-pre-wrap break-words`, the tool-call box (via `ToolCallDisplay`), the tool-result presentation (`Helpers.tool_result_presentation/1`) and its background-shell chip.
+`EvoDashWeb.AgentsLive.ToolCallDisplay` is therefore reached from this component, NOT from `agents_live.ex` (whose alias list no longer names it).
+
+## Notes for Agents — left-panel view-switch motion
+
+The left panel's card body is view-keyed: `id={"agents-tree-body-#{@left_view}"}` with `class={["card-body p-4 wizard-step-enter", @left_view == :commits && "agents-tree-body-commits"]}`, so switching views re-keys the element and replays the existing `wizard-step-enter` entrance (reduced-motion safe, `assets/css/motion.css`) instead of snapping.
+The `agents-tree-body-commits` class still rides the SAME element the CSS flex chain starts from, so no wrapper may be inserted between `.card-body.agents-tree-body-commits` and `#commit-graph` (the xl+ commit-graph fill depends on that DIRECT-child relationship).
+No new keyframes, no JS and no `assets/**` edits are involved.
+
+## Notes for Agents — live cursor, not an "execution dot"
+
+The Agents page has NO `.assistant-execution-dot` / `assistant-execution-indicator` markup (that indicator belongs to `/assistant`'s composer strip).
+The live current-call affordance here is `.inspector-stream-cursor` plus the `#inspector-thinking` accessibility/reduced-motion contract rendered by `StreamPanel`, both styled in `app.css` — do not invent a separate page-level execution indicator.
 
 ## Notes for Agents — Tool-call display layout contract
 
