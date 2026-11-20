@@ -467,6 +467,139 @@ defmodule EvoDashWeb.ProviderProfileFieldsTest do
     end
   end
 
+  describe "ChatGPT sign-in inside the auth status" do
+    test "a non-connected ChatGPT account renders the shared panel instead of CLI prose" do
+      tree =
+        auth(%{state: :missing, login_instructions: "NODE-LOGIN-MARKER"},
+          profile: chatgpt_profile()
+        )
+
+      button = one(tree, "#provider-status-codex-main-chatgpt-sign-in")
+      assert attr(button, "type") == ["button"]
+      assert attr(button, "phx-click") == ["chatgpt_sign_in"]
+      assert attr(button, "phx-value-surface") == ["status"]
+      assert attr(button, "phx-value-profile_id") == ["codex-main"]
+
+      # The old primary CLI instruction paragraph is gone from this branch.
+      refute text(tree) =~ "NODE-LOGIN-MARKER"
+      refute text(tree) =~ "genesis chatgpt login"
+      refute text(tree) =~ "Sign in with the provider's CLI on the selected node"
+
+      # The verdict row itself is unchanged.
+      assert text(tree) =~ "No subscription login found"
+
+      assert length(Floki.find(tree, ~s(button[phx-click="refresh_auth_status"]))) == 1
+    end
+
+    test "the status surface renders its own flow and ignores another surface's" do
+      waiting =
+        auth(%{state: :missing},
+          profile: chatgpt_profile(),
+          chatgpt_sign_in: %{
+            surface: {:status, "codex-main"},
+            flow_id: "f1",
+            phase: :waiting,
+            url: "https://example.test/authorize"
+          }
+        )
+
+      link = one(waiting, "#provider-status-codex-main-chatgpt-sign-in-url")
+      assert attr(link, "href") == ["https://example.test/authorize"]
+      assert attr(link, "target") == ["_blank"]
+      assert attr(link, "rel") == ["noopener noreferrer"]
+
+      assert text(one(waiting, "#provider-status-codex-main-chatgpt-waiting p[role=\"status\"]")) ==
+               "Waiting for authorization…"
+
+      assert attr(
+               one(waiting, "#provider-status-codex-main-chatgpt-sign-in-cancel"),
+               "phx-value-profile_id"
+             ) == ["codex-main"]
+
+      assert Floki.find(waiting, "#provider-status-codex-main-chatgpt-sign-in") == []
+
+      for foreign <- [
+            %{surface: {:detail, "codex-main"}, phase: :waiting, url: "https://example.test/a"},
+            %{surface: {:status, "another-account"}, phase: :waiting},
+            %{surface: :wizard, phase: :waiting, url: "https://example.test/a"}
+          ] do
+        idle = auth(%{state: :missing}, profile: chatgpt_profile(), chatgpt_sign_in: foreign)
+
+        assert Floki.find(idle, "#provider-status-codex-main-chatgpt-sign-in") != []
+        assert Floki.find(idle, "#provider-status-codex-main-chatgpt-waiting") == []
+        assert Floki.find(idle, "a[href]") == []
+      end
+    end
+
+    test "manual mode renders the account-specific CLI command and no button" do
+      tree =
+        auth(%{state: :missing},
+          profile: chatgpt_profile(),
+          chatgpt_sign_in_manual: true,
+          chatgpt_sign_in: %{surface: {:status, "codex-main"}, phase: :waiting}
+        )
+
+      hint = one(tree, "#provider-status-codex-main-chatgpt-manual-hint")
+      assert text(hint) =~ "genesis chatgpt login --account work"
+      assert text(hint) =~ "same machine as the execution node"
+
+      assert Floki.find(tree, "#provider-status-codex-main-chatgpt-sign-in") == []
+      assert Floki.find(tree, "#provider-status-codex-main-chatgpt-waiting") == []
+
+      # A profile without a usable account name shows the plain command.
+      plain =
+        auth(%{state: :missing},
+          profile: chatgpt_profile(%{"siwc_account" => ""}),
+          chatgpt_sign_in_manual: true
+        )
+
+      assert text(one(plain, "#provider-status-codex-main-chatgpt-manual-hint")) =~
+               "genesis chatgpt login"
+    end
+
+    test "the collapsed summary row stays compact: no panel, Recheck retained" do
+      tree =
+        auth(%{state: :missing, login_instructions: "DETAIL-MARKER"},
+          profile: chatgpt_profile(),
+          details: false,
+          chatgpt_sign_in: %{surface: {:status, "codex-main"}, phase: :waiting}
+        )
+
+      assert Floki.find(tree, "#provider-status-codex-main-chatgpt-sign-in") == []
+      assert Floki.find(tree, "#provider-status-codex-main-chatgpt-waiting") == []
+      assert Floki.find(tree, "#provider-status-codex-main-chatgpt-manual-hint") == []
+
+      assert text(tree) =~ "No subscription login found"
+      assert length(Floki.find(tree, ~s(button[phx-click="refresh_auth_status"]))) == 1
+      refute text(tree) =~ "DETAIL-MARKER"
+    end
+
+    test "a connected ChatGPT account keeps its account id line and renders no panel" do
+      tree =
+        auth(%{state: :ok, account_id: "work@example.test"},
+          profile: chatgpt_profile(),
+          chatgpt_sign_in: %{surface: {:status, "codex-main"}, phase: :waiting}
+        )
+
+      assert text(tree) =~ "Login detected"
+      assert text(tree) =~ "work@example.test"
+      assert Floki.find(tree, "#provider-status-codex-main-chatgpt-sign-in") == []
+      assert Floki.find(tree, "#provider-status-codex-main-chatgpt-waiting") == []
+      refute text(tree) =~ "genesis chatgpt login"
+    end
+
+    test "non-ChatGPT providers keep the node-owned instructions" do
+      tree =
+        auth(%{state: :missing, login_instructions: "NODE-LOGIN-MARKER"},
+          chatgpt_sign_in: %{surface: {:status, "subscription-a"}, phase: :waiting}
+        )
+
+      assert text(tree) =~ "NODE-LOGIN-MARKER"
+      assert Floki.find(tree, "#provider-status-subscription-a-chatgpt-sign-in") == []
+      assert Floki.find(tree, "#provider-status-subscription-a-chatgpt-waiting") == []
+    end
+  end
+
   defp schedule(fields),
     do: render_component(&Fields.provider_schedule/1, fields: fields) |> parse()
 
@@ -474,6 +607,20 @@ defmodule EvoDashWeb.ProviderProfileFieldsTest do
     do:
       Map.merge(
         %{"id" => "subscription-a", "provider" => "anthropic", "auth_mode" => "oauth"},
+        overrides
+      )
+
+  defp chatgpt_profile(overrides \\ %{}),
+    do:
+      Map.merge(
+        %{
+          "id" => "codex-main",
+          "provider" => "openai_codex",
+          "auth_mode" => "oauth",
+          "siwc_account" => "work",
+          "default_model" => "gpt-5-codex",
+          "models" => [%{"model" => "gpt-5-codex"}]
+        },
         overrides
       )
 

@@ -16,6 +16,7 @@ defmodule EvoDashWeb.ProviderWizardTest do
 
   alias EvoDashWeb.SettingsComponents.ProviderWizard
   alias EvoDashWeb.SettingsComponents.ProviderWizard.ChatGPTAuth
+  alias EvoDashWeb.SettingsComponents.ChatGPTSignInPanel
 
   @steps [:provider, :auth, :model, :reasoning_schedule, :test, :done]
 
@@ -1146,6 +1147,85 @@ defmodule EvoDashWeb.ProviderWizardTest do
       assert nodes(tree, "#wizard-waiting") == []
       assert nodes(tree, "#wizard-sign-in-error") == []
       assert nodes(tree, "#wizard-refresh") != []
+    end
+  end
+
+  describe "chatgpt_auth/1 — the sign-in section is the shared panel" do
+    test "defaults to the wizard surface and renders no profile id attribute" do
+      tree =
+        render_tree(&ChatGPTAuth.chatgpt_auth/1,
+          id: "wizard",
+          change_event: "change",
+          refresh_event: "refresh"
+        )
+
+      button = one(tree, "#wizard-sign-in")
+      assert attr(button, "phx-value-surface") == "wizard"
+      assert Floki.attribute(button, "phx-value-profile_id") == []
+      assert nodes(tree, "#wizard-manual-hint") == []
+    end
+
+    test "surface and profile_id reach the begin and cancel payloads" do
+      assigns = [
+        id: "wizard",
+        change_event: "change",
+        refresh_event: "refresh",
+        surface: "custom-surface",
+        profile_id: "acct-42"
+      ]
+
+      idle = render_tree(&ChatGPTAuth.chatgpt_auth/1, assigns)
+      begin_button = one(idle, "#wizard-sign-in")
+      assert attr(begin_button, "phx-value-surface") == "custom-surface"
+      assert attr(begin_button, "phx-value-profile_id") == "acct-42"
+
+      waiting =
+        render_tree(
+          &ChatGPTAuth.chatgpt_auth/1,
+          assigns ++ [sign_in: %{phase: :waiting, url: "https://example.test/a"}]
+        )
+
+      cancel = one(waiting, "#wizard-sign-in-cancel")
+      assert attr(cancel, "phx-value-surface") == "custom-surface"
+      assert attr(cancel, "phx-value-profile_id") == "acct-42"
+    end
+
+    test "manual mode still renders the CLI hint with no button and no waiting block" do
+      tree =
+        render_tree(&ChatGPTAuth.chatgpt_auth/1,
+          id: "wizard",
+          change_event: "change",
+          refresh_event: "refresh",
+          manual: true,
+          sign_in: %{phase: :waiting, url: "https://example.test/a"}
+        )
+
+      assert [hint] = nodes(tree, "#wizard-manual-hint")
+      assert text(hint) =~ "genesis chatgpt login"
+      assert nodes(tree, "#wizard-sign-in") == []
+      assert nodes(tree, "#wizard-waiting") == []
+      assert [_refresh] = nodes(tree, "#wizard-refresh")
+    end
+
+    test "another surface's state reaches the wizard as the idle button" do
+      # The page owns the state and projects it onto the wizard surface through
+      # `ChatGPTSignInPanel.surface_state/2` (the ONE isolation rule); this
+      # control renders whatever it is handed.
+      foreign = %{surface: {:detail, "acct-42"}, phase: :waiting, url: "https://example.test/a"}
+
+      assert ChatGPTSignInPanel.surface_state(foreign, :wizard) == %{}
+
+      tree =
+        render_tree(&ChatGPTAuth.chatgpt_auth/1,
+          id: "wizard",
+          change_event: "change",
+          refresh_event: "refresh",
+          sign_in: ChatGPTSignInPanel.surface_state(foreign, :wizard)
+        )
+
+      assert nodes(tree, "#wizard-sign-in") != []
+      assert nodes(tree, "#wizard-waiting") == []
+      assert nodes(tree, "#wizard-sign-in-url") == []
     end
   end
 end
