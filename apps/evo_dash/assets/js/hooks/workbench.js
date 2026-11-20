@@ -523,11 +523,6 @@ const Workbench = {
       projectLink.classList.toggle("is-current", selected)
       const windows = row.querySelector("[data-workbench-project-windows]")
       const tabs = this.tabsForProject(project.workbenchNode, project.workbenchProject)
-      const openItems = new Set(tabs.map(tab => `${tab.kind}:${tab.id}`))
-      row.querySelectorAll("[data-project-activity-id]").forEach(activity => {
-        const {projectActivityKind, projectActivityId} = activity.dataset
-        activity.hidden = openItems.has(`${projectActivityKind}:${projectActivityId}`)
-      })
       const signature = JSON.stringify([tabs.some(tab => tab.key === activeKey) && activeKey, tabs])
       if (windows.dataset.signature === signature) return
       windows.dataset.signature = signature
