@@ -40,6 +40,21 @@ The provider-setup wizard step transitions (Settings + Welcome) are three flat c
 `.wizard-progress` carries a 200ms ease-out `transition` on `width`, `transform` and `background-color` so the rail/fill animates between steps; it sets no width, shape or color — those stay in the markup's Tailwind utilities and theme tokens.
 A dedicated `@media (prefers-reduced-motion: reduce)` block disables both the wizard animations and the progress transition, so reduced motion shows each step instantly.
 Component authors opt in with the class only: no JS, no layout/height animation, and the step wrapper must be the re-keyed element or the entrance never replays.
+
+## Motion foundation (`motion.css`)
+`./motion.css` is the ONE shared motion vocabulary every dashboard package consumes with a single attribute or class; `app.css` imports it from its `@import` block immediately after `./workbench.css` (an `@import` must precede every other rule, so "last import" is "loaded last"), and its `!important` reduced-motion backstop makes cascade position moot.
+Timing and easing come only from `--motion-fast` (120ms), `--motion-base` (170ms), `--motion-slow` (220ms), `--motion-ease-out` and `--motion-ease-in` on `:root`.
+Motion is opacity/transform only (`motion-fade-in`, `motion-fade-out`, `motion-slide-in` — a 6px lift; `motion-collapse` is deliberately opacity-only), the one bounded layout exception being `grid-template-rows: 0fr → 1fr` on a single wrapper.
+Never animate `height`/`width` on the transcript scrollers, the composer or the sidebar, and never add `scroll-behavior: smooth` to `#chat-messages`, `.agent-history-scroll`, `.cg-scroll` or `#workbench-history`.
+`<details>` disclosure — add `class="motion-disclosure"`: `[open] > :not(summary)` slides in with no JS, and the `DisclosureMotion` hook sets `data-disclosure-state="closing"` then removes `open` for the exit.
+State-driven panel — `class="motion-panel"` plus `data-motion-state="opening" | "closing"` (or the class-only `motion-panel-open` / `motion-panel-close`, and `motion-panel-slide` to slide instead of fade); the `both` fill holds the closing frame until the hook removes the node.
+Mounted-section collapse — `class="motion-collapse-grid"` + `data-motion-open="true"` on one wrapper, for a panel that stays mounted and cannot use `:if`.
+LiveView `:if` removal — `phx-remove={JS.hide(transition: {"motion-exit-lift", "motion-exit-visible", "motion-exit-hidden"})}` (use `motion-exit-fade` for a pure fade): one attribute, no JS of our own.
+Project palette exit — either the `phx-remove` recipe above (preferred) or a hook setting `data-palette-state="closing"` on `#project-omnibox`, which applies the `palette-fade-out` keyframe (defined in `app.css`) to `.project-palette-backdrop` / `.project-palette-overlay`.
+Workbench windows — `dialog.workbench-window[open]` animates in on `showModal()`, while the `workbench.js` close path sets `data-window-state="closing"` and defers `close()` for the exit (plus the `::backdrop` fade).
+Native modals — `dialog_modal.js` sets `data-dialog-state="opening|open|closing"` and defers `close()`, so `dialog.modal[data-dialog-state="closing"]` (+ `::backdrop`) can finally animate out.
+The LAST rule in `motion.css` is the global `prefers-reduced-motion` backstop (`animation-duration`, `animation-iteration-count`, `transition-duration`, `transition-delay` and `scroll-behavior: auto`, all `!important`, on `*, *::before, *::after`); nothing may follow it, and per-component guards elsewhere stay as harmless redundancy.
+
 ## Constraints
 Use existing theme tokens and the standalone accent for focus outlines; keep fill/content roles unchanged.
 The workbench right panel (`./workbench.css`, `.workbench-history` = `#workbench-history` + `#workbench-git`) animates `transform` + `opacity` (220ms ease-out) plus — while docked (`min-width: 1280px`) — `flex-basis`/padding, so the center column glides instead of snapping; the drawer range (`max-width: 1279.98px`) slides `translateX(100%)` instead.
@@ -47,6 +62,7 @@ The workbench right panel (`./workbench.css`, `.workbench-history` = `#workbench
 Those state rules must NEVER declare `display`: `hidden` stays owned by `#workbench-history[hidden], #workbench-git[hidden] { display: none }`, which is what makes the server-rendered closed state flash-free.
 `@media (prefers-reduced-motion: reduce)` drops the panel transition entirely (the hook then closes in the same task).
 Keep Assistant adjustments scoped, normal-flow message actions untouched, and reduced-motion overrides after the caret animation rule.
+Never use `transition: all` in `app.css`: the `.input-*` rules enumerate their properties (`min-height`, `padding`, `gap`, `box-shadow`, `border-color`) so `AdaptiveInput`'s inline height writes are not animated.
 Do not edit generated static assets or translations.
 Never add an unlayered `.capsule-stops { flex-wrap: … }` rule (or any other layout override on that class): unlayered CSS beats Tailwind's layered utilities and would override both capsules at once.
 The one-line quality-stops contract lives ONLY in the task form's markup (`#mode-speed-capsule .capsule-stops` carries `flex-nowrap`).
@@ -57,13 +73,11 @@ Source ORDER is load-bearing in the capsule panel pair: the `[open]` and `[data-
 `@media (prefers-reduced-motion: reduce)` disables the panel open AND close, the view switching and the submenu with `animation: none !important` (the hook itself also short-circuits its animated close).
 
 ## Known Issues — Motion Coverage
-The reduced-motion guards are selector-specific rather than global, and `html` still requests smooth scrolling under reduced motion although both transcript scrollers explicitly stay instant.
-The broad reduced-motion block precedes the equal-specificity `.no-project-overlay` and `.dashboard-topbar[data-no-project="true"]` animation declarations, so those later declarations override its `animation: none`.
-`.task-card-active`, `.node-switch-fade`, the project-palette entrances and `.file-manual-input-wrap` have no matching reduced-motion animation override.
 The non-Assistant legacy history rule still animates every matching row with a 300ms 8px slide and has higher specificity than `.inspector-message-enter` if a row matches both selectors.
+The reduced-motion backstop in `motion.css` bounds every animation/transition duration to `.01ms`, so it neutralizes rather than removes motion definitions and leaves each component's authored timing in place.
 
 ## Validation
-Run `node --test apps/evo_dash/assets/css/assistant_motion.test.cjs` from the repository root for focused source contracts covering opacity-only motion, visible reduced-motion fallbacks, native-dialog transition guards, history exclusions and instant-scroll invariants.
+Run `node --test apps/evo_dash/assets/css/assistant_motion.test.cjs` from the repository root for focused source contracts covering opacity-only motion, visible reduced-motion fallbacks, native-dialog transition guards, history exclusions, instant-scroll invariants, the `motion.css` tokens/keyframes/state rules, the last-block reduced-motion backstop and the absence of `transition: all` in `app.css`.
 This dependency-free Node suite is not part of `mix test` or the existing JS-only globs; include `apps/evo_dash/assets/css/*.test.cjs` in any aggregate asset-test command alongside `apps/evo_dash/assets/js/*.test.cjs apps/evo_dash/assets/js/hooks/*.test.cjs`.
 Run `mix tailwind evo_dash` from the repository root to compile the CSS and `git diff --check` for whitespace checks.
 For browser review, check `/assistant` in light/dark themes at narrow and desktop widths, pending/running/restored/ended turns, long URLs, code/tables, nested lists, RTL quotes, multiline composer, keyboard focus and reduced motion.
@@ -71,5 +85,6 @@ Verify the indicator appears only while execution is pending/running, labels rem
 Build and source assertions do not substitute for browser visual validation.
 
 ## Routing Table
-There are no child directories or separate CSS modules.
+There are no child directories.
+`./motion.css` is imported by `./app.css` and owns the shared motion foundation (tokens, keyframes, disclosure/panel/window/dialog state rules, the `JS.hide` exit helpers and the global reduced-motion backstop).
 `./workbench.css` is imported by `./app.css` and owns the workbench shell (tabs, sidebars, the right panel's state/animation rules, Git pane, dialogs); its state machine lives in `../js/hooks/workbench_panel.js`.
