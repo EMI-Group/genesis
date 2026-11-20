@@ -30,6 +30,7 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
     * `archive_seq` — the context generation; a fresh first page, `retry/1` and a context reset bump it, so results from before are dropped.
     * `archive_agent_results` — `%{agent_id => %{state: :loading | :ok | :error, entry: map() | nil, error: term() | nil}}`.
     * `archive_agent_seq` — the generation of the lazy result cache; `invalidate_agent_results/1` and a context reset bump it, so in-flight per-agent results from before are dropped.
+    * `archive_label_total` — the CACHED `label_total/1` (the tab badge and the section header read it); `put_label/1` refreshes it on every path that rewrites the records/total assigns, so no render recomputes it.
 
   Same async pattern as `LoadData` / `MergeCheck`: every fetch runs in an `EvoDash.TaskSupervisor` child behind `EvoDash.SafeCall.run/1` and ALWAYS reports its result, so no shape can wedge the panel on a spinner.
   A page reports `{:review_archive_loaded, task_id, node, seq, offset, result}`; one agent's result reports `{:review_archive_agent_loaded, task_id, node, agent_id, seq, result}`.
@@ -181,6 +182,7 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
         archive_seq: next_seq(socket, :archive_seq),
         archive_agent_seq: next_seq(socket, :archive_agent_seq)
       )
+      |> put_label()
       |> ensure_loaded()
     else
       socket
@@ -206,6 +208,7 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
         archive_agent_seq: next_seq(socket, :archive_agent_seq),
         archive_records: Enum.map(records(socket.assigns), &drop_result/1)
       )
+      |> put_label()
     end
   end
 
@@ -248,6 +251,7 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
             archive_seq: next_seq(socket, :archive_seq),
             archive_agent_seq: next_seq(socket, :archive_agent_seq)
           )
+          |> put_label()
 
         if Map.get(socket.assigns, :review_tab) == :archive and
              Map.get(socket.assigns, :archive_opt_in?, false) do
@@ -365,6 +369,14 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
     end
   end
 
+  # Caches `label_total/1` in the `@archive_label_total` assign.
+  # Everything that rewrites `archive_records` / `archive_total` /
+  # `archive_server_total` funnels through this, so the tab badge and the
+  # section header read a PLAIN assign and no render ever recomputes the label.
+  defp put_label(socket) do
+    assign(socket, :archive_label_total, label_total(socket.assigns))
+  end
+
   # Single source of the failure message (a gettext literal so extraction sees
   # it); the fetch paths and the panel share it.
   defp error_message, do: gettext("Failed to load archive data.")
@@ -391,10 +403,19 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
       archive_agent_seq: next_seq(socket, :archive_agent_seq),
       archive_key: {socket.assigns.task_id, socket.assigns.current_node}
     )
+    |> put_label()
     |> request_page(0)
   end
 
-  defp apply_page(socket, 0, result) do
+  # Every page application recomputes the tab/header LABEL from the resulting
+  # assigns, so the template never has to (`@archive_label_total`).
+  defp apply_page(socket, offset, result) do
+    socket
+    |> do_apply_page(offset, result)
+    |> put_label()
+  end
+
+  defp do_apply_page(socket, 0, result) do
     case result do
       {:ok, %{entries: entries, total: total}} ->
         apply_page_success(socket, 0, entries, total, entries)
@@ -429,7 +450,7 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
     end
   end
 
-  defp apply_page(socket, offset, result) do
+  defp do_apply_page(socket, offset, result) do
     case result do
       {:ok, %{entries: entries, total: total}} ->
         accumulated = append_entries(records(socket.assigns), entries)
@@ -492,30 +513,35 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
     results = Map.get(socket.assigns, :archive_agent_results, %{})
     results = if is_map(results), do: results, else: %{}
 
-    case result do
-      {:ok, entry} when is_map(entry) ->
-        assign(socket,
-          archive_agent_results:
-            Map.put(results, agent_id, %{state: :ok, entry: entry, error: nil}),
-          archive_records: ArchiveHelpers.merge_entry(records(socket.assigns), entry)
-        )
+    socket =
+      case result do
+        {:ok, entry} when is_map(entry) ->
+          assign(socket,
+            archive_agent_results:
+              Map.put(results, agent_id, %{state: :ok, entry: entry, error: nil}),
+            archive_records: ArchiveHelpers.merge_entry(records(socket.assigns), entry)
+          )
 
-      {:error, reason} ->
-        assign(
-          socket,
-          :archive_agent_results,
-          Map.put(results, agent_id, %{state: :error, entry: nil, error: reason})
-        )
+        {:error, reason} ->
+          assign(
+            socket,
+            :archive_agent_results,
+            Map.put(results, agent_id, %{state: :error, entry: nil, error: reason})
+          )
 
-      other ->
-        # Anything else (a nil payload included) is terminal, so the UI can
-        # offer Retry instead of spinning forever.
-        assign(
-          socket,
-          :archive_agent_results,
-          Map.put(results, agent_id, %{state: :error, entry: nil, error: other})
-        )
-    end
+        other ->
+          # Anything else (a nil payload included) is terminal, so the UI can
+          # offer Retry instead of spinning forever.
+          assign(
+            socket,
+            :archive_agent_results,
+            Map.put(results, agent_id, %{state: :error, entry: nil, error: other})
+          )
+      end
+
+    # Folding a lazily fetched entry rewrites `archive_records`, so the label is
+    # refreshed here too (a no-op when the effective counts did not move).
+    put_label(socket)
   end
 
   # A result is stale when it belongs to another task/node, or when it was
