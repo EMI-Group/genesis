@@ -2806,7 +2806,7 @@ defmodule EvoDashWeb.ProjectsLive do
       true ->
         case result do
           {:ok, results} ->
-            project_changed? = socket.assigns.active_project_path != path
+            project_changed? = Map.get(socket.assigns, :active_project_path) != path
 
             socket =
               socket
