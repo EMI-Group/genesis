@@ -33,9 +33,14 @@ defmodule EvoGit.ProcessManager.Control.Posix do
   would kill Genesis itself. When the group form fails the bare-pid form is
   retried once.
 
+  The signal NAME is authoritative: `EvoGit.ProcessManager.Control.signal/2`
+  normalizes it once, so `signal/2` only turns it into a `kill` argument.
+
   `kill/1` is TERM → grace (`EvoGit.ProcessManager.Control.kill_grace_ms/0`) →
-  KILL, then a final `alive?/1` verification: `:ok` only when the process is
-  really gone.
+  KILL, then a final `alive?/1` verification decided by
+  `EvoGit.ProcessManager.Control.kill_outcome/3`: `:ok` only when the process is
+  really gone, otherwise the real backend failure — `{:error, :still_alive}`
+  means only that both signals were delivered and it is still there.
   """
 
   alias EvoGit.ProcessManager.{Control, Handle, Stats}
@@ -71,14 +76,15 @@ defmodule EvoGit.ProcessManager.Control.Posix do
   def alive?(_handle), do: false
 
   @impl true
-  def signal(%Handle{} = handle, signal) do
-    with {:ok, name} <- control_signal(signal),
-         {:ok, targets} <- signal_targets(handle) do
+  def signal(%Handle{} = handle, name) when is_binary(name) do
+    with {:ok, targets} <- signal_targets(handle) do
       send_signal(name, targets)
     end
   end
 
-  def signal(_handle, _signal), do: {:error, :no_handle}
+  def signal(%Handle{}, _name), do: {:error, :invalid_signal}
+
+  def signal(_handle, _name), do: {:error, :no_handle}
 
   @impl true
   def kill(%Handle{} = handle) do
@@ -87,15 +93,16 @@ defmodule EvoGit.ProcessManager.Control.Posix do
         {:error, reason}
 
       {:ok, targets} ->
-        result = send_signal("TERM", targets)
+        soft = send_signal("TERM", targets)
         # Best-effort escalation: a TERM that already failed (no such process)
         # still gets the KILL attempt, because a dead group leader with live
         # children is exactly the case the escalation exists for.
-        _ = result
         Process.sleep(Control.kill_grace_ms())
-        _ = send_signal("KILL", targets)
+        hard = send_signal("KILL", targets)
 
-        if alive?(handle), do: {:error, :still_alive}, else: :ok
+        # A gone handle is :ok; otherwise the REAL backend failure wins over the
+        # generic `:still_alive` (an EPERM kill, a missing `kill` binary, …).
+        Control.kill_outcome(alive?(handle), hard, soft)
     end
   end
 
@@ -367,13 +374,6 @@ defmodule EvoGit.ProcessManager.Control.Posix do
     _ -> nil
   catch
     _, _ -> nil
-  end
-
-  defp control_signal(signal) do
-    case Control.normalize_signal(signal) do
-      {:ok, name} -> {:ok, name}
-      {:error, reason} -> {:error, reason}
-    end
   end
 
   defp int(value) do

@@ -146,6 +146,34 @@ defmodule EvoGit.ProcessManager.StatsTest do
     end
   end
 
+  describe "from_systemd/1" do
+    test "builds the frozen stats map from parsed systemctl output" do
+      assert {:ok, parsed} = Stats.parse_systemctl_show(@systemctl_show)
+      assert {:ok, stats} = Stats.from_systemd(parsed)
+      assert stats.cpu_time_ms == 2_500
+      assert stats.memory_bytes == 104_857_600
+      # systemd reports the cgroup total, so RSS mirrors memory and no pid is
+      # queried.
+      assert stats.rss_bytes == 104_857_600
+      assert stats.pids == []
+      assert stats.cpu_percent == nil
+      assert is_struct(stats.sampled_at, DateTime)
+    end
+
+    test "is total: a parsed map with unknown figures stays a map, garbage is :malformed" do
+      assert {:ok, stats} = Stats.from_systemd(%{cpu_time_ms: nil, memory_bytes: nil})
+      assert stats.cpu_time_ms == nil
+      assert stats.memory_bytes == nil
+      assert stats.rss_bytes == nil
+
+      # Never a bare map / nil success: `{:ok, stats}` always carries a map, so
+      # a caller may chain it exactly like the sibling parsers.
+      assert {:error, :malformed} = Stats.from_systemd(nil)
+      assert {:error, :malformed} = Stats.from_systemd("not parsed")
+      assert {:error, :malformed} = Stats.from_systemd(cpu_time_ms: 1)
+    end
+  end
+
   describe "cpu_percent/4 and changed?/2 and summarize/1" do
     test "cpu_percent is nil without two comparable samples" do
       now = DateTime.utc_now()
