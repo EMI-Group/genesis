@@ -14,7 +14,7 @@ defmodule EvoGit.Config.Schema.ProviderProfiles do
   Effort inventories retain their configured order; no effort is invented when
   neither level declares a default. An empty inventory imposes no restriction.
 
-  `resolve_model_spec/2` accepts nil (configured default), a provider/legacy id,
+  `resolve_selection/2` accepts nil (configured default), a provider/legacy id,
   or a map with `provider_profile_id`, optional `model` and `reasoning_effort`.
   It returns selection fields plus the chosen `reasoning_effort`, canonical
   `provider_profile`, atom-keyed `runtime_profile`, ReqLLM `model_spec`, shared
@@ -22,31 +22,138 @@ defmodule EvoGit.Config.Schema.ProviderProfiles do
   and constraint choke point, adding `api_key` only when the named environment
   variable has a value. Enumeration never imports credentials or reads metadata;
   resolution can do both through the existing LLM helper.
+
+  `resolve_model_spec/2` is only a compatibility alias for
+  `resolve_selection/2`: the old name collides with a task's `model_spec`, which
+  is the STRING-keyed selection identity (`provider_profile_id`/`model`/
+  `reasoning_effort`) a task persists, whereas THIS resolver answers a ReqLLM
+  model identifier under a `model_spec` key.
   """
 
   alias EvoGit.Config.Schema.LLM
   alias EvoGit.Config.Schema.ProviderProfiles.Normalize
 
+  # ── Types ───────────────────────────────────────────────────────────
+
+  @typedoc """
+  A canonical provider account, STRING-keyed.
+
+  `"id"`, `"provider"` and `"models"` (an ordered list of model maps) are always
+  present; `"name"`, `"default_model"`, the reasoning-effort inventory and the
+  auth/endpoint/schedule keys appear only when configured. Normalization (and
+  legacy migration) belongs to
+  `EvoGit.Config.Schema.ProviderProfiles.Normalize`.
+  """
+  @type provider_profile :: %{required(String.t()) => term()}
+
+  @typedoc "One enumerated model/effort choice from an account's inventory."
+  @type selection :: %{
+          provider_profile_id: String.t(),
+          profile_name: String.t(),
+          provider: String.t(),
+          model: String.t(),
+          reasoning_efforts: [String.t()],
+          default_reasoning_effort: String.t() | nil,
+          context_window: pos_integer()
+        }
+
+  @typedoc """
+  The ATOM-keyed profile the LLM layer consumes: the account's (model-overridden)
+  auth/endpoint/generation fields plus `:id`, the ReqLLM `:model`, the resolved
+  `:context_window` and the chosen `:reasoning_effort`. Absent fields are omitted
+  rather than set to `nil`.
+  """
+  @type runtime_profile :: %{
+          required(:id) => String.t(),
+          required(:model) => reqllm_model(),
+          required(:context_window) => pos_integer(),
+          required(:reasoning_effort) => String.t() | nil,
+          optional(atom()) => term()
+        }
+
+  @typedoc """
+  A ReqLLM model identifier: the qualified `"provider:model"` string, or the
+  endpoint-override map form ReqLLM also accepts.
+  """
+  @type reqllm_model ::
+          String.t()
+          | %{
+              required(:provider) => atom(),
+              required(:id) => String.t(),
+              optional(:base_url) => String.t() | nil,
+              optional(:extra) => map()
+            }
+
+  @typedoc "What a caller may ask `resolve_selection/2` for."
+  @type selection_input :: nil | String.t() | map()
+
+  @typedoc "Why a selection could not be resolved."
+  @type resolution_error ::
+          :invalid_config
+          | :invalid_model_spec
+          | {:provider_profile_not_found, term()}
+          | {:duplicate_provider_profile_id, String.t()}
+          | {:model_not_found, String.t() | nil, String.t() | nil}
+          | {:duplicate_model, String.t(), String.t()}
+          | {:invalid_reasoning_effort, term()}
+          | {:unsupported_reasoning_effort, String.t(), [String.t()]}
+
+  @typedoc """
+  A resolved selection: the `selection/0` fields plus the chosen effort, the
+  canonical account, its atom-keyed `runtime_profile`, the ReqLLM `model_spec`
+  identifier and the assembled `generation_params`. The account's schedule keys
+  (`:concurrency`, `:peak_concurrency`, `:peak_hours`, `:timezone`,
+  `:off_peak_days`, `:off_peak_holidays`) are copied to the top level when set.
+  """
+  @type resolved_selection :: %{
+          required(:provider_profile_id) => String.t(),
+          required(:profile_name) => String.t(),
+          required(:provider) => String.t(),
+          required(:model) => String.t(),
+          required(:reasoning_efforts) => [String.t()],
+          required(:default_reasoning_effort) => String.t() | nil,
+          required(:context_window) => pos_integer(),
+          required(:reasoning_effort) => String.t() | nil,
+          required(:provider_profile) => provider_profile(),
+          required(:runtime_profile) => runtime_profile(),
+          required(:model_spec) => reqllm_model(),
+          required(:generation_params) => keyword(),
+          optional(:concurrency) => pos_integer(),
+          optional(:peak_concurrency) => non_neg_integer(),
+          optional(:peak_hours) => [map()],
+          optional(:timezone) => String.t(),
+          optional(:off_peak_days) => [String.t()],
+          optional(:off_peak_holidays) => String.t()
+        }
+
   @runtime_keys ~w(id model auth_mode oauth_file siwc_account api_key_env_var temperature max_tokens reasoning_effort top_p top_k frequency_penalty presence_penalty provider_options context_window concurrency peak_concurrency peak_hours timezone off_peak_days off_peak_holidays)a
   @schedule_keys ~w(concurrency peak_concurrency peak_hours timezone off_peak_days off_peak_holidays)a
 
-  @spec provider_profiles(term()) :: [map()]
+  @spec provider_profiles(term()) :: [provider_profile()]
   def provider_profiles(%{} = config), do: config |> Normalize.stringify() |> Normalize.profiles()
   def provider_profiles(_), do: []
 
-  @spec model_selections(term()) :: [map()]
+  @spec model_selections(term()) :: [selection()]
   def model_selections(config) do
     for profile <- provider_profiles(config), model <- profile["models"] do
       selection(profile, model)
     end
   end
 
-  @spec resolve_model_spec(term(), term()) :: {:ok, map()} | {:error, term()}
-  def resolve_model_spec(%{} = config, spec) do
+  @doc """
+  Resolves a provider-profile selection into everything the runtime needs.
+
+  Accepts `nil` (the configured default account/model), a provider or legacy
+  profile id, or a map with `provider_profile_id`, optional `model` and
+  `reasoning_effort`. See the module doc for the returned shape.
+  """
+  @spec resolve_selection(term(), selection_input()) ::
+          {:ok, resolved_selection()} | {:error, resolution_error()}
+  def resolve_selection(%{} = config, spec) do
     config = Normalize.stringify(config)
     profiles = provider_profiles(config)
 
-    with {:ok, {profile, model, effort}} <- resolve_selection(config, profiles, spec) do
+    with {:ok, {profile, model, effort}} <- resolve_selection_fields(config, profiles, spec) do
       runtime_profile = runtime_profile(profile, model, effort)
       params = LLM.profile_generation_params(runtime_profile)
 
@@ -65,24 +172,39 @@ defmodule EvoGit.Config.Schema.ProviderProfiles do
     end
   end
 
-  def resolve_model_spec(_, _), do: {:error, :invalid_config}
+  def resolve_selection(_, _), do: {:error, :invalid_config}
+
+  @doc """
+  Compatibility alias for `resolve_selection/2`, identical in arguments and
+  return value.
+
+  Kept because in-tree callers (task admission, scheduler dispatch, the
+  dashboard's selection surfaces) and their tests still use this name. Prefer
+  `resolve_selection/2` in new code: this resolver's `model_spec` key is a
+  ReqLLM-ready identifier, NOT a task's STRING-keyed `model_spec` selection
+  identity, so the old name reads as the wrong thing at every call site.
+  """
+  @spec resolve_model_spec(term(), selection_input()) ::
+          {:ok, resolved_selection()} | {:error, resolution_error()}
+  def resolve_model_spec(config, spec), do: resolve_selection(config, spec)
 
   # Runtime compatibility reads must not assemble generation params: scheduler
   # boot deliberately leaves cold catalog loading to CatalogWarmup.
   @doc false
-  @spec resolve_runtime_profile(term(), term()) :: {:ok, map()} | {:error, term()}
+  @spec resolve_runtime_profile(term(), selection_input()) ::
+          {:ok, runtime_profile()} | {:error, resolution_error()}
   def resolve_runtime_profile(%{} = config, spec) do
     config = Normalize.stringify(config)
 
     with {:ok, {profile, model, effort}} <-
-           resolve_selection(config, provider_profiles(config), spec) do
+           resolve_selection_fields(config, provider_profiles(config), spec) do
       {:ok, runtime_profile(profile, model, effort)}
     end
   end
 
   def resolve_runtime_profile(_, _), do: {:error, :invalid_config}
 
-  defp resolve_selection(config, profiles, spec) do
+  defp resolve_selection_fields(config, profiles, spec) do
     with {:ok, spec} <- normalize_spec(spec),
          {:ok, profile} <- find_profile(config, profiles, spec),
          {:ok, model} <- find_model(profile, spec),
