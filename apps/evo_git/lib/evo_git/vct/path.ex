@@ -32,6 +32,17 @@ defmodule EvoGit.VCT.Path do
   """
   @type point :: String.t()
 
+  @typedoc """
+  A `parse/1` failure reason.
+
+  Derived from the parser chain: `strip_scheme/1` yields `:invalid_scheme`,
+  `split_authority/1` yields `:non_local_authority` or `:invalid_path`, and
+  `parse_segments/1` yields `{:invalid_segment, segment}`. A non-binary input is
+  `:invalid_path`.
+  """
+  @type parse_error ::
+          :invalid_scheme | :non_local_authority | :invalid_path | {:invalid_segment, String.t()}
+
   @scheme "vct://"
   @scheme_size byte_size(@scheme)
   @max_control 0x1F
@@ -78,7 +89,7 @@ defmodule EvoGit.VCT.Path do
     * `{:error, :invalid_path}` — the input is not a binary or carries no path
     * `{:error, {:invalid_segment, segment}}` — a rejected segment
   """
-  @spec parse(String.t()) :: {:ok, t()} | {:error, atom() | {atom(), term()}}
+  @spec parse(String.t()) :: {:ok, t()} | {:error, parse_error()}
   def parse(url) when is_binary(url) do
     with {:ok, rest} <- strip_scheme(url),
          {:ok, path} <- split_authority(rest),

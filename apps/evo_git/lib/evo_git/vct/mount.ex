@@ -50,6 +50,31 @@ defmodule EvoGit.VCT.Mount do
   # (`../vct.ex`, outside this package's write scope) references `member()`.
   @type member :: member_ref()
 
+  @typedoc """
+  A workspace-member normalization failure.
+
+  The reasons the member validators actually return: `{:invalid_member, ref}` (a
+  non-map, neither key usable, a non-binary/unparseable point, a
+  blank/relative/non-binary path, both keys nil) from `member/1`'s helpers, and
+  `{:member_is_workspace, point}` (workspaces never nest) from
+  `decode_member_point/2`. `:invalid_members` is contributed only by the
+  LIST-level validator `normalize_members/1` for a non-list.
+  """
+  @type member_error ::
+          {:invalid_member, term()} | {:member_is_workspace, String.t()} | :invalid_members
+
+  @typedoc """
+  A `from_map/1` failure reason — the LENIENT loader's real union.
+
+  `:invalid_mount` for a non-map, `EvoGit.VCT.Path.parse_error/0` for an
+  unparseable persisted point (propagated by `decode_point/1`), and the shape
+  failures `:invalid_point` (point absent/non-binary), `:invalid_path` (a
+  present, blank or non-binary path) and `:invalid_members` (members present but
+  not a list).
+  """
+  @type decode_error ::
+          VctPath.parse_error() | :invalid_point | :invalid_path | :invalid_members
+
   @type t :: %__MODULE__{
           point: String.t(),
           path: String.t() | nil,
@@ -165,7 +190,9 @@ defmodule EvoGit.VCT.Mount do
   Nothing is required to exist: a member may name an unmounted path or a mount
   whose OS path is missing.
   """
-  @spec member(term()) :: {:ok, member_ref()} | {:error, term()}
+  @spec member(term()) ::
+          {:ok, member_ref()}
+          | {:error, {:invalid_member, term()} | {:member_is_workspace, String.t()}}
   def member(ref) when is_map(ref) do
     with {:ok, point} <- member_point(ref),
          {:ok, path} <- member_path(ref) do
@@ -192,7 +219,7 @@ defmodule EvoGit.VCT.Mount do
   worth refusing (an unparseable point, a workspace point, a relative path).
   LOADING a persisted row must never use it: see `from_map/1`.
   """
-  @spec normalize_members(term()) :: {:ok, [member_ref()]} | {:error, term()}
+  @spec normalize_members(term()) :: {:ok, [member_ref()]} | {:error, member_error()}
   def normalize_members(members) when is_list(members) do
     members
     |> Enum.reduce_while({:ok, []}, fn ref, {:ok, acc} ->
@@ -228,6 +255,12 @@ defmodule EvoGit.VCT.Mount do
   @doc """
   Returns `true` when `mount` is a `"git"` mount (the default kind).
 
+  It reports the `kind` STORAGE-CLASS label only (`"git"` covers both project and
+  reserved mounts), it has no production caller, and the
+  project/workspace/reserved split is decided by
+  `EvoGit.VCT.Table.project_mount?/1` / `workspace_point?/1` / `reserved?/1`,
+  never by `kind`.
+
   TOTAL: a non-mount input is `false`, never a raise.
   """
   @spec git?(term()) :: boolean()
@@ -262,7 +295,7 @@ defmodule EvoGit.VCT.Mount do
   An absent, `nil` or unparseable ISO-8601 `last_opened_at` decodes to `nil`
   without raising.
   """
-  @spec from_map(map()) :: {:ok, t()} | {:error, term()}
+  @spec from_map(map()) :: {:ok, t()} | {:error, decode_error() | :invalid_mount}
   def from_map(map) when is_map(map) do
     with {:ok, point} <- decode_point(map),
          {:ok, path} <- decode_path(map),

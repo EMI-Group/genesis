@@ -51,6 +51,17 @@ defmodule EvoGit.VCT.Table do
   alias EvoGit.VCT.Mount
   alias EvoGit.VCT.Path, as: VctPath
 
+  @typedoc """
+  A mutation-rule failure of this module.
+
+  Exactly the reasons the pure rules return: `:invalid_point` (an unparseable
+  point, or a workspace point where a file mount is required — both via
+  `VctPath.canonical/1` / `reject_workspace_point/1` / `require_workspace_point/1`),
+  `:invalid_path` (a blank or non-binary OS path), `:invalid_mounts` (a non-list
+  mount table) and `:not_found` (a removal that matched no mount).
+  """
+  @type mount_error :: :invalid_point | :invalid_path | :invalid_mounts | :not_found
+
   @projects_prefix VctPath.projects()
 
   ## Path normalization
@@ -181,6 +192,10 @@ defmodule EvoGit.VCT.Table do
   Returns `true` when `point` names a workspace mount — the POINT-based
   spelling of `workspace_point?/1` (mirroring `project_mount?/1`, which is also
   point-based).
+
+  This is the LEGACY spelling of `workspace_point?/1` — the same rule, with no
+  production caller, kept only while the value-object tests pin it; prefer
+  `workspace_point?/1`.
 
   TOTAL: an unparseable or non-path input is `false`.
   """
@@ -641,7 +656,7 @@ defmodule EvoGit.VCT.Table do
   created through `upsert_workspace/6`, never as a file mount.
   """
   @spec ensure_mount([Mount.t()], VctPath.t() | String.t(), String.t(), String.t() | nil) ::
-          {:ok, [Mount.t()], Mount.t(), boolean()} | {:error, term()}
+          {:ok, [Mount.t()], Mount.t(), boolean()} | {:error, mount_error()}
   def ensure_mount(mounts, point, os_path, name) when is_list(mounts) do
     with {:ok, canonical} <- VctPath.canonical(point),
          :ok <- reject_workspace_point(canonical),
@@ -678,7 +693,7 @@ defmodule EvoGit.VCT.Table do
           [Mount.member_ref()],
           String.t() | nil,
           DateTime.t() | nil
-        ) :: {:ok, [Mount.t()], Mount.t()} | {:error, term()}
+        ) :: {:ok, [Mount.t()], Mount.t()} | {:error, mount_error() | Mount.member_error()}
   def upsert_workspace(mounts, point, name, members, description, now \\ nil)
 
   def upsert_workspace(mounts, point, name, members, description, now)
