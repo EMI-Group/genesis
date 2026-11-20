@@ -299,7 +299,7 @@ Making those reads explicit requires `assign_new/3`-seeding each key during the 
 
 ## Known Issues — remaining hot-path costs and the out-of-package call sites
 
-Each item is verified against this package's HEAD and names the file that must change; the first three are outside `home_live/`, so they cannot be fixed from here.
+Each item is verified against this package's HEAD and names the exact file that must change; every one of them lives OUTSIDE this package's write scope (`apps/evo_dash/lib/evo_dash_web/live/home_live.ex` and `apps/evo_dash/lib/evo_dash/chat_history.ex`), so the owning parent node must make the change.
 
 - **The whole transcript still re-renders on every delta.** `ChatMessages.message_list/1` is a plain function component, so one growing bubble re-renders up to 200 history rows per ~75 ms batch. The O(n²) rescans are gone (the last-assistant index is computed once before the loop, and a finalized answer re-uses its cached `:html`), but unaffected bubbles are still diffed per batch; the remaining lever is a change-tracked `live_component` keyed by entry id for the assistant bubble.
 - **Blocking session RPCs run in the LiveView.** `SendPath.start_session_chat/4` and `SendPath.queue_session_message/5` wrap `SessionActions` in `EvoDash.SafeCall.run/1`, and `stop_reply/1` / `finish_chat/4` in `../home_live.ex` do the same, so a busy or remote node freezes delta processing and timers until the call returns. Converting them needs `EvoDash.SafeCall.start/4` plus a tagged `handle_info`, a `send_in_flight` flag and a monotonic `send_seq` stale guard — the handler lives in `../home_live.ex`, so `send_path.ex` cannot change alone.
