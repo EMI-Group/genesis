@@ -1,15 +1,19 @@
 defmodule EvoDash.ChatGPTCLI do
   @moduledoc """
   Local terminal entry point for the Sign in with ChatGPT loopback flow.
+  The flow itself lives in `EvoDash.ChatGPTLogin` (shared with the dashboard), so this module only parses the command line, prints the URL and the outcome, and lists what the credential store knows.
   """
 
-  alias EvoGit.Auth.ChatGPT
   alias EvoGit.Auth.ChatGPT.Store
-  import Plug.Conn
+  alias EvoDash.ChatGPTLogin
 
   @port 1455
-  @timeout :timer.minutes(10)
+  @signin_timeout_ms 600_000
+  @notification_slack_ms 15_000
+  @poll_interval_ms 100
+  @poll_attempts 50
 
+  @doc "Runs the command and halts the VM with exit code 1 on error."
   def main(args) do
     case run(args) do
       :ok ->
@@ -21,81 +25,108 @@ defmodule EvoDash.ChatGPTCLI do
     end
   end
 
-  def run([flag]) when flag in ["help", "-h", "--help"], do: usage()
+  @doc """
+  Runs one `genesis chatgpt <login|status|models|logout|import FILE>` command and returns `:ok` or `{:error, reason}`.
+  """
+  def run(args), do: run(args, [])
 
-  def run(args) do
+  @doc false
+  def run([flag], _opts) when flag in ["help", "-h", "--help"], do: usage()
+
+  @doc false
+  # `opts[:store]` and `opts[:exchange]` exist so a test can drive the command
+  # against a stub instead of the node's real credential store; production
+  # callers pass none and resolve the core modules.
+  def run(args, opts) do
     with {options, positional, []} <-
            OptionParser.parse(args, strict: [account: :string, port: :integer]),
          {:ok, _} <- Application.ensure_all_started(:req) do
+      store = opts[:store] || Store
       account = options[:account] || Store.default_account()
-      command(positional, account, options)
+      command(positional, account, options, Keyword.put(opts, :store, store))
     else
       _ -> {:error, :invalid_command}
     end
   end
 
-  defp command(["login"], account, options) do
-    port = options[:port] || @port
-
-    with {:ok, _} <- Store.path(account),
-         {:ok, registration} <- existing_registration(account),
-         {:ok, host} <- Store.host_id(),
-         {:ok, url, attempt} <-
-           ChatGPT.authorization(host, "http://127.0.0.1:#{port}/auth/callback", registration),
-         {:ok, _} <- Application.ensure_all_started(:bandit),
-         {:ok, server} <-
-           Bandit.start_link(
-             plug: {__MODULE__, {self(), attempt.state}},
-             ip: {127, 0, 0, 1},
-             port: port,
-             startup_log: false
-           ) do
-      try do
-        IO.puts("Open this URL in the browser on the computer with the loopback listener:")
-        IO.puts(url)
-        IO.puts("Waiting for ChatGPT authorization.")
-
-        receive do
-          {:chatgpt_callback, browser, ref, params} ->
-            result = finish_login(attempt, params, account)
-            send(browser, {ref, callback_result(result)})
-            await_callback_response(ref)
-            result
-        after
-          @timeout -> {:error, :authorization_timeout}
-        end
-      after
-        Supervisor.stop(server)
-      end
-    else
-      {:error, {:shutdown, _}} -> {:error, :loopback_listener_unavailable}
-      {:error, _} = error -> error
-    end
+  defp command(["login"], account, options, opts) do
+    login(account, options[:port] || @port, opts)
   end
 
-  defp command(["models"], account, _) do
-    with {:ok, models} <- Store.models(account), do: print_models(models)
+  defp command(["models"], account, _options, opts) do
+    with {:ok, models} <- opts[:store].models(account), do: print_models(models)
   end
 
-  defp command(["status"], account, _) do
-    with {:ok, status} <- Store.status(account) do
+  defp command(["status"], account, _options, opts) do
+    with {:ok, status} <- opts[:store].status(account) do
       IO.puts("Connected as #{status.account_id}.")
       print_models(status.models)
     end
   end
 
-  defp command(["logout"], account, _) do
-    with :ok <- Store.logout(account), do: IO.puts("Disconnected ChatGPT account #{account}.")
+  defp command(["logout"], account, _options, opts) do
+    with :ok <- opts[:store].logout(account),
+         do: IO.puts("Disconnected ChatGPT account #{account}.")
   end
 
-  defp command(["import", protected_path], account, _) do
-    with {:ok, models} <- Store.import_file(account, protected_path) do
+  defp command(["import", protected_path], account, _options, opts) do
+    with {:ok, models} <- opts[:store].import_file(account, protected_path) do
       IO.puts("Imported ChatGPT account #{account}.")
       print_models(models)
     end
   end
 
-  defp command(_args, _account, _options), do: usage()
+  defp command(_args, _account, _options, _opts), do: usage()
+
+  # The listener binds AFTER the flow starts, so the printed URL always carries
+  # the port that is really open (the default 1455 or an explicit `--port`).
+  defp login(account, port, opts) do
+    flow_opts = [port: port, caller: self()] ++ Keyword.take(opts, [:store, :exchange])
+
+    with {:ok, flow} <- ChatGPTLogin.begin(account, flow_opts) do
+      IO.puts("Open this URL in the browser on the computer with the loopback listener:")
+      IO.puts(flow.url)
+      IO.puts("Waiting for ChatGPT authorization.")
+      await_result(flow.id)
+    end
+  end
+
+  # The facade notifies this process exactly once per attempt; the bounded poll
+  # is only the fallback for a missed notification, never a wait loop.
+  defp await_result(id) do
+    receive do
+      {:chatgpt_login, ^id, result} -> render_result(result)
+    after
+      @signin_timeout_ms + @notification_slack_ms -> poll_result(id, @poll_attempts)
+    end
+  end
+
+  defp poll_result(_id, 0), do: {:error, :authorization_timeout}
+
+  defp poll_result(id, attempts) do
+    case ChatGPTLogin.status(id) do
+      :pending ->
+        receive do
+          {:chatgpt_login, ^id, result} -> render_result(result)
+        after
+          @poll_interval_ms -> poll_result(id, attempts - 1)
+        end
+
+      result ->
+        render_result(result)
+    end
+  end
+
+  defp render_result({:ok, %{account: account} = result}) do
+    IO.puts("Connected ChatGPT account #{account}.")
+    result |> Map.get(:status) |> print_models()
+    :ok
+  end
+
+  defp render_result({:error, reason}), do: {:error, reason}
+
+  # A running attempt is never a command outcome.
+  defp render_result(:pending), do: {:error, :authorization_timeout}
 
   defp usage do
     IO.puts("""
@@ -107,91 +138,14 @@ defmodule EvoDash.ChatGPTCLI do
     :ok
   end
 
-  defp existing_registration(account) do
-    case Store.registration(account) do
-      {:error, reason} when reason in [:no_credentials, :invalid_credentials] -> {:ok, nil}
-      result -> result
-    end
-  end
+  defp print_models(%{models: models}), do: print_models(models)
 
-  defp print_models(models) do
-    Enum.each(models, fn model ->
-      IO.puts("#{model["slug"]}\t#{model["display_name"]}")
+  defp print_models(models) when is_list(models) do
+    Enum.each(models, fn
+      %{"slug" => slug, "display_name" => name} -> IO.puts("#{slug}\t#{name}")
+      _other -> :ok
     end)
   end
 
-  defp finish_login(attempt, params, account) do
-    with {:ok, record} <- ChatGPT.exchange(attempt, params),
-         {:ok, models} <- Store.install(account, record) do
-      IO.puts("Connected ChatGPT account #{account}.")
-      print_models(models)
-    end
-  end
-
-  defp callback_result(:ok),
-    do:
-      {200,
-       "ChatGPT connected to Genesis. Return to Welcome or Settings to choose your account and models."}
-
-  defp callback_result({:error, :authorization_denied}),
-    do:
-      {400, "ChatGPT authorization was cancelled. Run the Genesis login command again to retry."}
-
-  defp callback_result({:error, :plan_not_authorized}),
-    do:
-      {400,
-       "Genesis did not receive permission to use your ChatGPT plan. Sign in again and approve plan usage."}
-
-  defp callback_result({:error, reason}),
-    do:
-      {400,
-       "Genesis could not finish connecting ChatGPT (#{inspect(reason)}). Return to the terminal to retry."}
-
-  defp await_callback_response(ref) do
-    receive do
-      {:chatgpt_callback_sent, ^ref} -> :ok
-    after
-      2_000 -> :ok
-    end
-  end
-
-  @doc false
-  def init(options), do: options
-
-  @doc false
-  def call(
-        %Plug.Conn{method: "GET", host: "127.0.0.1", request_path: "/auth/callback"} = conn,
-        {caller, state}
-      ) do
-    conn =
-      conn
-      |> fetch_query_params()
-      |> put_resp_header("cache-control", "no-store")
-      |> put_resp_header("referrer-policy", "no-referrer")
-
-    case conn.query_params do
-      %{"state" => ^state} = params ->
-        ref = make_ref()
-        send(caller, {:chatgpt_callback, self(), ref, params})
-
-        receive do
-          {^ref, {status, message}} ->
-            resp = send_resp(conn, status, message)
-            send(caller, {:chatgpt_callback_sent, ref})
-            resp
-        after
-          90_000 ->
-            send_resp(
-              conn,
-              504,
-              "Genesis is still finishing sign-in. Check the result in your terminal."
-            )
-        end
-
-      _ ->
-        send_resp(conn, 400, "Invalid sign-in attempt.")
-    end
-  end
-
-  def call(conn, _), do: send_resp(conn, 404, "Not found")
+  defp print_models(_models), do: :ok
 end
