@@ -17,7 +17,8 @@ defmodule EvoGit.Store.Boot do
   every pending migration file on every run, redefining an already-loaded
   module into the BEAM and printing a `redefining module` warning per boot.
   The remaining `:global` lock serializes that one-time compile plus each run
-  (see `migrate_synchronized!/0`).
+  (see `with_migration_lock/1`), and a lock that cannot be taken is a FAILED
+  boot, never a schema-less one.
 
   `HistoricalSources` rejects reserved objects left by an interrupted prior
   preservation attempt before running the ordinary ordered migration source.
@@ -118,9 +119,11 @@ defmodule EvoGit.Store.Boot do
   Returns the list of migrated versions (empty when current).
 
   RAISES a descriptive `RuntimeError` when the migration lock
-  (`:global.trans/2`) cannot be taken: the migration run then did NOT happen,
-  so a caller must never treat that as a booted schema. `start_dynamic/2`
-  converts exactly that failure into `{:error, :migration_lock_unavailable}`.
+  (`:global.trans/2`, behind the default-inert `:store_boot_lock_fun` seam —
+  see `with_migration_lock/1`) cannot be taken: the migration run then did NOT
+  happen, so a caller must never treat that as a booted schema.
+  `start_dynamic/2` converts exactly that failure into
+  `{:error, :migration_lock_unavailable}`.
   """
   @spec run_migrations(keyword() | pid()) :: [integer()]
   def run_migrations(pid) when is_pid(pid) do
@@ -345,12 +348,23 @@ defmodule EvoGit.Store.Boot do
   lock described in `migrate_synchronized!/0`) and memoized, so later calls
   and later boots reuse the modules already loaded in the BEAM instead of
   recompiling them.
+
+  The compile path takes the SAME migration lock as the migration run, so a
+  lock that cannot be taken fails here EXACTLY as it does in
+  `run_migrations/1`: this function raises the same
+  `RuntimeError` (`"task-store migration lock unavailable; refusing to report
+  a successful boot"`) instead of returning the bare `:aborted` atom, which
+  would contradict the documented `[{integer(), module()}]` result. A memoized
+  source needs no lock and is always returned as-is.
   """
   @spec migration_source() :: [{integer(), module()}]
   def migration_source do
     case cached_migration_source() do
-      nil -> with_migration_lock(&load_migration_source/0)
-      source -> source
+      nil ->
+        reject_lock_unavailable(with_migration_lock(&load_migration_source/0))
+
+      source ->
+        source
     end
   end
 
@@ -411,18 +425,7 @@ defmodule EvoGit.Store.Boot do
   # re-entry by the same owner and re-grant). Only the boot window is
   # serialized, and the compile it guards is a one-time per-BEAM cost.
   defp migrate_synchronized! do
-    case with_migration_lock(fn ->
-           EvoGit.Store.HistoricalSources.run(load_migration_source())
-         end) do
-      # `:global.trans/2` answers the BARE ATOM `:aborted` when the lock cannot
-      # be taken (the fun never ran). That atom must NEVER be discarded or
-      # handed back as a result: every caller treats the return value as "the
-      # migration versions applied", so a discarded `:aborted` reported a
-      # SUCCESSFUL boot for a database where NO migration ran — a schema-less
-      # task store that then serves reads and writes.
-      :aborted -> {:error, :migration_lock_unavailable}
-      versions -> versions
-    end
+    with_migration_lock(fn -> EvoGit.Store.HistoricalSources.run(load_migration_source()) end)
   end
 
   # The PUBLIC contract keeps its version list (`mix migrate.store` and many
@@ -434,8 +437,34 @@ defmodule EvoGit.Store.Boot do
 
   defp reject_lock_unavailable(versions) when is_list(versions), do: versions
 
+  # THE one lock-taking point, shared by `migrate_synchronized!/0` and
+  # `migration_source/0` — so the lock-failure outcome is decided ONCE and the
+  # two paths can never diverge.
+  #
+  # `:global.trans/2` answers the BARE ATOM `:aborted` when the lock cannot be
+  # taken (the fun never ran). That atom must NEVER be discarded or handed back
+  # as a result: every caller treats the return value as "the migration versions
+  # applied", so a discarded `:aborted` reported a SUCCESSFUL boot for a database
+  # where NO migration ran — a schema-less task store that then serves reads and
+  # writes. Normalizing it HERE keeps that ONE mapping, and
+  # `reject_lock_unavailable/1` turns it into the ONE
+  # `@migration_lock_unavailable` raise for both callers.
+  #
+  # The lock FUNCTION is a default-inert call-time seam (`:store_boot_lock_fun`,
+  # read HERE at the call site — the same pattern as `:store_boot_optimize_fun`
+  # and `EvoGit.Platform.config_dir/1`'s `:config_dir_fun`): on OTP 29
+  # `:global.trans/2` retries until it is granted, so the `:aborted` arm below
+  # would otherwise be unreachable and untestable. An absent pin answers
+  # `&:global.trans/2`, i.e. behaviour byte-identical to the pre-seam code.
   defp with_migration_lock(fun) do
-    :global.trans({:evo_git_store_migrations, self()}, fun)
+    case migration_lock_fun().({:evo_git_store_migrations, self()}, fun) do
+      :aborted -> {:error, :migration_lock_unavailable}
+      result -> result
+    end
+  end
+
+  defp migration_lock_fun do
+    Application.get_env(:evo_git, :store_boot_lock_fun, &:global.trans/2)
   end
 
   # MUST be called while holding the migration lock — the compile below races

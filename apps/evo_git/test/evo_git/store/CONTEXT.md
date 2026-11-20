@@ -15,6 +15,7 @@ Repeated attempts preserve exact schema, ledger and source bytes both without a 
 - `boot_migration_test.exs` → fresh schema and raw pre-Ecto 15/17/19/20-column adoption, exact physical column order, nullable tail appends, healthy data preservation and final indexes.
 - `boot_normalization_test.exs` → raw pre-boot values exercising timestamp, result and opts normalization, backfills and quarantine.
 - `boot_migration_source_test.exs` → exactly nine preloaded ascending `{version, module}` pairs matching filenames, memoization, loaded modules and repeated boot without migration-module redefinition warnings.
+- `boot_migration_lock_test.exs` → the `:aborted` migration-lock arm through the `:store_boot_lock_fun` seam: `start_dynamic/2` answers `{:error, :migration_lock_unavailable}` with no pid and no migration stamped, `run_migrations/1` raises the ONE lock message, the seam is consulted with the production lock id, and an unset seam still boots and lists the source (default-inert control).
 - `archive_migration_test.exs` → migration 5 creates the 23-column archive table, fans out one row per agent, strips duplicated result archives and drops `archive_metadata`.
 It pins partial fan-out idempotency, corrupt-source skip/log/dump behavior and unchanged `updated_at`.
 - `vct_mounts_migration_test.exs` → ordinary legacy and tagged v0.14.1 upgrade paths, five-column VCT table, mount naming/deduplication, invalid-path skip, newest-100 cap and projects drop.
@@ -43,7 +44,7 @@ Summary/page rows have exactly 18 keys including `session_mode` and `pause_kind`
 Archive rows are plain JSON-backed relational records keyed by `(task_id, agent_id)`, with TEXT `repo_id` and roster index `(task_id, depth, agent_id)`.
 
 ## Constraints
-All modules are `async: true` except `maintenance_test.exs` (global app-env maintenance seams) and `archive_migration_test.exs` (shared platform migration-dump path), whose in-file documentation names their forcing globals.
+All modules are `async: true` except `maintenance_test.exs` (global app-env maintenance seams), `archive_migration_test.exs` (shared platform migration-dump path) and `boot_migration_lock_test.exs` (the `:evo_git, :store_boot_lock_fun` app env injected into the migration lock, which a concurrently booting store would observe), whose in-file documentation names their forcing globals.
 No mocks or user-database copies are used; historical fixtures are independent raw SQL literals.
 Migration/schema suites deliberately boot fresh databases because migration is their subject; ordinary operation/facade suites use immutable checkpointed `EvoGit.TestSupport.StoreTemplate` copies.
 Do not introduce test-side migration locks: production owns the global migration-source lock and preloaded source memo.
