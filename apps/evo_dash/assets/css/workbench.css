@@ -254,6 +254,39 @@
   background: var(--color-base-200);
   border-inline-start: 1px solid var(--color-base-300);
   padding: .55rem .6rem;
+  /* Right-panel entrance/exit. The transform/opacity slide is paired with the
+     flex basis (see the docked rule below) so the CENTER column glides instead
+     of snapping. `display` is never declared in this family of rules: `hidden`
+     (display: none) stays owned by the [hidden] rule further down, so a closing
+     panel can never be re-shown by a state rule. */
+  transform: translateX(0);
+  opacity: 1;
+  transition: transform 220ms ease-out, opacity 220ms ease-out,
+    flex-basis 220ms ease-out, padding 220ms ease-out;
+}
+/* Closed AND closing share the exit geometry: "closed" is the single frame an
+   entrance is painted at before it becomes "open" (the transition's start),
+   "closing" is the running exit. */
+.workbench-history[data-panel-state="closed"],
+.workbench-history[data-panel-state="closing"] {
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(1.25rem);
+  pointer-events: none;
+}
+@media (min-width: 1280px) {
+  /* Docked, the panel is a flex sibling, so collapsing basis + padding + border
+     to zero is what keeps the center column from snapping at either end. */
+  .workbench-history[data-panel-state="closed"],
+  .workbench-history[data-panel-state="closing"] {
+    flex-basis: 0;
+    padding-inline: 0;
+    padding-block: 0;
+    border-inline-start-width: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workbench-history { transition: none; }
 }
 .workbench-history-controls { padding: .25rem .25rem .6rem; }
 .workbench-segmented {
@@ -333,6 +366,12 @@
     inset: 0 0 0 auto;
     width: min(22rem, 92vw);
     overscroll-behavior: contain;
+  }
+  /* The drawer is not a flex sibling, so it slides fully off the edge; the
+     docked flex-basis/padding collapse does not apply here. */
+  .workbench-history[data-panel-state="closed"],
+  .workbench-history[data-panel-state="closing"] {
+    transform: translateX(100%);
   }
 }
 @media (max-width: 1023.98px) {

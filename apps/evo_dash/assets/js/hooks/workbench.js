@@ -1,8 +1,13 @@
 import {projectPreview} from "./workbench_project_preview"
+import {initialPanelState, planPanelRequest, completePanelClose, isPanelCloseTransition,
+  panelCloseWaitsForTransition, PANEL_CLOSED, PANEL_OPEN, PANEL_CLOSING,
+  PANEL_CLOSE_FALLBACK_MS} from "./workbench_panel"
 
 const TAB_KEY = "genesis-workbench.tabs.v1"
 const ACCENT_KEY = "genesis-workbench.accent"
 const SIDEBAR_WIDTHS_KEY = "genesis-workbench.sidebar-widths"
+const HISTORY_KEY = "genesis-workbench.history"
+const GIT_KEY = "genesis-workbench.git"
 const SIDEBAR_WIDTHS = {
   left: {default: 256, min: 192, max: 480},
   right: {default: 336, min: 264, max: 640},
@@ -88,14 +93,15 @@ const Workbench = {
     }
     this.tabs = [...restored.values()]
     write(sessionStorage, TAB_KEY, this.tabs)
-    this.kind = "task"
-    this.historyQuery = ""
-    this.historySearchOpen = false
-    this.scope = null
-    this.historyPreference = read(sessionStorage, "genesis-workbench.history", null)
     this.media = matchMedia(WIDE)
-    this.historyOpen = this.media.matches && this.historyPreference !== false
-    this.gitOpen = this.media.matches && read(sessionStorage, "genesis-workbench.git", false)
+    this.reduceMotion = matchMedia("(prefers-reduced-motion: reduce)")
+    this.panelStates = new Map()
+    this.panelClose = new Map()
+    this.panelFrames = new Map()
+    this.panelReady = false
+    // Only an explicit choice in THIS tab re-opens the panel; a fresh tab is closed.
+    this.historyOpen = initialPanelState(read(sessionStorage, HISTORY_KEY, null)) === PANEL_OPEN
+    this.gitOpen = initialPanelState(read(sessionStorage, GIT_KEY, null)) === PANEL_OPEN
     this.gitLoadedScope = null
     this.sidebarWidths = read(localStorage, SIDEBAR_WIDTHS_KEY, {})
     this.sidebarDrag = null
@@ -105,15 +111,15 @@ const Workbench = {
       this.positionCreateMenu()
     }
     this.onResize = () => {
-      this.historyOpen = this.media.matches && this.historyPreference !== false
+      // A narrower viewport turns the docked panel into an overlay drawer; an
+      // unexpected drawer appearing on resize is not a remembered preference.
+      if (!this.media.matches) {
+        this.historyOpen = false
+        this.gitOpen = false
+      }
       this.syncHistoryPanel()
     }
     this.onClick = event => this.click(event)
-    this.onInput = event => {
-      if (event.target.id !== "workbench-history-search") return
-      this.historyQuery = event.target.value
-      this.renderHistory()
-    }
     this.onPointerDown = event => {
       this.pressedBackdrop =
         event.target.matches("dialog.workbench-window[open]")
@@ -146,9 +152,6 @@ const Workbench = {
       if (create) {
         create.open = false
         create.querySelector("summary")?.focus()
-        event.preventDefault()
-      } else if (event.target.id === "workbench-history-search") {
-        this.setHistorySearch(false, true)
         event.preventDefault()
       } else if (this.gitDiff && !this.el.hasAttribute("data-workbench-history-drawer-open") &&
           !event.target.closest("dialog[open]")) {
@@ -191,7 +194,6 @@ const Workbench = {
     this.settingsWindow?.addEventListener("close", this.onSettingsClose)
     window.addEventListener("message", this.onWindowMessage)
     this.el.addEventListener("click", this.onClick)
-    this.el.addEventListener("input", this.onInput)
     this.el.addEventListener("pointerdown", this.onPointerDown)
     this.el.addEventListener("pointermove", this.onPointerMove)
     this.el.addEventListener("pointerup", this.onPointerEnd)
@@ -218,7 +220,6 @@ const Workbench = {
     this.settingsWindow?.removeEventListener("close", this.onSettingsClose)
     window.removeEventListener("message", this.onWindowMessage)
     this.el.removeEventListener("click", this.onClick)
-    this.el.removeEventListener("input", this.onInput)
     this.el.removeEventListener("pointerdown", this.onPointerDown)
     this.el.removeEventListener("pointermove", this.onPointerMove)
     this.el.removeEventListener("pointerup", this.onPointerEnd)
@@ -232,17 +233,13 @@ const Workbench = {
     this.media.removeEventListener("change", this.onResize)
     window.removeEventListener("phx:page-loading-stop", this.onNavigation)
     window.removeEventListener("storage", this.onStorage)
+    for (const key of [...this.panelClose.keys()]) this.clearPanelClose(key)
+    for (const key of [...this.panelFrames.keys()]) this.cancelPanelFrame(key)
   },
 
   sync() {
     applyAccent(this.el)
     const data = this.el.dataset
-    const scope = JSON.stringify([data.workbenchNode, data.workbenchProject])
-    if (scope !== this.scope) {
-      this.scope = scope
-      this.historyQuery = ""
-      this.historySearchOpen = false
-    }
     this.node = data.workbenchNode
     this.project = data.workbenchProject
     this.gitDiff = this.el.querySelector("#workbench-git-content")?.dataset.workbenchGitDiff
@@ -257,7 +254,10 @@ const Workbench = {
     this.renderProjectWindows()
     this.renderHistory()
     this.syncEmptyState()
-    this.syncHistoryPanel()
+    // The first sync only SEEDS the panel: a stored open preference must not
+    // play its entrance animation on page load.
+    this.syncHistoryPanel(this.panelReady)
+    this.panelReady = true
     this.syncSidebarWidths()
     this.syncGitStatus()
     this.syncGitDiffFocus()
@@ -550,56 +550,32 @@ const Workbench = {
     })
   },
 
-  setHistorySearch(open, focus = false) {
-    this.historySearchOpen = open
-    if (!open) this.historyQuery = ""
-    this.renderHistory()
-    if (focus) this.el.querySelector(open ? "#workbench-history-search" : "#workbench-history-search-toggle")?.focus()
-  },
-
   renderHistory() {
-    const project = this.el.querySelector("#workbench-history-project")
-    if (project && project.textContent !== (this.projectName || "")) project.textContent = this.projectName || ""
-    const search = this.el.querySelector("#workbench-history-search")
-    if (search) {
-      this.el.querySelector("#workbench-history-query").hidden = !this.historySearchOpen
-      if (!this.historySearchOpen || document.activeElement !== search) search.value = this.historyQuery
-    }
-    this.el.querySelector("#workbench-history-search-toggle")
-      ?.setAttribute("aria-expanded", String(this.historySearchOpen))
-    const query = this.historyQuery.trim().toLocaleLowerCase()
-    const more = this.el.querySelector("[data-workbench-more]")
-    if (more) more.hidden = this.kind !== "task"
-    this.el.querySelectorAll("[data-workbench-kind]").forEach(button =>
-      button.setAttribute("aria-pressed", String(button.dataset.workbenchKind === this.kind)))
-    let visible = 0
+    // The panel's own queries, filters, empty state and "more" control are
+    // SERVER-rendered live-component state; the hook only marks the row whose
+    // window is already open in this tab.
     for (const row of this.rows) {
-      const kind = row.dataset.workbenchItem
-      const matches = (row.dataset.itemTitle + " " + row.dataset.itemState).toLocaleLowerCase().includes(query)
-      row.hidden = kind !== this.kind || !matches
-      const current = this.currentTab === JSON.stringify([this.node, "", kind, row.dataset.itemId])
+      const current = this.currentTab === JSON.stringify(
+        [this.node, "", row.dataset.workbenchItem, row.dataset.itemId])
       row.querySelector("[data-workbench-open]")?.classList.toggle("is-current", current)
-      if (!row.hidden) visible++
     }
-    const empty = this.el.querySelector("[data-workbench-empty]")
-    if (empty) empty.hidden = visible > 0 || empty.parentElement.dataset.loading === "true"
   },
 
-  syncHistoryPanel() {
+  syncHistoryPanel(animate = true) {
     const panel = this.el.querySelector("#workbench-history")
     if (!panel) return
     const git = this.el.querySelector("#workbench-git")
     const gitOpen = Boolean(git && this.gitOpen && this.project)
-    const assistantDefault = this.el.dataset.workbenchPage === "assistant" &&
-      this.media.matches && this.historyPreference === null
-    const open = this.historyOpen && Boolean(this.project) && !gitOpen && !assistantDefault
-    panel.hidden = !open
-    if (git) git.hidden = !gitOpen
+    const open = this.historyOpen && Boolean(this.project) && !gitOpen
+    this.applyPanelState(panel, open, animate)
+    if (git) this.applyPanelState(git, gitOpen, animate)
     const drawerOpen = (open || gitOpen) && !this.media.matches
     const resizer = this.el.querySelector("#workbench-right-resize")
     if (resizer) resizer.hidden = drawerOpen || !(open || gitOpen)
-    this.el.querySelector("#workbench-history-overlay").hidden = !drawerOpen
-    this.el.querySelector(".workbench-center").inert = drawerOpen || Boolean(this.previewTab)
+    const overlay = this.el.querySelector("#workbench-history-overlay")
+    if (overlay) overlay.hidden = !drawerOpen
+    const center = this.el.querySelector(".workbench-center")
+    if (center) center.inert = drawerOpen || Boolean(this.previewTab)
     panel.inert = Boolean(this.previewTab)
     if (git) git.inert = Boolean(this.previewTab)
     const attribute = "data-workbench-history-drawer-open"
@@ -611,12 +587,96 @@ const Workbench = {
     this.el.querySelector("#workbench-git-toggle")?.setAttribute("aria-expanded", String(gitOpen))
   },
 
+  // Drives one aside through the pure state machine. Every LiveView patch
+  // re-runs this, so an unchanged state is a pure re-assert: a running close is
+  // never restarted and a stable open never re-animates.
+  applyPanelState(panel, wantOpen, animate) {
+    const key = panel.id
+    const state = this.panelStates.get(key) || initialPanelState(panel.dataset.panelState === PANEL_OPEN)
+    const plan = planPanelRequest(state, wantOpen)
+    if (plan.state === state) {
+      if (panel.hidden !== plan.hidden) panel.hidden = plan.hidden
+      this.setPanelState(panel, plan.state)
+      return
+    }
+    this.panelStates.set(key, plan.state)
+    this.clearPanelClose(key)
+    if (plan.state === PANEL_OPEN) {
+      panel.hidden = false
+      if (animate && plan.animate) {
+        // Paint one frame at the closed style so the transition has a start.
+        this.setPanelState(panel, PANEL_CLOSED)
+        this.panelFrames.set(key, requestAnimationFrame(() => {
+          this.panelFrames.delete(key)
+          if (this.panelStates.get(key) === PANEL_OPEN) this.setPanelState(panel, PANEL_OPEN)
+        }))
+      } else {
+        this.setPanelState(panel, PANEL_OPEN)
+      }
+    } else if (plan.state === PANEL_CLOSING) {
+      this.cancelPanelFrame(key)
+      panel.hidden = false
+      this.setPanelState(panel, PANEL_CLOSING)
+      if (animate && panelCloseWaitsForTransition(plan.animate, this.reducedMotion())) {
+        this.armPanelClose(panel, key)
+      } else {
+        this.finishPanelClose(panel)
+      }
+    } else {
+      this.cancelPanelFrame(key)
+      panel.hidden = true
+      this.setPanelState(panel, PANEL_CLOSED)
+    }
+  },
+
+  setPanelState(panel, state) {
+    if (panel.dataset.panelState !== state) panel.dataset.panelState = state
+  },
+
+  reducedMotion() {
+    return Boolean(this.reduceMotion?.matches)
+  },
+
+  armPanelClose(panel, key) {
+    const onEnd = event => {
+      if (event.target !== panel) return
+      if (!isPanelCloseTransition(this.panelStates.get(key), event.propertyName)) return
+      this.finishPanelClose(panel)
+    }
+    const timer = setTimeout(() => this.finishPanelClose(panel), PANEL_CLOSE_FALLBACK_MS)
+    panel.addEventListener("transitionend", onEnd)
+    this.panelClose.set(key, {panel, onEnd, timer})
+  },
+
+  clearPanelClose(key) {
+    const pending = this.panelClose.get(key)
+    if (!pending) return
+    clearTimeout(pending.timer)
+    pending.panel.removeEventListener("transitionend", pending.onEnd)
+    this.panelClose.delete(key)
+  },
+
+  cancelPanelFrame(key) {
+    const frame = this.panelFrames.get(key)
+    if (frame == null) return
+    cancelAnimationFrame(frame)
+    this.panelFrames.delete(key)
+  },
+
+  finishPanelClose(panel) {
+    const key = panel.id
+    this.clearPanelClose(key)
+    const done = completePanelClose(this.panelStates.get(key))
+    if (!done) return false
+    this.panelStates.set(key, done.state)
+    panel.hidden = done.hidden
+    this.setPanelState(panel, done.state)
+    return true
+  },
+
   setHistory(open, focus = false) {
     this.historyOpen = open
-    if (this.media.matches) {
-      this.historyPreference = open
-      write(sessionStorage, "genesis-workbench.history", open)
-    }
+    write(sessionStorage, HISTORY_KEY, open)
     this.syncHistoryPanel()
     if (focus) this.el.querySelector(open ? "[data-workbench-close-history]" : "#workbench-history-toggle")?.focus()
   },
@@ -642,7 +702,7 @@ const Workbench = {
   setGit(open, focus = false) {
     this.gitOpen = open
     if (open && !this.gitDiff) this.gitLoadedScope = null
-    if (this.media.matches) write(sessionStorage, "genesis-workbench.git", open)
+    write(sessionStorage, GIT_KEY, open)
     this.syncHistoryPanel()
     this.syncGitStatus()
     if (focus) this.el.querySelector(open ? "[data-workbench-close-git]" : "#workbench-git-toggle")?.focus()
@@ -771,7 +831,6 @@ const Workbench = {
         return
       }
     }
-    if (trigger.id === "workbench-history-search-toggle") this.setHistorySearch(!this.historySearchOpen, true)
     if (trigger.id === "workbench-git-toggle") this.setGit(!this.gitOpen, true)
     if (trigger.id === "workbench-history-toggle") {
       if (this.gitOpen) {
@@ -787,10 +846,6 @@ const Workbench = {
     }
     if ("workbenchCloseHistory" in trigger.dataset) this.setHistory(false, true)
     if ("workbenchCloseGit" in trigger.dataset) this.setGit(false, true)
-    if ("workbenchKind" in trigger.dataset) {
-      this.kind = trigger.dataset.workbenchKind
-      this.renderHistory()
-    }
     if (trigger.dataset.workbenchSettings && this.settingsWindow && !this.settingsWindow.open &&
         !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
       event.preventDefault()

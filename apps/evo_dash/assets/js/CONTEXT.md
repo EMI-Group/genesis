@@ -6,7 +6,9 @@ Client-side JavaScript for the EvoDash dashboard: the main entry (`app.js`, Live
 
 ## Routing Table
 
-- `./hooks/` → Standalone LiveView hook files (`sidebar_collapse.js`, `node_switch_fade.js`, `adaptive_input.js`, `legend_tooltip.js`, `diff_viewer.js`, `commit_graph.js`, `capsule_panel.js`, `inspector_messages.js`) + `hooks/CONTEXT.md`
+- `./hooks/` → Standalone LiveView hook files (`sidebar_collapse.js`, `node_switch_fade.js`, `adaptive_input.js`, `legend_tooltip.js`, `diff_viewer.js`, `commit_graph.js`, `capsule_panel.js`, `inspector_messages.js`, the workbench trio in `workbench.js` + `workbench_project_preview.js` + the pure `workbench_panel.js`) + `hooks/CONTEXT.md`
+- `./hooks/workbench.js` → `Workbench` (the `#app-layout` workbench: tabs, project windows, sidebars, the animated right panel, Git pane, create menu, settings window), `WorkbenchSection` and `WorkbenchWindow`; its right-panel decisions are the pure `./hooks/workbench_panel.js` module.
+- `./hooks/workbench_panel.js` → PURE right-panel state machine (`closed | open | closing`) consumed by `workbench.js` and sliced by `./hooks/workbench_panel.test.cjs`.
 - `./*.test.cjs` and `./hooks/*.test.cjs` → Node-run inline-hook and standalone-hook tests — `node --test apps/evo_dash/assets/js/*.test.cjs apps/evo_dash/assets/js/hooks/*.test.cjs`, never part of `mix test` (see "JS Unit Tests")
 - `app.js` → Main entry — LiveSocket, inline hooks (`TauriDetect`, `DesktopQuit`, `DesktopQuitConfirm`, `UpdateStatus`, `PlatformDetect`, `PathAutocomplete`, `DirectoryPicker`, `FilePicker`, `Guide`, `StatePersistence`, `AutoClearFlash`, `ClipboardCopy`, `AgentHistoryAutoScroll`, `FocusInput`, `PaletteList`), topbar wiring, guide-client-id sessionStorage
 - `dialog_modal.js` → Imported `DialogModal` review-only dialog hook with safe initial focus, focus restoration, native modal opening and visible nonmodal fallback.
@@ -51,6 +53,8 @@ Both use Node's built-in runner (`node:test` + `node:assert/strict`) and `node:v
 The DOM half of that hook (rAF coalescing, observers, listeners) carries no decision of its own and is deliberately not faked.
 `state_persistence.test.cjs` runs the real `StatePersistence` hook object against `sessionStorage`/timer stubs and asserts the saved-state shape, node scoping and the `persist_model_selection` merge.
 `hooks/inspector_messages.test.cjs` runs the real `InspectorMessages` hook against a small DOM seam using `node:vm`, covering message-entry animation, scope changes, reduced motion and lifecycle cleanup without browser packages.
+`hooks/workbench_panel.test.cjs` slices the block from the `// --- WorkbenchPanel: pure right-panel state machine` marker to the `// WorkbenchPanel hook:` marker of `hooks/workbench_panel.js` and pins the decisions behind the workbench history/Git aside: a null preference starts CLOSED (only a literal `true` opens), an open request during `closing` cancels the pending hidden-marking so a late close applies nothing, a close reaches `closed` exactly once and leaves the panel displayed until then, only a `transform` transition may finish a close, and the reduced-motion path closes in the same task instead of waiting for the bounded 300 ms fallback.
+The DOM half (the rAF starting frame, the `transitionend` listener and the fallback timer) only executes those plans and is not faked.
 
 ## BrowserNotifications Integration Contract
 

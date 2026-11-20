@@ -42,6 +42,10 @@ A dedicated `@media (prefers-reduced-motion: reduce)` block disables both the wi
 Component authors opt in with the class only: no JS, no layout/height animation, and the step wrapper must be the re-keyed element or the entrance never replays.
 ## Constraints
 Use existing theme tokens and the standalone accent for focus outlines; keep fill/content roles unchanged.
+The workbench right panel (`./workbench.css`, `.workbench-history` = `#workbench-history` + `#workbench-git`) animates `transform` + `opacity` (220ms ease-out) plus — while docked (`min-width: 1280px`) — `flex-basis`/padding, so the center column glides instead of snapping; the drawer range (`max-width: 1279.98px`) slides `translateX(100%)` instead.
+`[data-panel-state="closed"|"closing"]` is the shared exit geometry (`opacity: 0`, `pointer-events: none`, `overflow: hidden`); `closed` exists only as the single frame an entrance is painted at before it becomes `open`.
+Those state rules must NEVER declare `display`: `hidden` stays owned by `#workbench-history[hidden], #workbench-git[hidden] { display: none }`, which is what makes the server-rendered closed state flash-free.
+`@media (prefers-reduced-motion: reduce)` drops the panel transition entirely (the hook then closes in the same task).
 Keep Assistant adjustments scoped, normal-flow message actions untouched, and reduced-motion overrides after the caret animation rule.
 Do not edit generated static assets or translations.
 Never add an unlayered `.capsule-stops { flex-wrap: … }` rule (or any other layout override on that class): unlayered CSS beats Tailwind's layered utilities and would override both capsules at once.
@@ -68,3 +72,4 @@ Build and source assertions do not substitute for browser visual validation.
 
 ## Routing Table
 There are no child directories or separate CSS modules.
+`./workbench.css` is imported by `./app.css` and owns the workbench shell (tabs, sidebars, the right panel's state/animation rules, Git pane, dialogs); its state machine lives in `../js/hooks/workbench_panel.js`.
