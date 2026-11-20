@@ -552,9 +552,17 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     <div class="text-xs font-mono">
       <%= cond do %>
         <% @loading? and is_nil(@file.diff) -> %>
-          <div role="status" class="flex items-center justify-center py-8 gap-2 text-base-content/70">
-            <span class="loading loading-spinner loading-sm"></span>
-            <span>{gettext("Loading diff...")}</span>
+          <%!-- zh_CN: 骨架屏占位，高度与加载完成后的 diff 面板一致，避免载入时跳动 --%>
+          <div
+            role="status"
+            aria-live="polite"
+            class="flex min-h-32 flex-col justify-center gap-3 px-4 py-6 text-base-content/70"
+          >
+            <EvoDashWeb.Components.Skeleton.row count={4} class="w-full" />
+            <span class="flex items-center justify-center gap-2 text-xs">
+              <span class="loading loading-spinner loading-sm"></span>
+              <span>{gettext("Loading diff...")}</span>
+            </span>
           </div>
         <% is_nil(@file.diff) -> %>
           <div class="flex flex-wrap items-center justify-center gap-2 p-4 text-base-content/75">
