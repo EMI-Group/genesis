@@ -89,6 +89,23 @@ defmodule EvoGit.ProcessManager do
     * `:process_stats_probe_timeout_ms` — per-execution `sample_all/1` budget
       (default `2_000`).
     * `:process_kill_grace_ms` — TERM→KILL escalation grace (default `1_500`).
+
+  ## Unavailable registry vs wedged registry
+
+  The registry can be absent (not started, or stopped) or WEDGED (a request it
+  never answers). These are different facts and are reported differently:
+
+    * absent → each function's documented degraded value: `list/1` and
+      `sample_all/1` answer `[]` / `%{}`, `get/2` and the control functions
+      answer `{:error, :not_found}`, `prune/1` answers `{:ok, 0}`,
+      `track/3` answers `{:error, :process_manager_unavailable}`.
+    * wedged, or crashed while answering → `{:error, :timeout}` /
+      `{:error, {:registry_exit, reason}}`, so "nothing is running" can never
+      mean "the registry is stuck". `list/1` and `sample_all/1` stay `[]` / `%{}`
+      (they are the dashboard reads whose empty value IS the contract).
+
+  No function here raises for any registry state: the OS work happens in the
+  caller and the registry answers pure state.
   """
 
   alias EvoGit.ProcessManager.{Control, Execution, Handle, Registry, Stats}
@@ -150,9 +167,14 @@ defmodule EvoGit.ProcessManager do
 
   When `:owner_pid` is a pid it is MONITORED: the owner's death kills every
   execution it owns (see `finish/3` and the owner-lifetime contract).
+
+  Answers `{:error, :process_manager_unavailable}` when the registry is not
+  running and `{:error, :timeout}` / `{:error, {:registry_exit, reason}}` when
+  it is wedged or crashed.
   """
   @spec track(Execution.kind() | String.t(), map() | keyword(), keyword()) ::
-          {:ok, String.t()} | {:error, :process_manager_unavailable}
+          {:ok, String.t()}
+          | {:error, :process_manager_unavailable | Registry.call_error()}
   def track(kind, meta, opts \\ []) do
     Registry.track(server_from(opts), normalize_kind(kind), Registry.normalize_meta(meta))
   end
@@ -168,9 +190,10 @@ defmodule EvoGit.ProcessManager do
   `:starting → :running` transition.
 
   Total: an unknown/terminal execution or an unrecognized handle is a no-op
-  (`:ok`) — never a raise, never a ghost `:running` record.
+  (`:ok`) — never a raise, never a ghost `:running` record. A wedged or crashed
+  registry answers `{:error, :timeout}` / `{:error, {:registry_exit, reason}}`.
   """
-  @spec attach(String.t(), Handle.t() | map(), keyword()) :: :ok
+  @spec attach(String.t(), Handle.t() | map(), keyword()) :: :ok | {:error, Registry.call_error()}
   def attach(id, handle, opts \\ [])
 
   def attach(id, handle, opts) when is_binary(id) do
@@ -191,8 +214,12 @@ defmodule EvoGit.ProcessManager do
   `EvoGit.ProcessManager.Execution.status_for_reason/1` for the uniform status
   mapping). Stamps `ended_at` and broadcasts
   `{:process_exited, execution, node}` exactly once.
+
+  A wedged or crashed registry answers `{:error, :timeout}` /
+  `{:error, {:registry_exit, reason}}` — the terminal fact was NOT stored.
   """
-  @spec finish(String.t(), Execution.status() | term(), keyword()) :: :ok
+  @spec finish(String.t(), Execution.status() | term(), keyword()) ::
+          :ok | {:error, Registry.call_error()}
   def finish(id, status, opts \\ [])
 
   def finish(id, status, opts) when is_binary(id) do
@@ -204,7 +231,8 @@ defmodule EvoGit.ProcessManager do
   @doc """
   Lists executions, newest first (by `inserted_at`, then numeric id).
   Filters (all optional, all exact-match): `:agent_id`, `:task_id`, `:kind`,
-  `:status`, `:backend`. An unreachable registry yields `[]`.
+  `:status`, `:backend`. A registry that is unreachable OR wedged yields `[]`
+  (the dashboard-shaped read: an empty roster is its documented degraded value).
   """
   @spec list(keyword()) :: [Execution.t()]
   def list(opts \\ []) do
@@ -213,9 +241,12 @@ defmodule EvoGit.ProcessManager do
 
   @doc """
   Fetches one execution. Unknown id (or an unreachable registry) yields
-  `{:error, :not_found}`.
+  `{:error, :not_found}`; a wedged or crashed registry yields
+  `{:error, :timeout}` / `{:error, {:registry_exit, reason}}` instead — a stuck
+  registry never reads as "no such execution".
   """
-  @spec get(String.t(), keyword()) :: {:ok, Execution.t()} | {:error, :not_found}
+  @spec get(String.t(), keyword()) ::
+          {:ok, Execution.t()} | {:error, :not_found | Registry.call_error()}
   def get(id, opts \\ [])
 
   def get(id, opts) when is_binary(id), do: Registry.get(server_from(opts), id)
@@ -224,9 +255,12 @@ defmodule EvoGit.ProcessManager do
   @doc """
   Forces a retention pass and returns `{:ok, removed_count}`.
   Retention also runs on every `finish/3` and every sampling tick; this is the
-  explicit (operator/test) entry point.
+  explicit (operator/test) entry point. An unreachable registry answers
+  `{:ok, 0}`; a wedged one answers `{:error, :timeout}` (and
+  `{:error, {:registry_exit, reason}}` after a crash) rather than claiming a
+  clean pass that never ran.
   """
-  @spec prune(keyword()) :: {:ok, non_neg_integer()}
+  @spec prune(keyword()) :: {:ok, non_neg_integer()} | {:error, Registry.call_error()}
   def prune(opts \\ []), do: Registry.prune(server_from(opts))
 
   ## Observation
@@ -240,7 +274,9 @@ defmodule EvoGit.ProcessManager do
   (unknown id), `{:error, :no_os_process}` (a `:builtin` execution — it ran
   inside the BEAM, so there is nothing to probe), `{:error, :not_running}` (a
   terminal execution, or one that never attached a handle) or `{:error, reason}`
-  from the backend. Never raises.
+  from the backend — including `{:error, :timeout}` /
+  `{:error, {:registry_exit, reason}}` from a wedged or crashed registry. Never
+  raises.
   """
   @spec sample(String.t(), keyword()) :: {:ok, Stats.t()} | {:error, term()}
   def sample(id, opts \\ [])
@@ -259,6 +295,10 @@ defmodule EvoGit.ProcessManager do
 
       {:error, :not_found} ->
         {:error, :not_found}
+
+      {:error, reason} ->
+        # A wedged/crashed registry is NOT "no such execution".
+        {:error, reason}
     end
   end
 
@@ -272,7 +312,8 @@ defmodule EvoGit.ProcessManager do
 
   Failed probes are OMITTED from the map rather than reported as errors — this
   is the dashboard-shaped read, and one dead handle must not hide the other
-  executions. Never raises.
+  executions. A registry that is unavailable OR wedged yields `%{}` (same
+  contract as `list/1`). Never raises.
   """
   @spec sample_all(keyword()) :: %{optional(String.t()) => Stats.t()}
   def sample_all(opts \\ []) do
@@ -315,7 +356,9 @@ defmodule EvoGit.ProcessManager do
   Answers `{:error, :not_found}`, `{:error, :no_os_process}` (a `:builtin`
   execution — nothing runs outside the BEAM to signal), `{:error, :terminal}`
   (the OS already ended it), `{:error, :invalid_signal}`, `{:error, :no_handle}`
-  (nothing to signal yet) or the backend's own error. Never raises.
+  (nothing to signal yet), the backend's own error, or `{:error, :timeout}` /
+  `{:error, {:registry_exit, reason}}` from a wedged or crashed registry. Never
+  raises.
   """
   @spec signal(String.t(), Control.signal(), keyword()) :: :ok | {:error, term()}
   def signal(id, signal, opts \\ [])
@@ -358,6 +401,10 @@ defmodule EvoGit.ProcessManager do
 
       {:error, :not_found} ->
         {:error, :not_found}
+
+      {:error, reason} ->
+        # A wedged/crashed registry is NOT "no such execution".
+        {:error, reason}
     end
   end
 
@@ -402,8 +449,9 @@ defmodule EvoGit.ProcessManager do
       record; defaults to `{:killed_by, actor}` (so it follows the supplied
       `:actor`).
 
-  Answers `:ok` (already terminal: idempotent), `{:error, :not_found}`, or the
-  backend's error.
+  Answers `:ok` (already terminal: idempotent), `{:error, :not_found}`, the
+  backend's error, or `{:error, :timeout}` / `{:error, {:registry_exit, reason}}`
+  from a wedged or crashed registry (in which case nothing was killed).
 
   The record becomes `:killed` ONLY when the backend reports success: an
   accepted kill appends `%{action: :kill, reason: <human text>, actor: actor}`
@@ -438,6 +486,10 @@ defmodule EvoGit.ProcessManager do
 
       {:error, :not_found} ->
         {:error, :not_found}
+
+      {:error, reason} ->
+        # A wedged/crashed registry is NOT "no such execution".
+        {:error, reason}
     end
   end
 
@@ -462,15 +514,14 @@ defmodule EvoGit.ProcessManager do
   defp normalize_kind("background_job"), do: :background_job
   defp normalize_kind(_kind), do: :tool_call
 
+  # The facade's OWN concern is a handle that never became known. Everything
+  # else is `Control.stats/1`'s job: it dispatches to the backend and is already
+  # TOTAL (`{:error, :no_handle}` for a missing backend, backend errors as data,
+  # and a crashed backend tagged `{:error, {:probe_failed, detail}}` there), so
+  # wrapping it in another rescue/catch would only duplicate the tag.
   defp probe(nil), do: {:error, :no_handle}
 
-  defp probe(handle) do
-    Control.stats(handle)
-  rescue
-    e -> {:error, {:probe_failed, Exception.message(e)}}
-  catch
-    kind, reason -> {:error, {:probe_failed, {kind, reason}}}
-  end
+  defp probe(handle), do: Control.stats(handle)
 
   defp store_sample(_server, _id, {:error, _reason} = error), do: error
 
@@ -534,6 +585,9 @@ defmodule EvoGit.ProcessManager do
 
         finish(id, :killed, server: server, reason: terminal_reason, exit_code: nil)
         Registry.clear_kill_intent(server, id)
+        # The OS stop SUCCEEDED: a registry that stopped answering while the
+        # bookkeeping was written must not turn an accepted kill into an error.
+        :ok
 
       {:error, reason_error} ->
         Registry.clear_kill_intent(server, id)
