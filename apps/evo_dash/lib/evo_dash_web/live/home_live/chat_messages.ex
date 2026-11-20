@@ -104,6 +104,8 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
   # greeting's suggestion chips would only attempt a doomed send. The composer
   # is already disabled for `chat_status: :ended`; this state adds the message
   # and the explicit New-chat affordance.
+  attr(:scoped?, :boolean, default: false)
+
   def session_ended_state(assigns) do
     ~H"""
     <div
@@ -122,7 +124,8 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
       </p>
       <button
         type="button"
-        phx-click="new_chat"
+        phx-click={if !@scoped?, do: "new_chat"}
+        data-workbench-new-conversation={if @scoped?, do: ""}
         class="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-base-300 px-3.5 py-2 text-sm font-medium text-base-content/80 hover:bg-base-200 hover:text-base-content transition-colors focus-visible:outline-2 focus-visible:outline-primary-standalone"
       >
         <.icon name="hero-plus" class="size-4" />

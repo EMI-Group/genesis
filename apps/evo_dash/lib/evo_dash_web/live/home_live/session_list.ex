@@ -16,7 +16,7 @@ defmodule EvoDashWeb.HomeLive.SessionList do
       are parked at `:awaiting_input` or currently `:running`, read through
       `EvoDashWeb.HomeLive.SessionActions.list/1` (which resolves the
       call-time `:home_session_list_runner` seam itself); and
-    * CACHED local conversations — `EvoDash.ChatHistory.list_chats/0`
+    * CACHED conversations on this node — `EvoDash.ChatHistory.list_chats/0`
       (already newest-first) plus each chat's persisted state for its title,
       so a conversation with no live session (a finished session, a legacy
       one-shot `:reflect` chat) stays reachable.
@@ -100,12 +100,12 @@ defmodule EvoDashWeb.HomeLive.SessionList do
         {:error, reason}
 
       {agent_summaries, awaiting_entries} ->
-        {:ok, build_rows(agent_summaries, awaiting_entries, cached_chats())}
+        {:ok, build_rows(agent_summaries, awaiting_entries, cached_chats(node))}
 
-      # Not the documented pair: still show the local cache rather than an
+      # Not the documented pair: still show the node cache rather than an
       # empty rail (and never raise on a broken seam answer).
       _other ->
-        {:ok, build_rows([], [], cached_chats())}
+        {:ok, build_rows([], [], cached_chats(node))}
     end
   end
 
@@ -132,7 +132,9 @@ defmodule EvoDashWeb.HomeLive.SessionList do
     ended_rows =
       cached_chats
       |> cached_entries()
-      |> Enum.reject(fn {id, _state} -> MapSet.member?(live_ids, id) end)
+      |> Enum.reject(fn {id, state} ->
+        MapSet.member?(live_ids, id) or unsent_workbench_draft?(state)
+      end)
       |> Enum.map(fn {id, state} -> %{id: id, title: row_title(state, id), marker: :ended} end)
 
     awaiting_rows = live_rows |> Enum.filter(&(&1.marker == :awaiting_input)) |> newest_first()
@@ -140,6 +142,12 @@ defmodule EvoDashWeb.HomeLive.SessionList do
 
     awaiting_rows ++ running_rows ++ ended_rows
   end
+
+  @doc "Whether a blank workbench draft belongs only in its open tab."
+  def unsent_workbench_draft?(%{workbench_draft_key: _} = state),
+    do: not EvoDashWeb.HomeLive.ChatState.conversation?(state)
+
+  def unsent_workbench_draft?(_), do: false
 
   @doc """
   The row title for a row source: the first `:user` transcript entry's text,
@@ -273,13 +281,23 @@ defmodule EvoDashWeb.HomeLive.SessionList do
 
   ## Cached conversations
 
-  defp cached_chats do
+  defp cached_chats(server) do
     EvoDash.ChatHistory.list_chats()
-    |> Enum.map(&cached_chat/1)
+    |> Enum.map(fn id -> {id, EvoDash.ChatHistory.get_state(id)} end)
+    |> Enum.filter(fn {_id, state} ->
+      cached_chat_node(state) == server and EvoDashWeb.HomeLive.ChatState.conversation?(state)
+    end)
   end
 
-  defp cached_chat(id) when is_integer(id) and id > 0, do: {id, EvoDash.ChatHistory.get_state(id)}
-  defp cached_chat(other), do: other
+  defp cached_chat_node(%{chat_node: server})
+       when is_atom(server) and server not in [nil, :nonode@nohost],
+       do: server
+
+  defp cached_chat_node(%{workspace: %{node_id: target, node: server}})
+       when is_binary(target) and is_atom(server) and not is_nil(server),
+       do: server
+
+  defp cached_chat_node(_), do: node()
 
   defp cached_entries(chats) when is_list(chats) do
     chats

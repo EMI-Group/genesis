@@ -41,6 +41,7 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   """
 
   alias EvoDashWeb.HomeLive.Transcript
+  alias EvoDash.ChatHistory
 
   # `:awaiting_input` is included because the page assigns `chat_task_status`
   # straight from an idle interactive session's summary — dropping it here
@@ -87,27 +88,58 @@ defmodule EvoDashWeb.HomeLive.ChatState do
     }
     |> persist_selection(assigns)
     |> persist_workspace(assigns)
+    |> persist_workbench_draft(assigns)
   end
 
   @doc """
-  Persists the current chat state into `EvoDash.ChatHistory` and returns the
-  socket unchanged, so it can sit in a pipeline.
-
-  Only runs on a CONNECTED socket with a known chat id — a dead render must
-  never create or overwrite persisted chat state. Never raises on the
-  `build/1` side; `EvoDash.ChatHistory.put_state/2` keeps its own contract.
+  Persists conversation state. Unsaved workbench tabs keep their edits in the
+  temporary draft store until a message or a task starts a conversation.
   """
-  @spec persist(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
-  def persist(socket) do
-    if Phoenix.LiveView.connected?(socket) and Map.get(socket.assigns, :chat_id) != nil do
-      EvoDash.ChatHistory.put_state(
-        Map.get(socket.assigns, :chat_id),
-        build(socket.assigns)
-      )
+  @spec persist(Phoenix.LiveView.Socket.t(), keyword()) :: Phoenix.LiveView.Socket.t()
+  def persist(socket, opts \\ []) do
+    assigns = socket.assigns
+
+    if Phoenix.LiveView.connected?(socket) and not is_nil(assigns[:chat_id]) do
+      key = draft_key(assigns)
+
+      cond do
+        is_nil(key) or conversation?(assigns) ->
+          ChatHistory.put_state(assigns.chat_id, build(assigns))
+          if key, do: ChatHistory.delete_draft(key)
+
+        key && is_nil(assigns[:session_id]) &&
+            (assigns[:draft_edited?] == true or String.trim(assigns.chat_draft) != "") ->
+          draft = Map.merge(build(assigns), Map.take(assigns, [:chat_id, :draft_edited?]))
+          ChatHistory.put_draft(key, draft)
+
+        key && opts[:clear_empty_draft] ->
+          ChatHistory.delete_draft(key)
+
+        true ->
+          :ok
+      end
     end
 
     socket
   end
+
+  def edited(socket), do: Phoenix.Component.assign(socket, :draft_edited?, true)
+
+  def draft_key(%{workbench_draft_key: key}) when not is_nil(key), do: {:workbench, key}
+
+  def draft_key(_), do: nil
+
+  def conversation?(state) when is_map(state) do
+    (is_binary(state[:chat_task_id]) and state.chat_task_id != "") or
+      (is_integer(state[:session_id]) and state[:chat_task_status] in @task_statuses) or
+      (is_list(state[:transcript]) and
+         Enum.any?(state.transcript, fn
+           %{text: text} when is_binary(text) -> String.trim(text) != ""
+           _ -> false
+         end))
+  end
+
+  def conversation?(_), do: false
 
   @doc """
   Normalizes a stored state map into assign values (mount direction). Total:
@@ -180,6 +212,11 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   end
 
   def restore_selection(_state, scope), do: empty_selection(scope)
+
+  defp persist_workbench_draft(state, %{workbench_draft_key: key}) when not is_nil(key),
+    do: Map.put(state, :workbench_draft_key, key)
+
+  defp persist_workbench_draft(state, _), do: state
 
   defp persist_workspace(state, source) do
     if Map.has_key?(source, :workspace) or Map.has_key?(source, :assistant_conversation_id) do

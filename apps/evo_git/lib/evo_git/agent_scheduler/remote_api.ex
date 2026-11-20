@@ -107,7 +107,9 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     states = agent_states_by_id()
 
     Enum.map(sched_metas, fn {id, meta} ->
-      build_agent_summary(id, meta, Map.get(states, id))
+      id
+      |> build_agent_summary(meta, Map.get(states, id))
+      |> with_assistant_context(meta)
     end)
   end
 
@@ -1653,7 +1655,6 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       objective: spec.objective,
       result: nil,
       agent_module: spec.agent_module,
-      assistant_context: assistant_context(meta),
       started_at: nil,
       model_id: nil,
       provider_profile_id: nil,
@@ -1697,7 +1698,6 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       objective: objective,
       result: nil,
       agent_module: meta.spec.agent_module,
-      assistant_context: assistant_context(meta),
       started_at: nil,
       model_id: state.model_id,
       provider_profile_id: state.provider_profile_id,
@@ -1720,17 +1720,18 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     }
   end
 
-  defp assistant_context(%SchedMeta{
+  defp with_assistant_context(summary, %SchedMeta{
          parent_id: nil,
          spec: %{agent_module: EvoGit.Agents.SelfReflective, opts: opts}
        })
        when is_list(opts) do
-    opts
-    |> Keyword.take([:assistant_conversation_id, :assistant_workspace])
-    |> Map.new()
+    case Keyword.take(opts, [:assistant_conversation_id, :assistant_workspace]) do
+      [] -> summary
+      fields -> Map.put(summary, :assistant_context, Map.new(fields))
+    end
   end
 
-  defp assistant_context(_meta), do: nil
+  defp with_assistant_context(summary, _meta), do: summary
 
   # Nil-tolerant phylo_node field read: repo-less agents carry a nil
   # phylo_node (no worktree, no commits) — return nil instead of raising a

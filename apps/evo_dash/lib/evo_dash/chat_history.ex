@@ -43,9 +43,12 @@ defmodule EvoDash.ChatHistory do
       sequence (drives `list_chats/0`'s newest-first ordering — NOT the chat
       id, which is unique but not guaranteed ordered) and the opaque per-chat
       state (`nil` until the first `put_state/2`)
+    * `{:draft, key}` → `{seq, state}` — edited composer state before the
+      first send, scoped to its browser or workbench tab. These entries are
+      excluded from the conversation index.
 
-  Memory is bounded only by explicit `prune/1` calls — pruning is NEVER
-  automatic; the caller decides when to cap retained chats.
+  Conversations can be capped with explicit `prune/1` calls. The temporary
+  draft store keeps at most 80 entries and evicts the least recently saved.
 
   ## Totality
 
@@ -60,6 +63,7 @@ defmodule EvoDash.ChatHistory do
   use GenServer
 
   @table :evo_dash_chat_history
+  @max_drafts 80
 
   @typedoc "A chat id: a positive integer from `System.unique_integer([:positive])`."
   @type chat_id :: pos_integer()
@@ -157,6 +161,19 @@ defmodule EvoDash.ChatHistory do
     GenServer.call(__MODULE__, {:get_state, chat_id})
   end
 
+  @doc "Reads temporary composer state, separate from the conversation index."
+  def get_draft(key), do: GenServer.call(__MODULE__, {:get_draft, key})
+
+  @doc "Retains edited composer state across view navigation."
+  def put_draft(key, draft), do: GenServer.call(__MODULE__, {:put_draft, key, draft})
+
+  @doc "Discards the temporary state of a composer."
+  def delete_draft(key), do: GenServer.call(__MODULE__, {:delete_draft, key})
+
+  @doc "Discards a workbench tab's temporary state across its node scopes."
+  def discard_workbench_draft(tab_id),
+    do: GenServer.call(__MODULE__, {:discard_workbench_draft, tab_id})
+
   @doc """
   Clears ALL chats and the current pointer (test helper / hard reset).
   """
@@ -212,6 +229,41 @@ defmodule EvoDash.ChatHistory do
     # an unknown id is harmless, and silently ignoring it would hide caller
     # bugs.
     :ets.insert(table, {{:current}, chat_id})
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:get_draft, key}, _from, %{table: table} = state) do
+    draft =
+      case :ets.lookup(table, {:draft, key}) do
+        [{{:draft, ^key}, {_sequence, draft}}] -> draft
+        [] -> nil
+      end
+
+    {:reply, draft, state}
+  end
+
+  def handle_call({:put_draft, key, draft}, _from, %{table: table} = state) do
+    sequence = System.unique_integer([:monotonic, :positive])
+    :ets.insert(table, {{:draft, key}, {sequence, draft}})
+
+    drafts = :ets.match_object(table, {{:draft, :_}, :_})
+
+    if length(drafts) > @max_drafts do
+      {oldest, _} = Enum.min_by(drafts, fn {_key, {sequence, _}} -> sequence end)
+      :ets.delete(table, oldest)
+    end
+
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:delete_draft, key}, _from, %{table: table} = state) do
+    :ets.delete(table, {:draft, key})
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:discard_workbench_draft, tab_id}, _from, %{table: table} = state) do
+    :ets.match_delete(table, {{:draft, {:workbench, {:_, :_, :_, tab_id}}}, :_})
     {:reply, :ok, state}
   end
 

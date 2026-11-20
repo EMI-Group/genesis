@@ -53,6 +53,8 @@ defmodule EvoDashWeb.HomeLive.Composer do
 
   alias EvoDashWeb.HomeLive.Attachments
 
+  alias EvoDashWeb.HomeLive.Workspace
+
   @chat_statuses [:idle, :running, :cancelling, :awaiting_input, :ended]
 
   # Echo text cap: these are transient echoes, not the message itself.
@@ -96,6 +98,14 @@ defmodule EvoDashWeb.HomeLive.Composer do
       <p :if={@composer_model_error?} role="alert" class="assistant-compose-error">
         {gettext("Model selection is unavailable. Choose a valid model or reconnect to the node.")}
       </p>
+      <p
+        :if={assigns[:workbench_draft] && assigns[:workspace_error]}
+        id="assistant-workspace-error"
+        role="alert"
+        class="assistant-compose-error"
+      >
+        {assigns[:workspace_error]}
+      </p>
       <div class="assistant-input-card">
         <form
           id="chat-form"
@@ -119,7 +129,9 @@ defmodule EvoDashWeb.HomeLive.Composer do
         <div id="chat-composer-controls" class="assistant-context-bar">
           <div class="assistant-context-start">
             <.attach_menu {assigns} />
-            {EvoDashWeb.HomeLive.WorkspaceComponent.selector(assigns)}
+            <%= if is_nil(assigns[:workbench_draft]) do %>
+              {EvoDashWeb.HomeLive.WorkspaceComponent.selector(assigns)}
+            <% end %>
             {EvoDashWeb.HomeLive.TaskCard.follow_control(assigns)}
           </div>
           <div class="assistant-context-end">
@@ -439,6 +451,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
   # textarea.
   defp send_blocked?(assigns) do
     compose_disabled?(assigns) or assigns[:workspace_loading] == true or
+      Workspace.missing_draft_project?(assigns) or
       assigns[:upload_in_progress] == true or not has_content?(assigns) or
       model_missing?(assigns) or model_error?(assigns)
   end

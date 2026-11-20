@@ -4303,6 +4303,43 @@ defmodule EvoDashWeb.HomeLiveTest do
     refute has_element?(view, approval_button("other-action", "approve"))
   end
 
+  test "workbench tabs retain distinct drafts without listing them as conversations", %{
+    conn: conn
+  } do
+    root =
+      Path.join(System.tmp_dir!(), "assistant-workbench-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(root)
+    {:ok, _mount} = EvoDash.NodeContext.mount_project(node(), root, nil)
+
+    on_exit(fn ->
+      EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.forget_project(node(), root) end)
+      File.rm_rf!(root)
+    end)
+
+    open_tab = fn draft ->
+      query = URI.encode_query(%{"wb_project" => root, "wb_draft" => draft})
+      {:ok, view, _} = live(recycle(conn), "/assistant?" <> query)
+      wait_until(fn -> match?(%{path: ^root}, assigns(view).workspace) end)
+      view
+    end
+
+    first = "123456789012345678901234"
+    second = "234567890123456789012345"
+    first_view = open_tab.(first)
+    render_change(first_view, "chat_input", %{"message" => "Keep this tab's draft"})
+    first_chat_id = assigns(first_view).chat_id
+    GenServer.stop(first_view.pid)
+
+    other_view = open_tab.(second)
+    assert assigns(other_view).chat_draft == ""
+    refute first_chat_id in EvoDash.ChatHistory.list_chats()
+
+    reopened = open_tab.(first)
+    assert assigns(reopened).chat_draft == "Keep this tab's draft"
+    assert assigns(reopened).chat_id == first_chat_id
+  end
+
   describe "optional project and source context" do
     test "atomic workspace send failure preserves the unsent draft and conversation", %{
       conn: conn

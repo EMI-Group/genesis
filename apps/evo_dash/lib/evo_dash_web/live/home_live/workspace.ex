@@ -7,7 +7,19 @@ defmodule EvoDashWeb.HomeLive.Workspace do
   alias EvoDashWeb.ProjectsLive.ProjectFlow
 
   def scope(assigns), do: {assigns[:current_node_id], assigns[:current_node] || node()}
-  def locked?(assigns), do: assigns[:chat_status] in [:running, :cancelling]
+
+  def locked?(assigns),
+    do:
+      assigns[:session_attach_pending?] == true or
+        assigns[:chat_status] in [:running, :cancelling]
+
+  def draft_project(%{workbench_draft_key: {_, _, project, _}}) when is_binary(project),
+    do: project
+
+  def draft_project(_), do: nil
+
+  def missing_draft_project?(assigns),
+    do: is_nil(assigns[:workspace]) and is_binary(draft_project(assigns))
 
   def normalize(%{path: path, node: target} = workspace)
       when is_binary(path) and is_atom(target) and target not in [nil, true, false] do
@@ -88,6 +100,13 @@ defmodule EvoDashWeb.HomeLive.Workspace do
     end
   end
 
+  def select_mounted(socket, path) do
+    case socket.assigns.workspace do
+      %{path: ^path} -> socket
+      _ -> load(socket, {:mounted, path})
+    end
+  end
+
   def apply_result(socket, seq, request_scope, chat_id, kind, result) do
     if seq == socket.assigns.workspace_seq and request_scope == scope(socket.assigns) and
          chat_id == socket.assigns.chat_id do
@@ -97,7 +116,7 @@ defmodule EvoDashWeb.HomeLive.Workspace do
         {:list, {:ok, {:ok, projects}}} ->
           assign(socket, workspace_projects: projects)
 
-        {:open, {:ok, {:ok, workspace}}} ->
+        {kind, {:ok, {:ok, workspace}}} when kind in [:open, :mounted] ->
           if locked?(socket.assigns) do
             socket
           else
@@ -120,7 +139,7 @@ defmodule EvoDashWeb.HomeLive.Workspace do
   defp load(socket, operation) do
     {node_id, target} = request_scope = scope(socket.assigns)
     seq = socket.assigns.workspace_seq + 1
-    kind = if operation == :list, do: :list, else: :open
+    kind = if operation == :list, do: :list, else: elem(operation, 0)
     tag = {:assistant_workspace_loaded, seq, request_scope, socket.assigns.chat_id, kind}
 
     result =
@@ -128,6 +147,7 @@ defmodule EvoDashWeb.HomeLive.Workspace do
         case operation do
           :list -> list(node_id, target)
           {:open, path} -> open(node_id, target, path)
+          {:mounted, path} -> mounted(node_id, target, path)
         end
       end)
 
@@ -137,6 +157,15 @@ defmodule EvoDashWeb.HomeLive.Workspace do
 
       _ ->
         assign(socket, workspace_error: gettext("Could not load the project. Try again."))
+    end
+  end
+
+  defp mounted(node_id, target, path) do
+    with {:ok, projects} <- list(node_id, target),
+         %{name: name} <- Enum.find(projects, &match?(%{path: ^path}, &1)) do
+      {:ok, %{path: path, name: name, node: target, node_id: node_id}}
+    else
+      _ -> {:error, gettext("This project is no longer open on the selected node.")}
     end
   end
 

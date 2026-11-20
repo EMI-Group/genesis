@@ -65,6 +65,14 @@ defmodule EvoDashWeb.HomeLive.SendPath do
         {:noreply,
          put_flash(socket, :error, gettext("Wait for the project selection to finish."))}
 
+      EvoDashWeb.HomeLive.Workspace.missing_draft_project?(socket.assigns) ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("This project is no longer open on the selected node.")
+         )}
+
       true ->
         do_send_chat(socket, text, policy)
     end
@@ -293,6 +301,7 @@ defmodule EvoDashWeb.HomeLive.SendPath do
 
   def adopt_session(socket, agent_id, text) do
     node = socket.assigns[:current_node] || node()
+    if key = ChatState.draft_key(socket.assigns), do: EvoDash.ChatHistory.delete_draft(key)
 
     transcript =
       socket.assigns[:transcript]
