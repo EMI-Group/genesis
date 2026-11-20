@@ -608,12 +608,11 @@ defmodule EvoGit.VCT do
   per input path.
   """
   @spec vct_paths_for(String.t(), [String.t()]) :: [String.t() | nil]
-  def vct_paths_for(repo_root, relative_paths) when is_list(relative_paths),
-    do:
-      call(
-        {:vct_paths_for, repo_root, relative_paths},
-        Enum.map(relative_paths, fn _path -> nil end)
-      )
+  def vct_paths_for(repo_root, relative_paths) when is_list(relative_paths) do
+    # Length-preserving degradation: ONE `nil` per input path, never a short list.
+    fallback = Enum.map(relative_paths, fn _path -> nil end)
+    call({:vct_paths_for, repo_root, relative_paths}, fallback)
+  end
 
   @doc """
   Returns the global context file path (`<vct_dir>/CONTEXT.md`).
