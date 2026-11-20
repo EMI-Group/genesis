@@ -251,8 +251,7 @@ A message is a legacy `String.t()` OR `%{text:, attachments:}` via `AgentSchedul
 ## Background Job Timers (test seam)
 
 All timing knobs are CALL-TIME app-env reads (never TOML, so overriding modules stay `async: false` and restore in `on_exit`): `:background_tick_interval_ms` (1_000), `:background_poll_interval_ms` (100, read ONCE per wait as the base of the ×1.5 backoff capped at 3_000 ms), `:background_wait_default_ms` (120_000), `:background_wait_max_ms` (test-only, POSITIVE ints only).
-`wait_max_ms/0` is DERIVED at CALL time: `Config.resolve([:scheduler, :max_tool_timeout])` minus `dispatch_headroom_ms/0` (`@dispatch_headroom_ms` 25_000, the ONE headroom literal), floored at 1_000 ms — 1_775_000 ms with the default config, 1_800_000 ms when that value is not a positive integer. `Agent.Tools.default_timeout_ms/1` adds the SAME headroom back for `job_output`, so its dispatch ceiling lands exactly on `[:scheduler, :max_tool_timeout]`.
-The timer is armed only while a live job uses a `:unit` handle and re-arms on every change, so a test can await the re-armed `tick_timer` ref instead of sleeping. Detail: `./agent/tools/CONTEXT.md` + `./background_jobs/CONTEXT.md`.
+`wait_max_ms/0` is DERIVED at CALL time: `Config.resolve([:scheduler, :max_tool_timeout])` minus `dispatch_headroom_ms/0` (`@dispatch_headroom_ms` 25_000, the ONE headroom literal), floored at 1_000 ms (1_775_000 ms with the default config); `Agent.Tools.default_timeout_ms/1` adds the SAME headroom back for `job_output`, landing its dispatch ceiling exactly on `[:scheduler, :max_tool_timeout]`. Detail: `./agent/tools/CONTEXT.md` + `./background_jobs/CONTEXT.md`.
 
 ## ReqLLM Finch Pool (`EvoGit.ReqLLMPool`)
 
