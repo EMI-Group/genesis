@@ -367,8 +367,15 @@ defmodule EvoDashWeb.TasksLive do
           {gettext("Refreshing tasks…")}
         </div>
 
-        <!-- Task List -->
-        <div id="tasks-list" class="space-y-4 lg:space-y-5">
+        <!-- Task List. The `ListEnter` hook animates only genuinely NEW row keys
+           within one unchanged `data-list-enter-scope` (a filter/page/node change
+           reseeds its silent baseline). The rows themselves live in the keyed
+           stream container below, so an update patches ONE card. -->
+        <div
+          id="tasks-list"
+          phx-hook="ListEnter"
+          data-list-enter-scope={list_enter_scope(assigns)}
+        >
           <%= if @tasks_loading do %>
             <%!-- FIRST load only (nothing on screen yet): daisyUI skeleton rows
                  stand in for the cards. The "Loading tasks..." text stays as the
@@ -425,11 +432,18 @@ defmodule EvoDashWeb.TasksLive do
                 </div>
               <% end %>
             <% else %>
-              <%!-- NO enter animation and NO per-index stagger: the rows are
-                   stable across a refresh (a filtered reload must not re-enter
-                   every card). --%>
-              <%= for task <- @filtered_tasks do %>
-                <div class="relative z-10 has-[[open]]:z-30">
+              <%!-- Keyed stream: `id` is exactly `task-<id>` and every row keeps
+                   ONE persistent DOM node, so a refresh patches the rows that
+                   actually changed instead of re-rendering the whole list. A
+                   `reset` happens ONLY on a landed page load (first load, filter,
+                   page, node switch, refresh) — never on a push or a mutation. --%>
+              <div id="tasks-stream" phx-update="stream" class="space-y-4 lg:space-y-5">
+                <div
+                  :for={{dom_id, task} <- @streams.tasks}
+                  id={dom_id}
+                  data-list-enter-key={task.id}
+                  class="relative z-10 has-[[open]]:z-30"
+                >
                   <EvoDashWeb.TaskCardComponents.task_card
                     task={task}
                     focused={@focused_task_id == task.id}
@@ -440,7 +454,7 @@ defmodule EvoDashWeb.TasksLive do
                     action_busy={@action_busy}
                   />
                 </div>
-              <% end %>
+              </div>
             <% end %>
           <% end %>
         </div>
@@ -1045,6 +1059,7 @@ defmodule EvoDashWeb.TasksLive do
             # background refresh / pagination round-trip.
             |> TaskDetail.prune(visible)
             |> TaskDetail.ensure_expanded(visible)
+            |> put_tasks_stream(visible)
 
           {:noreply, socket}
 
@@ -1140,21 +1155,26 @@ defmodule EvoDashWeb.TasksLive do
   # applies the node + entry + seq guards; a stale/foreign result is dropped.
   @impl true
   def handle_info({:task_detail_loaded, seq, node, task_id, result}, socket) do
-    {:noreply, TaskDetail.apply_detail(socket, seq, node, task_id, result)}
+    {:noreply,
+     socket |> TaskDetail.apply_detail(seq, node, task_id, result) |> refresh_stream_row(task_id)}
   end
 
   # Per-card lazy archive result — same guarded apply path. The module reads the
   # envelope to decide whether this is the FIRST page or an appended page.
   @impl true
   def handle_info({:task_archive_loaded, seq, node, task_id, result}, socket) do
-    {:noreply, TaskDetail.apply_archive(socket, seq, node, task_id, result)}
+    {:noreply,
+     socket |> TaskDetail.apply_archive(seq, node, task_id, result) |> refresh_stream_row(task_id)}
   end
 
   # Per-agent lazy archive result (one agent's full entry, its `"result"`
   # included) — same guarded apply path, keyed on the archive's seq.
   @impl true
   def handle_info({:task_archive_agent_loaded, seq, node, task_id, agent_id, result}, socket) do
-    {:noreply, TaskDetail.apply_archive_agent(socket, seq, node, task_id, agent_id, result)}
+    {:noreply,
+     socket
+     |> TaskDetail.apply_archive_agent(seq, node, task_id, agent_id, result)
+     |> refresh_stream_row(task_id)}
   end
 
   # Sync-error fallback for initiate_remote_connect/2: the subsystem is
@@ -1373,27 +1393,27 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_event("toggle_task_details", %{"task_id" => task_id}, socket) do
-    {:noreply, TaskDetail.toggle(socket, task_id)}
+    {:noreply, socket |> TaskDetail.toggle(task_id) |> refresh_stream_row(task_id)}
   end
 
   # Inline "could not load this task" strip → force a refetch of that card's
   # detail (drops the cached :error entry first).
   @impl true
   def handle_event("retry_task_detail", %{"task_id" => task_id}, socket) do
-    {:noreply, TaskDetail.retry(socket, task_id)}
+    {:noreply, socket |> TaskDetail.retry(task_id) |> refresh_stream_row(task_id)}
   end
 
   # The expanded card's archive section asked for its FIRST page → lazy, cached
   # archive fetch (no-op while loading / already loaded).
   @impl true
   def handle_event("load_task_archive", %{"task_id" => task_id}, socket) do
-    {:noreply, TaskDetail.load_archive(socket, task_id)}
+    {:noreply, socket |> TaskDetail.load_archive(task_id) |> refresh_stream_row(task_id)}
   end
 
   # "Load more" (and its retry) — appends the next 100-entry page.
   @impl true
   def handle_event("load_more_task_archive", %{"task_id" => task_id}, socket) do
-    {:noreply, TaskDetail.load_more_archive(socket, task_id)}
+    {:noreply, socket |> TaskDetail.load_more_archive(task_id) |> refresh_stream_row(task_id)}
   end
 
   # "Show result" / its retry — ONE agent's full archive entry, including the
@@ -1404,7 +1424,10 @@ defmodule EvoDashWeb.TasksLive do
         %{"task_id" => task_id, "agent_id" => agent_id},
         socket
       ) do
-    {:noreply, TaskDetail.load_agent_result(socket, task_id, agent_id)}
+    {:noreply,
+     socket
+     |> TaskDetail.load_agent_result(task_id, agent_id)
+     |> refresh_stream_row(task_id)}
   end
 
   @impl true
@@ -1852,6 +1875,7 @@ defmodule EvoDashWeb.TasksLive do
     case mutation_result(result) do
       :ok ->
         socket
+        |> delete_stream_row(action, task_id)
         |> assign(:expanded_task_ids, MapSet.delete(socket.assigns.expanded_task_ids, task_id))
         |> reload(socket.assigns.current_page)
 
@@ -1896,6 +1920,75 @@ defmodule EvoDashWeb.TasksLive do
   # as a change, which is what paints the first-load skeleton.
   defp node_context_changed?(previous_ctx, socket) do
     previous_ctx != {socket.assigns.current_node_id, socket.assigns.current_node}
+  end
+
+  # --- The keyed `:tasks` stream -------------------------------------------
+  #
+  # The rows are a LiveView stream (`phx-update="stream"`, row DOM id exactly
+  # `task-<id>`) so an update patches ONE card's DOM node instead of
+  # re-rendering the whole list. A landed page load is the ONLY place rows are
+  # (re)populated, and it always RESETS — that covers the first load, a filter
+  # or page change, a node switch and every background refresh.
+  #
+  # The plain `:tasks` / `:filtered_tasks` assigns are RETAINED alongside the
+  # stream (the count line, the empty state, `ModalHelpers.view_full_options/2`
+  # and the page's own tests read those lists) — streams live under
+  # `socket.assigns.streams`, so the two coexist.
+  defp put_tasks_stream(socket, rows),
+    do: stream(socket, :tasks, rows, reset: true, dom_id: &task_dom_id/1)
+
+  # The row's DOM id MUST stay exactly `task-<id>` (the card's inner ids and
+  # every `#task-<id>-*` selector assume it), which the `:tasks` stream name
+  # would otherwise prefix to `tasks-<id>`. Tolerant of atom/string-keyed rows.
+  defp task_dom_id(task) when is_map(task),
+    do: "task-#{Map.get(task, :id) || Map.get(task, "id")}"
+
+  # A deleted task's row leaves the stream immediately. `stream_delete/3`
+  # raises for a stream that was never created (the pre-first-page-load state),
+  # so it only runs once a page load has populated the stream; every other
+  # action just reloads, which resets the stream anyway.
+  defp delete_stream_row(socket, :delete, task_id) do
+    if socket.assigns |> Map.get(:streams, %{}) |> Map.has_key?(:tasks) do
+      stream_delete(socket, :tasks, %{id: task_id})
+    else
+      socket
+    end
+  end
+
+  defp delete_stream_row(socket, _action, _task_id), do: socket
+
+  # Re-emit ONE row through the stream so a card whose EXPANDED / DETAIL state
+  # just changed is patched in place. A stream row is not re-rendered when a
+  # plain assign it reads (`@expanded_task_ids`, `@task_details`) changes, so
+  # every arm that mutates those inputs must re-insert the affected row.
+  # `stream_insert/3` keeps the captured `dom_id` fun, so nothing is re-configured.
+  defp refresh_stream_row(socket, task_id) do
+    streams = Map.get(socket.assigns, :streams, %{})
+
+    row =
+      socket.assigns
+      |> Map.get(:tasks, [])
+      |> Enum.find(&(Map.get(&1, :id) == task_id))
+
+    if Map.has_key?(streams, :tasks) and is_map(row) do
+      stream_insert(socket, :tasks, row)
+    else
+      socket
+    end
+  end
+
+  # A stable binary identity of the LIST for the `ListEnter` hook: while it is
+  # unchanged, only genuinely new row keys animate; when it changes (node,
+  # filter, search, pagination) the hook reseeds a silent baseline so a
+  # re-filtered page is not staggered. Built from the existing filter assigns
+  # (nothing is atomized) — no extra assign is introduced.
+  defp list_enter_scope(assigns) do
+    node = assigns.current_node_id || "local"
+
+    "tasks:#{node}:#{assigns.status_filter}:#{assigns.project_filter}:" <>
+      "#{assigns.review_status_filter}:#{assigns.search_query}:" <>
+      "#{assigns.session_mode_filter}:#{assigns.current_page}:" <>
+      "#{assigns.show_reflect_tasks}:#{assigns.focused_task_id}"
   end
 
   # --- The ONE page-data reload path ---------------------------------------
