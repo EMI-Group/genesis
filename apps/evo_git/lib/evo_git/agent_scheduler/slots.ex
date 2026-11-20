@@ -5,15 +5,16 @@ defmodule EvoGit.AgentScheduler.Slots do
   Provides pure functions that operate on the scheduler state map
   to manage concurrent LLM call and tool execution slots.
 
-  ## Per-Model LLM Slot Pools
+  ## Per-Account LLM Slot Pools
 
-  LLM slots are organized into **per-model pools**. Each model profile gets
-  its own concurrency limit, holder set, waiting queue, and backoff timer.
-  The agent's `model_id` (read from ETS via `AgentState`) determines which
-  pool it belongs to.
+  LLM slots are organized into **per-account pools**. Each provider/account
+  profile gets its own concurrency limit, holder set, waiting queue, and
+  backoff timer. The agent's pool id (its bound provider/account profile id,
+  else its legacy ETS `model_id` mapped through the selection aliases)
+  determines which pool it belongs to.
 
   The key benefit: an exhaustion on one provider no longer blocks agents
-  using a different model. Backoff is scoped per-model.
+  using a different model. Backoff is scoped per account pool.
 
   ## Slot Tracking
 
@@ -25,7 +26,7 @@ defmodule EvoGit.AgentScheduler.Slots do
   ## Slot Types
 
   - **LLM slots** — Controls how many agents can make concurrent LLM calls,
-    per-model. Includes a per-model backoff mechanism for LLM
+    per account pool. Includes a per-account backoff mechanism for LLM
     model-exhaustion errors (`:rate_limit` / `:insufficient_balance` /
     `:model_exhaustion`) with a caller-supplied duration (default 60 s) and a
     self-rescheduling wakeup sweep that works for multi-hour durations.
@@ -65,15 +66,16 @@ defmodule EvoGit.AgentScheduler.Slots do
           {:reply, :ok, State.t(), [{pos_integer(), atom()}]}
           | {:noreply, State.t(), [{pos_integer(), atom()}]}
 
-  # --- Model ID Resolution ---
+  # --- Pool ID Resolution ---
 
   @doc """
-  Resolves the provider/account pool id from the agent's immutable dispatch binding.
+  Resolves the provider/ACCOUNT pool id from the agent's immutable dispatch
+  binding — a pool id, never a model id.
   Legacy ETS rows map their model id through the configured selection aliases;
-  missing rows use the default provider pool. The historical function name remains.
+  missing rows use the default provider pool.
   """
-  @spec resolve_model_id(pos_integer(), State.t()) :: String.t()
-  def resolve_model_id(agent_id, %State{} = state) do
+  @spec resolve_pool_id(pos_integer(), State.t()) :: String.t()
+  def resolve_pool_id(agent_id, %State{} = state) do
     case Store.get_provider_profile_id(agent_id) do
       id when is_binary(id) and id != "" ->
         id
@@ -86,50 +88,60 @@ defmodule EvoGit.AgentScheduler.Slots do
     end
   end
 
+  @doc """
+  LEGACY ALIAS for `resolve_pool_id/2` (kept for external callers).
+
+  The name is historical: it resolves the provider/ACCOUNT pool id, not a
+  model id. New code must call `resolve_pool_id/2`.
+  """
+  @spec resolve_model_id(pos_integer(), State.t()) :: String.t()
+  def resolve_model_id(agent_id, %State{} = state), do: resolve_pool_id(agent_id, state)
+
   # --- LLM Slot Management ---
 
   @doc """
   Handles an LLM slot request.
 
-  Resolves the agent's model_id from ETS, then checks the per-model pool.
-  Returns `{:reply, :ok, state, status_updates}` if a slot is immediately available,
-  or `{:noreply, state, status_updates}` if the agent must wait (no slots, in
-  backoff, scheduler paused, or the model has 0 capacity — a 0-capacity request
-  enqueues exactly like the paused case and is granted when capacity returns).
+  Resolves the agent's provider/account pool id from ETS, then checks that
+  pool. Returns `{:reply, :ok, state, status_updates}` if a slot is immediately
+  available, or `{:noreply, state, status_updates}` if the agent must wait (no
+  slots, in backoff, scheduler paused, or the pool has 0 capacity — a
+  0-capacity request enqueues exactly like the paused case and is granted when
+  capacity returns).
   """
   @spec handle_request_llm_slot(pos_integer(), GenServer.from(), State.t()) :: slot_result()
   def handle_request_llm_slot(agent_id, from, %State{} = state) do
-    model_id = resolve_model_id(agent_id, state)
+    pool_id = resolve_pool_id(agent_id, state)
 
     if state.paused do
-      waiting = State.waiting_for(state, model_id)
+      waiting = State.waiting_for(state, pool_id)
       waiting = :queue.in({agent_id, from, nil}, waiting)
-      state = State.update_waiting(state, model_id, waiting)
+      state = State.update_waiting(state, pool_id, waiting)
       {:noreply, state, [{agent_id, :blocked}]}
     else
-      do_handle_request_llm_slot(agent_id, from, state, model_id)
+      do_handle_request_llm_slot(agent_id, from, state, pool_id)
     end
   end
 
-  defp do_handle_request_llm_slot(agent_id, from, %State{} = state, model_id) do
-    concurrency = State.concurrency_for(state, model_id)
+  defp do_handle_request_llm_slot(agent_id, from, %State{} = state, pool_id) do
+    concurrency = State.concurrency_for(state, pool_id)
     now = System.monotonic_time(:millisecond)
-    backoff = State.backoff_for(state, model_id)
-    holders = State.holders_for(state, model_id)
+    backoff = State.backoff_for(state, pool_id)
+    holders = State.holders_for(state, pool_id)
 
     if backoff && now < backoff do
-      waiting = State.waiting_for(state, model_id)
+      waiting = State.waiting_for(state, pool_id)
       waiting = :queue.in({agent_id, from, backoff}, waiting)
-      state = State.update_waiting(state, model_id, waiting)
+      state = State.update_waiting(state, pool_id, waiting)
       {:noreply, state, [{agent_id, :blocked}]}
     else
       if MapSet.size(holders) < concurrency do
         state =
           state
-          |> State.update_holders(model_id, MapSet.put(holders, agent_id))
+          |> State.update_holders(pool_id, MapSet.put(holders, agent_id))
           |> State.update_last_granted(
-            model_id,
-            Map.put(State.last_granted_for(state, model_id), agent_id, now)
+            pool_id,
+            Map.put(State.last_granted_for(state, pool_id), agent_id, now)
           )
 
         {:reply, :ok, state, []}
@@ -140,13 +152,13 @@ defmodule EvoGit.AgentScheduler.Slots do
         if concurrency == 0 do
           Logger.debug(
             "AgentScheduler: LLM slot request ENQUEUED — agent=#{agent_id} " <>
-              "model=#{inspect(model_id)} capacity=0 (peak pause)"
+              "pool=#{inspect(pool_id)} capacity=0 (peak pause)"
           )
         end
 
-        waiting = State.waiting_for(state, model_id)
+        waiting = State.waiting_for(state, pool_id)
         waiting = :queue.in({agent_id, from, nil}, waiting)
-        state = State.update_waiting(state, model_id, waiting)
+        state = State.update_waiting(state, pool_id, waiting)
         {:noreply, state, [{agent_id, :blocked}]}
       end
     end
@@ -155,7 +167,7 @@ defmodule EvoGit.AgentScheduler.Slots do
   @doc """
   Handles an LLM slot release.
 
-  Removes the agent from the holder set of every per-model pool (idempotent —
+  Removes the agent from the holder set of every per-account pool (idempotent —
   an agent holds at most one LLM slot) and grants pending requests. The model
   is NOT resolved via ETS: the releasing agent's ETS entry may already be gone
   (stale `model_id` after a profiles update removed its profile), so a
@@ -193,8 +205,8 @@ defmodule EvoGit.AgentScheduler.Slots do
   Handles an LLM error report with a caller-supplied backoff duration.
 
   LLM **model-exhaustion** errors — `:rate_limit`, `:insufficient_balance`
-  (HTTP 402) and the `:model_exhaustion` synonym — trigger a **per-model**
-  backoff, re-queuing all waiting agents for that model with the backoff
+  (HTTP 402) and the `:model_exhaustion` synonym — trigger a **per-account**
+  backoff, re-queuing all waiting agents for that pool with the backoff
   timestamp. The backoff duration is caller-supplied (`backoff_ms`); a nil
   value falls back to `@default_backoff_ms` (60 s) and every value is clamped
   to `@max_timer_ms` to guard against `Process.send_after/3` overflow (the
@@ -206,30 +218,30 @@ defmodule EvoGit.AgentScheduler.Slots do
   read at CALL time from the app env key `:llm_backoff_sweep_epsilon_ms`
   (default `@default_sweep_epsilon_ms`, 1 s).
 
-  This is the key win of per-model pools: an exhaustion on one provider
+  This is the key win of per-account pools: an exhaustion on one provider
   no longer blocks agents using a different model.
   """
   @spec handle_report_llm_error(pos_integer(), atom(), non_neg_integer() | nil, State.t()) ::
           {:reply, :ok, State.t(), [{pos_integer(), atom()}]}
   def handle_report_llm_error(agent_id, error_type, backoff_ms, %State{} = state)
       when error_type in [:rate_limit, :insufficient_balance, :model_exhaustion] do
-    model_id = resolve_model_id(agent_id, state)
+    pool_id = resolve_pool_id(agent_id, state)
     ms = backoff_ms || @default_backoff_ms
     ms = min(ms, @max_timer_ms)
     backoff_until = System.monotonic_time(:millisecond) + ms
 
     Logger.warning(
-      "AgentScheduler: LLM #{error_type} for model '#{model_id}' — " <>
-        "per-model backoff of #{ms}ms"
+      "AgentScheduler: LLM #{error_type} for pool '#{pool_id}' — " <>
+        "per-account backoff of #{ms}ms"
     )
 
-    waiting = State.waiting_for(state, model_id)
+    waiting = State.waiting_for(state, pool_id)
     waiting = update_waiting_with_backoff(waiting, backoff_until)
 
     state =
       state
-      |> State.update_waiting(model_id, waiting)
-      |> State.update_backoff(model_id, backoff_until)
+      |> State.update_waiting(pool_id, waiting)
+      |> State.update_backoff(pool_id, backoff_until)
 
     Process.send_after(
       self(),
@@ -340,9 +352,9 @@ defmodule EvoGit.AgentScheduler.Slots do
   Releases all slots held by an agent and purges it from waiting queues.
 
   Called on agent death (`:DOWN` handler) to prevent slot leaks. Removes
-  the agent from both the per-model LLM holder set(s) and the tool holder
+  the agent from both the per-account LLM holder set(s) and the tool holder
   set, then grants any newly-available slots to pending waiters. Also
-  purges the agent from all waiting queues (LLM per-model + tool).
+  purges the agent from all waiting queues (LLM per-account + tool).
 
   Returns `{state, status_updates}`.
   """
@@ -419,7 +431,7 @@ defmodule EvoGit.AgentScheduler.Slots do
   end
 
   @doc """
-  Purges agents from both LLM (per-model) and tool waiting queues.
+  Purges agents from both LLM (per-account) and tool waiting queues.
 
   Replies to each purged agent's blocked GenServer.from so their waiting calls
   unblock cleanly: `{:error, :cancelled}` by default (force-kill / graceful
@@ -509,7 +521,7 @@ defmodule EvoGit.AgentScheduler.Slots do
   # --- Private Helpers: LLM Slots ---
 
   # Removes an agent from the holder set (and last_granted map) of every
-  # per-model LLM pool. Scans ALL pools because the agent's ETS model_id may
+  # per-account LLM pool. Scans ALL pools because the agent's ETS model_id may
   # be stale or absent — a resolve-then-delete-from-one-pool could hit the
   # wrong pool and leak the holder.
   defp remove_agent_from_llm_holders(%State{} = state, agent_id) do
@@ -676,7 +688,7 @@ defmodule EvoGit.AgentScheduler.Slots do
     end
   end
 
-  # Clears a per-model backoff if it has expired.
+  # Clears a per-account pool backoff if it has expired.
   defp maybe_clear_model_backoff(%State{} = state, model_id, now) do
     case State.backoff_for(state, model_id) do
       nil ->
