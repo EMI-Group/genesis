@@ -262,11 +262,11 @@ All timing knobs are CALL-TIME app-env reads (never TOML, so overriding modules 
 
 ## SystemSampler — System Topic Sampling (`EvoGit.SystemSampler`)
 
-Supervised GenServer sampling every 3s and broadcasting on `"system"`; the 14 keys plus the `llm_slots` / `llm_pools` payload shapes are pinned in the PubSub Event Contract at `../CONTEXT.md` — this section owns only the sampling behaviour.
+Supervised GenServer sampling every 3s and broadcasting on `"system"`; the 14 keys plus the `llm_slots` / `llm_pools` payload shapes are pinned in the PubSub Event Contract at `../CONTEXT.md`.
 `llm_slots` = `AgentScheduler.get_llm_slot_status/0` (`%{}` when the scheduler is down or the bounded call fails); `llm_used`/`llm_waiting` and both tool keys stay `:running`/`:blocked` proxies counted from local `:evogit_sched_meta` (guarded `:ets.whereis`); sampling is LOCAL-only, `seq` monotonic per instance.
 Tick: `Process.send_after(self(), :sample_tick, interval)`, `interval = Application.get_env(:evo_git, :system_sample_interval_ms, 3000)` read ONCE at init (tests raise it and drive `tick/0`), rescheduled BEFORE sampling.
-Capacity and `llm_pools` come from a BOUNDED `:get_config` call (2s, seam `:system_sampler_config_fun`) — deliberately NOT `RemoteAPI.get_config/0` and NOT `Config.resolve/0`, whose RAM snapshot misses runtime overrides — cached as `config_cache: {totals, pools, tick}` and refreshed at `rem(tick, 10) == 1` (tick 1 always loads; an unloaded cache refetches every tick until one attempt succeeds). Zero capacities are NEVER cached.
-Degradation: scheduler reads go through `safe_scheduler_call/1` (2s bound < the 3s cadence + `catch :exit` — the module's single justified try/catch); a config-refresh failure KEEPS the last totals + pools and an `llm_slots` failure broadcasts `%{}`, with rate-limited warnings. With `scheduler_alive?/0` false the sample carries zero counts/capacities + empty slots/pools.
+Capacity and `llm_pools` come from a BOUNDED `:get_config` call (2s, seam `:system_sampler_config_fun`) — deliberately NOT `RemoteAPI.get_config/0` and NOT `Config.resolve/0`, whose RAM snapshot misses runtime overrides — cached as `config_cache: {totals, pools, tick}` and refreshed at `rem(tick, 10) == 1` (tick 1 always loads; an unloaded cache refetches every tick until one attempt succeeds); zero capacities are NEVER cached.
+Degradation: scheduler reads go through `safe_scheduler_call/1` (2s bound < the 3s cadence + `catch :exit` — the module's single justified try/catch), a config-refresh failure KEEPS the last totals + pools, and an `llm_slots` failure broadcasts `%{}` with rate-limited warnings; with `scheduler_alive?/0` false the sample carries zero counts/capacities + empty slots/pools.
 Ring buffer: last 60 samples; `get_recent_samples/0` → `{:ok, samples}` | `{:error, :not_found}`; `RemoteAPI.get_recent_system_samples/0` → `{:error, :sampler_down}`.
 
 ## Peak/Off-Peak Diagnostics
