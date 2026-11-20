@@ -6,6 +6,7 @@ Reads are served from ONE RAM snapshot per config directory (`EvoGit.Config.Cach
 
 ## Routing Table
 - `./schema/` → config schema definitions (pure data: keys, types, defaults, validation) + provider/model generation-parameter extraction (`schema/CONTEXT.md`)
+- `./keys.ex` → `EvoGit.Config.Keys`: the ONE tolerant key reader (`fetch/2`, `get/2,3` over atom- OR string-keyed maps, presence-based, never interning an atom) and the ONE recursive string-key transform (`stringify/2`, policies `:drop_nils` / `:model_tuples` / `:keyword_lists`); every tolerant read and string-key conversion in the config subtree delegates here.
 
 ## API Surface
 
