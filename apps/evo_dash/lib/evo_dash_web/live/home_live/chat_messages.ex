@@ -138,6 +138,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
   attr(:stream_unavailable, :boolean, default: false)
   attr(:transcript, :list, required: true)
   attr(:chat_task_status, :any, required: true)
+  # declared for the home_live.ex call site; the value is not rendered here
   attr(:thought_process, :list, required: true)
   attr(:raw_entry_ids, :any, required: true)
 
@@ -152,6 +153,10 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
   # Reasoning belongs to each reply; only the task badge and stream meta belong
   # to the last assistant entry.
   def message_list(assigns) do
+    # Computed ONCE per render, not once per transcript entry: a per-entry scan
+    # made this list O(n²) in the transcript length.
+    assigns = assign(assigns, last_assistant_index: last_assistant_index(assigns.transcript))
+
     ~H"""
     <div class="px-3 py-6 pb-8 space-y-8 sm:px-4 sm:space-y-10">
       <%= for {entry, index} <- Enum.with_index(@transcript) do %>
@@ -160,7 +165,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
             <% :user -> %>
               <UserMessage.user_message entry={entry} />
             <% :assistant -> %>
-              <% is_last = index == last_assistant_index(@transcript) %>
+              <% is_last = index == @last_assistant_index %>
               <.assistant_message
                 entry={entry}
                 stream_unavailable={is_last and @stream_unavailable}

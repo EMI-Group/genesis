@@ -38,7 +38,8 @@ defmodule EvoDashWeb.HomeLive.Composer do
 
   ## Event contract (implemented by the page)
 
-  `send_message` (form submit from Enter or the Send button), `chat_input` (form change),
+  `send_message` (form submit from Enter or the Send button), `chat_input` (form change,
+  debounced 250 ms so typing does not round-trip a chat-state persist per keystroke),
   `stop`, `interrupt_turn`, `chat_upload_validate`,
   `chat_upload_cancel`, `chat_upload_clear_error`, `chat_attach_manual` (server-path form
   submit with `path`) and `chat_attachment_remove` (`phx-value-index`).
@@ -111,6 +112,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
           id="chat-form"
           phx-submit="send_message"
           phx-change="chat_input"
+          phx-debounce="250"
           class="assistant-message-form"
         >
           <.attachment_chips {assigns} />
