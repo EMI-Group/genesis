@@ -39,6 +39,9 @@ defmodule EvoGit.Store.Types.ArchiveColumns do
   Genuinely unencodable terms (pids, refs, functions) still yield `:error`, so
   the caller sees the violation instead of a silently mangled payload.
 
+  The four `Ecto.Type` modules below are generated on this contract by
+  `EvoGit.Store.Types.JsonColumn` (`:lenient` shape).
+
   Pure module — no Repo, no GenServer, no I/O.
   """
 
@@ -117,24 +120,14 @@ defmodule EvoGit.Store.Types.ArchiveUsageJson do
   corrupt text loads as `nil`).
   """
 
-  use Ecto.Type
+  alias EvoGit.Store.Types.ArchiveColumns
+  alias EvoGit.Store.Types.JsonColumn
 
-  @impl Ecto.Type
-  def type, do: :string
-
-  @impl Ecto.Type
-  def cast(nil), do: {:ok, nil}
-  def cast(value) when is_map(value) or is_list(value), do: {:ok, value}
-  def cast(_other), do: :error
-
-  @impl Ecto.Type
-  def dump(value), do: EvoGit.Store.Types.ArchiveColumns.dump_json(value)
-
-  @impl Ecto.Type
-  def load(value), do: {:ok, EvoGit.Store.Types.ArchiveColumns.load_json(value)}
-
-  @impl Ecto.Type
-  def embed_as(_format), do: :self
+  use JsonColumn,
+    shape: :lenient,
+    cast_guard: is_map(value) or is_list(value),
+    encoder: {ArchiveColumns, :dump_json},
+    decoder: {ArchiveColumns, :load_json}
 end
 
 defmodule EvoGit.Store.Types.ArchiveLlmSettingsJson do
@@ -145,24 +138,14 @@ defmodule EvoGit.Store.Types.ArchiveLlmSettingsJson do
   See `EvoGit.Store.Types.ArchiveColumns` for the wire contract.
   """
 
-  use Ecto.Type
+  alias EvoGit.Store.Types.ArchiveColumns
+  alias EvoGit.Store.Types.JsonColumn
 
-  @impl Ecto.Type
-  def type, do: :string
-
-  @impl Ecto.Type
-  def cast(nil), do: {:ok, nil}
-  def cast(value) when is_map(value) or is_list(value), do: {:ok, value}
-  def cast(_other), do: :error
-
-  @impl Ecto.Type
-  def dump(value), do: EvoGit.Store.Types.ArchiveColumns.dump_json(value)
-
-  @impl Ecto.Type
-  def load(value), do: {:ok, EvoGit.Store.Types.ArchiveColumns.load_json(value)}
-
-  @impl Ecto.Type
-  def embed_as(_format), do: :self
+  use JsonColumn,
+    shape: :lenient,
+    cast_guard: is_map(value) or is_list(value),
+    encoder: {ArchiveColumns, :dump_json},
+    decoder: {ArchiveColumns, :load_json}
 end
 
 defmodule EvoGit.Store.Types.ArchiveAgentSettingsJson do
@@ -174,24 +157,14 @@ defmodule EvoGit.Store.Types.ArchiveAgentSettingsJson do
   See `EvoGit.Store.Types.ArchiveColumns` for the wire contract.
   """
 
-  use Ecto.Type
+  alias EvoGit.Store.Types.ArchiveColumns
+  alias EvoGit.Store.Types.JsonColumn
 
-  @impl Ecto.Type
-  def type, do: :string
-
-  @impl Ecto.Type
-  def cast(nil), do: {:ok, nil}
-  def cast(value) when is_map(value) or is_list(value), do: {:ok, value}
-  def cast(_other), do: :error
-
-  @impl Ecto.Type
-  def dump(value), do: EvoGit.Store.Types.ArchiveColumns.dump_json(value)
-
-  @impl Ecto.Type
-  def load(value), do: {:ok, EvoGit.Store.Types.ArchiveColumns.load_json(value)}
-
-  @impl Ecto.Type
-  def embed_as(_format), do: :self
+  use JsonColumn,
+    shape: :lenient,
+    cast_guard: is_map(value) or is_list(value),
+    encoder: {ArchiveColumns, :dump_json},
+    decoder: {ArchiveColumns, :load_json}
 end
 
 defmodule EvoGit.Store.Types.ArchiveForeignReposJson do
@@ -204,22 +177,12 @@ defmodule EvoGit.Store.Types.ArchiveForeignReposJson do
   See `EvoGit.Store.Types.ArchiveColumns` for the wire contract.
   """
 
-  use Ecto.Type
+  alias EvoGit.Store.Types.ArchiveColumns
+  alias EvoGit.Store.Types.JsonColumn
 
-  @impl Ecto.Type
-  def type, do: :string
-
-  @impl Ecto.Type
-  def cast(nil), do: {:ok, nil}
-  def cast(value) when is_list(value) or is_map(value), do: {:ok, value}
-  def cast(_other), do: :error
-
-  @impl Ecto.Type
-  def dump(value), do: EvoGit.Store.Types.ArchiveColumns.dump_json(value)
-
-  @impl Ecto.Type
-  def load(value), do: {:ok, EvoGit.Store.Types.ArchiveColumns.load_json(value)}
-
-  @impl Ecto.Type
-  def embed_as(_format), do: :self
+  use JsonColumn,
+    shape: :lenient,
+    cast_guard: is_list(value) or is_map(value),
+    encoder: {ArchiveColumns, :dump_json},
+    decoder: {ArchiveColumns, :load_json}
 end

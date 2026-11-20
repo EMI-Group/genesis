@@ -1,4 +1,10 @@
 defmodule EvoGit.Store.Codec do
+  # NOTE — this module is LEGITIMATELY long (well over the usual ~1000-line
+  # comfort threshold) and must stay in ONE file: it is the single on-disk wire
+  # oracle for the store, so splitting it across modules would fragment the byte
+  # contract (column order, JSON tags, atom whitelists, fallback rules) that
+  # every Operations read/write and every migration depends on. Keep additions
+  # grouped by the `--- field ---` sections below instead of extracting them.
   @moduledoc """
   Pure serialization functions for the EvoDash SQLite store.
 
@@ -59,7 +65,23 @@ defmodule EvoGit.Store.Codec do
 
   alias EvoGit.TaskInfo
 
+  @typedoc "A decoded `result` column value (the 4 canonical tagged forms, or NULL)."
+  @type result_value :: {:ok, map()} | {:error, term()} | {:exit, term()} | String.t() | nil
+
+  @typedoc "A decoded `opts` column value: a pair list with the atomized known keys."
+  @type opts_value :: keyword() | nil
+
+  @typedoc "A decoded `usage` column value."
+  @type usage_value :: EvoGit.Agent.Usage.t() | nil
+
+  @typedoc "A decoded canonical `error` payload (nil when the row carries none)."
+  @type error_value :: map() | nil
+
   @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha lease_expires_at model_id project_path branch_name error session_mode pause_kind)
+
+  # Compile-time atom twin of @task_columns, used by task_values/1 to project a
+  # row map/struct into the exact positional list decode_task/1 destructures.
+  @task_fields Enum.map(@task_columns, &String.to_atom/1)
 
   @usage_fields [
     :input_tokens,
@@ -100,10 +122,42 @@ defmodule EvoGit.Store.Codec do
   ## Public — column lists
 
   @doc "Returns the ordered list of task column names."
+  @spec task_columns() :: [String.t()]
   def task_columns, do: @task_columns
+
+  @doc """
+  Returns a task row's 20 values in `task_columns/0` order.
+
+  Accepts anything map-shaped that carries the 20 task fields — the raw read
+  projection (`%EvoGit.Store.Schemas.TaskRowRaw{}`), the typed write schema
+  (`%EvoGit.Store.Schemas.TaskRow{}`) or a plain map with those keys. A missing
+  field raises `KeyError`: it is always a caller bug, never DB data.
+
+  No schema module is referenced here on purpose — the Codec stays the
+  dependency-free wire oracle for the positional column contract.
+  """
+  @spec task_values(map() | struct()) :: [term()]
+  def task_values(row) when is_map(row) do
+    Enum.map(@task_fields, &Map.fetch!(row, &1))
+  end
+
+  @doc """
+  Decodes a raw read-projection row (map or struct) into a `%EvoGit.TaskInfo{}`.
+
+  `task_values/1` + `decode_task/1`: decode stays STRICTLY canonical, so a
+  corrupt cell raises here — callers wrap this call in their skip-and-log
+  boundary (the Operations' skip rules rely on that).
+  """
+  @spec decode_raw_row(map() | struct()) :: TaskInfo.t()
+  def decode_raw_row(row), do: row |> task_values() |> decode_task()
 
   ## Public — Encode (struct → column values)
 
+  @doc """
+  Encodes a `%EvoGit.TaskInfo{}` into the 20 positional column values (in
+  `task_columns/0` order) — TOTAL, never raises.
+  """
+  @spec encode_task(TaskInfo.t()) :: [term()]
   def encode_task(%TaskInfo{} = task) do
     [
       task.id,
@@ -131,25 +185,41 @@ defmodule EvoGit.Store.Codec do
 
   # Extracts the :path value from opts for denormalization into the project_path
   # column. Returns nil if opts is nil or doesn't contain a :path key.
-  defp extract_project_path(nil), do: nil
+  # Public (`@doc false`) so Operations.Tasks can share this rule instead of
+  # keeping a verbatim private copy: the denormalization must stay byte-identical
+  # on both the encode and the write-helper path.
+  @doc false
+  @spec extract_project_path(term()) :: String.t() | nil
+  def extract_project_path(nil), do: nil
 
-  defp extract_project_path(opts) when is_list(opts) do
+  def extract_project_path(opts) when is_list(opts) do
     Keyword.get(opts, :path)
   end
 
   # Extracts the :branch_name from a {:ok, %{branch_name: name}} result tuple
   # for denormalization into the branch_name column. Returns nil for all other
-  # result shapes.
-  defp extract_branch_name(nil), do: nil
+  # result shapes. Public (`@doc false`) for the same reason as
+  # extract_project_path/1.
+  @doc false
+  @spec extract_branch_name(term()) :: String.t() | nil
+  def extract_branch_name(nil), do: nil
 
-  defp extract_branch_name({:ok, data}) when is_map(data) do
+  def extract_branch_name({:ok, data}) when is_map(data) do
     Map.get(data, :branch_name)
   end
 
-  defp extract_branch_name(_other), do: nil
+  def extract_branch_name(_other), do: nil
 
   ## Public — Decode (column values → struct)
 
+  @doc """
+  Decodes the 20 positional column values (in `task_columns/0` order) into a
+  `%EvoGit.TaskInfo{}`.
+
+  Raises on non-canonical data (`ArgumentError` from the strict field decoders)
+  — callers use `decode_raw_row/1` behind a skip-and-log boundary.
+  """
+  @spec decode_task([term()]) :: TaskInfo.t()
   def decode_task(row) do
     [
       id,
@@ -201,6 +271,12 @@ defmodule EvoGit.Store.Codec do
 
   ## Public — Validation
 
+  @doc """
+  Structural validation of a task before a write: a binary `id` and a non-nil
+  `status` are required.
+  """
+  @spec validate_task(TaskInfo.t()) ::
+          :ok | {:error, :missing_task_id | :missing_task_status}
   def validate_task(%TaskInfo{id: id, status: status})
       when is_binary(id) and not is_nil(status),
       do: :ok
@@ -215,6 +291,8 @@ defmodule EvoGit.Store.Codec do
   # Stored as TEXT in SQLite. Accepts nil, atoms, and strings so that a decoded
   # value (which may be a string) can always be re-encoded without crashing —
   # this guarantees round-trip safety.
+  @doc "Encodes an atom-valued column (`type`/`status`/`review_status`) to TEXT — TOTAL."
+  @spec encode_atom(nil | atom() | String.t()) :: String.t() | nil
   def encode_atom(nil), do: nil
   def encode_atom(atom) when is_atom(atom), do: Atom.to_string(atom)
   def encode_atom(str) when is_binary(str), do: str
@@ -259,6 +337,11 @@ defmodule EvoGit.Store.Codec do
   @spec known_statuses() :: [atom()]
   def known_statuses, do: @known_statuses
 
+  @doc """
+  Decodes an atom-valued column (`type`/`review_status`) — an unrecognized
+  value logs a warning and decodes to `nil`.
+  """
+  @spec decode_atom(nil | String.t()) :: atom() | nil
   def decode_atom(nil), do: nil
 
   def decode_atom(str) when is_binary(str) do
@@ -524,12 +607,15 @@ defmodule EvoGit.Store.Codec do
   writers use `DateTime.utc_now()` (UTC); existing rows are migrated by the
   `20260815000002_data_normalization` boot migration (timestamp rewrite).
   """
+  @spec encode_datetime(DateTime.t() | nil) :: String.t() | nil
   def encode_datetime(nil), do: nil
 
   def encode_datetime(%DateTime{} = dt) do
     dt |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()
   end
 
+  @doc "Decodes a fixed-precision ISO-8601 TEXT cell (`nil` when absent or unparseable)."
+  @spec decode_datetime(nil | String.t()) :: DateTime.t() | nil
   def decode_datetime(nil), do: nil
 
   def decode_datetime(str) when is_binary(str) do
@@ -593,6 +679,11 @@ defmodule EvoGit.Store.Codec do
   @spec known_atomized_opt_keys() :: [atom()]
   def known_atomized_opt_keys, do: @atomized_opt_keys
 
+  @doc """
+  Encodes the `opts` keyword list as a plain JSON OBJECT with string keys —
+  TOTAL (falls back to the four essential keys, then to `nil`).
+  """
+  @spec encode_opts(keyword() | nil) :: String.t() | nil
   def encode_opts(nil), do: nil
 
   def encode_opts(opts) when is_list(opts) do
@@ -632,6 +723,11 @@ defmodule EvoGit.Store.Codec do
     end
   end
 
+  @doc """
+  Decodes the `opts` JSON object — STRICTLY canonical: anything but a JSON
+  object raises `ArgumentError`.
+  """
+  @spec decode_opts(nil | String.t()) :: opts_value()
   def decode_opts(nil), do: nil
 
   def decode_opts(str) when is_binary(str) do
@@ -656,6 +752,11 @@ defmodule EvoGit.Store.Codec do
   # Atomized opt keys are converted for caller convenience (Keyword.get/2 with
   # atom keys). Everything else — including the intentionally string-keyed
   # `@string_opt_keys` — stays as a string: they are looked up by string key.
+  @doc """
+  Maps a persisted opt key to its decoded spelling: the atomized set becomes
+  atoms, every other key stays a string.
+  """
+  @spec decode_opt_key(atom() | String.t()) :: atom() | String.t()
   def decode_opt_key(key) when is_atom(key), do: key
 
   def decode_opt_key(key) when is_binary(key) do
@@ -667,6 +768,8 @@ defmodule EvoGit.Store.Codec do
   end
 
   # --- logs (list of strings) ---
+  @doc "Encodes the `logs` list as JSON TEXT — TOTAL (`\"[]\"` for nil or unencodable)."
+  @spec encode_logs(nil | [String.t()]) :: String.t()
   def encode_logs(nil), do: "[]"
 
   def encode_logs(logs) when is_list(logs), do: encode_logs_json(logs)
@@ -678,6 +781,8 @@ defmodule EvoGit.Store.Codec do
     end
   end
 
+  @doc "Decodes the `logs` JSON TEXT — LENIENT: a nil/corrupt value decodes to `[]`."
+  @spec decode_logs(nil | String.t()) :: [String.t()]
   def decode_logs(nil), do: []
 
   def decode_logs(str) when is_binary(str), do: decode_logs_json(str)
@@ -706,6 +811,11 @@ defmodule EvoGit.Store.Codec do
   # result column is valid JSON — this enables future `json_valid`-guarded
   # `json_extract` SQL filters. Decode is strictly canonical: only the tagged
   # forms decode; legacy raw strings/untagged JSON raise (see decode_result/1).
+  @doc """
+  Encodes the `result` value as a tagged JSON object — TOTAL (any other shape
+  falls back to a `"string"`-tagged `inspect/1`).
+  """
+  @spec encode_result(term()) :: String.t() | nil
   def encode_result(nil), do: nil
 
   def encode_result(result), do: encode_result_json(result)
@@ -764,6 +874,8 @@ defmodule EvoGit.Store.Codec do
   # Converts the success data map into a string-keyed, JSON-safe map.
   # The embedded `%EvoGit.Agent.Usage{}` is serialized via Map.from_struct/1
   # (same pattern as encode_usage/1).
+  @doc "Converts an `{:ok, data}` result map into its string-keyed, JSON-safe form."
+  @spec encode_result_data(map()) :: map()
   def encode_result_data(data) do
     data
     |> Enum.reduce(%{}, fn
@@ -775,6 +887,11 @@ defmodule EvoGit.Store.Codec do
     end)
   end
 
+  @doc """
+  Decodes the `result` column — STRICTLY canonical: only the 4 tagged forms
+  (plus NULL) decode; everything else raises `ArgumentError`.
+  """
+  @spec decode_result(nil | String.t()) :: result_value()
   def decode_result(nil), do: nil
 
   def decode_result(str) when is_binary(str) do
@@ -813,6 +930,11 @@ defmodule EvoGit.Store.Codec do
   # embedded %EvoGit.Agent.Usage{} struct (same pattern as decode_usage/1).
   # Only the known keys in `@result_data_fields` are atomized — unknown keys
   # are kept as strings to avoid blind atomization of arbitrary data.
+  @doc """
+  Rebuilds a decoded `{:ok, data}` result map: the known `@result_data_fields`
+  keys become atoms and an embedded `usage` map becomes a `%EvoGit.Agent.Usage{}`.
+  """
+  @spec decode_result_data(map()) :: map()
   def decode_result_data(data) when is_map(data) do
     Enum.reduce(data, %{}, fn {key, value}, acc ->
       atom_key =
@@ -851,6 +973,12 @@ defmodule EvoGit.Store.Codec do
   # — String.to_existing_atom/1 has no non-crashing variant. The fallback (keep
   # the string) is the correct semantic: an unknown reason is still valid as a
   # string, not "bad data".
+  @doc """
+  Best-effort reason recovery for `{:error, reason}` / `{:exit, reason}`: a
+  string matching an EXISTING atom becomes that atom, every other term passes
+  through opaque.
+  """
+  @spec decode_reason(term()) :: term()
   def decode_reason(str) when is_binary(str) do
     try do
       String.to_existing_atom(str)
@@ -862,6 +990,8 @@ defmodule EvoGit.Store.Codec do
   def decode_reason(other), do: other
 
   # --- usage (EvoGit.Agent.Usage struct) ---
+  @doc "Encodes a `%EvoGit.Agent.Usage{}` as flat JSON TEXT — TOTAL (`nil` on failure)."
+  @spec encode_usage(EvoGit.Agent.Usage.t() | nil) :: String.t() | nil
   def encode_usage(nil), do: nil
 
   def encode_usage(%EvoGit.Agent.Usage{} = usage) do
@@ -875,6 +1005,8 @@ defmodule EvoGit.Store.Codec do
     end
   end
 
+  @doc "Decodes the `usage` JSON TEXT — LENIENT: a nil/corrupt value decodes to `nil`."
+  @spec decode_usage(nil | String.t()) :: usage_value()
   def decode_usage(nil), do: nil
 
   def decode_usage(str) when is_binary(str) do
@@ -889,6 +1021,8 @@ defmodule EvoGit.Store.Codec do
 
   # Shared helper: builds a %EvoGit.Agent.Usage{} struct from a string-keyed or
   # atom-keyed map, only extracting the known usage fields.
+  @doc "Builds a `%EvoGit.Agent.Usage{}` from a string- or atom-keyed usage map."
+  @spec decode_usage_map(map()) :: EvoGit.Agent.Usage.t()
   def decode_usage_map(map) when is_map(map) do
     atom_usage =
       Enum.reduce(@usage_field_pairs, %{}, fn {field, str}, acc ->
@@ -921,6 +1055,8 @@ defmodule EvoGit.Store.Codec do
   # atomized via the whitelist, `kind`/`source` string values are restored to
   # their closed-set atoms, unknown keys keep their string keys, and all other
   # values pass through unchanged.
+  @doc "Encodes the canonical failed-task `error` payload as JSON TEXT — TOTAL."
+  @spec encode_error(map() | nil) :: String.t() | nil
   def encode_error(nil), do: nil
 
   def encode_error(map) when is_map(map) do
@@ -952,6 +1088,12 @@ defmodule EvoGit.Store.Codec do
   # stacktrace are strings/lists by contract and pass through untouched.
   defp error_atom_field?(key), do: key in [:kind, :source] or key in ["kind", "source"]
 
+  @doc """
+  Decodes the canonical `error` payload — LENIENT by design: nil and
+  non-object JSON decode to `nil`, the four known keys are atomized and the
+  closed-set `kind`/`source` values restored to atoms.
+  """
+  @spec decode_error(nil | String.t()) :: error_value()
   def decode_error(nil), do: nil
 
   def decode_error(str) when is_binary(str) do

@@ -42,6 +42,15 @@ defmodule EvoGit.Store.Operations.Filters do
   The escape char must be pinned as a PARAMETER, never written as the SQL
   literal `'\\'`: the adapter doubles backslashes inside SQL string literals,
   which SQLite then rejects ("ESCAPE expression must be a single character").
+
+  ## Pagination clamps
+
+  The three clamps below are the SAME rule with different arguments — `nil`,
+  a non-integer or (by default) a NON-POSITIVE value falls back to the
+  caller's default, while a positive integer is bounded by the caller's
+  maximum — and that rule lives in ONE place (`clamp/2`). Every paged read in
+  the store (legacy task page, lightweight summary page, per-agent archive
+  roster) clamps its `:limit`/`:offset` through one of these functions.
   """
 
   import Ecto.Query
@@ -58,26 +67,43 @@ defmodule EvoGit.Store.Operations.Filters do
 
   @doc "Legacy pagination clamp: non-integer or non-positive → 50."
   @spec clamp_limit(term()) :: pos_integer()
-  def clamp_limit(nil), do: @default_limit
-  def clamp_limit(n) when is_integer(n) and n > 0, do: n
-  def clamp_limit(_), do: @default_limit
+  def clamp_limit(value), do: clamp_limit(value, default: @default_limit)
 
   @doc """
   Lightweight-page limit clamp: `nil`/invalid/non-positive → #{@page_default_limit},
   a positive integer is capped at #{@page_max_limit}.
   """
   @spec clamp_page_limit(term()) :: pos_integer()
-  def clamp_page_limit(nil), do: @page_default_limit
-
-  def clamp_page_limit(n) when is_integer(n) and n > 0, do: min(n, @page_max_limit)
-
-  def clamp_page_limit(_), do: @page_default_limit
+  def clamp_page_limit(value),
+    do: clamp_limit(value, default: @page_default_limit, max: @page_max_limit)
 
   @doc "Offset clamp: `nil`, negative or non-integer → 0."
   @spec clamp_offset(term()) :: non_neg_integer()
-  def clamp_offset(nil), do: 0
-  def clamp_offset(n) when is_integer(n) and n >= 0, do: n
-  def clamp_offset(_), do: 0
+  def clamp_offset(value), do: clamp_limit(value, default: 0)
+
+  # The ONE pagination-clamp rule behind the three clamps above (see the
+  # moduledoc). `:max` is the positive cap, `:infinity` (the default) leaves a
+  # positive value uncapped. `:non_positive` decides what a zero/negative
+  # INTEGER becomes: `:default` (a non-positive value means "not specified",
+  # so the caller's `:default` applies — the legacy and lightweight reads) or
+  # `:minimum` (the hard minimum of 1 — the archive roster, which floors a
+  # too-small page to one row rather than falling back to 100).
+  @doc false
+  @spec clamp_limit(term(), keyword()) :: non_neg_integer()
+  def clamp_limit(value, opts) when is_list(opts) do
+    default = Keyword.fetch!(opts, :default)
+    max = Keyword.get(opts, :max, :infinity)
+    non_positive = Keyword.get(opts, :non_positive, :default)
+
+    cond do
+      not is_integer(value) -> default
+      value <= 0 and non_positive == :default -> default
+      true -> value |> max(1) |> bounded(max)
+    end
+  end
+
+  defp bounded(value, :infinity), do: value
+  defp bounded(value, max), do: min(value, max)
 
   @doc """
   Applies the task-list filter set (see the moduledoc) to a `TaskRowRaw`-rooted
