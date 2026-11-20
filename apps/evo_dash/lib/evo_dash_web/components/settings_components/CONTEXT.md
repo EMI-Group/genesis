@@ -93,6 +93,11 @@ Catalog suggestions are advisory only: they mark a chip's provenance and never d
 `SettingCard.reasoning_options/1` and `SettingCard.reasoning_value/1` expose the same ladder for the flat `llm.reasoning_effort` card, which search results render outside `category_section`.
 `ProviderProfileFields` also supplies the shared generation grid (temperature, max tokens, top_p, top_k, frequency/presence penalty as optional numeric strings, plus the JSON `extra`/`provider_options` textareas with key-safety help), the peak/day controls (`off_peak_days[]` and `peak_hours[index][days][]` with hidden blank sentinels) and the node-correct OAuth guidance.
 
+## Custom tool error normalization
+
+`CustomToolsPanel.error_entry/1` always produces a map because its reason falls back to `inspect/1`, which returns a string even for a missing reason (`"nil"`).
+A missing file and reason therefore renders the unknown-file fallback plus `"nil"`, rather than dropping the entry, and any normalization cleanup must preserve that behavior unless explicitly changing the UI contract.
+
 ## Visual rules
 
 Every module here writes tokens only (`base-*`, `primary`, `error`, `warning`), never a raw color and never a hex.
