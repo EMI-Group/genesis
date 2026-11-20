@@ -55,13 +55,12 @@ defmodule EvoDashWeb.TasksLive do
       current_node_id={@current_node_id}
       remote_targets={assigns[:remote_targets] || []}
       connection_statuses={assigns[:connection_statuses] || %{}}
-      workbench_project={assigns[:workbench_project]}
+      workbench_project={@workbench_project}
       workbench_git_project={
-        if @current_node_id || !assigns[:workbench_remote_requested],
-          do: assigns[:workbench_project]
+        if @current_node_id || !@workbench_remote_requested, do: @workbench_project
       }
-      workbench_task={assigns[:focused_task_id]}
-      workbench_title={assigns[:workbench_title]}
+      workbench_task={@focused_task_id}
+      workbench_title={@workbench_title}
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
       session_list={assigns[:session_list] || []}
@@ -77,11 +76,11 @@ defmodule EvoDashWeb.TasksLive do
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
-        <h1 :if={!assigns[:focused_task_id]} class="text-lg font-semibold mb-3">
+        <h1 :if={!@focused_task_id} class="text-lg font-semibold mb-3">
           {gettext("Task History")}
         </h1>
         <div
-          :if={!assigns[:focused_task_id]}
+          :if={!@focused_task_id}
           class="rounded-lg border border-base-300 bg-base-100 p-3 sm:p-4 mb-4"
         >
           <form id="task-filters" phx-submit="noop">
@@ -321,7 +320,7 @@ defmodule EvoDashWeb.TasksLive do
            count flashes "0 tasks found" during every filter/navigation; also
            hidden when a failed load left no rows at all, where the count would
            contradict the error block below) -->
-        <%= if !assigns[:focused_task_id] and not @tasks_loading and not (@tasks_error != nil and @filtered_tasks == []) do %>
+        <%= if !@focused_task_id and not @tasks_loading and not (@tasks_error != nil and @filtered_tasks == []) do %>
           <div class="flex items-center justify-between mb-4">
             <p class="text-sm text-base-content/60">
               {dngettext(
@@ -352,15 +351,37 @@ defmodule EvoDashWeb.TasksLive do
           </div>
         <% end %>
 
+        <!-- Non-first load (a filter / search / pagination / session-kind
+           change with rows already on screen): the loaded rows stay mounted and
+           this thin inline line is the only loading affordance. Setting
+           `@tasks_refreshing` (never `@tasks_loading`) is what keeps the list
+           from blanking on every keystroke. -->
+        <div
+          :if={@tasks_refreshing}
+          id="tasks-refreshing"
+          role="status"
+          aria-live="polite"
+          class="mb-3 flex items-center gap-2 text-xs text-base-content/60"
+        >
+          <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+          {gettext("Refreshing tasks…")}
+        </div>
+
         <!-- Task List -->
         <div id="tasks-list" class="space-y-4 lg:space-y-5">
           <%= if @tasks_loading do %>
-            <div class="text-center py-12 sm:py-16 text-base-content/70">
-              <.icon
-                name="hero-arrow-path"
-                class="size-10 mx-auto mb-4 text-base-content/40 animate-spin"
-              />
-              <p class="text-lg font-medium">{gettext("Loading tasks...")}</p>
+            <%!-- FIRST load only (nothing on screen yet): daisyUI skeleton rows
+                 stand in for the cards. The "Loading tasks..." text stays as the
+                 accessible label (and the suite's load-finished marker). --%>
+            <div id="tasks-loading" role="status" aria-live="polite" class="space-y-4 lg:space-y-5">
+              <span class="sr-only">{gettext("Loading tasks...")}</span>
+              <%= for _ <- 1..3 do %>
+                <div class="rounded-lg border border-base-300 bg-base-100 p-4">
+                  <div class="skeleton h-4 w-1/3 mb-3"></div>
+                  <div class="skeleton h-3 w-2/3 mb-2"></div>
+                  <div class="skeleton h-3 w-1/2"></div>
+                </div>
+              <% end %>
             </div>
           <% else %>
             <%= if @filtered_tasks == [] do %>
@@ -383,18 +404,18 @@ defmodule EvoDashWeb.TasksLive do
                 <div class="text-center py-12 sm:py-16 text-base-content/70">
                   <.icon name="hero-inbox" class="size-10 mx-auto mb-4 text-base-content/40" />
                   <h2 class="text-lg font-medium">
-                    {if assigns[:focused_task_id],
+                    {if @focused_task_id,
                       do: gettext("Task not found"),
                       else: gettext("No tasks found")}
                   </h2>
                   <.link
-                    :if={assigns[:focused_task_id]}
+                    :if={@focused_task_id}
                     navigate={with_node_param(~p"/tasks", @current_node_id)}
                     class="btn btn-ghost btn-sm mt-3"
                   >
                     {gettext("Task History")}
                   </.link>
-                  <p :if={!assigns[:focused_task_id]} class="text-sm mt-1">
+                  <p :if={!@focused_task_id} class="text-sm mt-1">
                     <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" or @session_mode_filter != "all" or (@total_count > 0 and not @show_reflect_tasks) do %>
                       {gettext("Try adjusting your filters or search query.")}
                     <% else %>
@@ -404,14 +425,14 @@ defmodule EvoDashWeb.TasksLive do
                 </div>
               <% end %>
             <% else %>
-              <%= for {task, idx} <- Enum.with_index(@filtered_tasks) do %>
-                <div class={[
-                  "relative z-10 has-[[open]]:z-30 animate-fade-in-up",
-                  animation_delay_class(idx)
-                ]}>
+              <%!-- NO enter animation and NO per-index stagger: the rows are
+                   stable across a refresh (a filtered reload must not re-enter
+                   every card). --%>
+              <%= for task <- @filtered_tasks do %>
+                <div class="relative z-10 has-[[open]]:z-30">
                   <EvoDashWeb.TaskCardComponents.task_card
                     task={task}
-                    focused={assigns[:focused_task_id] == task.id}
+                    focused={@focused_task_id == task.id}
                     show_details={MapSet.member?(@expanded_task_ids, task.id)}
                     detail={Map.get(@task_details, task.id)}
                     current_node_id={@current_node_id}
@@ -425,7 +446,7 @@ defmodule EvoDashWeb.TasksLive do
         </div>
 
         <!-- Pagination Controls -->
-        <%= if @total_pages > 1 and is_nil(assigns[:focused_task_id]) do %>
+        <%= if @total_pages > 1 and is_nil(@focused_task_id) do %>
           <% offset = (@current_page - 1) * @page_size %>
           <% range_start = offset + 1 %>
           <% range_end = min(offset + @page_size, @total_count) %>
@@ -478,14 +499,19 @@ defmodule EvoDashWeb.TasksLive do
         <% end %>
 
         <!-- Clear History (moved to bottom for safety) -->
-        <div :if={!assigns[:focused_task_id]} class="mt-6 flex justify-center sm:justify-end">
+        <div :if={!@focused_task_id} class="mt-6 flex justify-center sm:justify-end">
           <button
             type="button"
             class="btn btn-ghost btn-sm text-error gap-1"
             phx-click="clear_task_history"
+            disabled={@clearing_history}
             data-confirm={gettext("Clear all finished task history? This cannot be undone.")}
           >
-            <.icon name="hero-trash" class="size-3.5" /> {gettext("Clear History")}
+            <.icon :if={!@clearing_history} name="hero-trash" class="size-3.5" />
+            <span :if={@clearing_history} class="loading loading-spinner loading-xs"></span>
+            {if @clearing_history,
+              do: gettext("Clearing…"),
+              else: gettext("Clear History")}
           </button>
         </div>
 
@@ -584,8 +610,17 @@ defmodule EvoDashWeb.TasksLive do
                   type="button"
                   class="btn btn-warning rounded-md px-6 gap-2"
                   phx-click="confirm_cancel_task"
+                  disabled={action_busy?(@action_busy, @confirm_cancel_task_id)}
                 >
-                  <.icon name="hero-x-mark" class="size-4.5" />
+                  <span
+                    :if={action_busy?(@action_busy, @confirm_cancel_task_id)}
+                    class="loading loading-spinner loading-xs"
+                  ></span>
+                  <.icon
+                    :if={!action_busy?(@action_busy, @confirm_cancel_task_id)}
+                    name="hero-x-mark"
+                    class="size-4.5"
+                  />
                   {gettext("Cancel Task")}
                 </button>
               </div>
@@ -625,8 +660,17 @@ defmodule EvoDashWeb.TasksLive do
                   type="button"
                   class="btn btn-error rounded-md px-6 gap-2"
                   phx-click="confirm_force_kill_task"
+                  disabled={action_busy?(@action_busy, @confirm_force_kill_task_id)}
                 >
-                  <.icon name="hero-x-circle" class="size-4.5" />
+                  <span
+                    :if={action_busy?(@action_busy, @confirm_force_kill_task_id)}
+                    class="loading loading-spinner loading-xs"
+                  ></span>
+                  <.icon
+                    :if={!action_busy?(@action_busy, @confirm_force_kill_task_id)}
+                    name="hero-x-circle"
+                    class="size-4.5"
+                  />
                   {gettext("Force Kill")}
                 </button>
               </div>
@@ -639,6 +683,7 @@ defmodule EvoDashWeb.TasksLive do
           <EvoDashWeb.TasksLive.Session.confirm_close_session_modal
             task_id={@confirm_close_session_task_id}
             session_agent_id={session_agent_id(@awaiting_sessions, @confirm_close_session_task_id)}
+            busy={action_busy?(@action_busy, @confirm_close_session_task_id)}
           />
         <% end %>
 
@@ -767,13 +812,25 @@ defmodule EvoDashWeb.TasksLive do
         # for the sidebar's "Active Tasks" fetch. The debounced reload spawns
         # BOTH loads in the same handler, so a shared counter would make each
         # load's bump invalidate the other's in-flight result.
-        # tasks_loading drives the loading placeholder; tasks_error holds the
-        # reason of the LAST failed page load (nil on success). An error keeps
-        # the already-loaded rows untouched and renders a retry affordance.
+        # tasks_loading drives the FIRST-load skeleton rows (nothing on screen
+        # yet); tasks_refreshing is the NON-blanking refresh flag — a filter /
+        # search / pagination change keeps the loaded rows mounted and only
+        # paints a thin inline progress line above the list.
+        # tasks_error holds the reason of the LAST failed page load (nil on
+        # success). An error keeps the already-loaded rows untouched and renders
+        # a retry affordance.
         page_load_seq: 0,
         tasks_loading: false,
-        tasks_error: nil
+        tasks_refreshing: false,
+        tasks_error: nil,
+        # Page-level in-flight flag for the async `clear_task_history` mutation
+        # (the per-task equivalent lives in `:action_busy`).
+        clearing_history: false
       )
+      |> assign_new(:focused_task_id, fn -> nil end)
+      |> assign_new(:workbench_project, fn -> nil end)
+      |> assign_new(:workbench_title, fn -> nil end)
+      |> assign_new(:workbench_remote_requested, fn -> false end)
 
     {:ok, socket}
   end
@@ -816,9 +873,16 @@ defmodule EvoDashWeb.TasksLive do
         # mount, and the disconnected render's async result is discarded —
         # so spawning there would issue a full duplicate query (page SELECT +
         # COUNT + 25-row %TaskInfo{} decode + get_unique_paths) per
-        # navigation. The else branch still paints the loading placeholder so
-        # the static HTML matches the connected render.
-        PageLoad.start(socket, requested_page, true)
+        # navigation. The else branch still paints the FIRST-load skeleton rows
+        # so the static HTML matches the connected render.
+        #
+        # Pagination is a push_patch through here, so it must NOT blank the
+        # list either: `reload/3` paints the skeleton only when there is
+        # nothing to keep. A NODE switch is the one exception — the rows on
+        # screen belong to the old node, so they are replaced by the skeleton.
+        node_switched? = node_context_changed?(previous_node_ctx, socket)
+
+        reload(socket, requested_page, if(node_switched?, do: true))
       else
         assign(socket, :tasks_loading, true)
       end
@@ -837,6 +901,11 @@ defmodule EvoDashWeb.TasksLive do
         # OLD node — clear both so a close can never hit another node's session.
         |> assign(:confirm_close_session_task_id, nil)
         |> assign(:awaiting_sessions, %{})
+        # Page-level in-flight markers belong to the OLD node's requests: their
+        # result messages carry no node, so clear them here or a vanished
+        # spinner would hang forever on the newly-viewed node.
+        |> assign(:clearing_history, false)
+        |> assign(:tasks_refreshing, false)
         # Cached per-card details belong to the OLD node: drop them so the
         # expanded cards of the new node fetch their own rows (and stale
         # in-flight results are rejected by TaskDetail's node + entry guards).
@@ -932,6 +1001,10 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_info({:tasks_page_loaded, seq, node, result}, socket) do
+    # The thin "Refreshing tasks…" line is cleared on EVERY outcome — stale,
+    # successful and failed alike — so a non-blanking refresh can never stick.
+    socket = assign(socket, :tasks_refreshing, false)
+
     if seq < socket.assigns.page_load_seq or node != socket.assigns.current_node do
       # Stale page-load result — a newer page load was started after this one
       # was spawned (or the user switched nodes). Drop it: the newest
@@ -950,7 +1023,7 @@ defmodule EvoDashWeb.TasksLive do
           visible =
             PageLoad.visible_tasks(
               m.tasks,
-              socket.assigns.show_reflect_tasks or not is_nil(socket.assigns[:focused_task_id])
+              socket.assigns.show_reflect_tasks or not is_nil(socket.assigns.focused_task_id)
             )
 
           socket =
@@ -1011,6 +1084,58 @@ defmodule EvoDashWeb.TasksLive do
   def handle_info({{:resume_result, task_id}, result}, socket),
     do: {:noreply, pause_resume_result(socket, task_id, :resume, result)}
 
+  # Async results of the five task MUTATIONS that used to call the registry/RPC
+  # INLINE (freezing the LiveView for the whole call — up to the 30s :erpc
+  # default on a dead remote node). Each runs under `EvoDash.SafeCall.start/4`,
+  # which sends its tag VERBATIM, so the tag arrives NESTED as
+  # `{{tag, task_id}, result}`; `task_mutation_result/4` ALWAYS clears the
+  # task's `:action_busy` marker, so a control can never wedge — and because
+  # `SafeCall.start/4` sends NOTHING when the child cannot be started, the
+  # spawning arm clears the marker itself on that failure.
+  # Defined BEFORE the `handle_info(_msg, socket)` catch-all, like the pause/
+  # resume clauses above, so these results are never dropped.
+  @impl true
+  def handle_info({{:cancel_result, task_id}, result}, socket),
+    do: {:noreply, task_mutation_result(socket, :cancel, task_id, result)}
+
+  @impl true
+  def handle_info({{:force_kill_result, task_id}, result}, socket),
+    do: {:noreply, task_mutation_result(socket, :force_kill, task_id, result)}
+
+  @impl true
+  def handle_info({{:close_session_result, task_id}, result}, socket),
+    do: {:noreply, task_mutation_result(socket, :close, task_id, result)}
+
+  @impl true
+  def handle_info({{:delete_result, task_id}, result}, socket),
+    do: {:noreply, task_mutation_result(socket, :delete, task_id, result)}
+
+  # `clear_finished_tasks/1` is a PAGE-level action (no task id), so its busy
+  # marker is the page-level `:clearing_history` flag rather than an
+  # `:action_busy` entry. Cleared on EVERY outcome.
+  @impl true
+  def handle_info({{:clear_finished_result}, result}, socket) do
+    socket = assign(socket, :clearing_history, false)
+
+    case mutation_result(result) do
+      :ok ->
+        socket =
+          socket
+          |> assign(:expanded_task_ids, MapSet.new())
+          |> reload(1)
+
+        {:noreply, socket}
+
+      {:error, reason} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Failed to clear task history: %{reason}", reason: inspect(reason))
+         )}
+    end
+  end
+
   # Per-card lazy detail result (EvoDashWeb.TasksLive.TaskDetail). The module
   # applies the node + entry + seq guards; a stale/foreign result is dropped.
   @impl true
@@ -1065,7 +1190,7 @@ defmodule EvoDashWeb.TasksLive do
      socket
      |> assign(:status_filter, status_filter)
      |> assign(:project_filter, project_filter)
-     |> PageLoad.start(1, true)}
+     |> reload(1)}
   end
 
   @impl true
@@ -1073,7 +1198,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:review_status_filter, filter)
-     |> PageLoad.start(1, true)}
+     |> reload(1)}
   end
 
   @impl true
@@ -1081,7 +1206,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:search_query, query)
-     |> PageLoad.start(1, true)}
+     |> reload(1)}
   end
 
   # Session-kind filter — whitelist match only (never an atom conversion); an
@@ -1090,7 +1215,7 @@ defmodule EvoDashWeb.TasksLive do
   @impl true
   def handle_event("filter_session_mode", %{"session_mode_filter" => mode}, socket)
       when mode in ["all", "oneshot", "interactive"] do
-    {:noreply, socket |> assign(:session_mode_filter, mode) |> PageLoad.start(1, true)}
+    {:noreply, socket |> assign(:session_mode_filter, mode) |> reload(1)}
   end
 
   @impl true
@@ -1105,8 +1230,7 @@ defmodule EvoDashWeb.TasksLive do
   # previous rows visible while the retry runs).
   @impl true
   def handle_event("retry_load", _params, socket) do
-    {:noreply,
-     PageLoad.start(socket, socket.assigns.current_page, socket.assigns[:filtered_tasks] == [])}
+    {:noreply, reload(socket, socket.assigns.current_page)}
   end
 
   # Reveal toggle for :reflect (repo-less Home-chat) tasks, default OFF. The
@@ -1122,7 +1246,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:show_reflect_tasks, show)
-     |> PageLoad.start(1, true)}
+     |> reload(1)}
   end
 
   @impl true
@@ -1153,7 +1277,7 @@ defmodule EvoDashWeb.TasksLive do
        review_status_filter: "all",
        session_mode_filter: "all"
      )
-     |> PageLoad.start(1, true)}
+     |> reload(1)}
   end
 
   @impl true
@@ -1161,7 +1285,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:status_filter, "all")
-     |> PageLoad.start(1, true)}
+     |> reload(1)}
   end
 
   @impl true
@@ -1169,7 +1293,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:project_filter, "all")
-     |> PageLoad.start(1, true)}
+     |> reload(1)}
   end
 
   @impl true
@@ -1177,7 +1301,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:search_query, "")
-     |> PageLoad.start(1, true)}
+     |> reload(1)}
   end
 
   @impl true
@@ -1185,7 +1309,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:review_status_filter, "all")
-     |> PageLoad.start(1, true)}
+     |> reload(1)}
   end
 
   @impl true
@@ -1193,7 +1317,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:session_mode_filter, "all")
-     |> PageLoad.start(1, true)}
+     |> reload(1)}
   end
 
   @impl true
@@ -1215,25 +1339,35 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_event("clear_task_history", _params, socket) do
-    # SafeCall captures an exit (store timeout / dead store) as a value, so a
-    # slow clear flashes instead of crashing the LiveView. The reload after a
-    # successful clear stays ASYNC.
-    case SafeCall.run(fn ->
-           EvoDash.NodeContext.clear_finished_tasks(socket.assigns.current_node)
-         end) do
-      {:ok, _} ->
-        {:noreply,
-         socket
-         |> assign(:expanded_task_ids, MapSet.new())
-         |> PageLoad.start(1, true)}
+    # ASYNC: clearing a finished-task history is a slow, serialized store write,
+    # so the LiveView never waits on it (SafeCall also captures an exit — store
+    # timeout / dead store — as a value instead of crashing the page). The
+    # page-level :clearing_history flag disables the button AND guards a
+    # duplicate submit; the result lands as `{{:clear_finished_result}, result}`
+    # (see the handle_info clause, which clears the flag on every outcome).
+    if socket.assigns.clearing_history do
+      # A clear is already in flight — ignore a duplicate submit.
+      {:noreply, socket}
+    else
+      socket = assign(socket, :clearing_history, true)
 
-      {:error, reason} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("Failed to clear task history: %{reason}", reason: inspect(reason))
-         )}
+      case SafeCall.start(self(), {:clear_finished_result}, fn ->
+             EvoDash.NodeContext.clear_finished_tasks(socket.assigns.current_node)
+           end) do
+        {:ok, _pid} ->
+          {:noreply, socket}
+
+        # No child started, so no result message will ever arrive: clear the
+        # flag HERE or the button would stay disabled forever.
+        {:error, reason} ->
+          {:noreply,
+           socket
+           |> assign(:clearing_history, false)
+           |> put_flash(
+             :error,
+             gettext("Failed to clear task history: %{reason}", reason: inspect(reason))
+           )}
+      end
     end
   end
 
@@ -1316,39 +1450,20 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_event("confirm_cancel_task", _params, socket) do
-    case socket.assigns[:confirm_cancel_task_id] do
+    case socket.assigns.confirm_cancel_task_id do
       nil ->
         # Modal was never opened (or already closed) — no-op.
         {:noreply, socket}
 
       task_id ->
-        # Synchronous single-row mutation (tests assert the store state right
-        # after the click); SafeCall turns an exit (store timeout / dead store)
-        # into a flash instead of a crashed LiveView.
-        result =
-          SafeCall.run(fn ->
-            EvoDash.NodeContext.cancel_task(socket.assigns.current_node, task_id)
-          end)
-
-        case mutation_result(result) do
-          :ok ->
-            expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
-
-            {:noreply,
-             socket
-             |> assign(:expanded_task_ids, expanded)
-             |> assign(:confirm_cancel_task_id, nil)
-             |> PageLoad.start(socket.assigns.current_page, false)}
-
-          {:error, reason} ->
-            {:noreply,
-             socket
-             |> assign(:confirm_cancel_task_id, nil)
-             |> put_flash(
-               :error,
-               gettext("Failed to cancel task: %{reason}", reason: inspect(reason))
-             )}
-        end
+        # ASYNC: a graceful cancel messages every agent of the task (and can
+        # block on a dead remote node for the :erpc default), so it runs
+        # off-process. The result lands as `{{:cancel_result, task_id}, result}`
+        # and `task_mutation_result/4` clears the busy marker and settles the
+        # modal exactly as the old synchronous arm did.
+        start_task_mutation(socket, :cancel, :cancel_result, task_id, fn ->
+          EvoDash.NodeContext.cancel_task(socket.assigns.current_node, task_id)
+        end)
     end
   end
 
@@ -1369,36 +1484,16 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_event("confirm_force_kill_task", _params, socket) do
-    case socket.assigns[:confirm_force_kill_task_id] do
+    case socket.assigns.confirm_force_kill_task_id do
       nil ->
         # Modal was never opened (or already closed) — no-op.
         {:noreply, socket}
 
       task_id ->
-        result =
-          SafeCall.run(fn ->
-            EvoDash.NodeContext.force_kill_task(socket.assigns.current_node, task_id)
-          end)
-
-        case mutation_result(result) do
-          :ok ->
-            expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
-
-            {:noreply,
-             socket
-             |> assign(:expanded_task_ids, expanded)
-             |> assign(:confirm_force_kill_task_id, nil)
-             |> PageLoad.start(socket.assigns.current_page, false)}
-
-          {:error, reason} ->
-            {:noreply,
-             socket
-             |> assign(:confirm_force_kill_task_id, nil)
-             |> put_flash(
-               :error,
-               gettext("Failed to force kill task: %{reason}", reason: inspect(reason))
-             )}
-        end
+        # ASYNC — see confirm_cancel_task/3. Result: `{{:force_kill_result, id}, result}`.
+        start_task_mutation(socket, :force_kill, :force_kill_result, task_id, fn ->
+          EvoDash.NodeContext.force_kill_task(socket.assigns.current_node, task_id)
+        end)
     end
   end
 
@@ -1447,7 +1542,7 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_event("confirm_close_session", _params, socket) do
-    task_id = socket.assigns[:confirm_close_session_task_id]
+    task_id = socket.assigns.confirm_close_session_task_id
     agent_id = session_agent_id(socket.assigns.awaiting_sessions, task_id)
 
     cond do
@@ -1462,27 +1557,11 @@ defmodule EvoDashWeb.TasksLive do
          |> put_flash(:error, gettext("This session is no longer waiting for input."))}
 
       true ->
-        # Sync mutation like confirm_cancel_task; SafeCall turns an exit into a
-        # flash and the modal is ALWAYS cleared, so it can never wedge.
-        result =
-          EvoDash.SafeCall.run(fn ->
-            EvoDash.NodeContext.close_session(socket.assigns.current_node, agent_id, :normal)
-          end)
-
-        socket = assign(socket, :confirm_close_session_task_id, nil)
-
-        case mutation_result(result) do
-          :ok ->
-            {:noreply, PageLoad.start(socket, socket.assigns.current_page, false)}
-
-          {:error, reason} ->
-            {:noreply,
-             put_flash(
-               socket,
-               :error,
-               gettext("Failed to close session: %{reason}", reason: inspect(reason))
-             )}
-        end
+        # ASYNC — the session close finalizes the task through the core, so it
+        # must never block the socket. Result: `{{:close_session_result, id}, result}`.
+        start_task_mutation(socket, :close, :close_session_result, task_id, fn ->
+          EvoDash.NodeContext.close_session(socket.assigns.current_node, agent_id, :normal)
+        end)
     end
   end
 
@@ -1555,30 +1634,13 @@ defmodule EvoDashWeb.TasksLive do
 
   def handle_event("resume_task", _params, socket), do: {:noreply, socket}
 
+  # ASYNC: a delete cascades through the task's archives and durable agent
+  # state, so it runs off-process. Result: `{{:delete_result, id}, result}`.
   @impl true
   def handle_event("delete_task", %{"task_id" => task_id}, socket) do
-    result =
-      SafeCall.run(fn ->
-        EvoDash.NodeContext.delete_task(socket.assigns.current_node, task_id)
-      end)
-
-    case mutation_result(result) do
-      :ok ->
-        expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
-
-        {:noreply,
-         socket
-         |> assign(:expanded_task_ids, expanded)
-         |> PageLoad.start(socket.assigns.current_page, false)}
-
-      {:error, reason} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("Failed to delete task: %{reason}", reason: inspect(reason))
-         )}
-    end
+    start_task_mutation(socket, :delete, :delete_result, task_id, fn ->
+      EvoDash.NodeContext.delete_task(socket.assigns.current_node, task_id)
+    end)
   end
 
   # Helpers
@@ -1733,6 +1795,123 @@ defmodule EvoDashWeb.TasksLive do
   defp mutation_result({:ok, {:error, reason}}), do: {:error, reason}
   defp mutation_result({:error, reason}), do: {:error, reason}
 
-  defp animation_delay_class(idx) when idx <= 5, do: "animation-delay-#{div(idx, 1) * 100}"
-  defp animation_delay_class(_), do: ""
+  # --- Async task mutations -------------------------------------------------
+  #
+  # The five task mutations (cancel / force kill / close session / delete /
+  # clear history) all touch the registry (or a remote node over :erpc), so they
+  # NEVER run on the LiveView process. Each spawns through
+  # `EvoDash.SafeCall.start/4`, which sends its tag VERBATIM — hence the NESTED
+  # `{{tag, task_id}, result}` shape the matching `handle_info` clauses unwrap.
+
+  # ONE spawn path for the four task-keyed mutations. The task id is marked busy
+  # in the SAME `:action_busy` map the pause/resume pair uses (string key), which
+  # both disables the control and guards a duplicate submit server-side.
+  #
+  # `SafeCall.start/4` sends NOTHING when the child cannot be started, so the
+  # marker is cleared HERE on that arm — otherwise the control would stay
+  # disabled forever. Every other outcome is settled by `task_mutation_result/4`.
+  defp start_task_mutation(socket, action, tag, task_id, fun) do
+    if action_busy?(socket.assigns.action_busy, task_id) do
+      # A mutation for this task is already in flight — ignore the duplicate.
+      {:noreply, socket}
+    else
+      socket =
+        assign(
+          socket,
+          :action_busy,
+          Map.put(socket.assigns.action_busy, to_string(task_id), action)
+        )
+
+      case SafeCall.start(self(), {tag, task_id}, fun) do
+        {:ok, _pid} ->
+          {:noreply, socket}
+
+        {:error, reason} ->
+          {:noreply,
+           socket
+           |> assign(
+             :action_busy,
+             Map.delete(socket.assigns.action_busy, to_string(task_id))
+           )
+           |> clear_confirm_assign(action)
+           |> put_flash(:error, mutation_error(action, reason))}
+      end
+    end
+  end
+
+  # Settles an async task-mutation outcome. The busy marker and the confirmation
+  # modal are cleared on EVERY arm (success, refusal, transport failure alike), so
+  # a control can never wedge. Success collapses the card (its status just
+  # changed) and reloads the page without blanking the list.
+  defp task_mutation_result(socket, action, task_id, result) do
+    socket =
+      socket
+      |> assign(:action_busy, Map.delete(socket.assigns.action_busy, to_string(task_id)))
+      |> clear_confirm_assign(action)
+
+    case mutation_result(result) do
+      :ok ->
+        socket
+        |> assign(:expanded_task_ids, MapSet.delete(socket.assigns.expanded_task_ids, task_id))
+        |> reload(socket.assigns.current_page)
+
+      {:error, reason} ->
+        put_flash(socket, :error, mutation_error(action, reason))
+    end
+  end
+
+  # The confirmation assign each action was spawned from (delete has none — it is
+  # posted directly by the card's dropdown, without a modal).
+  defp clear_confirm_assign(socket, :cancel), do: assign(socket, :confirm_cancel_task_id, nil)
+
+  defp clear_confirm_assign(socket, :force_kill),
+    do: assign(socket, :confirm_force_kill_task_id, nil)
+
+  defp clear_confirm_assign(socket, :close),
+    do: assign(socket, :confirm_close_session_task_id, nil)
+
+  defp clear_confirm_assign(socket, _action), do: socket
+
+  defp mutation_error(:cancel, reason),
+    do: gettext("Failed to cancel task: %{reason}", reason: inspect(reason))
+
+  defp mutation_error(:force_kill, reason),
+    do: gettext("Failed to force kill task: %{reason}", reason: inspect(reason))
+
+  defp mutation_error(:close, reason),
+    do: gettext("Failed to close session: %{reason}", reason: inspect(reason))
+
+  defp mutation_error(:delete, reason),
+    do: gettext("Failed to delete task: %{reason}", reason: inspect(reason))
+
+  # Total read of the page's per-task busy map (`%{task_id_string => action}`).
+  # nil (no task / no modal open) is never busy.
+  defp action_busy?(_busy, nil), do: false
+  defp action_busy?(busy, task_id) when is_map(busy), do: Map.has_key?(busy, to_string(task_id))
+  defp action_busy?(_busy, _task_id), do: false
+
+  # True when the node context resolved by `NodeAware.assign_node/2` changed
+  # since the last page load. The captured `{node_id, node}` tuple is the SAME
+  # dedup key NodeAware keeps in `:tasks_node_loaded`; a first load (nil) counts
+  # as a change, which is what paints the first-load skeleton.
+  defp node_context_changed?(previous_ctx, socket) do
+    previous_ctx != {socket.assigns.current_node_id, socket.assigns.current_node}
+  end
+
+  # --- The ONE page-data reload path ---------------------------------------
+  #
+  # Every filter / search / pagination / session-kind change and every
+  # post-mutation refresh goes through here so the list NEVER blanks mid-session.
+  # `show_loading?` defaults to the FIRST-LOAD rule (no rows yet): only then is
+  # the skeleton placeholder painted; a refresh keeps the mounted rows and raises
+  # the thin `:tasks_refreshing` progress line instead (cleared in the
+  # `{:tasks_page_loaded, ...}` handler on every outcome).
+  defp reload(socket, page, show_loading? \\ nil)
+
+  defp reload(socket, page, nil), do: reload(socket, page, socket.assigns.filtered_tasks == [])
+
+  defp reload(socket, page, show_loading?) do
+    socket = assign(socket, :tasks_refreshing, not show_loading?)
+    PageLoad.start(socket, page, show_loading?)
+  end
 end
