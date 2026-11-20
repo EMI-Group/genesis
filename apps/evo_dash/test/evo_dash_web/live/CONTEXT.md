@@ -246,9 +246,8 @@ This test node contains no production fix for that source issue.
 
 ## Known Issues
 
-- `welcome_live_test.exs` "ChatGPT in-browser sign-in cancelling returns to the sign-in button and stops the flow" (`~line 538`) intermittently fails in a FULL `mix test apps/evo_dash/test` run at `assert_receive {:signin_stub, {:begin, "default"}}, @stub_call_timeout` with `no matching message after 5000ms`, while the mailbox still holds only the mount-time `{:plug_conn, :sent}` / `{ref, {200, …}}` leftovers.
-  The stub's `begin` notification is emitted from `ChatGPTSignIn.call/3`'s `Task.async` and the handler waits for it via `Task.yield` (15 s), so under the full async cohort the call can exceed the 5 s `@stub_call_timeout` window — or its own 15 s `@call_timeout_ms`, in which case the page settles into `{:error, :sign_in_unavailable}` and no notification is ever sent.
-  It passes with the same seed when the file runs alone (40 passed) and reproduces on the pre-fix tree, so it is not caused by the system-page chart work; the fix belongs to that file's stub barrier (wait on the applied page state or the module's `@async_wait_budget_ms`), not to `system_live_test.exs`.
+- No known flake remains in this tree's sign-in coverage: the former `welcome_live_test.exs` "cancelling returns to the sign-in button and stops the flow" failure at a 5 s `@stub_call_timeout` budget is fixed by waiting on the observable page state and asserting every stub notification (`begin`/`cancel`/`status`) on `@async_wait_budget_ms`.
+  The product's 15 s `ChatGPTSignIn.@call_timeout_ms` remains the only bound on a flow call: if it elapses the page honestly settles into `{:error, :sign_in_unavailable}` and no stub notification is emitted, which the state-first assertion reports as a missing `#welcome-chatgpt-waiting` element instead of a bare "no matching message".
 
 ## Notes for Agents — system page chart assertions
 
