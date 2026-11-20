@@ -22,10 +22,116 @@
 # from the `:config_dir_fun` seam (`EvoDash.Test.ConfigDir.isolate!/1`,
 # installed by `test_helper.exs`), never from a BEAM-global `XDG_CONFIG_HOME`
 # write.
+# A per-test stand-in for `EvoDash.ChatGPTLogin` (the SIWC flow module),
+# injected through `EvoDashWeb.LLMSetup.ChatGPTSignIn.login_module/0`'s
+# CALL-TIME `$callers` seam: `Phoenix.LiveViewTest` puts the test pid in the
+# mounted view's `$callers`, so `install!/1` seeds the test's OWN process
+# dictionary and nothing here is BEAM-global.
+#
+# The mutable flow state (the answer `begin/2` gives, the queue of answers
+# `status/1` gives, the ids `cancel/1` saw) lives in an Agent the test starts;
+# every call resolves that pid through `$callers` too, because the sign-in
+# boundary calls us from `Task.async`/poll tasks, never only from the view.
+defmodule EvoDashWeb.SettingsLive.ProviderWizardTest.ChatGPTStub do
+  @moduledoc false
+
+  # `begin:` — `{:ok, %{id:, url:, port:}}` or `{:error, reason}`.
+  # `statuses:` — the answer queue; each entry is a value or a zero-arity fun
+  # (an exhausted queue keeps answering `:pending`). A cancelled flow always
+  # answers `:pending`, like a facade that already retired it.
+  def install!(opts) do
+    test_pid = self()
+
+    {:ok, pid} =
+      Agent.start_link(fn ->
+        %{
+          begin: Keyword.fetch!(opts, :begin),
+          statuses: Keyword.get(opts, :statuses, []),
+          cancelled: [],
+          test_pid: test_pid
+        }
+      end)
+
+    Process.put(:chatgpt_login_module, __MODULE__)
+    Process.put(:chatgpt_stub_pid, pid)
+    # Keep the poll cheap; the cap is far beyond any test's lifetime.
+    Process.put(:chatgpt_signin_poll_interval_ms, 5)
+    Process.put(:chatgpt_signin_poll_timeout_ms, 60_000)
+    pid
+  end
+
+  def begin(account, _opts) do
+    Agent.get_and_update(pid!(), fn state ->
+      send(state.test_pid, {:chatgpt_stub, :begin, account})
+      {state.begin, state}
+    end)
+  end
+
+  def status(flow_id) do
+    Agent.get_and_update(pid!(), fn state ->
+      send(state.test_pid, {:chatgpt_stub, :status, flow_id})
+
+      {reply, statuses} =
+        if flow_id in state.cancelled do
+          {:pending, state.statuses}
+        else
+          case state.statuses do
+            [next | rest] -> {resolve(next), rest}
+            [] -> {:pending, []}
+          end
+        end
+
+      {reply, %{state | statuses: statuses}}
+    end)
+  end
+
+  def cancel(flow_id) do
+    Agent.get_and_update(pid!(), fn state ->
+      send(state.test_pid, {:chatgpt_stub, :cancel, flow_id})
+      {:ok, %{state | cancelled: [flow_id | state.cancelled]}}
+    end)
+  end
+
+  defp resolve(next) when is_function(next, 0), do: next.()
+  defp resolve(next), do: next
+
+  defp pid! do
+    Process.get(:chatgpt_stub_pid) ||
+      Enum.find_value(Process.get(:"$callers") || [], fn pid ->
+        case Process.info(pid, :dictionary) do
+          {:dictionary, dictionary} -> Keyword.get(dictionary, :chatgpt_stub_pid)
+          _ -> nil
+        end
+      end)
+  end
+end
+
+# A minimal fake connection manager registered in
+# `EvoGit.RemoteConnection.Registry` under a saved target id, so
+# `LiveHooks.NodeAware` resolves `?node=<id>` to a REMOTE BEAM node atom (an
+# unreachable fake node, exactly like the other settings suites). Definition
+# order is load-bearing: the async module below starts running as soon as it is
+# registered, so this must be defined FIRST.
+defmodule EvoDashWeb.SettingsLive.ProviderWizardTest.ConnectionManager do
+  use GenServer
+
+  def start_link(args), do: GenServer.start_link(__MODULE__, args)
+
+  @impl true
+  def init({target_id, status}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, status}
+  end
+
+  @impl true
+  def handle_call(:status, _from, status), do: {:reply, status, status}
+end
+
 defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
   use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   alias EvoDashWeb.SettingsComponents.ProviderProfiles.Row
+  alias EvoDashWeb.SettingsLive.ProviderWizardTest.ChatGPTStub
   # Load-tolerant budgets for waits on ASYNC settings work (mount load chain,
   # owned config-save receipt). That work runs in supervised tasks on a shared
   # host whose scheduling swings 10-30x (test/CONTEXT.md), so the waits stay
@@ -160,6 +266,41 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
     choose_custom_model(view, model)
     wizard_next(view)
     save_wizard(view)
+  end
+
+  # Provider → auth for the ChatGPT provider: the ONLY step that owns the
+  # in-browser sign-in.
+  defp open_chatgpt_auth_step(view) do
+    start_wizard(view)
+    pick_provider(view, "openai_codex")
+    wizard_next(view)
+    assert has_element?(view, "#wizard-step-auth")
+  end
+
+  # Bounded wait for the sign-in poll's ONE result to be APPLIED by the
+  # LiveView (the poll runs off-process in a supervised task). `receive after
+  # 2` is the suite's poll cadence, never a fixed wait.
+  defp await_sign_in(view, phase) do
+    await_sign_in(view, phase, System.monotonic_time(:millisecond) + @async_wait_budget_ms)
+  end
+
+  defp await_sign_in(view, phase, deadline) do
+    state = assigns(view)
+    sign_in = (state[:provider_wizard] || %{})[:chatgpt_sign_in] || %{}
+
+    if Map.get(sign_in, :phase) == phase do
+      render(view)
+    else
+      assert System.monotonic_time(:millisecond) < deadline,
+             "ChatGPT sign-in never reached #{inspect(phase)}"
+
+      receive do
+      after
+        2 -> :ok
+      end
+
+      await_sign_in(view, phase, deadline)
+    end
   end
 
   # ── account helpers ────────────────────────────────────────────────────────
@@ -598,6 +739,169 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
       ensure_open(view, "second")
       submit_detail_form(view, "second", %{"off_peak_holidays" => ""})
       refute Map.has_key?(stored_profile("second"), "off_peak_holidays")
+    end
+  end
+
+  # ── in-browser Sign in with ChatGPT (the wizard's auth step) ───────────────
+  #
+  # Hermetic: the flow module is the per-test `ChatGPTStub` injected through the
+  # sign-in boundary's CALL-TIME seam, so no loopback listener is bound, no
+  # network is touched and nothing BEAM-global is mutated.
+  describe "in-browser ChatGPT sign-in" do
+    test "a local sign-in waits on a real link and continues with the connected account", %{
+      conn: conn
+    } do
+      ChatGPTStub.install!(
+        begin: {:ok, %{id: "flow-1", url: "https://auth.openai.com/x", port: 48_123}},
+        statuses: [:pending, {:ok, %{account: "work"}}]
+      )
+
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_chatgpt_auth_step(view)
+
+      # LOCAL page: the in-browser button, never the terminal command.
+      assert has_element?(view, "#settings-chatgpt-sign-in")
+      refute has_element?(view, "#settings-chatgpt-manual-hint")
+      assert has_element?(view, ~s|#{wizard_button("provider_wizard_next")}[disabled]|)
+
+      # The registration the browser flow installs lands in the store while the
+      # page waits; the poll's success is what reloads the account list.
+      EvoGit.TestSupport.ChatGPTFixture.seed!("work")
+
+      view |> element("#settings-chatgpt-sign-in") |> render_click()
+      assert_receive {:chatgpt_stub, :begin, account}
+      # No explicit selection yet -> the account the picker resolves to.
+      assert account == "default"
+
+      assert has_element?(view, "#settings-chatgpt-waiting")
+      link = view |> element("#settings-chatgpt-sign-in-url") |> render()
+      assert link =~ "https://auth.openai.com/x"
+      assert link =~ ~s|target="_blank"|
+
+      html = await_sign_in(view, :ok)
+
+      assert assigns(view).provider_wizard.draft["siwc_account"] == "work"
+      assert Map.has_key?(assigns(view).provider_wizard.chatgpt_accounts, "work")
+      assert html =~ "ChatGPT connected"
+      # The panel is back to its idle button and the step can be left.
+      assert has_element?(view, "#settings-chatgpt-sign-in")
+      refute has_element?(view, "#settings-chatgpt-waiting")
+      refute has_element?(view, ~s|#{wizard_button("provider_wizard_next")}[disabled]|)
+
+      # ...and the wizard continues with THAT account's model inventory.
+      wizard_next(view)
+      assert has_element?(view, "#wizard-step-model")
+      assert has_element?(view, ~s(button[phx-value-model="gpt-5.6-terra"]))
+    end
+
+    test "cancel abandons the flow and brings the sign-in button back", %{conn: conn} do
+      ChatGPTStub.install!(
+        begin: {:ok, %{id: "flow-1", url: "https://auth.openai.com/x", port: 48_123}}
+      )
+
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_chatgpt_auth_step(view)
+
+      view |> element("#settings-chatgpt-sign-in") |> render_click()
+      assert_receive {:chatgpt_stub, :begin, _account}
+      assert has_element?(view, "#settings-chatgpt-waiting")
+
+      view |> element("#settings-chatgpt-sign-in-cancel") |> render_click()
+      # The flow module really was cancelled, and the panel is quiet again.
+      assert_receive {:chatgpt_stub, :cancel, "flow-1"}
+      refute has_element?(view, "#settings-chatgpt-waiting")
+      refute has_element?(view, "#settings-chatgpt-sign-in-error")
+      assert has_element?(view, "#settings-chatgpt-sign-in")
+      assert assigns(view).provider_wizard.chatgpt_sign_in.phase == :idle
+    end
+
+    test "a sign-in that cannot start shows a friendly line, never the raw reason", %{
+      conn: conn
+    } do
+      ChatGPTStub.install!(begin: {:error, :loopback_listener_unavailable})
+
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_chatgpt_auth_step(view)
+
+      html = view |> element("#settings-chatgpt-sign-in") |> render_click()
+
+      refute has_element?(view, "#settings-chatgpt-waiting")
+      assert has_element?(view, "#settings-chatgpt-sign-in-error")
+      error = view |> element("#settings-chatgpt-sign-in-error") |> render()
+      assert error =~ "Genesis could not start a local sign-in"
+      refute error =~ "loopback_listener_unavailable"
+      refute html =~ "loopback_listener_unavailable"
+      # The button stays available for a retry.
+      assert has_element?(view, "#settings-chatgpt-sign-in")
+    end
+
+    test "a denied authorization in the browser maps to the friendly denial line", %{
+      conn: conn
+    } do
+      ChatGPTStub.install!(
+        begin: {:ok, %{id: "flow-1", url: "https://auth.openai.com/x", port: 48_123}},
+        statuses: [{:error, :authorization_denied}]
+      )
+
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_chatgpt_auth_step(view)
+      view |> element("#settings-chatgpt-sign-in") |> render_click()
+      assert_receive {:chatgpt_stub, :begin, _account}
+
+      html = await_sign_in(view, :error)
+
+      assert has_element?(view, "#settings-chatgpt-sign-in-error")
+      error = view |> element("#settings-chatgpt-sign-in-error") |> render()
+      assert error =~ "Sign-in was cancelled in the browser."
+      refute error =~ "authorization_denied"
+      refute html =~ "authorization_denied"
+    end
+
+    test "a result for a superseded flow changes nothing", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_chatgpt_auth_step(view)
+      before = assigns(view).provider_wizard
+
+      send(view.pid, {:chatgpt_signin_result, "other-flow", {:ok, %{account: "x"}}})
+      render(view)
+
+      after_state = assigns(view).provider_wizard
+      assert after_state.draft == before.draft
+      assert after_state.chatgpt_accounts == before.chatgpt_accounts
+      assert after_state.chatgpt_sign_in == before.chatgpt_sign_in
+      refute Map.has_key?(after_state.chatgpt_accounts, "x")
+      refute has_element?(view, "#settings-chatgpt-account")
+    end
+
+    test "a remote node gets the CLI hint instead of a sign-in button", %{conn: conn} do
+      id = "wizard-remote-#{System.unique_integer([:positive])}"
+
+      {:ok, _target} =
+        EvoGit.RemoteConnections.save(%{
+          ssh_target: "user@host",
+          id: id,
+          name: "Wizard Remote"
+        })
+
+      on_exit(fn -> EvoGit.RemoteConnections.delete(id) end)
+
+      start_supervised!(
+        {EvoDashWeb.SettingsLive.ProviderWizardTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote_wizard@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, _html} = mount_settings(conn, "/settings?node=" <> id)
+      assert assigns(view).current_node != node()
+
+      open_chatgpt_auth_step(view)
+
+      # The in-browser flow binds a loopback listener on THIS BEAM, so a remote
+      # execution node can only be connected through the CLI.
+      refute has_element?(view, "#settings-chatgpt-sign-in")
+      assert has_element?(view, "#settings-chatgpt-manual-hint")
+      hint = view |> element("#settings-chatgpt-manual-hint") |> render()
+      assert hint =~ "genesis chatgpt login"
+      assert hint =~ "same machine as the execution node"
     end
   end
 end
