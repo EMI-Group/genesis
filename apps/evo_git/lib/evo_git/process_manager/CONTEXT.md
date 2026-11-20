@@ -34,6 +34,16 @@ While an intent is pending, the FIRST non-killed terminal finish settles the rec
 An incoming `:killed` finish and an `:owner_died` finish are never translated, and the intent is consumed by its ONE translation, so `do_finish/4` stays idempotent for every later finish.
 An intent is dropped together with its record during retention, and a FAILED stop clears it so a later natural exit keeps its own terminal facts.
 
+## Error Vocabulary
+
+A control callback answers its OWN failure, so a caller never has to guess.
+A backend that raises is contained by `Control.guarded/2` and tagged by the operation that failed: `{:error, {:probe_failed, detail}}` (`stats`), `{:error, {:kill_failed, detail}}` (`kill`), `{:error, {:signal_failed, detail}}` (`signal`) — an unusable/unknown handle is `{:error, :no_handle}` and `alive?/1` answers `false`.
+`Control.kill_outcome/3` is the ONE kill verdict shared by the escalating backends: a gone handle is `:ok`, otherwise the first REAL backend failure wins (KILL, then TERM), and `{:error, :still_alive}` means only that both signals were delivered and the handle is still there — an EPERM kill, a unavailable `kill`/`systemctl` or `{:error, :no_pid}` is reported as itself.
+`Control.signal/2` normalizes the signal exactly ONCE and backends receive the NAME as authoritative; a backend never re-validates it.
+A registry request has THREE possible outcomes and they are never conflated: a dead/unregistered registry keeps each call site's documented degraded value (`get/2`/`lookup/2` → `{:error, :not_found}`, `list/1`/`live/1` → `[]`, `prune/1` → `{:ok, 0}`, `track/3` → `{:error, :process_manager_unavailable}`), a WEDGED registry (the call timed out) answers `{:error, :timeout}`, and one that crashed while answering answers `{:error, {:registry_exit, reason}}`, each with ONE `Logger.warning`.
+`Registry.classify_exit/1` is that decision (pure, `@doc false`, unit-tested without waiting out a call); `list/1`, `live/1` and `sample_all/1` stay empty-shaped for both failure kinds because an empty roster IS the dashboard read's contract.
+`Registry.record_stats/3` drops a non-map probe answer (`:ok`) rather than crashing the calling agent, an unknown `handle_call` answers `{:error, {:unknown_call, request}}` (never `:ok`), and `Registry.cast/2` is a bare `GenServer.cast/2` — it cannot fail, so it carries no guard.
+
 ## API Surface
 
 | Module | Role |
