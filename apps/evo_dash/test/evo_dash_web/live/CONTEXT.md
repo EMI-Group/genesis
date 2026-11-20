@@ -243,6 +243,12 @@ Async `home_live/approval_workflow_review_test.exs` and `home_live/execution_ind
 The mounted stale-scope regression pins fail-closed browser review with `ApprovalWorkflow.dialog_index/3`, including a stale notification whose exact pending ID is reused by a new chat, and missing or malformed scopes.
 This test node contains no production fix for that source issue.
 
+## Known Issues
+
+- `welcome_live_test.exs` "ChatGPT in-browser sign-in cancelling returns to the sign-in button and stops the flow" (`~line 538`) intermittently fails in a FULL `mix test apps/evo_dash/test` run at `assert_receive {:signin_stub, {:begin, "default"}}, @stub_call_timeout` with `no matching message after 5000ms`, while the mailbox still holds only the mount-time `{:plug_conn, :sent}` / `{ref, {200, …}}` leftovers.
+  The stub's `begin` notification is emitted from `ChatGPTSignIn.call/3`'s `Task.async` and the handler waits for it via `Task.yield` (15 s), so under the full async cohort the call can exceed the 5 s `@stub_call_timeout` window — or its own 15 s `@call_timeout_ms`, in which case the page settles into `{:error, :sign_in_unavailable}` and no notification is ever sent.
+  It passes with the same seed when the file runs alone (40 passed) and reproduces on the pre-fix tree, so it is not caused by the system-page chart work; the fix belongs to that file's stub barrier (wait on the applied page state or the module's `@async_wait_budget_ms`), not to `system_live_test.exs`.
+
 ## Notes for Agents — system page chart assertions
 
 `/system` mounts the shared app layout, so its rendered HTML also carries ambient sidebar content — Recent projects from the BEAM-global `EvoGit.VCT` mount table (written by concurrently running projects suites) and the run-wide active-task list — which belongs to other suites, never to this page.
