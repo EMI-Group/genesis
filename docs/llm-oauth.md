@@ -4,7 +4,10 @@ Genesis supports OpenAI API keys and ChatGPT subscriptions as separate OpenAI pr
 
 ## ChatGPT Subscription
 
-Run the Genesis sign-in command and open the displayed URL in a browser. Grant Genesis permission to use your ChatGPT plan. The command lists the model IDs available to that account.
+In **Welcome** or **Settings → LLM → Provider accounts**, choose **ChatGPT Subscription** and select **Sign in with ChatGPT** on the account you are creating or editing (the wizard auth step, an expanded account, and an account's auth row all offer it). Genesis starts a loopback listener on the execution host, shows an authorization link that opens in a new browser tab, and waits for you to grant permission. When the tab reports success the account turns connected: pick your registration, select from its available models, and finish.
+The waiting panel can be cancelled; closing the panel, the wizard or the settings window cancels it too, and an attempt expires after ten minutes.
+
+The same sign-in is available from the command line, which prints the URL to open and can list the models for an account:
 
 ```sh
 genesis chatgpt login
@@ -14,7 +17,9 @@ genesis chatgpt models
 
 From a source checkout, run `mix genesis.chatgpt login`. A release without the `genesis` CLI can run its launcher with `eval 'EvoDash.ChatGPTCLI.main(System.argv())' login`.
 
-In **Welcome** or **Settings → LLM → Provider accounts**, choose **ChatGPT Subscription**. Select **Check connection** after signing in, choose your registration and select from its available models. In Settings, save the account before running **Connection Test**. In Welcome, test the selected model before finishing setup.
+In Settings, save the account before running **Connection Test**. In Welcome, test the selected model before finishing setup. Both the dashboard button and the CLI drive the same loopback flow and the same credential store, so either can be used for reauthorization.
+
+The dashboard button signs in on the node the dashboard is connected to, and it binds a loopback address on that host — so it is offered only in a local node context. For a remote execution host, run the CLI there (forwarding the port if you are on SSH, see below) and then press **Check connection**.
 
 ```toml
 [[llm.providers]]
