@@ -276,15 +276,10 @@ Supervised GenServer sampling every 3s and broadcasting on `"system"`; the exact
 - **Degradation**: scheduler reads go through `safe_scheduler_call/1` (2s bound < the 3s cadence + `catch :exit` — the module's single justified try/catch); a config-refresh failure KEEPS the last totals + pools, an `llm_slots` failure broadcasts `%{}`, so the 14-key shape always ships with rate-limited warnings. With `scheduler_alive?/0` false the sample carries zero counts/capacities + empty slots/pools, and zero capacities are NEVER cached.
 - **Ring buffer**: last 60 samples; `get_recent_samples/0` → `{:ok, samples}` | `{:error, :not_found}`; `RemoteAPI.get_recent_system_samples/0` → `{:error, :sampler_down}`.
 
-## Peak/Off-Peak Diagnostics (a task stuck blocked after peak exit)
+## Peak/Off-Peak Diagnostics
 
-Read these log lines IN ORDER when a task stays `:blocked` after a peak window (`concurrency: 5`, `peak_concurrency: 0`).
-1. `PeakHourEngine: wakeup reason=… now=… utc_now=… scheduler_up=…` (`reason` = `:boot | :timer | :broadcast | :manual`) — no post-window `:timer` wakeup ⇒ never woke.
-2. `PeakHourEngine: decision=applying|unchanged effective=… current=…` — `unchanged` with the post-window map already `current`, or `applying` with `effective=%{"m" => 0}` ⇒ still believes it is in peak.
-3. `PeakHourEngine: next wakeup in <ms>ms … transitions=[{id, tz, wall_transition}]` — the 6h safety net is flagged when none was computable.
-4. `AgentScheduler: model_concurrency updated — old=… new=…` — `old == new` after the window ⇒ never applied.
-5. `AgentScheduler: LLM slot grant sweep (resume) — model=… capacity=… waiting_before=… granted=… waiting_after=…` — `capacity=N granted=0 waiting_after>0` ⇒ applied but never granted.
-Logging only; `peak_hour_engine_test.exs` pins the fixed-point invariant. Detail: `./agent_scheduler/CONTEXT.md`.
+Peak handling is log-only; `peak_hour_engine_test.exs` pins the fixed-point invariant.
+The ordered diagnostic sequence for a task stuck `:blocked` after a peak window (`PeakHourEngine` wakeup/decision/next-wakeup lines, then `AgentScheduler: model_concurrency updated` and the `LLM slot grant sweep (resume)` line with `capacity=N granted=0 waiting_after>0`) lives in `./agent_scheduler/CONTEXT.md`.
 
 ## Runtime distribution control
 `Distribution.enable_runtime/3` pins `:kernel` `inet_dist_listen_min = inet_dist_listen_max = dist_port` UNCONDITIONALLY (before any start attempt) and `epmd_module` to `EvoGit.EpmdDist`, then starts distribution via `start_net_kernel/1`.
