@@ -4,21 +4,38 @@ defmodule EvoGit.Agent.Tools.GuideUser do
   `EvoGit.CommandShell` via the `run_command` tool. Shows transient
   user-facing guides in the dashboard UI.
 
+  NOT an LLM tool: it exposes no `schema/0` and is never listed in an agent's
+  `available_tools/0` — the model reaches it only through the `run_command`
+  tool's literal command registry.
+
+  ## Return contract
+
+  A SUCCESS returns the confirmation string
+  `"Guide shown to user: <first 80 characters of the message>"` (a plain
+  `String.t()`); a bad or missing argument (`message`, `dismissible`) returns
+  `{:error, String.t()}` through the `with` chain, with no `else` clause — the
+  exact shape `EvoGit.CommandShell` propagates as a shell error.
+  The return values are never truncated beyond that 80-character confirmation.
+
+  ## Delivery
+
   Broadcasts a `{:guide_updated, id, payload, node()}` message on the
   `"guides"` PubSub topic so the dashboard can render a guide card (e.g. a
-  toast or inline hint) to the user. The broadcast is best-effort: the agent
-  never crashes when the PubSub server is unavailable.
+  toast or inline hint) to the user. The broadcast is best-effort: PubSub being
+  down (a headless remote daemon without a dashboard subscriber, or an
+  environment without the PubSub app) never raises, and the confirmation is
+  returned anyway.
   """
 
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
-  Executes the guide_user tool.
+  Executes the guide_user command handler.
 
-  Broadcasts the guide payload on the `"guides"` PubSub topic and returns a
-  short confirmation. Never raises on bad args (returns a descriptive error
-  string) and never raises when PubSub is down (the broadcast is skipped and
-  the confirmation is still returned).
+  Broadcasts the guide payload on the `"guides"` PubSub topic and returns the
+  confirmation string described in the moduledoc. Never raises: a bad/missing
+  argument returns `{:error, message}` (not a string), and a PubSub outage
+  skips the broadcast while still returning the confirmation.
   """
   def execute(args, _repo_path, _repo_root) do
     with {:ok, message} <- Shared.fetch_string_arg(args, "message"),
@@ -41,11 +58,13 @@ defmodule EvoGit.Agent.Tools.GuideUser do
     end
   end
 
-  # Tool-boundary rescue: the PubSub server may be down (headless remote
-  # daemon without a dashboard subscriber, or a test env without the PubSub
-  # app started). Showing a guide to the user is best-effort UI — the agent
-  # must never crash because the UI is unavailable, so the broadcast failure
-  # is swallowed and the confirmation is still returned.
+  # Delivery guard: the PubSub server may be down (headless remote daemon
+  # without a dashboard subscriber, or a test env without the PubSub app
+  # started). Showing a guide to the user is best-effort UI — the agent must
+  # never crash because the UI is unavailable — so this is the one place a
+  # failure is deliberately swallowed, and the SUCCESS value (`:ok`) rather than
+  # an error is the point: `EvoGit.Agent.Tools.Boundary`'s error rendering does
+  # not apply.
   defp broadcast_guide(id, payload) do
     try do
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "guides", {:guide_updated, id, payload, node()})
