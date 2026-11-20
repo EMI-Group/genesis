@@ -281,8 +281,8 @@ Adding a NEW top-level category is additive for: enumeration (append a schema ma
 Dashboard-side requirements for a new schema-driven category (evo_dash, not core): `category_display_name/1`, `category_icon/1`, `category_description/1` clauses in `EvoDashWeb.SettingsComponents.CategoryMetadata` (no catch-all — a missing clause = FunctionClauseError in the sidebar/header) plus an entry in its `sort_categories/1` order list (missing = sorts last). `:agents`/`:remote_connections` are NOT core categories — the dashboard injects them as empty-schema pseudo-categories rendered by dedicated inline UI branches.
 
 ## Validation Path Typing
-`Schema.key_path/0` describes atom-only descriptor paths, but `Schema.ValidationError.t/0` also currently declares atom-only paths even though composite validators append non-negative list indices (`ecto_validation.ex:272`, `provider_profile_validation.ex:15,117`).
-Error paths therefore need a distinct atom-or-non-negative-integer segment type rather than widening descriptor paths indiscriminately.
+`Schema.key_path/0` describes atom-only schema descriptor paths.
+`Schema.ValidationError.key_path/0` describes error paths containing atoms and non-negative list indexes, as emitted by composite profile validators, and is used by `Schema.ValidationError.t/0`.
 
 ## Validation Engine — Ecto-backed (architecture)
 
