@@ -1195,7 +1195,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
     test "the empty workbench only shows its no-project message", %{conn: conn} do
       {:ok, view, html} = live(conn, ~p"/projects")
-      render_async(view)
+
+      # Pass the suite's async deadline explicitly: `render_async/2`'s 100 ms default is a fixed-load assumption, while this page's async work is scheduled by the shared BEAM.
+      render_async(view, async_wait_budget())
 
       assert has_element?(view, "#workbench-idle [data-workbench-idle-projects]", "No projects")
       assert has_element?(view, "#workbench-new-project[data-workbench-attention=true]")
@@ -1224,7 +1226,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         refute html =~ "chat-form"
         refute html =~ "project-omnibox"
 
-        render_async(view)
+        render_async(view, async_wait_budget())
         assert has_element?(view, "#workbench-new-project[data-workbench-attention=true]")
         refute has_element?(view, "#workbench-projects [data-workbench-project-row]")
         refute has_element?(view, "#workbench-project-search")
@@ -1239,7 +1241,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       assert {:ok, _} = EvoGit.VCT.mount(tmp_dir, name: "Workbench project")
       {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_home: "1"}}")
-      render_async(view)
+      render_async(view, async_wait_budget())
 
       assert has_element?(
                view,
@@ -3343,7 +3345,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          {:error, :not_a_directory}}
       )
 
-      html = render_async(view)
+      html = render_async(view, async_wait_budget())
 
       assert html =~ "Directory does not exist on the remote node: /home/user/proj"
       assert assigns(view)[:remote_project_loading] == nil
@@ -3368,7 +3370,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # Wait for the real async load so the assigns are settled (the mount-
       # seeded degraded values equal the async degraded results either way).
-      render_async(view)
+      render_async(view, async_wait_budget())
       assert assigns(view)[:custom_agents] == []
 
       # Forged result from a DIFFERENT node — dropped entirely by the
@@ -3385,7 +3387,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          }}
       )
 
-      render_async(view)
+      render_async(view, async_wait_budget())
 
       refute Enum.any?(assigns(view)[:custom_agents], &(&1.id == "stale"))
       assert assigns(view)[:custom_agents] == []
@@ -3439,7 +3441,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
           }}}
       )
 
-      render_async(view)
+      render_async(view, async_wait_budget())
 
       assert assigns(view)[:active_project] == nil
       assert assigns(view)[:active_project_path] == nil
