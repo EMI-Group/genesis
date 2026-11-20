@@ -554,7 +554,12 @@ defmodule EvoDashWeb.TaskCardComponents do
         </div>
 
         <%= if @show_details do %>
-          <div class="border-t border-base-200 pt-3 mt-1">
+          <%!-- `animate-detail-enter` (app.css) is the shared entrance for a
+               detail body that `:if`-mounts: the element is genuinely fresh on
+               every expand, so the keyframe replays on open and never on a patch
+               (no per-component keyframes, opacity+transform only, and the
+               global reduced-motion backstop stills it). --%>
+          <div class="animate-detail-enter border-t border-base-200 pt-3 mt-1">
             <div class="space-y-4">
               <!-- Full-detail structured failure block — EXPANDED failed card
                    only (the collapsed card shows the compact line instead).
@@ -700,14 +705,18 @@ defmodule EvoDashWeb.TaskCardComponents do
                     </button>
                   </div>
                 <% lite == nil -> %>
+                  <%!-- Skeleton (not a spinner) with the block's height reserved,
+                       so the heavy sections do not jump when the detail lands.
+                       The caption stays as the status line for assistive tech. --%>
                   <div
                     id={"task-#{@task.id}-detail-loading"}
-                    class="flex items-center gap-2 bg-base-200/40 border border-base-200/80 rounded-lg px-3 py-2"
+                    class="rounded-lg border border-base-200/80 bg-base-200/40 px-3 py-3 min-h-16"
+                    role="status"
                   >
-                    <span class="loading loading-spinner loading-xs text-base-content/60 shrink-0"></span>
-                    <span class="text-xs font-medium text-base-content/70">
+                    <EvoDashWeb.Components.Skeleton.row count={3} />
+                    <p class="mt-2 text-xs font-medium text-base-content/70">
                       {gettext("Loading task details…")}
-                    </span>
+                    </p>
                   </div>
                 <% true -> %>
                   <% usage = Map.get(lite, :usage) %>
@@ -771,18 +780,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                               </div>
                               <progress
                                 class="progress progress-success w-full mt-1"
-                                value={
-                                  if usage.input_tokens > 0,
-                                    do:
-                                      min(
-                                        round(
-                                          Map.get(usage, :cached_tokens, 0) /
-                                            usage.input_tokens * 100
-                                        ),
-                                        100
-                                      ),
-                                    else: 0
-                                }
+                                value={EvoDashWeb.Components.UsageFormat.cache_hit_percent(usage)}
                                 max="100"
                               ></progress>
                             </div>
@@ -854,7 +852,11 @@ defmodule EvoDashWeb.TaskCardComponents do
                   <%= if logs not in [nil, []] do %>
                     <% logs_preview = log_preview(logs) %>
                     <% log_count = logs_preview.total %>
-                    <details class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors group/logs">
+                    <details
+                      id={"task-#{@task.id}-logs"}
+                      class="motion-disclosure bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors group/logs"
+                      phx-hook="DisclosureMotion"
+                    >
                       <summary class="cursor-pointer text-sm font-bold flex items-center gap-2 select-none outline-none">
                         <.icon
                           name="hero-command-line"
@@ -942,11 +944,13 @@ defmodule EvoDashWeb.TaskCardComponents do
                             )}
                           </p>
                         <% archive_state(archive) == :loading -> %>
-                          <div class="flex items-center gap-2 mt-3">
-                            <span class="loading loading-spinner loading-xs text-base-content/60 shrink-0"></span>
-                            <span class="text-xs font-medium text-base-content/70">
+                          <%!-- Skeleton with reserved height; the caption keeps
+                               the live-status wording. --%>
+                          <div class="mt-3 min-h-12" role="status">
+                            <EvoDashWeb.Components.Skeleton.row count={2} />
+                            <p class="mt-2 text-xs font-medium text-base-content/70">
                               {gettext("Loading archive…")}
-                            </span>
+                            </p>
                           </div>
                         <% archive_state(archive) == :error -> %>
                           <div class="flex items-center gap-2 bg-error/10 border border-error/20 rounded-lg px-3 py-2 mt-3 min-w-0">
