@@ -819,8 +819,10 @@ defmodule EvoGit.VCT.Table do
   non-binary input.
 
   Takes an already-resolved `%Mount{}` plus a relative path — unlike
-  `EvoGit.VCT.vct_path_for/2`, which takes a repo ROOT plus a relative path and
-  resolves the containing mount itself.
+  `EvoGit.VCT.vct_path_for/2` and its batched companion
+  `EvoGit.VCT.vct_paths_for/2`, which take a repo ROOT plus relative path(s) and
+  resolve the containing mount themselves (`EvoGit.VCT.Mounts.vct_paths/3` maps
+  every path through this function after ONE mount lookup).
   """
   @spec vct_path_for(Mount.t(), term()) :: String.t() | nil
   def vct_path_for(%Mount{point: point}, relative) when is_binary(relative) do
