@@ -71,12 +71,23 @@ defmodule EvoDashWeb.ProjectComponents do
   attr(:projects, :list, default: [])
   attr(:palette_open, :boolean, default: false)
   attr(:palette_search, :string, default: "")
-  attr(:palette_mode, :atom, values: [:menu, :open_path, :new_project], default: :menu)
+
+  attr(:palette_mode, :atom,
+    values: [:menu, :open_path, :new_project, :new_workspace],
+    default: :menu
+  )
+
   attr(:palette_selected_index, :integer, default: 0)
   attr(:path_suggestions, :list, default: [])
   attr(:tauri_detected, :boolean, default: false)
   attr(:platform, :string, default: "linux")
   attr(:remote, :boolean, default: false)
+  # VCT WORKSPACE view maps (`%{workspace: mount, resolved: [mount], missing:
+  # [ref], nested: [ref]}`), the currently expanded workspace points, and the
+  # ordered member refs already chosen in the New Workspace form.
+  attr(:workspaces, :list, default: [])
+  attr(:expanded_workspaces, :list, default: [])
+  attr(:new_workspace_members, :list, default: [])
 
   def project_omnibox(assigns) do
     ~H"""
@@ -124,6 +135,8 @@ defmodule EvoDashWeb.ProjectComponents do
                 palette_search={@palette_search}
                 palette_selected_index={@palette_selected_index}
                 remote={@remote}
+                workspaces={@workspaces}
+                expanded_workspaces={@expanded_workspaces}
               />
             <% :open_path -> %>
               <.palette_open_path
@@ -137,6 +150,11 @@ defmodule EvoDashWeb.ProjectComponents do
                 tauri_detected={@tauri_detected}
                 remote={@remote}
               />
+            <% :new_workspace -> %>
+              <.palette_new_workspace
+                projects={@projects}
+                new_workspace_members={@new_workspace_members}
+              />
           <% end %>
         </div>
       <% end %>
@@ -145,18 +163,25 @@ defmodule EvoDashWeb.ProjectComponents do
   end
 
   # ---------------------------------------------------------------------------
-  # palette_menu/1 — Search input + filtered projects + actions
+  # palette_menu/1 — Search input + filtered projects + actions + workspaces
   # ---------------------------------------------------------------------------
 
   attr(:projects, :list, default: [])
   attr(:palette_search, :string, default: "")
   attr(:palette_selected_index, :integer, default: 0)
   attr(:remote, :boolean, default: false)
+  attr(:workspaces, :list, default: [])
+  attr(:expanded_workspaces, :list, default: [])
 
   defp palette_menu(assigns) do
     ~H"""
     <% filtered = filter_projects(@projects, @palette_search) %>
     <% action_base = length(filtered) %>
+    <%!-- The workspace action sits AFTER the existing actions, so the keyboard
+         index math stays `action_base` + a fixed offset: locally Open by Path,
+         Create New Project, New Workspace (indices +0/+1/+2); on a remote node
+         Create New Project is hidden, so New Workspace is +1. --%>
+    <% new_workspace_index = action_base + if @remote, do: 1, else: 2 %>
     <!-- Search input -->
     <div class="p-3 border-b border-base-200">
       <div class="relative">
@@ -258,10 +283,138 @@ defmodule EvoDashWeb.ProjectComponents do
         </button>
       <% end %>
 
+      <%!-- New Workspace — available on LOCAL and REMOTE nodes alike: a
+           workspace is pure VCT metadata (no OS path, no filesystem touch). --%>
+      <button
+        type="button"
+        phx-click="palette_mode"
+        phx-value-mode="new_workspace"
+        data-selected={@palette_selected_index == new_workspace_index}
+        class="project-palette-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors"
+      >
+        <.icon name="hero-rectangle-stack" class="size-4 shrink-0" />
+        <span class="text-sm">{gettext("New Workspace")}</span>
+      </button>
+
       <%= if filtered == [] and @palette_search != "" do %>
         <p class="text-xs text-base-content/60 px-3 py-2 text-center">
           {gettext("No matching projects")}
         </p>
+      <% end %>
+
+      <%!-- Workspaces — a pure GROUPING surface, rendered after the project
+           rows AND the action buttons so the existing keyboard index math
+           above is untouched. A workspace has `path: nil` and is NEVER
+           activatable: it is not a runnable project. --%>
+      <%= if @workspaces != [] do %>
+        <div class="border-t border-base-200 my-1"></div>
+        <p class="text-xs font-semibold uppercase tracking-wide text-base-content/60 px-2 py-1">
+          {gettext("Workspaces")}
+        </p>
+        <p class="text-[11px] text-base-content/60 px-2 pb-1">
+          <%!-- zh_CN: 工作区只是把项目分组，本身不是可运行的项目，不能作为任务执行路径 --%>
+          {gettext("A workspace groups projects; it is not a runnable project.")}
+        </p>
+        <%= for ws <- @workspaces do %>
+          <% point = workspace_point(ws) %>
+          <% expanded? = is_binary(point) and point in @expanded_workspaces %>
+          <div
+            id={"workspace-row-#{workspace_slug(point)}"}
+            data-workspace-point={point}
+            class="px-2 py-1"
+          >
+            <div class="flex items-start gap-2">
+              <div class="min-w-0 flex-1">
+                <div class="text-sm font-medium truncate">{workspace_name(ws)}</div>
+                <%= if is_binary(point) do %>
+                  <div class="text-xs text-base-content/70 font-mono truncate" title={point}>
+                    {point}
+                  </div>
+                <% end %>
+                <%= if is_binary(workspace_description(ws)) do %>
+                  <div class="text-xs text-base-content/60 truncate">
+                    {workspace_description(ws)}
+                  </div>
+                <% end %>
+              </div>
+              <%!-- Toggle only: never opens/activates anything. --%>
+              <button
+                type="button"
+                phx-click="toggle_workspace"
+                phx-value-point={point}
+                aria-expanded={to_string(expanded?)}
+                class="btn btn-ghost btn-xs gap-1 shrink-0"
+              >
+                <span class="text-[11px] font-normal">
+                  {gettext("%{count} members", count: workspace_member_count(ws))}
+                </span>
+                <.icon
+                  name={if expanded?, do: "hero-chevron-up", else: "hero-chevron-down"}
+                  class="size-3"
+                />
+              </button>
+            </div>
+
+            <%= if expanded? do %>
+              <%= if workspace_entries(ws) == [] do %>
+                <p class="text-[11px] text-base-content/60 pl-2 mt-1">
+                  {gettext("No members yet.")}
+                </p>
+              <% else %>
+                <ul class="mt-1.5 space-y-1 border-l border-base-200 pl-2">
+                  <%= for member <- workspace_resolved(ws) do %>
+                    <% ref_key = member_ref_key(member) %>
+                    <li
+                      data-workspace-member={ref_key}
+                      title={ref_key}
+                      class="flex items-center gap-2 min-w-0"
+                    >
+                      <.icon name="hero-folder" class="size-3 shrink-0" />
+                      <span class="min-w-0 flex-1">
+                        <span class="block text-xs font-medium truncate">
+                          {display_name(member)}
+                        </span>
+                        <%= if is_binary(ref_key) do %>
+                          <span class="block text-[11px] text-base-content/60 font-mono truncate">
+                            {ref_key}
+                          </span>
+                        <% end %>
+                      </span>
+                    </li>
+                  <% end %>
+                  <%= for ref <- workspace_missing(ws) do %>
+                    <% ref_key = ref_string(ref) %>
+                    <li
+                      data-workspace-missing={ref_key}
+                      title={ref_key}
+                      class="flex items-center gap-2 min-w-0"
+                    >
+                      <.icon name="hero-question-mark-circle" class="size-3 shrink-0 text-warning" />
+                      <span class="min-w-0 flex-1 text-[11px] text-base-content/70 font-mono truncate">
+                        {ref_key}
+                      </span>
+                      <span class="badge badge-warning badge-xs shrink-0">{gettext("Missing")}</span>
+                    </li>
+                  <% end %>
+                  <%= for ref <- workspace_nested(ws) do %>
+                    <% ref_key = ref_string(ref) %>
+                    <li
+                      data-workspace-nested={ref_key}
+                      title={ref_key}
+                      class="flex items-center gap-2 min-w-0"
+                    >
+                      <.icon name="hero-rectangle-stack" class="size-3 shrink-0" />
+                      <span class="min-w-0 flex-1 text-[11px] text-base-content/70 font-mono truncate">
+                        {ref_key}
+                      </span>
+                      <span class="badge badge-ghost badge-xs shrink-0">{gettext("Workspace")}</span>
+                    </li>
+                  <% end %>
+                </ul>
+              <% end %>
+            <% end %>
+          </div>
+        <% end %>
       <% end %>
     </div>
 
@@ -416,6 +569,239 @@ defmodule EvoDashWeb.ProjectComponents do
     </div>
     """
   end
+
+  # ---------------------------------------------------------------------------
+  # palette_new_workspace/1 — New workspace form (group existing projects)
+  #
+  # A workspace is a pure VCT GROUPING point: it carries a name, an optional
+  # description and an ORDERED member list, and it is never a runnable project.
+  # The member order is the click order — the server owns it in
+  # `new_workspace_members` (so the chips above the picker show position
+  # numbers) and submits it verbatim.
+  # ---------------------------------------------------------------------------
+
+  attr(:projects, :list, default: [])
+  attr(:new_workspace_members, :list, default: [])
+
+  defp palette_new_workspace(assigns) do
+    ~H"""
+    <!-- Header with back button -->
+    <div class="flex items-center gap-2 p-3 border-b border-base-200">
+      <button
+        type="button"
+        phx-click="palette_mode"
+        phx-value-mode="menu"
+        class="btn btn-ghost btn-sm btn-circle shrink-0"
+      >
+        <.icon name="hero-arrow-left" class="size-4" />
+      </button>
+      <span class="text-sm font-semibold">{gettext("New Workspace")}</span>
+    </div>
+
+    <div class="p-3">
+      <.form
+        for={%{}}
+        id="new-workspace-form"
+        phx-submit="create_workspace"
+        class="flex flex-col gap-2"
+      >
+        <div>
+          <label class="label py-1">
+            <span class="label-text text-xs font-medium">{gettext("Name")}</span>
+          </label>
+          <input
+            type="text"
+            id="new-workspace-name-input"
+            name="name"
+            required
+            placeholder={gettext("Workspace name")}
+            class="input input-bordered input-sm w-full"
+          />
+        </div>
+
+        <div>
+          <label class="label py-1">
+            <span class="label-text text-xs font-medium">{gettext("Description (optional)")}</span>
+          </label>
+          <input
+            type="text"
+            id="new-workspace-description-input"
+            name="description"
+            placeholder={gettext("Short description of what this group is for")}
+            class="input input-bordered input-sm w-full"
+          />
+        </div>
+
+        <%!-- Selected members, in click order (the order is submitted verbatim). --%>
+        <%= if @new_workspace_members != [] do %>
+          <div class="flex flex-wrap gap-1">
+            <%= for {point, index} <- Enum.with_index(@new_workspace_members) do %>
+              <span
+                data-workspace-selected={point}
+                class="badge badge-primary badge-sm gap-1 max-w-full"
+                title={point}
+              >
+                <span class="font-mono text-[11px] shrink-0">{index + 1}.</span>
+                <span class="font-mono text-[11px] truncate">{point}</span>
+              </span>
+            <% end %>
+          </div>
+        <% end %>
+
+        <%!-- Member picker — one clickable row per project mount on this node. --%>
+        <div class="max-h-48 overflow-y-auto rounded-lg border border-base-200">
+          <%= if @projects == [] do %>
+            <p class="text-xs text-base-content/60 px-2 py-3 text-center">
+              {gettext("No projects to add yet. Open a project first.")}
+            </p>
+          <% else %>
+            <%= for project <- @projects do %>
+              <% project_point = Map.get(project, :point) %>
+              <% selected? = is_binary(project_point) and project_point in @new_workspace_members %>
+              <button
+                type="button"
+                data-workspace-pick={project_point}
+                data-selected={selected?}
+                phx-click="toggle_workspace_member"
+                phx-value-point={project_point}
+                phx-value-path={Map.get(project, :path)}
+                class="w-full flex items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-base-200/60"
+              >
+                <.icon
+                  name={if selected?, do: "hero-check-circle", else: "hero-plus-circle"}
+                  class={
+                    if selected?,
+                      do: "size-3.5 shrink-0 text-primary-standalone",
+                      else: "size-3.5 shrink-0"
+                  }
+                />
+                <span class="min-w-0 flex-1">
+                  <span class="block text-xs font-medium truncate">{display_name(project)}</span>
+                  <span class="block text-[11px] text-base-content/60 font-mono truncate">
+                    {project_point || Map.get(project, :path)}
+                  </span>
+                </span>
+              </button>
+            <% end %>
+          <% end %>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-sm gap-1">
+          <.icon name="hero-check" class="size-4" /> {gettext("Create or update")}
+        </button>
+        <p class="text-[11px] text-base-content/60">
+          <%!-- zh_CN: 同名工作区会被整体替换（名称、成员与描述一起覆盖），不会新增第二个 --%>
+          {gettext("An existing workspace with the same name is replaced, not duplicated.")}
+        </p>
+      </.form>
+    </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # Workspace view helpers — TOTAL over any shape.
+  #
+  # A workspace entry reaching the palette is the view map built by
+  # `EvoDashWeb.ProjectsLive.AsyncLoad.load_workspaces/3`
+  # (`%{workspace: mount, resolved: [mount], missing: [ref], nested: [ref]}`),
+  # but a bare `%EvoGit.VCT.Mount{}` (or a partially-built map) renders too.
+  # Every field is treated as possibly nil.
+  # ---------------------------------------------------------------------------
+
+  defp workspace_mount(%{workspace: %{} = mount}), do: mount
+  defp workspace_mount(%{} = entry), do: entry
+  defp workspace_mount(_entry), do: %{}
+
+  defp workspace_point(entry) do
+    case Map.get(workspace_mount(entry), :point) do
+      point when is_binary(point) -> point
+      _ -> nil
+    end
+  end
+
+  # Primary line: display name → point → point slug.
+  defp workspace_name(entry) do
+    mount = workspace_mount(entry)
+    name = Map.get(mount, :name)
+
+    cond do
+      is_binary(name) and String.trim(name) != "" -> name
+      is_binary(workspace_point(entry)) -> workspace_point(entry)
+      true -> workspace_slug(workspace_point(entry))
+    end
+  end
+
+  defp workspace_description(entry) do
+    case Map.get(workspace_mount(entry), :description) do
+      description when is_binary(description) ->
+        if String.trim(description) == "", do: nil, else: description
+
+      _ ->
+        nil
+    end
+  end
+
+  defp workspace_member_count(entry) do
+    length(workspace_resolved(entry)) + length(workspace_missing(entry)) +
+      length(workspace_nested(entry))
+  end
+
+  defp workspace_resolved(entry), do: Map.get(entry, :resolved) |> list_or_empty()
+  defp workspace_missing(entry), do: Map.get(entry, :missing) |> list_or_empty()
+  defp workspace_nested(entry), do: Map.get(entry, :nested) |> list_or_empty()
+
+  defp workspace_entries(entry) do
+    workspace_resolved(entry) ++ workspace_missing(entry) ++ workspace_nested(entry)
+  end
+
+  defp list_or_empty(list) when is_list(list), do: list
+  defp list_or_empty(_other), do: []
+
+  # A resolved member's DOM/ref key: its point, else its OS path.
+  defp member_ref_key(member) do
+    point = Map.get(member, :point)
+    path = Map.get(member, :path)
+
+    cond do
+      is_binary(point) and point != "" -> point
+      is_binary(path) and path != "" -> path
+      true -> nil
+    end
+  end
+
+  # A stored member ref (`%{"point" => … | nil, "path" => … | nil}`, atom keys
+  # tolerated) as ONE displayable string: the non-nil point, else the path.
+  defp ref_string(ref) when is_binary(ref), do: ref
+
+  defp ref_string(ref) when is_map(ref) do
+    point = Map.get(ref, "point") || Map.get(ref, :point)
+    path = Map.get(ref, "path") || Map.get(ref, :path)
+
+    cond do
+      is_binary(point) and point != "" -> point
+      is_binary(path) and path != "" -> path
+      true -> ""
+    end
+  end
+
+  defp ref_string(ref) when is_list(ref),
+    do: ref |> List.wrap() |> Enum.map(&ref_string/1) |> Enum.join(" ")
+
+  defp ref_string(_ref), do: ""
+
+  # A stable, DOM-safe id fragment for a workspace point
+  # (`vct:///workspaces/my-group` → `my-group`).
+  defp workspace_slug(point) when is_binary(point) do
+    slug =
+      point
+      |> String.replace_prefix("vct:///workspaces/", "")
+      |> String.replace(~r/[^A-Za-z0-9_-]+/, "-")
+      |> String.trim("-")
+
+    if slug == "", do: "unknown", else: slug
+  end
+
+  defp workspace_slug(_point), do: "unknown"
 
   # ---------------------------------------------------------------------------
   # project_settings_panel/1 — Collapsible settings accordion

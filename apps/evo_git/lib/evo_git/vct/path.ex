@@ -47,6 +47,20 @@ defmodule EvoGit.VCT.Path do
   def projects, do: %__MODULE__{segments: ["projects"]}
 
   @doc """
+  Returns the workspaces folder (`vct:///workspaces`).
+
+  A WORKSPACE mount point sits below it (`vct:///workspaces/<slug>`); it is a
+  grouping point like the projects folder itself, never an OS path.
+
+  ## Examples
+
+      iex> EvoGit.VCT.Path.workspaces()
+      %EvoGit.VCT.Path{segments: ["workspaces"]}
+  """
+  @spec workspaces() :: t()
+  def workspaces, do: %__MODULE__{segments: ["workspaces"]}
+
+  @doc """
   Parses a VCT URL into a `t:t/0`.
 
   Returns `{:ok, path}` on success, otherwise one of:

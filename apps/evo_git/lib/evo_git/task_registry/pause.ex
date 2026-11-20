@@ -190,9 +190,9 @@ defmodule EvoGit.TaskRegistry.Pause do
   absent row `{:error, :not_found}`.
 
   On a paused row it re-runs the SAME admission `start_task/2` runs
-  (`RuntimeOpts.admit_model_selection/2` against the CURRENT config,
-  `admit_session_mode/1`, `admit_persistent_state/1`); a failed admission answers
-  that `{:error, reason}` and leaves the row `:paused`. It then requires the
+  (`RuntimeOpts.admit_task_path/1`, `admit_model_selection/2` against the CURRENT
+  config, `admit_session_mode/1`, `admit_persistent_state/1`); a failed admission
+  answers that `{:error, reason}` and leaves the row `:paused`. It then requires the
   task's durable ROOT row (`read_root_run/2`: ONE bounded, offloaded
   `EvoGit.TaskRegistry.AgentStateRead.roster/2` read), because a resume with
   nothing to restore — no durable row at all, or a roster holding only child
@@ -258,7 +258,8 @@ defmodule EvoGit.TaskRegistry.Pause do
   defp admit(%{opts: stored}) do
     opts = if is_list(stored), do: stored, else: []
 
-    with {:ok, opts} <-
+    with {:ok, opts} <- EvoGit.TaskRegistry.RuntimeOpts.admit_task_path(opts),
+         {:ok, opts} <-
            EvoGit.TaskRegistry.RuntimeOpts.admit_model_selection(opts, EvoGit.Config.resolve()),
          {:ok, opts} <- EvoGit.TaskRegistry.RuntimeOpts.admit_session_mode(opts),
          {:ok, opts} <- EvoGit.TaskRegistry.RuntimeOpts.admit_persistent_state(opts) do

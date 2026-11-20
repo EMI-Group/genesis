@@ -20,12 +20,34 @@ defmodule EvoGit.Store.Operations.VctMounts do
   ## Entry maps are STRING-KEYED
 
   `list/1` returns entries shaped `%{"point" =>, "path" =>, "name" =>,
-  "kind" =>, "last_opened_at" => %DateTime{} | nil}` — the shape the VCT layer
-  consumes. `save/2` accepts BOTH key spellings (atom-keyed mount maps and the
+  "kind" =>, "last_opened_at" => %DateTime{} | nil, "members" => [map()],
+  "description" => String.t() | nil}` — the shape the VCT layer consumes.
+  `save/2` accepts BOTH key spellings (atom-keyed mount maps and the
   string-keyed maps `EvoGit.VCT.Mount.to_map/1` produces), so a read-modify-write
   round trip needs no reshaping. `last_opened_at` may be a `%DateTime{}`, an
   ISO-8601 binary or `nil`; it is normalized through
-  `EvoGit.Store.Types.TaskTimestamp.cast/1` before the insert.
+  `EvoGit.Store.Types.TaskTimestamp.cast/1` before the insert. `path` may be
+  `nil` (a workspace mount owns no OS path), and so may `description`.
+
+  ## `members`: the decoded/encoded boundary
+
+  The column stores JSON **TEXT** (an ORDERED array of STRING-KEYED member
+  maps, `%{"point" => "vct:///…" | nil, "path" => "/abs/path" | nil}`); this
+  module is the ONE place that crosses that boundary, in both directions:
+
+    * on the way IN (`entry_from_row/1`) the column is DECODED into a list of
+      maps. A `NULL` column — every mount written before workspace mounts
+      existed — is `[]`, and an undecodable or non-list value also degrades to
+      `[]` with ONE `Logger.warning` per row (a corrupt column must not take the
+      whole mount list down);
+    * on the way OUT (`row_from_entry/1`) the list is encoded with `Jason`. An
+      absent or `nil` key is `"[]"`, so a git mount always round-trips to an
+      empty list, and a value that is not a list of maps raises a descriptive
+      `ArgumentError` — that is a caller bug (the VCT always writes a member
+      list), never a value to silently store.
+
+  `description` needs no boundary: it is plain TEXT and passes through as
+  `nil | String.t()`.
 
   ## Ordering
 
@@ -43,6 +65,8 @@ defmodule EvoGit.Store.Operations.VctMounts do
   """
 
   import Ecto.Query
+
+  require Logger
 
   alias EvoGit.Repo
   alias EvoGit.Store.RepoScope
@@ -97,14 +121,17 @@ defmodule EvoGit.Store.Operations.VctMounts do
   ## Private — row ↔ entry
 
   # THE row → entry translation. `last_opened_at` already loaded through
-  # `Types.TaskTimestamp` (a DateTime or nil).
+  # `Types.TaskTimestamp` (a DateTime or nil); `members` is the JSON TEXT
+  # column and is DECODED here, so no caller ever sees the wire format.
   defp entry_from_row(%VctMountRow{} = row) do
     %{
       "point" => row.point,
       "path" => row.path,
       "name" => row.name,
       "kind" => row.kind,
-      "last_opened_at" => row.last_opened_at
+      "last_opened_at" => row.last_opened_at,
+      "members" => decode_members(row.point, row.members),
+      "description" => row.description
     }
   end
 
@@ -114,8 +141,71 @@ defmodule EvoGit.Store.Operations.VctMounts do
       path: fetch(entry, :path),
       name: fetch(entry, :name),
       kind: fetch(entry, :kind) || "git",
-      last_opened_at: cast_timestamp(fetch(entry, :last_opened_at))
+      last_opened_at: cast_timestamp(fetch(entry, :last_opened_at)),
+      members: encode_members(fetch(entry, :members)),
+      description: fetch(entry, :description)
     }
+  end
+
+  ## Private — the `members` JSON boundary
+
+  # A NULL column is the EMPTY member list: every mount written before
+  # workspace mounts existed has one, and a git mount never has members. A
+  # corrupt value degrades to `[]` with ONE warning — one bad row must not take
+  # the whole mount list down (the read is total, like every other store read).
+  defp decode_members(_point, nil), do: []
+
+  defp decode_members(point, encoded) when is_binary(encoded) do
+    case Jason.decode(encoded) do
+      {:ok, members} when is_list(members) ->
+        if Enum.all?(members, &is_map/1) do
+          members
+        else
+          warn_members(point, encoded, :not_a_list_of_maps)
+          []
+        end
+
+      {:ok, _other} ->
+        warn_members(point, encoded, :not_a_list)
+        []
+
+      {:error, _reason} ->
+        warn_members(point, encoded, :undecodable)
+        []
+    end
+  end
+
+  defp decode_members(point, value) do
+    warn_members(point, value, :not_text)
+    []
+  end
+
+  # An absent/nil key is `"[]"`, so a git mount round-trips to an empty list. A
+  # value that is not a list of maps is a CALLER bug (the VCT always writes
+  # `Mount.to_map/1`'s shape) and raises instead of silently storing NULL.
+  defp encode_members(nil), do: "[]"
+
+  defp encode_members(members) when is_list(members) do
+    if Enum.all?(members, &is_map/1) do
+      Jason.encode!(members)
+    else
+      raise ArgumentError,
+            "invalid vct_mounts.members: #{inspect(members)} " <>
+              "(expected a list of member maps)"
+    end
+  end
+
+  defp encode_members(value) do
+    raise ArgumentError,
+          "invalid vct_mounts.members: #{inspect(value)} " <>
+            "(expected a list of member maps or nil)"
+  end
+
+  defp warn_members(point, value, reason) do
+    Logger.warning(
+      "vct_mounts: unusable members value for #{inspect(point)} (#{inspect(reason)}); " <>
+        "reading it as an empty member list: #{inspect(value)}"
+    )
   end
 
   # `TaskTimestamp.cast/1` accepts a DateTime, an ISO-8601 binary or nil; a

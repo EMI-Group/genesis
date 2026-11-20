@@ -114,6 +114,49 @@ defmodule EvoGit.Agent.Tools.ElixirEval.OperatorProjectsTest do
     end
   end
 
+  test "workspace reads resolve real members, remember missing refs and cover projects", ctx do
+    [alpha, beta] = ctx.mounts
+    name = "#{ctx.token}-workspace"
+    missing_ref = %{"point" => "vct:///projects/#{ctx.token}-missing-project", "path" => nil}
+
+    assert {:ok, workspace} =
+             VCT.create_workspace(
+               name,
+               [%{"point" => alpha.point}, %{"path" => beta.path}, missing_ref],
+               description: "operator workspace"
+             )
+
+    on_exit(fn -> assert :ok = GenServer.call(VCT, {:forget, workspace.point}, 30_000) end)
+
+    expected_workspaces = VCT.workspaces()
+    assert workspace in expected_workspaces
+    assert_value(ctx, "EvoGit.VCT.workspaces()", expected_workspaces)
+    assert_value(ctx, "EvoGit.VCT.workspaces(limit: 1)", VCT.workspaces(limit: 1))
+
+    resolution = VCT.workspace_members(name)
+    assert {:ok, resolution_map} = resolution
+    assert resolution_map.workspace.point == workspace.point
+    assert Enum.map(resolution_map.members, & &1.point) == [alpha.point, beta.point]
+    assert resolution_map.missing == [missing_ref]
+    assert resolution_map.nested == []
+    assert_value(ctx, "EvoGit.VCT.workspace_members(#{inspect(name)})", resolution)
+
+    # A project point and its OS path both name the same covered project.
+    assert_value(ctx, "EvoGit.VCT.workspaces_for(#{inspect(alpha.point)})", [workspace])
+    assert_value(ctx, "EvoGit.VCT.workspaces_for(#{inspect(beta.path)})", [workspace])
+
+    assert workspace in VCT.projects(include_workspaces: true)
+    refute workspace in VCT.projects()
+
+    assert_value(
+      ctx,
+      "EvoGit.VCT.projects(include_workspaces: true)",
+      VCT.projects(include_workspaces: true)
+    )
+
+    assert_no_approval(ctx)
+  end
+
   defp read(ctx, code) do
     ctx.fixture
     |> Fixture.call_async(fn ->
@@ -122,19 +165,48 @@ defmodule EvoGit.Agent.Tools.ElixirEval.OperatorProjectsTest do
     |> Fixture.await()
   end
 
+  # A workspace resolution is compared with the SAME Mount projection for the
+  # workspace and its resolved members, while the stored unresolved and nested
+  # refs are compared unexpanded and unprojected.
+  defp assert_value(ctx, code, {:ok, resolution}) do
+    expected =
+      {:ok, {project_mount(resolution.workspace), Enum.map(resolution.members, &project_mount/1)}}
+
+    literal = inspect(expected, limit: :infinity, printable_limit: :infinity)
+
+    assert read(ctx, """
+           {:ok, resolution} = (#{code})
+
+           {:ok,
+            {{Atom.to_string(resolution.workspace.__struct__),
+              Map.update!(Map.from_struct(resolution.workspace), :last_opened_at, fn
+                nil -> nil
+                timestamp -> DateTime.to_iso8601(timestamp)
+              end)},
+             Enum.map(resolution.members, fn mount ->
+               {Atom.to_string(mount.__struct__),
+                Map.update!(Map.from_struct(mount), :last_opened_at, fn
+                  nil -> nil
+                  timestamp -> DateTime.to_iso8601(timestamp)
+                end)}
+             end)}} == #{literal}
+           """) == "Result: true"
+
+    stored_refs = fn refs -> Enum.map(refs, fn ref -> Map.get(ref, "point") end) end
+    expected_refs = inspect(stored_refs.(resolution.missing) ++ stored_refs.(resolution.nested))
+
+    assert read(ctx, """
+           {:ok, resolution} = (#{code})
+           Enum.map(resolution.missing, fn ref -> Map.get(ref, "point") end) ++
+             Enum.map(resolution.nested, fn ref -> Map.get(ref, "point") end)
+           """) == "Result: " <> expected_refs
+  end
+
   defp assert_value(ctx, code, expected) do
     # Dune does not intern unadmitted struct alias segments from source literals.
     # Preserve every Mount field and its struct identity, rendering only the
     # DateTime as ISO8601 instead of synthesizing a Mount/DateTime literal.
-    expected =
-      Enum.map(expected, fn mount ->
-        {Atom.to_string(mount.__struct__),
-         Map.update!(Map.from_struct(mount), :last_opened_at, fn
-           nil -> nil
-           timestamp -> DateTime.to_iso8601(timestamp)
-         end)}
-      end)
-
+    expected = Enum.map(expected, &project_mount/1)
     literal = inspect(expected, limit: :infinity, printable_limit: :infinity)
 
     assert read(ctx, """
@@ -146,6 +218,14 @@ defmodule EvoGit.Agent.Tools.ElixirEval.OperatorProjectsTest do
               end)}
            end) == #{literal}
            """) == "Result: true"
+  end
+
+  defp project_mount(mount) do
+    {Atom.to_string(mount.__struct__),
+     Map.update!(Map.from_struct(mount), :last_opened_at, fn
+       nil -> nil
+       timestamp -> DateTime.to_iso8601(timestamp)
+     end)}
   end
 
   defp assert_no_approval(ctx) do

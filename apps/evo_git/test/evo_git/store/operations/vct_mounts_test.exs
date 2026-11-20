@@ -13,7 +13,12 @@ defmodule EvoGit.Store.Operations.VctMountsTest do
       no longer present, and a failure while writing the NEW rows rolls the
       delete back — the previous table survives intact;
     * the store facade maps a disk-full-class failure to
-      `{:error, :disk_full}`.
+      `{:error, :disk_full}`;
+    * the workspace columns cross the JSON boundary HERE: `members` is DECODED
+      to an ordered list of maps on the way out (`NULL`/corrupt → `[]`, one
+      warning per corrupt row) and ENCODED to JSON TEXT on the way in (absent
+      or `nil` → `"[]"`, a non-list-of-maps value raises), while `path` may be
+      `nil` and `description` stays plain TEXT.
 
   ## The disk-full arm
 
@@ -77,6 +82,20 @@ defmodule EvoGit.Store.Operations.VctMountsTest do
       "name" => name,
       "kind" => "git",
       "last_opened_at" => last_opened_at
+    }
+  end
+
+  # A WORKSPACE entry: no OS path of its own, an ORDERED member list and an
+  # optional description — the shape the VCT layer writes for a workspace mount.
+  defp workspace_entry(point, name, members, description, last_opened_at \\ nil) do
+    %{
+      "point" => point,
+      "path" => nil,
+      "name" => name,
+      "kind" => "workspace",
+      "last_opened_at" => last_opened_at,
+      "members" => members,
+      "description" => description
     }
   end
 
@@ -200,6 +219,149 @@ defmodule EvoGit.Store.Operations.VctMountsTest do
     end
   end
 
+  ## Workspace mounts (`members` + `description`)
+
+  describe "workspace mounts" do
+    test "round-trips the member list IN ORDER plus the description", %{sqlite_path: path} do
+      store = start_store!(path)
+
+      # Order is significant, and a member may be point-only or path-only — both
+      # shapes must survive verbatim.
+      members = [
+        %{"point" => "vct:///projects/beta", "path" => nil},
+        %{"point" => nil, "path" => "/p/legacy"},
+        %{"point" => "vct:///projects/alpha", "path" => "/p/a"}
+      ]
+
+      :ok =
+        Store.save_vct_mounts(store, [
+          workspace_entry("vct:///workspaces/all", "All", members, "everything I touch")
+        ])
+
+      assert [
+               %{
+                 "point" => "vct:///workspaces/all",
+                 "path" => nil,
+                 "name" => "All",
+                 "kind" => "workspace",
+                 "members" => ^members,
+                 "description" => "everything I touch"
+               }
+             ] = Store.list_vct_mounts(store)
+
+      # Stored as ONE JSON TEXT array (never a NULL column, never binary blobs).
+      assert [["vct:///workspaces/all", encoded]] =
+               raw_rows!(store, "SELECT point, members FROM vct_mounts")
+
+      assert Jason.decode!(encoded) == members
+    end
+
+    test "a mount with no members key and no description reads back as []/nil",
+         %{sqlite_path: path} do
+      store = start_store!(path)
+
+      # `entry/4` carries neither key: a git mount, i.e. the pre-workspace shape.
+      :ok = Store.save_vct_mounts(store, [entry("vct:///projects/plain", "/p/plain", "Plain")])
+
+      assert [%{"members" => [], "description" => nil}] = Store.list_vct_mounts(store)
+
+      # An absent key is persisted as the EMPTY array, so the read never has to
+      # special-case it.
+      assert [["[]"]] = raw_rows!(store, "SELECT members FROM vct_mounts")
+    end
+
+    test "a pre-workspace row with NULL members and NULL description reads as []/nil",
+         %{sqlite_path: path} do
+      store = start_store!(path)
+
+      :ok = Store.save_vct_mounts(store, [entry("vct:///projects/old", "/p/old", "Old")])
+
+      # What a row written by the OLD five-column table actually holds.
+      raw_exec!(store, "UPDATE vct_mounts SET members = NULL, description = NULL")
+
+      assert [%{"members" => [], "description" => nil, "path" => "/p/old"}] =
+               Store.list_vct_mounts(store)
+    end
+
+    test "an undecodable or non-list members column degrades to []", %{sqlite_path: path} do
+      store = start_store!(path)
+
+      :ok =
+        Store.save_vct_mounts(store, [
+          entry("vct:///projects/a", "/p/a", "A"),
+          entry("vct:///projects/b", "/p/b", "B")
+        ])
+
+      raw_exec!(store, "UPDATE vct_mounts SET members = 'not json' WHERE point = ?", [
+        "vct:///projects/a"
+      ])
+
+      raw_exec!(store, "UPDATE vct_mounts SET members = '{\"point\":\"x\"}' WHERE point = ?", [
+        "vct:///projects/b"
+      ])
+
+      # One warning per corrupt row, and the rest of the table is unaffected —
+      # a bad column never takes the whole mount list down.
+      log =
+        capture_log(fn ->
+          assert Enum.map(Store.list_vct_mounts(store), & &1["members"]) == [[], []]
+        end)
+
+      assert log =~ "vct:///projects/a"
+      assert log =~ "vct:///projects/b"
+    end
+
+    test "a members value that is not a list of maps raises at the write boundary",
+         %{sqlite_path: path} do
+      # Operations-level, like the last_opened_at case above: a write that
+      # raises crashes the writer, so the contract is asserted where it lives.
+      {:ok, repo} = Boot.start_dynamic(path)
+      :ok = Ops.save(repo, [entry("vct:///projects/kept", "/p/kept", "Kept")])
+
+      for bad <- ["not-a-list", %{"point" => "vct:///projects/a"}, ["not a map"], [1, 2]] do
+        assert_raise ArgumentError, ~r/invalid vct_mounts.members/, fn ->
+          Ops.save(repo, [
+            %{
+              "point" => "vct:///workspaces/bad",
+              "path" => nil,
+              "name" => "Bad",
+              "kind" => "workspace",
+              "members" => bad
+            }
+          ])
+        end
+      end
+
+      # Every raise rolled the transaction back, so the previous table survives.
+      assert points(Ops.list(repo)) == ["vct:///projects/kept"]
+
+      :ok = Boot.stop(repo)
+    end
+
+    test "atom-keyed workspace entries are accepted too", %{sqlite_path: path} do
+      store = start_store!(path)
+
+      :ok =
+        Store.save_vct_mounts(store, [
+          %{
+            point: "vct:///workspaces/atom",
+            path: nil,
+            name: "Atom",
+            kind: "workspace",
+            members: [%{point: "vct:///projects/a", path: nil}],
+            description: "desc"
+          }
+        ])
+
+      assert [
+               %{
+                 "members" => [%{"point" => "vct:///projects/a", "path" => nil}],
+                 "description" => "desc"
+               }
+             ] = Store.list_vct_mounts(store)
+    end
+  end
+
   ## Disk full
 
   describe "disk-full mapping" do
@@ -247,5 +409,23 @@ defmodule EvoGit.Store.Operations.VctMountsTest do
         {:ok, _} = XqliteNIF.query(conn, "PRAGMA query_only = #{value}", [])
         :ok
       end)
+  end
+
+  # Raw write / read on the store's own pooled connection: the only way to plant
+  # a value the operations module would never write (a NULL `members` column, an
+  # undecodable one) or to observe the exact bytes it did write.
+  defp raw_exec!(store, statement, params \\ []) do
+    :ok =
+      XqliteEcto3.with_xqlite(Store.__repo_pid__(store), fn conn ->
+        {:ok, _} = XqliteNIF.query(conn, statement, params)
+        :ok
+      end)
+  end
+
+  defp raw_rows!(store, statement, params \\ []) do
+    XqliteEcto3.with_xqlite(Store.__repo_pid__(store), fn conn ->
+      {:ok, %{rows: rows}} = XqliteNIF.query(conn, statement, params)
+      rows
+    end)
   end
 end

@@ -92,7 +92,7 @@ behaviour is to be *penalised* by our current shape.
 | Skills | `skill` (load one body) + **injected `<available_skills>` catalog** (republished only when the name/description digest changes) | 8 `skill_*` tools (list/read/add/edit/remove/enable/disable/where); enabled skills become tools; **no catalog injection** — discovery requires calling `skill_list` | propose catalog |
 | CONTEXT.md ops | **absent** (`AGENTS.md` instead) | `read_context`/`write_context`/`edit_context`/`search_context` | **we are ahead** |
 | History search | **absent** | `search_history` (git log + notes) | **we are ahead** |
-| Task control | **absent** (`schedule_*` for future turns only) | `run_command` — 10 commands + approval gate + self-reflective persona | **we are ahead** |
+| Task control | **absent** (`schedule_*` for future turns only) | `run_command` — 12 commands (including `list_workspaces` / `workspace_members`, so VCT workspaces are listed and expanded; a workspace groups projects and is never a task path) + approval gate + self-reflective persona | **we are ahead** |
 | Terminal / PTY | 6 `terminal_*` tools | **absent** (no background process at all) | future |
 | Background jobs | `job_list`/`job_output`/`job_kill` | **absent** | future (pairs with shell) |
 | MCP | `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource` + dynamic server tools | **absent** | future |

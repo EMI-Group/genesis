@@ -75,15 +75,19 @@ defmodule EvoGit.Store.BootMigrationTest do
   @vct_mounts_version 20_260_815_000_007
   @session_mode_version 20_260_815_000_008
   @pause_kind_version 20_260_815_000_009
+  # The workspace-mount rebuild of `vct_mounts` (version 10 is RETIRED and must
+  # never be reused).
+  @workspace_mounts_version 20_260_815_000_011
   # Ascending, exactly as `schema_migrations` reports it: the one schema-creating
   # baseline, the data normalization, the two shipped index migrations (the two
   # composite indexes and the two covering indexes), the merged
   # `task_agent_archives` table + legacy fan-out that drops
   # `tasks.archive_metadata`, the final prune of the four redundant indexes, the
-  # VCT mount table (`vct_mounts`) that retires the legacy `projects` table, and
-  # the probe-guarded `tasks.session_mode` adoption and the probe-guarded
+  # VCT mount table (`vct_mounts`) that retires the legacy `projects` table, the
+  # probe-guarded `tasks.session_mode` adoption, the probe-guarded
   # `tasks.pause_kind` adoption (each a NO-OP on a fresh database, which the
-  # baseline already creates with both columns).
+  # baseline already creates with both columns) and the `vct_mounts` rebuild
+  # that adds the two workspace columns and makes `path` nullable.
   @migration_versions [
     @baseline_version,
     @normalization_version,
@@ -93,7 +97,8 @@ defmodule EvoGit.Store.BootMigrationTest do
     @prune_indexes_version,
     @vct_mounts_version,
     @session_mode_version,
-    @pause_kind_version
+    @pause_kind_version,
+    @workspace_mounts_version
   ]
 
   # The LEGACY 20 column names in physical order — the shape a pre-release
@@ -663,9 +668,9 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all nine migrations (the Ecto migrator saw version 0)...
+      # The boot stamped all ten migrations (the Ecto migrator saw version 0)...
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[9]]
+      assert schema_migrations_count(pid) == [[10]]
 
       # ...the appended `error` landed AFTER the pre-existing `updated_at`
       # (SQLite ALTERs can only append) as a NULLABLE add with its declared
@@ -721,7 +726,7 @@ defmodule EvoGit.Store.BootMigrationTest do
       assert task_table_info(pid) == @adopted_19_col_table_info_rows
       refute "archive_metadata" in column_names(pid, "tasks")
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[9]]
+      assert schema_migrations_count(pid) == [[10]]
 
       row = get_task_row(pid, "r6b1-oldpipe")
       assert {row.id, row.status} == {"r6b1-oldpipe", "completed"}
@@ -853,7 +858,7 @@ defmodule EvoGit.Store.BootMigrationTest do
   # ── Scenario 6: the retired projects table + the VCT mount table ──────────
 
   describe "projects retirement and vct_mounts creation" do
-    test "an adopted legacy DB drops its projects table and gains the 5-column vct_mounts",
+    test "an adopted legacy DB drops its projects table and gains the 7-column vct_mounts",
          %{root: root} do
       path = db_path(%{root: root}, "projects_retired")
       build_legacy_db!(path, @ddl_15_col, ~w(id status), ["r6b1-noproj", "completed"])
@@ -868,10 +873,12 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       assert query_rows(pid, "PRAGMA table_info(vct_mounts)") == [
                [0, "point", "TEXT", 1, nil, 1],
-               [1, "path", "TEXT", 1, nil, 0],
+               [1, "path", "TEXT", 0, nil, 0],
                [2, "name", "TEXT", 1, nil, 0],
                [3, "kind", "TEXT", 1, nil, 0],
-               [4, "last_opened_at", "TEXT", 0, nil, 0]
+               [4, "last_opened_at", "TEXT", 0, nil, 0],
+               [5, "members", "TEXT", 0, nil, 0],
+               [6, "description", "TEXT", 0, nil, 0]
              ]
 
       # tasks adoption still happened alongside the mount-table creation.
@@ -891,7 +898,9 @@ defmodule EvoGit.Store.BootMigrationTest do
                "path",
                "name",
                "kind",
-               "last_opened_at"
+               "last_opened_at",
+               "members",
+               "description"
              ]
     end
   end

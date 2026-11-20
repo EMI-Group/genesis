@@ -1155,6 +1155,27 @@ defmodule EvoDash.NodeContextVctTest do
     mount
   end
 
+  # A unique WORKSPACE name: alphanumeric only, so the SLUGIFIED point segment
+  # (`EvoGit.VCT.Table.point_segment/1`) is the very same string and a bare-name
+  # resolution can match nothing else. Workspaces are UNCAPPED, so this is not
+  # about the project cap — unique names keep the shared mount table readable for
+  # peer suites, and every created workspace is forgotten on teardown.
+  defp unique_workspace_name(label) do
+    "ctxws#{label}#{System.unique_integer([:positive])}"
+  end
+
+  # Creates one uniquely-named local workspace through the delegate under test
+  # and forgets it on teardown.
+  defp workspace!(label, members, opts \\ []) do
+    name = unique_workspace_name(label)
+
+    assert {:ok, %EvoGit.VCT.Mount{} = workspace} =
+             EvoDash.NodeContext.create_workspace(node(), name, members, opts)
+
+    on_exit(fn -> EvoGit.VCT.forget(workspace.point) end)
+    workspace
+  end
+
   describe "projects/1 (VCT project-registry delegate)" do
     test "includes a newly mounted local project with its point/path/name" do
       mount = mount_unique!("projects")
@@ -1239,6 +1260,146 @@ defmodule EvoDash.NodeContextVctTest do
         with_log(fn -> EvoDash.NodeContext.forget_project(@remote_node, "/tmp/x") end)
 
       assert {:error, {_kind, _reason}} = result
+    end
+  end
+
+  describe "VCT workspaces (node-aware passthroughs)" do
+    test "creates a workspace mount with ordered members/description and lists it" do
+      project = mount_unique!("ws_create")
+      unique = System.unique_integer([:positive])
+      missing_path = "/tmp/node_context_ws_missing_#{unique}"
+      name = unique_workspace_name("create")
+
+      assert {:ok, %EvoGit.VCT.Mount{} = workspace} =
+               EvoDash.NodeContext.create_workspace(
+                 node(),
+                 name,
+                 [%{"point" => project.point}, %{"path" => missing_path}],
+                 description: "Grouped for the NodeContext suite"
+               )
+
+      on_exit(fn -> EvoGit.VCT.forget(workspace.point) end)
+
+      # A workspace is a GROUPING point: kind "workspace", no OS path at all.
+      assert workspace.kind == "workspace"
+      assert workspace.path == nil
+      assert workspace.name == name
+      assert workspace.description == "Grouped for the NodeContext suite"
+      # Member order is preserved; each ref is normalized to both keys.
+      assert [%{"point" => member_point, "path" => nil}, %{"path" => ^missing_path}] =
+               workspace.members
+
+      assert member_point == project.point
+
+      listed = EvoDash.NodeContext.workspaces(node())
+      assert Enum.all?(listed, &match?(%EvoGit.VCT.Mount{}, &1))
+
+      found = Enum.find(listed, &(&1.point == workspace.point))
+      assert %EvoGit.VCT.Mount{kind: "workspace", path: nil} = found
+      assert found.name == name
+
+      # Workspaces live outside vct:///projects/…, so they never surface as
+      # projects (and can never be used as a task path).
+      refute Enum.any?(EvoDash.NodeContext.projects(node()), &(&1.point == workspace.point))
+    end
+
+    test "re-creating the same name replaces members/description without a duplicate row" do
+      first = mount_unique!("ws_replace_a")
+      second = mount_unique!("ws_replace_b")
+      workspace = workspace!("replace", [%{"point" => first.point}], description: "first")
+
+      assert {:ok, %EvoGit.VCT.Mount{} = replaced} =
+               EvoDash.NodeContext.create_workspace(
+                 node(),
+                 workspace.name,
+                 [%{"point" => second.point}],
+                 description: "second"
+               )
+
+      # An idempotent slug-keyed UPSERT: same point, new contents.
+      assert replaced.point == workspace.point
+      assert replaced.description == "second"
+      assert [%{"point" => replaced_member}] = replaced.members
+      assert replaced_member == second.point
+
+      rows =
+        Enum.filter(EvoDash.NodeContext.workspaces(node()), &(&1.point == workspace.point))
+
+      assert [row] = rows
+      assert row.description == "second"
+      assert [%{"point" => ^replaced_member}] = row.members
+    end
+
+    test "workspace_members/2 resolves by point and by bare name, reporting missing members" do
+      project = mount_unique!("ws_members")
+      missing_point = "vct:///projects/node-ctx-absent-#{System.unique_integer([:positive])}"
+
+      workspace =
+        workspace!("members", [%{"point" => project.point}, %{"point" => missing_point}])
+
+      assert {:ok, by_point} = EvoDash.NodeContext.workspace_members(node(), workspace.point)
+      assert %EvoGit.VCT.Mount{point: workspace_point} = by_point.workspace
+      assert workspace_point == workspace.point
+      assert [%EvoGit.VCT.Mount{point: member_point}] = by_point.members
+      assert member_point == project.point
+      # A member need not exist: the STORED ref is reported, not dropped.
+      assert [%{"point" => ^missing_point}] = by_point.missing
+      assert by_point.nested == []
+
+      # A BARE name (no vct: prefix, no separator) resolves the same workspace.
+      assert {:ok, by_name} = EvoDash.NodeContext.workspace_members(node(), workspace.name)
+      assert by_name.workspace.point == workspace.point
+      assert by_name.members == by_point.members
+      assert by_name.missing == by_point.missing
+    end
+
+    test "workspaces_for/2 covers its member project and [] for an unrelated project" do
+      project = mount_unique!("ws_for")
+      unrelated = "/tmp/node_context_ws_unrelated_#{System.unique_integer([:positive])}"
+      workspace = workspace!("for", [%{"point" => project.point}])
+
+      assert Enum.any?(
+               EvoDash.NodeContext.workspaces_for(node(), project.point),
+               &(&1.point == workspace.point)
+             )
+
+      assert Enum.any?(
+               EvoDash.NodeContext.workspaces_for(node(), project.path),
+               &(&1.point == workspace.point)
+             )
+
+      refute Enum.any?(
+               EvoDash.NodeContext.workspaces_for(node(), unrelated),
+               &(&1.point == workspace.point)
+             )
+    end
+
+    test "returns {:error, :invalid_name} for a blank name and :not_found for an unknown one" do
+      assert EvoDash.NodeContext.create_workspace(node(), "   ", [], description: "blank") ==
+               {:error, :invalid_name}
+
+      assert EvoDash.NodeContext.workspace_members(node(), unique_workspace_name("absent")) ==
+               {:error, :not_found}
+    end
+
+    test "degrades to [] and error tuples on a remote node" do
+      {workspaces, _log} = with_log(fn -> EvoDash.NodeContext.workspaces(@remote_node) end)
+      assert workspaces == []
+
+      {for_project, _log} =
+        with_log(fn -> EvoDash.NodeContext.workspaces_for(@remote_node, "/tmp/x") end)
+
+      assert for_project == []
+
+      {created, _log} =
+        with_log(fn -> EvoDash.NodeContext.create_workspace(@remote_node, "remote", [], []) end)
+
+      assert {:error, _reason} = created
+
+      {members, _log} =
+        with_log(fn -> EvoDash.NodeContext.workspace_members(@remote_node, "remote") end)
+
+      assert {:error, _reason} = members
     end
   end
 end

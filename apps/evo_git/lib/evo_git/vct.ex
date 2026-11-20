@@ -20,7 +20,7 @@ defmodule EvoGit.VCT do
       history, so a global context edit is a committed, auditable change; a
       NON-BLANK file that already exists at boot is synced then, too.
 
-  ## Project mounts vs reserved (system) mounts
+  ## Project mounts, workspace mounts and reserved (system) mounts
 
   A point under `vct:///projects/<name>` is a PROJECT mount: it is what
   `projects/1` and `search/2` list, what the dashboard palette and the task
@@ -28,6 +28,14 @@ defmodule EvoGit.VCT do
   `vct:///projects` and any other top-level namespace such as
   `vct:///genesis-source` — is a RESERVED (system) mount (see
   `EvoGit.VCT.Table.reserved?/1`).
+
+  A point under `vct:///workspaces/<name>` is a WORKSPACE mount: a pure
+  GROUPING point with no OS path (`create_workspace/3`, `workspaces/1`,
+  `workspace_members/1`, `workspaces_for/1`). A workspace is neither a project
+  nor a reserved mount: the cap never evicts it, `mount_for_path/1` /
+  `vct_path_for/2` never answer with one, it is listed only by `workspaces/1`
+  (or an explicit `:include_workspaces`), `forget/1` removes it, and workspaces
+  never nest (a workspace point is refused as a member).
 
   Reserved mounts are real mounts for resolution: `resolve/1`,
   `mount_for_path/1`, `vct_path_for/2` and `put_global_context/1` see them
@@ -104,6 +112,23 @@ defmodule EvoGit.VCT do
           store: term(),
           pubsub: term(),
           mounts: [Mount.t()]
+        }
+
+  @typedoc """
+  A workspace resolved against the CURRENT mount table.
+
+    * `:workspace` — the workspace mount itself;
+    * `:members` — the member mounts that resolve, in stored member order;
+    * `:missing` — the STORED member refs that resolve to nothing (a member's
+      target need not exist);
+    * `:nested` — the STORED member refs that resolve to a WORKSPACE (never
+      expanded: workspaces do not nest).
+  """
+  @type workspace_resolution :: %{
+          workspace: Mount.t(),
+          members: [Mount.t()],
+          missing: [Mount.member()],
+          nested: [Mount.member()]
         }
 
   ## Client API
@@ -225,43 +250,165 @@ defmodule EvoGit.VCT do
     do: call({:ensure_mount, point, path, opts}, {:error, :vct_unavailable})
 
   @doc """
-  Returns every PROJECT mount, newest first (`last_opened_at` descending, `nil`
-  LAST).
+  Creates or REPLACES a WORKSPACE mount named `name` over `members`.
 
-  RESERVED (system) mounts are never listed — they are not part of the user's
-  project list (use `resolve/1` or `mount_for_path/1` to reach them).
+  A workspace is a pure GROUPING point (`vct:///workspaces/<slug>`): it has no
+  OS path, no directory is created, and nothing is required to exist. `name`
+  must be a non-blank binary (`{:error, :invalid_name}` otherwise); its point is
+  derived from the SLUGIFIED name
+  (`EvoGit.VCT.Table.point_segment/1`, so spaces and separators are folded into
+  the point while the supplied name stays the display name).
+
+  `members` is an ORDERED list of member refs — maps (atom- or string-keyed)
+  carrying `"point"` and/or `"path"`; see `EvoGit.VCT.Mount.member/1`.
 
   ## Options
 
-    * `:limit` — positive integer cap on the returned list (the table itself
-      keeps up to `max_projects/0` project mounts)
+    * `:description` — free-form text (normalized; blank becomes `nil`)
+
+  This is an IDEMPOTENT UPSERT by point, the seed/dashboard path: creating the
+  same name again REPLACES the name, members and description and refreshes
+  `last_opened_at` instead of adding a second row, and every call persists the
+  table once and broadcasts exactly ONE `{:vct_updated, node()}` on `"vct"`.
+
+  Workspaces are UNCAPPED (`max_projects/0` never evicts them). Validation
+  errors are propagated verbatim: `{:error, {:member_is_workspace, point}}` (a
+  workspace point is never a member — workspaces do not nest),
+  `{:error, {:invalid_member, ref}}` and `{:error, :invalid_members}`.
+
+  Returns `{:ok, mount}`, or `{:error, reason}` (the validation errors above, a
+  store error, or `:vct_unavailable`).
   """
-  @spec projects(keyword()) :: [Mount.t()]
-  def projects(opts \\ []) when is_list(opts), do: call({:projects, opts}, [])
+  @spec create_workspace(term(), term(), keyword()) :: {:ok, Mount.t()} | {:error, term()}
+  def create_workspace(name, members, opts \\ []) when is_list(opts),
+    do: call({:create_workspace, name, members, opts}, {:error, :vct_unavailable})
 
   @doc """
-  Returns the PROJECT mounts matching `query`, newest first.
+  Returns every WORKSPACE mount, newest first (`last_opened_at` descending,
+  `nil` LAST).
 
-  The match is a CASE-INSENSITIVE SUBSTRING search over the display name, the
-  OS path and the VCT point — the autocomplete interface. A blank query matches
-  every project mount; a non-binary query matches none. RESERVED (system) mounts
-  never appear, not even for a blank query.
+  Workspaces are neither project mounts nor reserved mounts, so this is the
+  only listing that returns them.
 
   ## Options
 
     * `:limit` — positive integer cap on the returned list
   """
+  @spec workspaces(keyword()) :: [Mount.t()]
+  def workspaces(opts \\ []) when is_list(opts), do: call({:workspaces, opts}, [])
+
+  @doc """
+  Resolves a workspace and its members against the CURRENT mount table.
+
+  Accepts:
+
+    * a workspace POINT — a `vct:///workspaces/<name>` binary or a
+      `%EvoGit.VCT.Path{}`;
+    * a BARE workspace name — a binary with no `vct:` prefix and no path
+      separator, matched against a workspace's point segment
+      (`EvoGit.VCT.Path.name/1`) or its display name (the newest wins when
+      several match).
+
+  A point that resolves to an EXISTING non-workspace mount answers
+  `{:error, :not_a_workspace}`; a workspace point (or bare name) with no row
+  answers `{:error, :not_found}`; anything else (a non-binary, an unparseable
+  `vct:` point, an OS path) answers `{:error, :invalid_point}`.
+
+  Returns `{:ok, %{workspace: mount, members: [...], missing: [...], nested:
+  [...]}}` — every member is resolved IN STORED ORDER with
+  `EvoGit.VCT.Table.member_mount/2`: a resolved git mount goes to `:members`,
+  an unresolvable ref to `:missing` (the STORED ref), and a ref naming another
+  workspace to `:nested` (the STORED ref, never expanded).
+  """
+  @spec workspace_members(String.t() | VctPath.t()) ::
+          {:ok, workspace_resolution()} | {:error, :not_found | :not_a_workspace | :invalid_point}
+  def workspace_members(point_or_name),
+    do: call({:workspace_members, point_or_name}, {:error, :not_found})
+
+  @doc """
+  Returns the WORKSPACE mounts whose membership covers `project`, newest first
+  (`[]` when none, or when the argument names nothing usable).
+
+  `project` may be:
+
+    * a PROJECT point — `vct:///projects/<name>` as a binary or a
+      `%EvoGit.VCT.Path{}`;
+    * a BARE project name — a binary with no `vct:` prefix and no leading
+      separator/drive, derived to `vct:///projects/<Table.point_segment/1>`;
+    * an ABSOLUTE OS path.
+
+  The candidate is matched as BOTH a point and an OS path (a project mount
+  contributes its point for its path and its path for its point), so a member
+  that names either form of the same project matches. A workspace whose member
+  names a missing mount still covers it: membership is metadata, not a
+  filesystem probe.
+  """
+  @spec workspaces_for(term()) :: [Mount.t()]
+  def workspaces_for(project), do: call({:workspaces_for, project}, [])
+
+  @doc """
+  Returns `true` when `point` is a WORKSPACE point
+  (`vct:///workspaces/<name>` and anything nested below it).
+
+  The TOTAL, PROCESS-FREE delegate to `EvoGit.VCT.Table.workspace_point?/1`:
+  it reads no mount table, needs no running VCT and never raises — an
+  unparseable, non-path or `nil` input is `false`. This is the predicate the
+  execution guard uses on a raw path-like argument.
+  """
+  @spec workspace_point?(term()) :: boolean()
+  def workspace_point?(point), do: Table.workspace_point?(point)
+
+  @doc """
+  Returns every PROJECT mount, newest first (`last_opened_at` descending, `nil`
+  LAST).
+
+  RESERVED (system) mounts are never listed — they are not part of the user's
+  project list (use `resolve/1` or `mount_for_path/1` to reach them).
+  WORKSPACE mounts are excluded too unless `:include_workspaces` is `true`.
+
+  ## Options
+
+    * `:limit` — positive integer cap on the returned list (the table itself
+      keeps up to `max_projects/0` project mounts)
+    * `:include_workspaces` — `true` merges the WORKSPACE mounts into the
+      result, sorted by the same recency rule (default `false`: projects only)
+  """
+  @spec projects(keyword()) :: [Mount.t()]
+  def projects(opts \\ []) when is_list(opts), do: call({:projects, opts}, [])
+
+  @doc """
+  Returns the mounts matching `query`, newest first.
+
+  The match is a CASE-INSENSITIVE SUBSTRING search over the display name, the
+  OS path and the VCT point — the autocomplete interface. A blank query matches
+  every eligible mount; a non-binary query matches none. RESERVED (system)
+  mounts never appear, not even for a blank query. WORKSPACE mounts are
+  searched only with `:include_workspaces` (a workspace has no OS path, so only
+  its name and point can match).
+
+  ## Options
+
+    * `:limit` — positive integer cap on the returned list
+    * `:include_workspaces` — `true` searches the WORKSPACE mounts as well and
+      merges them with the project matches, sorted by the same recency rule
+      (default `false`: projects only)
+  """
   @spec search(term(), keyword()) :: [Mount.t()]
   def search(query, opts \\ []) when is_list(opts), do: call({:search, query, opts}, [])
 
   @doc """
-  Forgets a PROJECT mount by VCT point (`"vct:..."` binary or
-  `%EvoGit.VCT.Path{}`) or by OS path (any other binary).
+  Forgets a mount by VCT point (`"vct:..."` binary or `%EvoGit.VCT.Path{}`), by
+  OS path (any other binary), or by BARE WORKSPACE NAME.
 
   Returns `:ok`, `{:error, :not_found}`, `{:error, :invalid_point}` for an
   unparseable point, `{:error, :reserved_point}` when the key resolves to a
   RESERVED (system) mount — whether the key is a reserved point (with or without
   a row) or the OS path of a reserved mount — or another `{:error, reason}`.
+
+  A WORKSPACE point is removable like any other non-reserved mount point. A
+  bare binary that matches no OS path falls back to a WORKSPACE lookup: a
+  workspace whose point segment or display name equals it is removed (the
+  newest wins when several match), and `{:error, :not_found}` when none does.
   """
   @spec forget(String.t() | VctPath.t()) :: :ok | {:error, term()}
   def forget(key), do: call({:forget, key}, {:error, :vct_unavailable})
@@ -271,7 +418,9 @@ defmodule EvoGit.VCT do
   exact OS path — to its mount.
 
   Operates over EVERY mount, so RESERVED (system) mounts resolve exactly like
-  project mounts.
+  project mounts, and a WORKSPACE POINT resolves to its workspace mount. A
+  workspace owns no OS path, so an OS-path lookup never answers a workspace
+  (`{:error, :not_found}` unless a real file mount holds that path).
   """
   @spec resolve(String.t() | VctPath.t()) ::
           {:ok, Mount.t()} | {:error, :not_found} | {:error, term()}
@@ -282,7 +431,8 @@ defmodule EvoGit.VCT do
   aware), or `nil`.
 
   Operates over EVERY mount, so a reserved (system) mount answers for the paths
-  underneath it.
+  underneath it. A WORKSPACE mount has NO OS path, so it is never returned here
+  (and never shadows a real file mount), whatever the requested path.
   """
   @spec mount_for_path(String.t()) :: Mount.t() | nil
   def mount_for_path(os_path), do: call({:mount_for_path, os_path}, nil)
@@ -292,7 +442,10 @@ defmodule EvoGit.VCT do
   or `nil` when no mount contains `repo_root` (or the relative path is invalid).
 
   Operates over EVERY mount, so a path under a reserved (system) mount yields a
-  URL under that reserved point (e.g. `vct:///genesis-source/src`).
+  URL under that reserved point (e.g. `vct:///genesis-source/src`). A WORKSPACE
+  mount owns no OS path, so it never answers for a repo root and never yields a
+  `vct:///workspaces/...` URL for a file — workspace points are grouping
+  metadata, never file paths.
   """
   @spec vct_path_for(String.t(), String.t()) :: String.t() | nil
   def vct_path_for(repo_root, relative_path),
@@ -436,10 +589,65 @@ defmodule EvoGit.VCT do
     end
   end
 
+  def handle_call({:create_workspace, name, members, opts}, _from, state) do
+    with {:ok, workspace_name} <- workspace_name(name),
+         {:ok, point} <- workspace_point_for(workspace_name),
+         {:ok, mounts, mount} <-
+           Table.upsert_workspace(
+             state.mounts,
+             point,
+             workspace_name,
+             members,
+             Keyword.get(opts, :description),
+             DateTime.utc_now()
+           ) do
+      # A workspace never counts against the project cap, so `enforce_cap/2` is
+      # deliberately NOT applied here.
+      case persist(state, mounts) do
+        :ok ->
+          broadcast_mount_change(state)
+          {:reply, {:ok, mount}, %{state | mounts: mounts}}
+
+        {:error, reason} ->
+          {:reply, {:error, reason}, state}
+      end
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:workspaces, opts}, _from, state) do
+    mounts =
+      state.mounts
+      |> Table.workspace_mounts()
+      |> Table.sort_by_recency()
+      |> apply_limit(Keyword.get(opts, :limit))
+
+    {:reply, mounts, state}
+  end
+
+  def handle_call({:workspace_members, key}, _from, state),
+    do: {:reply, resolve_workspace_members(state.mounts, key), state}
+
+  def handle_call({:workspaces_for, project}, _from, state) do
+    reply =
+      case workspace_target(state.mounts, project) do
+        {point, os_path} ->
+          state.mounts
+          |> Table.workspaces_containing(point, os_path)
+          |> Table.sort_by_recency()
+
+        :error ->
+          []
+      end
+
+    {:reply, reply, state}
+  end
+
   def handle_call({:projects, opts}, _from, state) do
     mounts =
       state.mounts
-      |> Table.project_mounts()
+      |> listed_mounts(opts)
       |> Table.sort_by_recency()
       |> apply_limit(Keyword.get(opts, :limit))
 
@@ -449,7 +657,7 @@ defmodule EvoGit.VCT do
   def handle_call({:search, query, opts}, _from, state) do
     mounts =
       state.mounts
-      |> Table.project_mounts()
+      |> listed_mounts(opts)
       |> matching_mounts(query)
       |> Table.sort_by_recency()
       |> apply_limit(Keyword.get(opts, :limit))
@@ -718,11 +926,22 @@ defmodule EvoGit.VCT do
         {:error, _reason} -> {:error, :invalid_point}
       end
     else
-      refuse_reserved_or_remove_by_path(mounts, key)
+      # An OS path first (a workspace owns none), then a BARE WORKSPACE NAME.
+      case refuse_reserved_or_remove_by_path(mounts, key) do
+        {:error, :not_found} -> remove_workspace_by_name(mounts, key)
+        other -> other
+      end
     end
   end
 
   defp remove_from(_mounts, _key), do: {:error, :not_found}
+
+  defp remove_workspace_by_name(mounts, key) do
+    case find_workspace_by_name(mounts, String.trim(key)) do
+      nil -> {:error, :not_found}
+      %Mount{point: point} -> Table.remove_by_point(mounts, point)
+    end
+  end
 
   defp refuse_reserved_or_remove_by_point(mounts, point) do
     if Table.reserved?(point),
@@ -750,6 +969,187 @@ defmodule EvoGit.VCT do
   end
 
   defp point_string?(value), do: String.starts_with?(value, "vct:")
+
+  ## Workspaces
+
+  defp workspace_name(name) do
+    case Table.normalize_name(name) do
+      nil -> {:error, :invalid_name}
+      normalized -> {:ok, normalized}
+    end
+  end
+
+  # The point derives from the SLUGIFIED name, so the display name is free text
+  # while the point stays one valid segment. `point_segment/1` already maps
+  # separators and control characters, so `format/1` cannot reject it; the
+  # rescue keeps this total anyway (a raise would kill the caller's call).
+  defp workspace_point_for(name) do
+    {:ok, VctPath.format(VctPath.join(VctPath.workspaces(), [Table.point_segment(name)]))}
+  rescue
+    ArgumentError -> {:error, :invalid_name}
+  end
+
+  # A workspace is resolved through its POINT (canonicalized), never through an
+  # OS path it does not have.
+  defp resolve_workspace_members(mounts, %VctPath{} = point),
+    do: resolve_workspace_members(mounts, VctPath.format(point))
+
+  defp resolve_workspace_members(mounts, key) when is_binary(key) do
+    trimmed = String.trim(key)
+
+    cond do
+      trimmed == "" ->
+        {:error, :invalid_point}
+
+      point_string?(trimmed) ->
+        with {:ok, point} <- canonical_point(trimmed) do
+          workspace_row(mounts, point)
+        end
+
+      path_like?(trimmed) ->
+        {:error, :invalid_point}
+
+      true ->
+        case find_workspace_by_name(mounts, trimmed) do
+          nil -> {:error, :not_found}
+          %Mount{point: point} -> workspace_row(mounts, point)
+        end
+    end
+  end
+
+  defp resolve_workspace_members(_mounts, _key), do: {:error, :invalid_point}
+
+  defp workspace_row(mounts, point) do
+    case Table.find_by_point(mounts, point) do
+      nil ->
+        {:error, :not_found}
+
+      %Mount{} = mount ->
+        if Mount.workspace?(mount),
+          do: {:ok, resolve_workspace_members_of(mounts, mount)},
+          else: {:error, :not_a_workspace}
+    end
+  end
+
+  # Every member is resolved IN STORED ORDER; an unresolvable ref keeps its
+  # STORED form (it is metadata, not a filesystem probe) and a ref naming
+  # another workspace is reported as `nested` instead of being expanded.
+  defp resolve_workspace_members_of(mounts, %Mount{members: members} = workspace) do
+    {resolved, missing, nested} =
+      members
+      |> workspace_member_refs()
+      |> Enum.reduce({[], [], []}, fn ref, {resolved, missing, nested} ->
+        case Table.member_mount(mounts, ref) do
+          {:ok, mount} -> {[mount | resolved], missing, nested}
+          :missing -> {resolved, [ref | missing], nested}
+          :nested -> {resolved, missing, [ref | nested]}
+        end
+      end)
+
+    %{
+      workspace: workspace,
+      members: Enum.reverse(resolved),
+      missing: Enum.reverse(missing),
+      nested: Enum.reverse(nested)
+    }
+  end
+
+  # A stored row is normally already normalized; a hand-written one is read
+  # LENIENTLY so a single unusable ref reports itself as `missing` instead of
+  # hiding the whole workspace.
+  defp workspace_member_refs(members) when is_list(members) do
+    case Mount.normalize_members(members) do
+      {:ok, normalized} -> normalized
+      {:error, _reason} -> members
+    end
+  end
+
+  defp workspace_member_refs(_members), do: []
+
+  defp find_workspace_by_name(mounts, name) do
+    mounts
+    |> Table.workspace_mounts()
+    |> Enum.filter(&workspace_name_match?(&1, name))
+    |> Table.sort_by_recency()
+    |> List.first()
+  end
+
+  defp workspace_name_match?(%Mount{point: point, name: display}, name),
+    do: VctPath.name(point) == name or display == name
+
+  defp path_like?(key), do: String.contains?(key, ["/", "\\"])
+
+  # The `{point, os_path}` pair a `workspaces_for/1` argument names, enriched
+  # from the mount table: a project's point contributes its OS path and an OS
+  # path contributes its point, so a member naming EITHER form matches.
+  defp workspace_target(mounts, project) do
+    case workspace_project_key(project) do
+      {:ok, point, os_path} -> enrich_workspace_target(mounts, point, os_path)
+      :error -> :error
+    end
+  end
+
+  defp workspace_project_key(%VctPath{} = point), do: {:ok, VctPath.format(point), nil}
+
+  defp workspace_project_key(project) when is_binary(project) do
+    trimmed = String.trim(project)
+
+    cond do
+      trimmed == "" ->
+        :error
+
+      point_string?(trimmed) ->
+        case VctPath.parse(trimmed) do
+          {:ok, point} -> {:ok, VctPath.format(point), nil}
+          {:error, _reason} -> :error
+        end
+
+      EvoGit.Platform.absolute_path?(trimmed) ->
+        {:ok, nil, Table.normalize_os_path(trimmed)}
+
+      true ->
+        {:ok, project_point(trimmed), nil}
+    end
+  rescue
+    ArgumentError -> :error
+  end
+
+  defp workspace_project_key(_project), do: :error
+
+  defp project_point(name),
+    do: VctPath.format(VctPath.join(VctPath.projects(), [Table.point_segment(name)]))
+
+  defp enrich_workspace_target(mounts, point, os_path) do
+    {point, os_path} = enrich_target_point(mounts, point, os_path)
+    enrich_target_path(mounts, point, os_path)
+  end
+
+  defp enrich_target_point(_mounts, nil, os_path), do: {nil, os_path}
+
+  defp enrich_target_point(mounts, point, os_path) do
+    case Table.find_by_point(mounts, point) do
+      %Mount{path: path} when is_binary(path) -> {point, os_path || path}
+      _missing -> {point, os_path}
+    end
+  end
+
+  defp enrich_target_path(_mounts, point, nil), do: {point, nil}
+
+  defp enrich_target_path(mounts, point, os_path) do
+    case Table.find_by_os_path(mounts, os_path) do
+      %Mount{point: mounted_point} -> {point || mounted_point, os_path}
+      nil -> {point, os_path}
+    end
+  end
+
+  # Project mounts only, or project + workspace mounts when the caller opts in.
+  defp listed_mounts(mounts, opts) do
+    if include_workspaces?(opts),
+      do: Table.project_mounts(mounts) ++ Table.workspace_mounts(mounts),
+      else: Table.project_mounts(mounts)
+  end
+
+  defp include_workspaces?(opts), do: Keyword.get(opts, :include_workspaces, false) == true
 
   ## Global context
 

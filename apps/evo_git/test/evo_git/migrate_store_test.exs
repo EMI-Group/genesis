@@ -41,8 +41,10 @@ defmodule EvoGit.MigrateStoreTest do
   @vct_mounts_version 20_260_815_000_007
   @session_mode_version 20_260_815_000_008
   @pause_kind_version 20_260_815_000_009
-  # Ascending, exactly as `schema_migrations` reports it — nine contiguous
-  # versions, no gaps.
+  @workspace_mounts_version 20_260_815_000_011
+  # Ascending, exactly as `schema_migrations` reports it — the nine contiguous
+  # versions 1..9 plus the workspace-mount `vct_mounts` rebuild (version 10 is
+  # RETIRED and must never be reused).
   @migration_versions [
     @baseline_version,
     @normalization_version,
@@ -52,7 +54,8 @@ defmodule EvoGit.MigrateStoreTest do
     @prune_indexes_version,
     @vct_mounts_version,
     @session_mode_version,
-    @pause_kind_version
+    @pause_kind_version,
+    @workspace_mounts_version
   ]
 
   @migration_count length(@migration_versions)

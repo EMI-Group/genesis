@@ -63,15 +63,18 @@ defmodule EvoGit.Store.RepoTest do
   @vct_mounts_version 20_260_815_000_007
   @session_mode_version 20_260_815_000_008
   @task_pause_kind_version 20_260_815_000_009
+  @workspace_mounts_version 20_260_815_000_011
   # Ascending, exactly as `schema_migrations` reports it: the ONE schema-creating
   # baseline, the data normalization, the two shipped index migrations (the
   # `(equality, started_at)` composites, then the covering pair), the merged
   # archive-table migration (legacy fan-out + `archive_metadata` drop, both
   # skipped on a fresh database), the redundant-index prune, the VCT mount table
-  # (which also retires any legacy `projects` table), and finally the
-  # probe-guarded `tasks.session_mode` adoption and the probe-guarded
-  # `tasks.pause_kind` adoption (both no-ops on a fresh database, whose baseline
-  # CREATE TABLE already declares the columns).
+  # (which also retires any legacy `projects` table), the probe-guarded
+  # `tasks.session_mode` adoption, the probe-guarded `tasks.pause_kind` adoption
+  # (both no-ops on a fresh database, whose baseline CREATE TABLE already
+  # declares the columns) and the `vct_mounts` rebuild that adds the two
+  # workspace columns and makes `path` nullable (version 10 is RETIRED and must
+  # never be reused).
   @migration_versions [
     @baseline_version,
     @normalization_version,
@@ -81,7 +84,8 @@ defmodule EvoGit.Store.RepoTest do
     @prune_indexes_version,
     @vct_mounts_version,
     @session_mode_version,
-    @task_pause_kind_version
+    @task_pause_kind_version,
+    @workspace_mounts_version
   ]
 
   # `tasks` columns RETIRED from the live table: the per-agent archive moved to
@@ -334,15 +338,19 @@ defmodule EvoGit.Store.RepoTest do
   # ── vct_mounts table shape ───────────────────────────────────────────────
 
   describe "vct_mounts table shape" do
-    test "exact 5-column shape with point as the TEXT primary key" do
+    test "exact 7-column shape with point as the TEXT primary key and a nullable path" do
       pid = start_repo!(:vct_mounts)
 
+      # `path` is NULLABLE (a workspace mount has no OS path) and still UNIQUE;
+      # `members`/`description` are the nullable workspace columns.
       assert query_rows(pid, "PRAGMA table_info(vct_mounts)") == [
                [0, "point", "TEXT", 1, nil, 1],
-               [1, "path", "TEXT", 1, nil, 0],
+               [1, "path", "TEXT", 0, nil, 0],
                [2, "name", "TEXT", 1, nil, 0],
                [3, "kind", "TEXT", 1, nil, 0],
-               [4, "last_opened_at", "TEXT", 0, nil, 0]
+               [4, "last_opened_at", "TEXT", 0, nil, 0],
+               [5, "members", "TEXT", 0, nil, 0],
+               [6, "description", "TEXT", 0, nil, 0]
              ]
     end
 

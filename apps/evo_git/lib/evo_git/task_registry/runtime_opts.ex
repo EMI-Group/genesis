@@ -188,6 +188,78 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
     end
   end
 
+  ## Task path (`:path`)
+  @doc """
+  Admits a task's `:path` — a task executes in an OS path, NEVER in a Virtual
+  Context Tree point.
+  A VCT point (`vct:///…`) is metadata that BINDS a point to an OS path; it is
+  not a filesystem of its own, so it can never be a task's execution path. A
+  WORKSPACE mount (`vct:///workspaces/<slug>`) is the strictest case: it is a
+  pure grouping point with NO OS path at all, so there is no worktree to run in.
+  Non-raising by contract — it runs inside the registry GenServer, where a raise
+  would kill the registry (`executable_repo_path!/1` is the raising counterpart
+  for direct callers).
+  - absent, or `nil` → `{:ok, opts}` unchanged (the repo-less `:reflect` task has
+    no path, and that must stay valid);
+  - a binary starting with `"vct:"` → `{:error, :workspace_not_executable}` for
+    a workspace point, else `{:error, :vct_point_not_executable}` — covering a
+    project point, a reserved point (`vct:///genesis-source`) and even an
+    unparseable `"vct:garbage"`;
+  - any other present, non-binary value (atom, number, map, …) →
+    `{:error, :invalid_path}`;
+  - every ordinary binary → `{:ok, opts}` UNCHANGED. Absoluteness and existence
+    are deliberately NOT validated here: this gate only rejects VCT points, so
+    no existing caller's path handling changes.
+  """
+  @spec admit_task_path(keyword()) ::
+          {:ok, keyword()}
+          | {:error, :workspace_not_executable | :vct_point_not_executable | :invalid_path}
+  def admit_task_path(opts) do
+    case Keyword.fetch(opts, :path) do
+      :error ->
+        {:ok, opts}
+
+      {:ok, nil} ->
+        {:ok, opts}
+
+      {:ok, path} when is_binary(path) ->
+        cond do
+          not vct_point?(path) -> {:ok, opts}
+          EvoGit.VCT.workspace_point?(path) -> {:error, :workspace_not_executable}
+          true -> {:error, :vct_point_not_executable}
+        end
+
+      {:ok, _other} ->
+        {:error, :invalid_path}
+    end
+  end
+
+  # ONE spelling of "this binary is a VCT point": the canonical `vct:` scheme
+  # prefix. Deliberately prefix-based, not parse-based, so an unparseable
+  # `"vct:garbage"` is still refused rather than treated as an OS path.
+  defp vct_point?(path), do: String.starts_with?(path, "vct:")
+  # The RAISING counterpart of `admit_task_path/1`, for direct builders that
+  # bypass the registry admission gate. A normal OS path (binary or not) is
+  # returned untouched, so every existing caller stays byte-identical.
+  defp executable_repo_path!(path) when is_binary(path) do
+    cond do
+      not vct_point?(path) ->
+        path
+
+      EvoGit.VCT.workspace_point?(path) ->
+        raise ArgumentError,
+              "invalid task path #{inspect(path)}: a workspace VCT point is not an " <>
+                "executable path (a workspace has no OS path and no worktree)"
+
+      true ->
+        raise ArgumentError,
+              "invalid task path #{inspect(path)}: VCT points are metadata-only, so a " <>
+                "task path must be an OS path"
+    end
+  end
+
+  defp executable_repo_path!(path), do: path
+
   @doc """
   Builds common runtime options for genesis and evolve tasks.
 
@@ -200,7 +272,11 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
   the task did not opt out); every other optional key is omitted when unset.
   """
   def build_common_runtime_opts(opts, task_id, task_type) do
-    repo_path = Keyword.fetch!(opts, :path)
+    # Defense in depth: `admit_task_path/1` is the NON-raising registry gate that
+    # refuses a VCT point before a task is enqueued; a direct caller of this
+    # builder never saw that gate, so it raises instead of silently running a
+    # task in a point that is metadata (or a workspace, which has no OS path).
+    repo_path = executable_repo_path!(Keyword.fetch!(opts, :path))
     mode = Keyword.get(opts, :mode, "simple")
 
     Application.ensure_all_started(:evo_git)
