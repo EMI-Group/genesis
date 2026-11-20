@@ -122,7 +122,7 @@ All dashboard-visible state changes are PUSHED on `EvoGit.PubSub` (Phoenix.PubSu
 | `"vct"` | `{:vct_updated, node}` | `EvoGit.VCT` after every successful mount mutation and `put_global_context/1` | the ONLY mount topic: one emit per mutation, none on a no-op/refused one; subscriber `EvoDashWeb.ProjectsLive` |
 | `"processes"` | `{:process_started, execution, node}` · `{:process_updated, id, changes_map, node}` · `{:process_exited, execution, node}` · `{:process_sample, node, seq, [%{id, status, stats}]}` · `{:process_control, id, %{action, signal, reason, actor, at}, node}` | `ProcessManager` registry | lifecycle changes only: started on attach, exited on first terminal transition, deltas, a sample per tick while a running execution exists (suppressed by `:process_stats_enabled`) |
 
-The payload-less `{:tasks_updated}` / `{:task_status, task_id, status}` shapes do NOT exist.
+Payload-less `{:tasks_updated}` / `{:task_status, …}` shapes do NOT exist.
 
 ## Provider Profiles & Concrete Model Selections
 
