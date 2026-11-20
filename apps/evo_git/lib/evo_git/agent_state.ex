@@ -17,7 +17,8 @@ defmodule EvoGit.AgentState do
   stable across restarts, plus its compressed message chunks. `parent_id` links
   a child to the agent that spawned it (`NULL` for a task's root) and
   `depth` places it in the tree, so a task's whole agent tree is reachable
-  through `roster/2`.
+  through `roster/2` — and the lean skeletons of MANY tasks through
+  `roster_many/2`.
 
   `status` is `running` or `done`: a `done` child row stays readable until its
   parent's checkpoint consumes that batch (`delete_done_children/4`), a
@@ -56,8 +57,21 @@ defmodule EvoGit.AgentState do
   `:spawn_index`, `:branch`, `:base_commit`, `:anchor_ref`, `:redispatch`,
   `:result`. Only the supplied keys are written; unknown keys are ignored.
 
+  A run's per-turn SCALARS can also be refreshed without touching its
+  conversation at all: `update_volatile/4` issues ONE constant-shape `UPDATE`
+  of the volatile columns alone (`turn`, `usage`, `total_tokens`,
+  `compression_count`, `current_commit`, `phase`, `pending_inputs`,
+  `pending_tool_batch`, `status`), with REPLACE semantics — the caller supplies
+  the FULL map every turn. Because its column list is fixed at compile time it
+  is one reused prepared statement, so a per-turn refresh never re-encodes an
+  identity or run fact.
+
   Every function is TOTAL: a dead/absent server, a malformed entry or a store
-  fault degrades to `:ok` / `[]` / `0` / `{:error, :store_unavailable}` and
+  fault degrades to that function's documented answer — `:ok` for a cast,
+  `[]`/`nil`/`0` for a read, `{:ok, count}` for `prune/1`, and an error tuple
+  where the caller must be able to tell (`{:error, :store_unavailable}` for an
+  absent/degraded store, `{:error, :not_found}` for a missing row,
+  `{:error, :timeout}` for a durability barrier that could not confirm) — and
   never crashes the agent run or the reader.
 
   ## Task-level pause/resume
@@ -105,6 +119,21 @@ defmodule EvoGit.AgentState do
   callers that model tasks numerically.
   """
   @type task_id :: String.t() | pos_integer()
+
+  @typedoc """
+  A checkpoint entry, in the normalized shape `EvoGit.AgentState.Entry`
+  validates and folds:
+
+      %{kind: :append | :rewrite,
+        base_seq: non_neg_integer() | nil,
+        messages: [ReqLLM.Message.t()],
+        fields: %{atom => term()},
+        owner: pid() | nil}
+
+  The facade only forwards it (the writer validates and logs it), so a
+  malformed entry degrades to a dropped checkpoint, never a crash.
+  """
+  @type checkpoint_entry :: EvoGit.AgentState.Entry.t()
 
   @doc """
   Starts the agent-state SUPERVISOR (the writer is its child).
@@ -170,9 +199,40 @@ defmodule EvoGit.AgentState do
   Enqueues a checkpoint. ALWAYS `:ok`, total — this is a CAST, so the hot path
   never blocks on the database.
   """
-  @spec checkpoint(String.t(), integer(), map(), keyword()) :: :ok
+  @spec checkpoint(task_id(), integer(), checkpoint_entry(), keyword()) :: :ok
   def checkpoint(task_id, agent_id, entry, opts \\ []) do
     cast(opts, {:checkpoint, task_id, agent_id, entry})
+  end
+
+  @doc """
+  Rewrites ONLY the VOLATILE per-turn scalars of one run.
+
+  A CAST through the SAME single serialized writer as `checkpoint/4`, so it
+  stands in the same order as the conversation writes around it and the agent's
+  turn never blocks on the database. The writer issues ONE constant-shape
+  `UPDATE` (`Record.volatile_columns/0`: `turn`, `usage`, `total_tokens`,
+  `compression_count`, `current_commit`, `phase`, `pending_inputs`,
+  `pending_tool_batch`, `status`), never a variable-width upsert.
+
+  The contract a caller (the session package) must honour:
+
+    * REPLACE semantics — supply the FULL volatile map on every turn. A key the
+      caller OMITTED is written as the column's default/`NULL`, NOT left alone
+      (the four `NOT NULL` columns fall back to their table defaults, so an
+      omitted `turn`/`total_tokens`/`compression_count`/`status` resets rather
+      than fails).
+    * It never INSERTS. A run's row comes into existence with its start
+      snapshot; with no matching row the store answers `{:error, :not_found}`
+      and the writer logs it.
+    * `pause_commit`, `result` and every identity/run fact are deliberately NOT
+      in this set — they belong to `put_pause_commit/4`, `mark_done/5` and the
+      checkpoint `fields` respectively.
+    * It is a CAST: total and `:ok`. Call `flush/1` when the write must be
+      observed (it is ordered behind everything queued before it).
+  """
+  @spec update_volatile(task_id(), integer(), map(), keyword()) :: :ok
+  def update_volatile(task_id, agent_id, fields, opts \\ []) do
+    cast(opts, {:update_volatile, task_id, agent_id, fields})
   end
 
   @doc """
@@ -188,20 +248,31 @@ defmodule EvoGit.AgentState do
 
   Also the read-your-writes barrier for callers that checkpoint and then
   `load/3`/`prune/1` in the same process — a plain read deliberately does NOT
-  queue behind the writer (see `load/3`). Accepts `store:` opts, a
-  server/supervisor pid, a registered name, or an agent id.
+  queue behind the writer (see `load/3`).
+
+  Accepts the whole target set `keyword() | pid() | atom() | integer() | nil`:
+  `store:` opts (a KEYWORD list), a server/supervisor pid, a registered name,
+  `nil` (no target at all) or an agent id. Anything else — a binary (a real
+  task id), a struct, a non-keyword list — is NOT a target this barrier can
+  flush, so it answers `{:error, :timeout}` instead of claiming a durability
+  nothing verified; that is exactly the agent-id/task-id mix-up the barrier
+  exists to catch.
 
   HONEST: `:ok` means the writer committed everything queued before this call;
   `{:error, :timeout}` means the caller must NOT claim durability (the server
-  is absent/dead, the writer is degraded, or its backlog is over the writer's
+  is absent/dead, the writer is degraded, its backlog is over the writer's
   cap — the `:max_backlog` start option, else app env
-  `:agent_state_max_backlog`, default 200). `nil` (no target at all) is `:ok` —
-  there is nothing to flush.
+  `:agent_state_max_backlog`, default 200 — or the target was not a target at
+  all). `nil` (no target at all) is `:ok` — there is nothing to flush.
   """
   @spec flush(keyword() | pid() | atom() | integer() | nil) :: :ok | {:error, :timeout}
   def flush(opts \\ [])
 
-  def flush(opts) when is_list(opts), do: flush(target(opts))
+  def flush(opts) when is_list(opts) do
+    # A non-keyword list is not a target set: it was never flushed, so this
+    # never reaches `target/1` (whose `Keyword.get/3` would raise on it).
+    if Keyword.keyword?(opts), do: flush(target(opts)), else: {:error, :timeout}
+  end
 
   # An agent id is accepted because the caller that pauses an agent holds one:
   # the writer is a SINGLE serialized process, so this is the same barrier as
@@ -219,7 +290,9 @@ defmodule EvoGit.AgentState do
     end
   end
 
-  def flush(_none), do: :ok
+  # An UNRECOGNISED target (a binary task id, a struct, …) never got a `:sync`,
+  # so nothing was flushed and durability cannot be claimed.
+  def flush(_other), do: {:error, :timeout}
 
   @doc """
   Persists (or, with `nil`, clears) one run's `pause_commit`: the git commit
@@ -234,17 +307,25 @@ defmodule EvoGit.AgentState do
   conversation write.
 
   Answers `{:error, :not_found}` when no durable row exists for
-  `(task_id, agent_id)` (e.g. `:persistent_state` was off for that task) and
-  `{:error, :not_persistent_state_disabled}` when the store is not running.
-  Total.
+  `(task_id, agent_id)` (an agent that never checkpointed, or a task whose
+  durable state is gone) and `{:error, :store_unavailable}` when the store is
+  simply absent/degraded — that is an AVAILABILITY failure, not a
+  configuration one. `:not_persistent_state_disabled` is the FLAG-specific tag
+  (the task's `:persistent_state` was turned OFF); no producer emits it today,
+  because `persistent_state: false` is fully inert, so it must never be used
+  to report unavailability.
+
+  Total: `{:error, :not_found | :store_unavailable | term()}`, and a caller
+  that only cares whether the sha landed may treat any `{:error, reason}` as
+  "not durable" (which is what `EvoGit.Agent.Session.Pause` does).
   """
   @spec put_pause_commit(task_id(), pos_integer(), String.t() | nil, keyword()) ::
-          :ok | {:error, term()}
+          :ok | {:error, :not_found | :store_unavailable | term()}
   def put_pause_commit(task_id, agent_id, sha, opts \\ []) do
     case call(opts, {:put_pause_commit, task_id, agent_id, sha}) do
       :ok -> :ok
       {:error, _reason} = error -> error
-      :error -> {:error, :not_persistent_state_disabled}
+      :error -> {:error, :store_unavailable}
       _other -> {:error, :store_unavailable}
     end
   end
@@ -265,12 +346,14 @@ defmodule EvoGit.AgentState do
   @doc """
   The task's WHOLE durable agent tree, ordered `depth ASC, agent_id ASC`.
 
-  ONE `SELECT` over `agent_states` with no chunk read: each record carries
-  `messages: nil` but the full scalar `fields` — identity and parentage
-  (`agent_id`, `parent_id`, `depth`), the spawn position (`spawn_turn`,
-  `spawn_index`), the git facts (`branch`, `base_commit`, `current_commit`,
-  `anchor_ref`), `status`, `result`, the re-dispatch payload and the objective,
-  module and model selection. A caller that needs one run's transcript calls
+  ONE `SELECT` over `agent_states` with no chunk read. The projection is LEAN
+  (file-wise lean): `messages` is `nil`, and so are `pending_inputs` and
+  `usage` — no roster consumer reads those, so they are not even selected.
+  Everything else is present: identity and parentage (`agent_id`, `parent_id`,
+  `depth`), the spawn position (`spawn_turn`, `spawn_index`), the git facts
+  (`branch`, `base_commit`, `current_commit`, `anchor_ref`), `status`,
+  `result`, the re-dispatch payload (`redispatch`), the objective and the
+  module/model selection. A caller that needs one run's transcript calls
   `load/3`.
 
   Total: `[]` on a missing/dead/degraded store, an error and no rows.
@@ -288,6 +371,41 @@ defmodule EvoGit.AgentState do
         end
     end
   end
+
+  @doc """
+  The LEAN `roster/2` skeletons of MANY tasks in one bounded pass.
+
+  One constant-shape `SELECT` per batch of task ids (`Store.roster_many/2`),
+  ordered `task_id ASC, depth ASC, agent_id ASC` — the bulk shape a registry
+  rebuilding several task trees at once needs, without a call per task. Each
+  record carries the same LEAN projection as `roster/2` (so `messages`,
+  `pending_inputs` and `usage` are `nil`; `objective`/`redispatch`, the git
+  facts, `status` and `result` are present).
+
+  Input is filtered to binary task ids and deduplicated by the store, so a
+  repeated or non-binary id is simply ignored (and an empty list reads
+  nothing).
+
+  Total: `[]` on a missing/dead/degraded store, an error, a non-list argument
+  and no rows.
+  """
+  @spec roster_many([task_id()], keyword()) :: [EvoGit.AgentState.Record.t()]
+  def roster_many(task_ids, opts \\ [])
+
+  def roster_many(task_ids, opts) when is_list(task_ids) do
+    case repo(target(opts)) do
+      nil ->
+        []
+
+      repo ->
+        case Store.roster_many(repo, task_ids) do
+          {:ok, records} -> records
+          _other -> []
+        end
+    end
+  end
+
+  def roster_many(_task_ids, _opts), do: []
 
   @doc """
   The highest `agent_id` the durable store has ever held, `0` when empty.
@@ -311,7 +429,7 @@ defmodule EvoGit.AgentState do
   behind pending checkpoint casts (use `flush/1` for a read-your-writes
   barrier).
   """
-  @spec load(String.t(), integer(), keyword()) ::
+  @spec load(task_id(), integer(), keyword()) ::
           {:ok, EvoGit.AgentState.Record.t()}
           | {:error, :not_found | :corrupt_state | :store_unavailable}
   def load(task_id, agent_id, opts \\ []) do
@@ -356,7 +474,7 @@ defmodule EvoGit.AgentState do
 
   A CAST: total, `:ok`. Call `flush/1` when the deletion must be observed.
   """
-  @spec delete(String.t(), integer(), keyword()) :: :ok
+  @spec delete(task_id(), integer(), keyword()) :: :ok
   def delete(task_id, agent_id, opts \\ []) do
     cast(opts, {:delete, task_id, agent_id})
   end
@@ -366,7 +484,7 @@ defmodule EvoGit.AgentState do
 
   A CAST: total, `:ok`. Call `flush/1` when the deletion must be observed.
   """
-  @spec delete_task(String.t(), keyword()) :: :ok
+  @spec delete_task(task_id(), keyword()) :: :ok
   def delete_task(task_id, opts \\ []) do
     cast(opts, {:delete_task, task_id})
   end
