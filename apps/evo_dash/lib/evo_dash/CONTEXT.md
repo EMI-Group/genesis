@@ -280,7 +280,7 @@ Consumers: `EvoDashWeb.SystemLive.SourceCard` + `EvoDashWeb.HomeLive`.
 ## Constraints
 
 - `EvoDash.Application` starts NO persistence/registry children — those belong to `EvoGit.Application`.
-- `EvoDash.ChatHistory` is in-memory only: a public ETS table owned by its GenServer, no disk persistence, no heir, no automatic pruning (`prune/1` is caller-driven). Mutations MUST go through the API (GenServer-serialized); direct table reads are safe but read-only by convention.
+- `EvoDash.ChatHistory` is in-memory only: a public ETS table owned by its GenServer, no disk persistence, no heir, no pruning beyond the 10-chat cap applied at creation (`prune/1` is the explicit lever). Single-key reads/writes hit the public table directly (and are total when it is missing); only the compound operations are GenServer-serialized, and direct table mutation outside the API is not allowed by convention.
 - `EvoDash.TaskSupervisor` IS started and IS used (async loads across all LiveViews). Do NOT remove it.
 - `NodeContext` keeps its public API stable; web-layer callers should never touch `EvoGit.RemoteNode`/`EvoGit.RemoteConnection`/`EvoGit.RemoteConnections` directly.
 - `DesktopLifetime` is desktop-only: gated on `EVOGIT_DESKTOP=1` + `EVOGIT_LIFETIME_PORT`, so the headless `genesis_server` release never starts it.
