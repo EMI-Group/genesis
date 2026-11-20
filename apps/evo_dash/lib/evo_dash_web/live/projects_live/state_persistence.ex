@@ -59,7 +59,12 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
         socket.assigns
         |> model_selection_state()
         |> Map.put(:node, socket.assigns[:current_node_id] || "local")
-        |> Map.put(:project, draft_project(socket))
+
+      state =
+        case draft_project(socket) do
+          project when is_binary(project) -> Map.put(state, :project, project)
+          _ -> state
+        end
 
       push_event(socket, "persist_model_selection", state)
     else
