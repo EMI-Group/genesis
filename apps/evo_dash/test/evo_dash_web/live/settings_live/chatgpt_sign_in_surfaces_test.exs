@@ -193,6 +193,16 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
     Regex.scan(~r/id="[^"]*-chatgpt-waiting"/, render(view)) |> length()
   end
 
+  # Selector membership on a CAPTURED render.
+  #
+  # `has_element?/2` reads the page's CURRENT state, which is the wrong
+  # instrument for a TRANSIENT one: the stub answers `status/1` on the very next
+  # 5 ms poll, so the waiting block may already be replaced by the success by
+  # the time a later read runs. Every "while it waits" claim is therefore made
+  # against the render the triggering event itself returned.
+  defp rendered?(html, selector),
+    do: html |> Floki.parse_fragment!() |> Floki.find(selector) != []
+
   # ── bounded sign-in waits (event-driven, never a fixed sleep) ─────────────
   defp await_page_sign_in(view, phase, surface) do
     await_page_sign_in(
@@ -224,11 +234,44 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
   end
 
   # ── auth-status injection (the auth_status_test pattern) ──────────────────
+  #
+  # The sign-in success path fires a REAL `AuthStatus.start/2` reload in a
+  # supervised task. That task captures the `:auth_status_seq` the page bumped
+  # BEFORE spawning it, so its `{:settings_auth_status_loaded, …}` carries
+  # exactly the seq an injector reads — the page's stale guard cannot tell the
+  # two apart, and whichever arrives LAST wins. Settling the real load first is
+  # therefore necessary but NOT sufficient: a load still in flight (or spawned
+  # while applying a queued result) delivers the same seq and overwrites the
+  # injected verdict, which is the intermittent failure this helper removes.
+  #
+  # So the injection is PROVEN to be the last writer instead of assumed:
+  #
+  #   1. settle every in-flight apply (the real load task's DOWN AND the
+  #      mailbox-draining `:sys.get_state` round-trip that can apply a queued
+  #      result and spawn the next real load),
+  #   2. inject with the page's CURRENT seq — the only value its stale guard
+  #      accepts,
+  #   3. settle again and re-read: a real result that landed after the injection
+  #      either replaced `:auth_statuses` or bumped `:auth_status_seq` (a bump
+  #      always precedes its spawn), and either one simply repeats the injection
+  #      against the seq the page now holds.
+  #
+  # Once step 3 sees BOTH an unmoved seq and the injected map, no real load can
+  # still be in flight (step 1's settle proved none was running, and any new one
+  # must bump the seq first), so the injected verdict is what the assertions
+  # render. The loop is bounded and event-driven — never a sleep.
   defp inject_statuses(view, statuses, target_node \\ nil) do
-    # Settle, then READ the assigns: that `:sys.get_state` round-trip drains the
-    # mailbox, which can apply a queued result and spawn the real credential
-    # load. Settle AGAIN before capturing the seq, so no in-flight result can
-    # land after — and overwrite — the injected map.
+    inject_statuses(
+      view,
+      statuses,
+      target_node,
+      System.monotonic_time(:millisecond) + @async_wait_budget_ms
+    )
+  end
+
+  defp inject_statuses(view, statuses, target_node, deadline) do
+    # Drain applies BEFORE enumerating: that round-trip can apply a queued
+    # result and spawn the real credential load, which must also finish.
     settle_mount_loads(view)
     _ = assigns(view)
     settle_mount_loads(view)
@@ -240,7 +283,25 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
        statuses}
     )
 
-    render(view)
+    _ = render(view)
+    # Prove the injected verdict is the page's LAST writer.
+    settle_mount_loads(view)
+    settled = assigns(view)
+
+    cond do
+      settled.auth_statuses == statuses and settled.auth_status_seq == state.auth_status_seq ->
+        render(view)
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk(
+          "Settings auth-status injection was overwritten by the real credential load " <>
+            "(seq #{state.auth_status_seq} -> #{settled.auth_status_seq}, " <>
+            "auth_statuses #{inspect(settled.auth_statuses)})"
+        )
+
+      true ->
+        inject_statuses(view, statuses, target_node, deadline)
+    end
   end
 
   defp profile_row(html, profile_id) do
@@ -388,11 +449,22 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
 
       seq_before = assigns(view).auth_status_seq
 
-      view |> element("#" <> detail_panel(@profile_id) <> "-sign-in") |> render_click()
+      click_html =
+        view |> element("#" <> detail_panel(@profile_id) <> "-sign-in") |> render_click()
+
       assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
-      assert has_element?(view, "#" <> detail_panel(@profile_id) <> "-waiting")
+      # The stub answers immediately, so the waiting block is TRANSIENT: pin it
+      # on the click's own render, never on a later read that can already show
+      # the success.
+      assert rendered?(click_html, "#" <> detail_panel(@profile_id) <> "-waiting")
 
       await_page_sign_in(view, :ok, {:detail, @profile_id})
+
+      # Settle the success path's supervised credential reload (and any queued
+      # config/node-data apply) BEFORE reading the page, so these assertions —
+      # and the injection below, which the real load would otherwise overwrite
+      # with the same seq — see one quiet page.
+      settle_mount_loads(view)
 
       # The connected registration lands in the expanded account's detached
       # draft (never the wizard's).
@@ -434,11 +506,21 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
 
       seq_before = assigns(view).auth_status_seq
 
-      view |> element("#" <> status_panel(@profile_id) <> "-sign-in") |> render_click()
+      click_html =
+        view |> element("#" <> status_panel(@profile_id) <> "-sign-in") |> render_click()
+
       assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
-      assert has_element?(view, "#" <> status_panel(@profile_id) <> "-waiting")
+      # Transient for the same reason as the detail surface: the success can be
+      # applied before any later read, so pin it on the click's render.
+      assert rendered?(click_html, "#" <> status_panel(@profile_id) <> "-waiting")
 
       await_page_sign_in(view, :ok, {:status, @profile_id})
+
+      # This surface reads the REAL credential load (it injects nothing), so the
+      # only ordering hazard is rendering/reading while the success path's
+      # supervised reload (or a queued config/node-data apply) is still in
+      # flight: settle it first so every assertion below sees the quiet page.
+      settle_mount_loads(view)
 
       assert assigns(view).profile_form_draft["siwc_account"] == "work-status"
       refute has_element?(view, "#" <> status_panel(@profile_id) <> "-waiting")
