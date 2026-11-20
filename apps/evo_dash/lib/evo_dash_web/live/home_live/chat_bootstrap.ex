@@ -20,6 +20,7 @@ defmodule EvoDashWeb.HomeLive.ChatBootstrap do
   `EvoDashWeb.HomeLive.AttachPipeline` — they are deliberately NOT copied here.
   """
   import Phoenix.Component, only: [assign: 2, assign_new: 3]
+
   use Phoenix.VerifiedRoutes,
     endpoint: EvoDashWeb.Endpoint,
     router: EvoDashWeb.Router,

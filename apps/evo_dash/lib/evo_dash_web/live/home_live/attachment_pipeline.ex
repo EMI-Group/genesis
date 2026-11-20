@@ -149,7 +149,8 @@ defmodule EvoDashWeb.HomeLive.AttachmentPipeline do
 
   # Async native-picker results for the composer's three attach ids; any other
   # picker id keeps the page's existing ignore behaviour.
-  def handle_info(socket, {:directory_picker_result, picker_id, result}) when is_binary(picker_id) do
+  def handle_info(socket, {:directory_picker_result, picker_id, result})
+      when is_binary(picker_id) do
     case attach_kind(picker_id) do
       nil -> {:noreply, socket}
       kind -> {:noreply, handle_attach_result(socket, kind, result)}

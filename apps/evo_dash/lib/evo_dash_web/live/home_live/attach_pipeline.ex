@@ -313,7 +313,8 @@ defmodule EvoDashWeb.HomeLive.AttachPipeline do
           do: apply_attach(socket, result),
           else: ChatState.persist(socket)
 
-      {:noreply, socket |> ApprovalDialogState.maybe_recover_approvals() |> TaskTracking.refresh()}
+      {:noreply,
+       socket |> ApprovalDialogState.maybe_recover_approvals() |> TaskTracking.refresh()}
     else
       {:noreply, socket}
     end

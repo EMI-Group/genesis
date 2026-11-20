@@ -47,7 +47,9 @@ defmodule EvoDashWeb.HomeLive.TaskEvents do
   ## Task broadcasts ------------------------------------------------------
 
   def task_updated(socket, {:task_updated, task_id, status, node}) do
-    {:noreply, socket} = NodeAware.handle_task_info(socket, {:task_updated, task_id, status, node})
+    {:noreply, socket} =
+      NodeAware.handle_task_info(socket, {:task_updated, task_id, status, node})
+
     socket = handle_task_event(socket, task_id, status, node)
 
     socket =
@@ -298,7 +300,8 @@ defmodule EvoDashWeb.HomeLive.TaskEvents do
         {{:chat_finish_result, seq, node, task_id, assigns, reload?}, result}
       ) do
     socket =
-      if ChatBootstrap.stale_control?(socket, seq, node) or task_id != socket.assigns[:chat_task_id] do
+      if ChatBootstrap.stale_control?(socket, seq, node) or
+           task_id != socket.assigns[:chat_task_id] do
         socket
       else
         case result do

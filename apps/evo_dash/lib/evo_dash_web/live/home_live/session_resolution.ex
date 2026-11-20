@@ -23,6 +23,7 @@ defmodule EvoDashWeb.HomeLive.SessionResolution do
   """
   import Phoenix.Component, only: [assign: 2]
   import Phoenix.LiveView, only: [connected?: 1]
+
   use Phoenix.VerifiedRoutes,
     endpoint: EvoDashWeb.Endpoint,
     router: EvoDashWeb.Router,
