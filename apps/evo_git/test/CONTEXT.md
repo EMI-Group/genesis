@@ -76,6 +76,7 @@ What is serialized, by forcing class: (a) the global `EvoGit.AgentScheduler` / a
 `agent/exchange_activity_phases_test.exs` (`EvoGit.Agent.ExchangeActivityPhasesTest`) is serialized for the app-global `EvoGit.AgentScheduler` (`resume/0` + a `model_profiles` rewrite installing the single-slot `"default"` pool) and the `:llm_model_metadata_fun` seam read by `Threshold.for_model/2`.
 `agent/session/start_retry_wait_test.exs` is serialized for the `:agent_retry_backoff_ms` seam its start task reads in ANOTHER process and the global `Logger` level it lowers.
 `background_jobs_nonblocking_test.exs` is serialized for the BEAM-global call-time seams `:background_status_probe_fun`, `:background_probe_min_interval_ms`, `:background_tick_interval_ms` and `:process_stats_enabled`.
+`agent_scheduler/sandbox_backend_cache_test.exs` is serialized for the app-global `EvoGit.AgentScheduler` state and the `:sandbox_backend_probe_fun` app-env seam it mutates (both observable by any concurrent module).
 
 ## Cost Profile (measured)
 Suite wall clock = the `async: true` phase + the serial sum of the `async: false` modules (ExUnit drains the whole async cohort first, then runs sync modules one at a time), so only work removed from that serial tail, or made cheaper, shortens the suite.
