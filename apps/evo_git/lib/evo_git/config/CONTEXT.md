@@ -54,32 +54,14 @@ DATA ONLY: writes no config, touches no disk, starts no process, reads no clock,
 - Two ship: `deepseek-standard` (`:deepseek`, UTC weekday windows, CN holidays + weekends off-peak) and `zai-glm-coding-plan` (`:zai_coding_plan`, weekday 14:00-18:00 Singapore time); sources and per-provider no-preset rationale: the module's moduledoc + `docs/llm-profiles.md` §7.
 
 ### `EvoGit.Config.VersionState` (upgrade detection)
-Tracks the last-seen Genesis version in `version_state.toml` (config dir); defaults to `"0.8.0"` when no file exists.
-| Function | Description |
-|----------|-------------|
-| `get_version/0` | Recorded version string (default `"0.8.0"` if absent/unparseable/missing key) |
-| `current_version/0` | Runtime version via `Application.spec(:evo_git, :vsn) \|> to_string()` |
-| `save_version/1` | Persists a version string (`save_version/0` persists `current_version/0`). `:ok \| {:error, reason}` |
-| `upgraded?/0` | `true` if recorded version ≠ current version |
-| `record_current_version/0` | Persists `current_version/0`; call after showing the update log. |
+Tracks the last-seen Genesis version in `version_state.toml` (config dir); `get_version/0` defaults to `"0.8.0"` when the file is absent/unparseable/a key is missing.
+`current_version/0` reads `Application.spec(:evo_git, :vsn) |> to_string()`; `save_version/1` persists a version string (`save_version/0` persists `current_version/0`) answering `:ok | {:error, reason}`; `upgraded?/0` is recorded ≠ current; `record_current_version/0` persists `current_version/0` (call after showing the update log).
 
 ### `EvoGit.Platform` (cross-platform utilities)
-| Function | Description |
-|----------|-------------|
-| `os/0` | `:linux`, `:macos`, `:windows`, or `:unknown` |
-| `config_dir/1` / `data_dir/1` | Platform config / data dirs |
-| `shell/0` | Effective shell — honors `[tools] shell`; defaults `"bash"` (Linux/macOS) / `"powershell"` (Windows) |
-| `shell_args/1` | `["-c", cmd]` (POSIX) or PowerShell `-EncodedCommand` args (via `EvoGit.Powershell`) |
-| `systemd_available?/0` / `nix_available?/0` | Linux + systemd / `nix` on PATH (Linux and macOS) |
+`os/0` (`:linux` / `:macos` / `:windows` / `:unknown`); `config_dir/1` / `data_dir/1`; `shell/0` (honors `[tools] shell`; defaults `"bash"` on Linux/macOS, `"powershell"` on Windows); `shell_args/1` (`["-c", cmd]` or PowerShell `-EncodedCommand` args via `EvoGit.Powershell`); `systemd_available?/0` (Linux + systemd) / `nix_available?/0` (`nix` on PATH, Linux and macOS).
 
 ### `EvoGit.ProjectConfig` (per-repo genesis.toml)
-| Function | Description |
-|----------|-------------|
-| `read/1` | Parses `genesis.toml` from repo root |
-| `worktree_script/1,2` | Worktree init script for the current / given OS, with variant resolution |
-| `write_worktree_script/2` | Writes/merges `[worktree].script`, preserving existing sections/keys |
-| `commands/1` | User-defined dev command shortcuts from `[commands]` |
-| `foreign_repos/1` | `ForeignRepo` structs |
+`read/1` (parse `genesis.toml` from the repo root); `worktree_script/1,2` (init script for the current/given OS, with variant resolution); `write_worktree_script/2` (writes/merges `[worktree].script`, preserving existing sections/keys); `commands/1` (user dev-command shortcuts); `foreign_repos/1` (`ForeignRepo` structs).
 
 ### genesis.toml Structure
 Three tables: `[worktree]` `script` (single fallback) with optional OS-specific variants as TOML dotted keys (`script.linux`/`script.macos`/`script.windows`; resolution `script.<current_os>` → `script` → `nil`), `[commands]` user shortcuts displayed in the dashboard and manually triggered (never auto-executed), and `[foreign_repos.<id>]` with `path` + `description` (+ `writable`/`base_sha`, see below).
