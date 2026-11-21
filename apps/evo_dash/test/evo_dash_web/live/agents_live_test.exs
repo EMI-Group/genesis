@@ -3474,7 +3474,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       collapsed_rows = commit_row_ids(view)
 
-      render_click(view, "toggle_commit_fold", %{"fold-key" => key})
+      render_click(view, "toggle_commit_fold", %{"fold_key" => key})
 
       # The key joined the expansion set and the gap node flipped to EXPANDED.
       assert MapSet.member?(assigns(view)[:commit_fold_expanded], key)
@@ -3500,12 +3500,42 @@ defmodule EvoDashWeb.AgentsLiveTest do
       refute_receive {:commit_graph_call, _, _, _, _, _}, 0
 
       # Toggling the SAME key again collapses it.
-      render_click(view, "toggle_commit_fold", %{"fold-key" => key})
+      render_click(view, "toggle_commit_fold", %{"fold_key" => key})
 
       refute MapSet.member?(assigns(view)[:commit_fold_expanded], key)
       assert commit_row_ids(view) == collapsed_rows
       hidden_sha = hidden_fold_sha(view)
       refute has_element?(view, "#commit-row-#{dom}-#{hidden_sha}")
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 0
+    end
+
+    test "a REAL click on the rendered gap row expands that fold", %{conn: conn} do
+      # REGRESSION (kebab-case `phx-value-*`): LiveView strips ONLY the
+      # `phx-value-` prefix, so `phx-value-fold-key` arrives as the params key
+      # `"fold-key"` while the handler reads `"fold_key"` — a silently dead row.
+      # Clicking the REAL element derives the event value from the rendered
+      # markup, so this fails unless BOTH sides are snake_case.
+      view = mount_foldable_commit_graph(conn)
+      [gap | _] = fold_gap_nodes(view)
+      key = gap.fold_key
+      collapsed_rows = commit_row_ids(view)
+      # No kebab-case value attribute is rendered at all…
+      refute has_element?(view, ".cg-gap-row[phx-value-fold-key]")
+      # …and the gap row itself carries the snake_case one.
+      row_id =
+        view
+        |> render()
+        |> Floki.parse_document!()
+        |> Floki.find(~s|[id^="commit-gap-row-"]|)
+        |> hd()
+        |> Floki.attribute("id")
+        |> hd()
+
+      assert has_element?(view, "##{row_id}[phx-value-fold_key]")
+      view |> element("##{row_id}") |> render_click()
+      assert MapSet.member?(assigns(view)[:commit_fold_expanded], key)
+      # The run's hidden commits re-joined the list, still with no git RPC.
+      assert length(commit_row_ids(view)) == length(collapsed_rows) + gap.hidden_count
       refute_receive {:commit_graph_call, _, _, _, _, _}, 0
     end
 
@@ -3553,7 +3583,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       # Still in the TREE view: there is nothing to re-fold and nothing to fetch.
       render_click(view, "expand_all_commit_folds", %{})
-      render_click(view, "toggle_commit_fold", %{"fold-key" => "whatever"})
+      render_click(view, "toggle_commit_fold", %{"fold_key" => "whatever"})
       render_click(view, "collapse_all_commit_folds", %{})
 
       assert assigns(view)[:commit_fold_expanded] == MapSet.new()
@@ -3568,7 +3598,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       [gap | _] = fold_gap_nodes(view)
       key = gap.fold_key
 
-      render_click(view, "toggle_commit_fold", %{"fold-key" => key})
+      render_click(view, "toggle_commit_fold", %{"fold_key" => key})
       assert MapSet.member?(assigns(view)[:commit_fold_expanded], key)
       expanded_rows = commit_row_ids(view)
 
@@ -3592,7 +3622,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       view = mount_foldable_commit_graph(conn)
       [gap | _] = fold_gap_nodes(view)
 
-      render_click(view, "toggle_commit_fold", %{"fold-key" => gap.fold_key})
+      render_click(view, "toggle_commit_fold", %{"fold_key" => gap.fold_key})
       assert MapSet.size(assigns(view)[:commit_fold_expanded]) == 1
 
       # Mirror the retained-agents / commit-graph reset tests: invoke

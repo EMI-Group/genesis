@@ -65,11 +65,17 @@ defmodule EvoDashWeb.LiveHooks.UpdateStatus do
 
   @doc false
   # Applies a check result to the hub and reports whether an auto-download
-  # should be requested (the hub's atomic once-per-version guard decides).
-  def handle_check_result(payload) do
-    UpdateStatus.handle_check_result(payload)
+  # should be requested (the hub's atomic once-per-version guard decides). A
+  # result belonging to a check that a newer `check_started/0` has superseded is
+  # dropped by the hub (`:stale`) and never triggers a download.
+  def handle_check_result(payload, generation \\ nil) do
+    case UpdateStatus.handle_check_result(payload, generation) do
+      :applied ->
+        if UpdateStatus.request_download?(), do: :request_download, else: :no_download
 
-    if UpdateStatus.request_download?(), do: :request_download, else: :no_download
+      :stale ->
+        :no_download
+    end
   end
 
   @doc false
@@ -125,7 +131,12 @@ defmodule EvoDashWeb.LiveHooks.UpdateStatus do
 
   # Attached `:handle_event` hook — runs BEFORE the LiveView's own callback.
   def handle_event("update_check_result", payload, socket) do
-    case handle_check_result(payload) do
+    # A page that triggered the check carries its generation in an assign
+    # (`SystemLive`); every other page has none, so the payload applies to the
+    # hub's current check.
+    generation = Map.get(socket.assigns, :update_check_generation)
+
+    case handle_check_result(payload, generation) do
       :request_download -> {:halt, push_event(socket, "update_download_requested", %{})}
       :no_download -> {:halt, socket}
     end

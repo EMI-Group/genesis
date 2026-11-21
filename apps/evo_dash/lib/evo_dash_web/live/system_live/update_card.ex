@@ -165,30 +165,35 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   end
 
   @doc """
-  Spawns the never-wedge check watchdog on `EvoDash.TaskSupervisor`.
+  Spawns the never-wedge check watchdog on `EvoDash.TaskSupervisor` for the
+  check `generation` that `EvoDash.UpdateStatus.check_started/0` returned.
 
   The runner is a test seam (`config :evo_dash, :update_check_runner`, default
-  `default_watchdog/1`); a raising — or exiting — runner is reported as a
+  the timeout watchdog); a raising — or exiting — runner is reported as a
   failed check so the `:checking` phase can never stick. When the seam replaces
-  the default watchdog, the never-wedge timeout watchdog ALSO runs in parallel —
+  the timeout watchdog, the never-wedge timeout watchdog ALSO runs in parallel —
   otherwise a runner that never reports (e.g. the no-result test seam) would
-  leave `:checking` stuck forever. In production the runner IS the default
+  leave `:checking` stuck forever. In production the runner IS the timeout
   watchdog, so the extra task is not spawned.
+
+  Every failure path carries `generation`, so a watchdog belonging to a check a
+  newer `check_started/0` has superseded can never fail the newer check.
   """
-  def spawn_check_watchdog(view_pid) do
-    runner = Application.get_env(:evo_dash, :update_check_runner) || (&default_watchdog/1)
+  def spawn_check_watchdog(view_pid, generation) do
+    seam = Application.get_env(:evo_dash, :update_check_runner)
+    runner = seam || fn pid -> default_watchdog(pid, generation) end
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
       case SafeCall.run(fn -> runner.(view_pid) end) do
         {:ok, _result} -> :ok
         # A crashing runner must not wedge the :checking phase.
-        {:error, _reason} -> UpdateStatus.check_failed("check_failed")
+        {:error, _reason} -> UpdateStatus.check_failed("check_failed", generation)
       end
     end)
 
-    if Application.get_env(:evo_dash, :update_check_runner) != nil do
+    if seam != nil do
       Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-        default_watchdog(view_pid)
+        default_watchdog(view_pid, generation)
       end)
     end
 
@@ -308,13 +313,15 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   # Default watchdog: waits out the check timeout, then fails the check if it
   # never completed. The CHECK step is bounded so the UI never wedges on a
   # spinner (the apply side's grace is deliberately NOT wall-clock bounded —
-  # LLM retries ~9min, per-tool cap 30min).
-  defp default_watchdog(_view_pid) do
+  # LLM retries ~9min, per-tool cap 30min). Both guards matter: the phase check
+  # skips a check that already resolved, and `generation` makes the hub drop the
+  # timeout outright once a newer check has superseded this one.
+  defp default_watchdog(_view_pid, generation) do
     timeout = Application.get_env(:evo_dash, :update_check_timeout, 30_000)
     Process.sleep(timeout)
 
     if UpdateStatus.phase() == :checking do
-      UpdateStatus.check_failed("timeout")
+      UpdateStatus.check_failed("timeout", generation)
     end
   end
 

@@ -497,25 +497,22 @@ defmodule EvoDashWeb.SystemLiveTest.Helpers do
   end
 
   # --- Check-watchdog leak guard --------------------------------------------
-  # `EvoDashWeb.SystemLive.UpdateCard.spawn_check_watchdog/1` starts the
+  # `EvoDashWeb.SystemLive.UpdateCard.spawn_check_watchdog/2` starts the
   # never-wedge check watchdog (plus, when a runner seam is injected, the
   # parallel timeout watchdog) as children of the SHARED
-  # `EvoDash.TaskSupervisor`, which never stops children per test. A watchdog
-  # therefore outlived the test that spawned it and, when it woke, cast
-  # `check_failed("timeout")` into the PROCESS-GLOBAL `EvoDash.UpdateStatus`
-  # hub: a LATER test that parks the hub at `:checking` (the mount-triggered
-  # check) could have its card flipped to "Check failed" between its own
-  # `await_update_phase(view, :checking)` and its `render/1` — the intermittent
-  # `assert html =~ "Checking for updates…"` failure. The seed-186 order makes
-  # the window explicit: "mounting the page with an idle hub triggers a check
-  # automatically" leaks a 500 ms watchdog, "Check now flow" runs, then "every
-  # update state renders in the card" parks `:checking` ~50 ms in — safely
-  # inside 500 ms unloaded, still parked past it on a loaded host.
-  # `terminate_owned_tasks!/1` stops every child THIS test owns, owner-aware
-  # through the OTP `:"$callers"` chain LiveViewTest threads from the test pid
-  # into the view and on into the tasks the view spawns (the same rule the
-  # mount funnels use). `Task.Supervisor.terminate_child/2` is synchronous, so
-  # nothing from one test can mutate the hub during the next.
+  # `EvoDash.TaskSupervisor`, which never stops children per test — so a
+  # watchdog can outlive the test that spawned it. The hub drops a timeout whose
+  # check generation has been superseded, but `EvoDash.UpdateStatus.reset/0`
+  # restarts that generation at 0, so a leftover watchdog can still carry a
+  # generation that matches a LATER test's check and fire
+  # `check_failed("timeout")` into the PROCESS-GLOBAL hub while that test parks
+  # at `:checking`.
+  # `terminate_owned_tasks!/1` is the hygiene that keeps one test's watchdogs
+  # out of the next: it stops every child THIS test owns, owner-aware through
+  # the OTP `:"$callers"` chain LiveViewTest threads from the test pid into the
+  # view and on into the tasks the view spawns (the same rule the mount funnels
+  # use). `Task.Supervisor.terminate_child/2` is synchronous, so nothing from
+  # one test can mutate the hub during the next.
   def owned_task_pids(owner) do
     for pid <- Task.Supervisor.children(EvoDash.TaskSupervisor),
         owned_task?(pid, owner),
@@ -562,6 +559,28 @@ defmodule EvoDashWeb.SystemLiveTest.Helpers do
         Process.sleep(@poll_ms)
         do_await_hub_phase(phase, deadline)
       end
+    end
+  end
+
+  # Reports whether the hub stayed at `phase` for the WHOLE window. Used to
+  # prove that a superseded check's watchdog really fired and was DROPPED: an
+  # applied timeout would flip the hub to :error inside the window.
+  def hub_stays_at_phase?(phase, window_ms) do
+    deadline = System.monotonic_time(:millisecond) + window_ms
+    do_hub_stays_at_phase?(phase, deadline)
+  end
+
+  def do_hub_stays_at_phase?(phase, deadline) do
+    cond do
+      EvoDash.UpdateStatus.phase() != phase ->
+        false
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        true
+
+      true ->
+        Process.sleep(@poll_ms)
+        do_hub_stays_at_phase?(phase, deadline)
     end
   end
 
@@ -1675,12 +1694,14 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
     end)
 
     # Nothing this test spawned on the SHARED `EvoDash.TaskSupervisor` may
-    # outlive it: a leftover check watchdog would cast a stale
+    # outlive it: a leftover check watchdog can fire
     # `check_failed("timeout")` into the process-global `EvoDash.UpdateStatus`
-    # hub during a LATER test (see `terminate_owned_tasks!/1`). Registered
-    # AFTER the env restore, so it runs FIRST (ExUnit runs `on_exit` callbacks
-    # LIFO) and the strays are gone before the seams are restored. `on_exit`
-    # runs in another process, so the test pid is captured here.
+    # hub during a LATER test (the generation guard only helps while the
+    # generation it carries is superseded — a reset restarts it; see
+    # `terminate_owned_tasks!/1`). Registered AFTER the env restore, so it runs
+    # FIRST (ExUnit runs `on_exit` callbacks LIFO) and the strays are gone before
+    # the seams are restored. `on_exit` runs in another process, so the test pid
+    # is captured here.
     spawned_by = self()
     on_exit(fn -> terminate_owned_tasks!(spawned_by) end)
 
@@ -2182,6 +2203,89 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       assert EvoDash.UpdateStatus.phase() == :checking
       assert assigns(view).update_status.phase == :checking
       assert render(view) =~ "Checking for updates…"
+    end
+
+    test "a superseded check's watchdog timeout cannot fail a newer check", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+
+      # The runner seam never reports, so only a watchdog can end a check.
+      Application.put_env(:evo_dash, :update_check_runner, fn _ -> :ok end)
+
+      # The FIRST check's watchdog sleeps only 150 ms; the SECOND check's
+      # watchdog is re-armed to a huge timeout BEFORE its trigger reads the seam,
+      # so it can never interfere. The window therefore isolates exactly one
+      # event: the first check's timeout firing while the second check runs.
+      Application.put_env(:evo_dash, :update_check_timeout, 150)
+
+      # Start from :up_to_date so mounting does NOT trigger a check (the mount
+      # trigger only fires from :idle).
+      EvoDash.UpdateStatus.handle_check_result(%{
+        "status" => "up_to_date",
+        "current_version" => "0.1.0"
+      })
+
+      await_hub_phase(:up_to_date)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      # Check 1 → generation 1, whose watchdog fires ~150 ms from now.
+      view |> element("#update-check-now") |> render_click()
+      await_update_phase(view, :checking)
+      assert assigns(view).update_check_generation == 1
+
+      # Check 2 while check 1 is still in flight. `render_click/3` dispatches the
+      # event directly (the Check-now button is `disabled` while :checking, which
+      # a DOM click could not bypass), and the huge timeout keeps check 2's own
+      # watchdog asleep for the rest of the test.
+      Application.put_env(:evo_dash, :update_check_timeout, 2_000_000)
+      render_click(view, "check_for_updates", %{})
+
+      assert assigns(view).update_check_generation == 2
+      assert EvoDash.UpdateStatus.phase() == :checking
+
+      # Well past check 1's 150 ms deadline: its timeout belongs to a superseded
+      # generation and is DROPPED, so the newer check stays :checking. With an
+      # unversioned hub this window ends in :error / "timeout".
+      assert hub_stays_at_phase?(:checking, 600)
+      state = EvoDash.UpdateStatus.get()
+      assert state.error == nil
+
+      # The newer check reports healthy through the view's result path, which
+      # carries the socket's generation.
+      send(
+        view.pid,
+        {:update_check_result, %{"status" => "up_to_date", "current_version" => "0.1.0"}}
+      )
+
+      await_update_phase(view, :up_to_date)
+      assert EvoDash.UpdateStatus.phase() == :up_to_date
+      assert render(view) =~ "is up to date"
+
+      # A late result from the superseded check is dropped too.
+      assert EvoDash.UpdateStatus.handle_check_result(
+               %{"status" => "error", "error" => "stale"},
+               1
+             ) == :stale
+
+      assert EvoDash.UpdateStatus.phase() == :up_to_date
+      assert EvoDash.UpdateStatus.get().error == nil
+
+      # The view's own result path carries the socket's generation too: a newer
+      # check (generation 3) supersedes the socket's 2, so a result arriving
+      # through `{:update_check_result, _}` is dropped instead of resolving the
+      # newer check.
+      EvoDash.UpdateStatus.check_started()
+
+      send(
+        view.pid,
+        {:update_check_result, %{"status" => "up_to_date", "current_version" => "0.1.0"}}
+      )
+
+      # `assigns/1` is a synchronous `:sys.get_state/2`, so the view has handled
+      # the message above by the time it answers.
+      assert assigns(view).update_check_generation == 2
+      assert EvoDash.UpdateStatus.phase() == :checking
     end
 
     test "every update state renders in the card", %{conn: conn} do
