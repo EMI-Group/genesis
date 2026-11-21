@@ -169,6 +169,7 @@ Running the suite INSIDE a Genesis worker sets `TMPDIR=/tmp/genesis/task_<n>`, w
 **`sandbox/helpers_test.exs` holds its alive-port child on purpose**: a short-lived `bash -c "echo $$"` exits in microseconds, so under load the port auto-closes before the first poll and the CORRECT helper returns `:undefined` — do NOT shorten that child (`./evo_git/sandbox/CONTEXT.md`).
 **The app-global `EvoGit.VCT` boot mount is REAL host state** — `EvoGit.Application` starts it with `EvoGit.SelfReflectiveSource.system_mounts()` over the machine's real data dir, so `vct:///genesis-source` binds to the developer's own tree and `SelfReflectiveSource.reference_path/0` step 3 depends on the host and on whichever earlier test re-pointed that mount.
 Rule: a test exercising the chain's VCT step pins `:evogit_vct_server` through `EvoGit.VCTTest.Helpers.start_stack/2` (an EMPTY per-test mount table) instead of inheriting the boot mount (`self_reflective_source_test.exs`'s negative `available?/0` case does).
+
 ## Console Output (kept quiet)
 Console noise must be captured, never leaked: `test_helper.exs` sets `ExUnit.start(capture_log: true)`; `ExUnit.CaptureLog.capture_log/2` is WINDOW-based and catches logs from ANY process, while raw subprocess stderr needs `stderr_to_stdout: true`.
 - Store read-worker faults: ONE facade line (`Store: read <op> failed — …`) from `format_offload_reason/1`; a `:shutdown`-class exit emits no crash report (`../lib/evo_git/store/CONTEXT.md`).
