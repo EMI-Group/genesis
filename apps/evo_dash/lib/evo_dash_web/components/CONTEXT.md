@@ -85,8 +85,7 @@ Task-card caps (`@in_card_blob_limit`, `@in_card_log_limit`, `@copy_payload_limi
 
 ### Restrained shell and core controls
 
-`Layouts.app/1` keeps a semibold base-size wordmark and flat tinted active navigation (no selection shadow); nav/branding/toggles and core default buttons/tabs/accordion summaries use theme-token focus-visible outlines (`rounded-lg` buttons, `text-base-content/70` form labels).
-The Assistant link uses `/assistant` (label `gettext("Assistant")`, `hero-chat-bubble-left-right`), sits right after Active Tasks, keys to `current_page == :assistant` and threads the node through `with_node_param/2`; the sidebar always renders a `Conversations` section (body `HomeLive.SessionList.session_list(assigns)`, rows `#chat-session-<id>`, loaded and stale-guarded by `LiveHooks.NodeAware`).
+`Layouts.app/1` keeps a semibold base-size wordmark and flat tinted active navigation (no selection shadow), with theme-token focus-visible outlines throughout. The Assistant link uses `/assistant` (label `gettext("Assistant")`, `hero-chat-bubble-left-right`), sits right after Active Tasks, keys to `current_page == :assistant` and threads the node through `with_node_param/2`; the sidebar always renders a `Conversations` section (body `HomeLive.SessionList.session_list(assigns)`, rows `#chat-session-<id>`, loaded and stale-guarded by `LiveHooks.NodeAware`).
 The chat approval surface belongs to `live/home_live/approval_dialog.ex` (`#approval-status-bar` + one `<dialog id="approval-dialog" class="modal" phx-hook="DialogModal">` with 1-of-N stepping, Deny / Allow once, sudo warning), not this node; the guide panel renders only when `@guide` exists ("Genesis Guide", Dismiss when `dismissible`, node-aware "Go" link).
 Below `lg` main content uses `pt-16` (desktop `lg:pt-4`); the fixed configuration notice lists its lines through `EvoDashWeb.ConfigIssues.lines/1` and never blames the LLM model.
 
