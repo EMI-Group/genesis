@@ -5,9 +5,11 @@ defmodule EvoGit.Agent.Tools.WebFetchTest do
   path is exercised with no network access and no mocking of `Req`.
   """
 
-  # NOT async: the fixed absolute `@repo` below is SHARED by every test (and by
-  # any concurrent run), so this module can only be flipped once its fixtures
-  # move to a per-test `@moduletag :tmp_dir` dir.
+  # `async: false`: `setup` sets the BEAM-global app-env key
+  # `:web_fetch_allow_private_hosts`, and one describe block flips it to `false`
+  # for its own tests, so two concurrently running modules could observe each
+  # other's value. (`@repo` is only passed through to `WebFetch.execute/3`,
+  # which ignores it.)
   use ExUnit.Case, async: false
 
   alias EvoGit.Agent.Tools.WebFetch

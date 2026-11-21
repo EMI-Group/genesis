@@ -1,6 +1,8 @@
 defmodule EvoGit.TaskControlTest do
-  # Valid task starts publish the existing node-wide VCT events, so these
-  # adapter tests must not overlap async tests observing that shared topic.
+  # `async: false` is FORCED by two app-global members: the pause/resume path
+  # flags tasks in the app-global `EvoGit.AgentScheduler` (`TaskRegistry.Pause`
+  # → `begin_task_pause`/`clear_task_pause`), and a resume restores a durable
+  # run through the app-booted `EvoGit.AgentState` server.
   use EvoGit.TaskRegistryCase, async: false
 
   alias EvoGit.TaskControl
