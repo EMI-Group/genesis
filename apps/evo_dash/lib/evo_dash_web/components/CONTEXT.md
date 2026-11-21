@@ -95,12 +95,11 @@ Task-card caps (`@in_card_blob_limit`, `@in_card_log_limit`, `@copy_payload_limi
 ### Restrained shell and core controls
 
 `Layouts.app/1` keeps a semibold base-size wordmark and flat tinted active navigation without a selection shadow.
-The Assistant link uses `/assistant` (`/help` 302-redirects there with the query string preserved) with the `gettext("Assistant")` label (`hero-chat-bubble-left-right`), sits right after Active Tasks, keys to `current_page == :assistant` and threads the node through `with_node_param/2`.
-The sidebar always renders a `Conversations` section (`gettext("Conversations")` + `hero-chat-bubble-left-right`, body `EvoDashWeb.HomeLive.SessionList.session_list(assigns)` with rows `#chat-session-<id>`, loaded and stale-guarded by `EvoDashWeb.LiveHooks.NodeAware`, owner of `{{:session_list_loaded, seq, node}, result}`).
-The chat approval surface belongs to `live/home_live/approval_dialog.ex` (fixed-height `#approval-status-bar` above the composer plus one `<dialog id="approval-dialog" class="modal" phx-hook="DialogModal">` with 1-of-N stepping, Deny / Allow once and a sudo warning), not this node.
-The guide panel renders only when `@guide` exists, is titled "Genesis Guide", shows plain message text, conditionally offers Dismiss when `dismissible` and a node-aware "Go" link when `page` is a binary.
-Below `lg` the main content uses `pt-16` for the fixed navigation toggle (desktop `lg:pt-4`); the fixed configuration notice is viewport-minus-two-rem wide capped at `max-w-sm`, lists its lines through `EvoDashWeb.ConfigIssues.lines/1` (core `warnings` + one line per schema `validation_error`), keeps the model-neutral "Configure now →" link and never blames the LLM model.
-Shell navigation, branding, toggles, core default buttons, tabs, accordion summaries and notice close buttons use theme-token focus-visible outlines; core notices use one subtle ring and a translated Close label; default core buttons `rounded-lg`, form labels `text-base-content/70`.
+The Assistant link uses `/assistant` (`/help` 302-redirects there with the query string preserved; label `gettext("Assistant")`, `hero-chat-bubble-left-right`), sits right after Active Tasks, keys to `current_page == :assistant` and threads the node through `with_node_param/2`.
+The sidebar always renders a `Conversations` section (`gettext("Conversations")`, body `HomeLive.SessionList.session_list(assigns)`, rows `#chat-session-<id>`, loaded and stale-guarded by `LiveHooks.NodeAware`).
+The chat approval surface belongs to `live/home_live/approval_dialog.ex` (fixed-height `#approval-status-bar` above the composer plus one `<dialog id="approval-dialog" class="modal" phx-hook="DialogModal">` with 1-of-N stepping, Deny / Allow once and a sudo warning), not this node; the guide panel renders only when `@guide` exists ("Genesis Guide", plain message text, Dismiss when `dismissible`, node-aware "Go" link).
+Below `lg` the main content uses `pt-16` (desktop `lg:pt-4`); the fixed configuration notice lists its lines through `EvoDashWeb.ConfigIssues.lines/1`, keeps the model-neutral "Configure now →" link and never blames the LLM model.
+Shell navigation, branding, toggles and core default buttons/tabs/accordion summaries use theme-token focus-visible outlines; default core buttons `rounded-lg`, form labels `text-base-content/70`.
 
 ### Shell motion (disclosures, transitions, palette, flash)
 
