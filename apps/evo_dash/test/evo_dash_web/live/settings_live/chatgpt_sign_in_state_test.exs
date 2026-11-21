@@ -10,6 +10,8 @@
 defmodule EvoDashWeb.SettingsLive.ChatGPTSignInStateTest do
   use ExUnit.Case, async: true
 
+  require Phoenix.LiveViewTest
+
   alias EvoDash.Test.ChatGPTLoginStub
   alias EvoDashWeb.SettingsLive.ChatGPTSignInState
 
@@ -62,17 +64,52 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInStateTest do
       flow_id: flow_id,
       url: @flow_url,
       phase: :waiting,
-      reason: nil
+      reason: nil,
+      port: 48_123,
+      mode: :loopback,
+      paste: "",
+      paste_error: nil
     }
   end
 
-  defp install!(begin_result, statuses \\ []) do
-    ChatGPTLoginStub.install!(begin: begin_result, statuses: statuses)
+  defp install!(begin_result, statuses \\ [], opts \\ []) do
+    ChatGPTLoginStub.install!([begin: begin_result, statuses: statuses] ++ opts)
+  end
+
+  # A hand-built socket for the page's event handlers: `assign/3` needs
+  # `__changed__`, and `sync_sign_in_state/1` reads `:provider_wizard` and the
+  # node assigns (absent = this local node, never `manual`).
+  defp socket(state) do
+    %Phoenix.LiveView.Socket{
+      assigns: %{__changed__: %{}, chatgpt_sign_in: state, provider_wizard: nil}
+    }
+  end
+
+  defp assign_state(socket), do: socket.assigns.chatgpt_sign_in
+
+  defp render_panel(surface, profile_id, sign_in) do
+    Phoenix.LiveViewTest.render_component(
+      &EvoDashWeb.SettingsComponents.ChatGPTSignInPanel.sign_in_panel/1,
+      id: "probe",
+      surface: surface,
+      profile_id: profile_id,
+      sign_in: sign_in
+    )
   end
 
   describe "new/0 and defaults/0" do
     test "both answer the same idle state with no owning surface" do
-      idle = %{surface: nil, flow_id: nil, url: nil, phase: :idle, reason: nil}
+      idle = %{
+        surface: nil,
+        flow_id: nil,
+        url: nil,
+        phase: :idle,
+        reason: nil,
+        port: nil,
+        mode: nil,
+        paste: "",
+        paste_error: nil
+      }
 
       assert ChatGPTSignInState.new() == idle
       assert ChatGPTSignInState.defaults() == idle
@@ -140,7 +177,11 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInStateTest do
                flow_id: @flow_id,
                url: @flow_url,
                phase: :waiting,
-               reason: nil
+               reason: nil,
+               port: 48_123,
+               mode: nil,
+               paste: "",
+               paste_error: nil
              }
 
       assert_receive {:chatgpt_stub, :begin, "work"}, @receive_timeout_ms
@@ -163,6 +204,8 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInStateTest do
       assert state.reason == :loopback_listener_unavailable
       assert state.flow_id == nil
       assert state.url == nil
+      assert state.port == nil
+      assert state.mode == nil
       refute ChatGPTSignInState.waiting?(state)
 
       assert_receive {:chatgpt_stub, :begin, _account}, @receive_timeout_ms
@@ -170,6 +213,28 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInStateTest do
       # supervised poll alive, no status read can ever reach the stub.
       assert_no_poll(self())
       refute_receive {:chatgpt_stub, :status, _flow_id}, 0
+    end
+
+    test "records the flow's redirect port and mode (absent ones are nil)" do
+      install!({:ok, %{id: @flow_id, url: @flow_url, port: 48_123, mode: :manual}})
+
+      manual = ChatGPTSignInState.begin(ChatGPTSignInState.new(), "work", :wizard, self())
+
+      assert_receive {:chatgpt_stub, :begin, "work"}, @receive_timeout_ms
+      assert manual.port == 48_123
+      assert manual.mode == :manual
+
+      projection = ChatGPTSignInState.surface_state(manual, :wizard)
+      assert projection.port == 48_123
+      assert projection.mode == :manual
+
+      # A flow module that reports neither is still a usable waiting surface.
+      install!({:ok, %{id: @flow_id, url: @flow_url}})
+      bare = ChatGPTSignInState.begin(manual, "work", {:detail, "profile-1"}, self())
+
+      assert bare.phase == :waiting
+      assert bare.port == nil
+      assert bare.mode == nil
     end
 
     test "a second flow on ANY surface cancels the still-waiting first one" do
@@ -207,6 +272,186 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInStateTest do
       # No flow module call is even attempted without an owner (`:begin` is a
       # synchronous notification, so the mailbox is conclusive here too).
       refute_receive {:chatgpt_stub, :begin, _account}, 0
+    end
+  end
+
+  describe "chatgpt_sign_in_paste/2 and chatgpt_sign_in_submit/2 — the manual fallback" do
+    test "the typed text reaches the flow and the surface stays waiting" do
+      install!({:ok, %{id: @flow_id, url: @flow_url, port: 48_123}})
+      surface = {:detail, "profile-1"}
+      typed = "  http://127.0.0.1:48123/auth/callback?code=abc&state=s1  "
+
+      {:noreply, pasted} =
+        ChatGPTSignInState.chatgpt_sign_in_paste(socket(waiting_state(surface)), %{
+          "surface" => "detail",
+          "profile_id" => "profile-1",
+          "value" => typed
+        })
+
+      # `phx-change` stores the text verbatim (the user may still be typing) and
+      # clears an earlier rejection — no flow call at all.
+      assert assign_state(pasted).paste == typed
+      assert assign_state(pasted).paste_error == nil
+      assert assign_state(pasted).phase == :waiting
+      refute_receive {:chatgpt_stub, :submit, _flow_id, _input}, 0
+
+      {:noreply, submitted} =
+        ChatGPTSignInState.chatgpt_sign_in_submit(pasted, %{
+          "surface" => "detail",
+          "profile_id" => "profile-1"
+        })
+
+      assert_receive {:chatgpt_stub, :submit, @flow_id, text}, @receive_timeout_ms
+      assert text == String.trim(typed)
+
+      state = assign_state(submitted)
+      assert state.phase == :waiting
+      assert state.paste == ""
+      assert state.paste_error == nil
+      assert state.flow_id == @flow_id
+    end
+
+    test "the submit payload's value is the fallback when nothing was typed" do
+      install!({:ok, %{id: @flow_id, url: @flow_url, port: 48_123}})
+
+      {:noreply, submitted} =
+        ChatGPTSignInState.chatgpt_sign_in_submit(socket(waiting_state(:wizard)), %{
+          "surface" => "wizard",
+          "value" => "abc123"
+        })
+
+      assert_receive {:chatgpt_stub, :submit, @flow_id, "abc123"}, @receive_timeout_ms
+      assert assign_state(submitted).phase == :waiting
+    end
+
+    test "a blank paste answers an inline, retryable :no_code WITHOUT touching the flow" do
+      waiting = waiting_state(:wizard)
+
+      for params <- [%{"surface" => "wizard"}, %{"surface" => "wizard", "value" => "   "}] do
+        {:noreply, submitted} =
+          ChatGPTSignInState.chatgpt_sign_in_submit(socket(waiting), params)
+
+        assert assign_state(submitted).phase == :waiting
+        assert assign_state(submitted).paste_error == :no_code
+        assert assign_state(submitted).flow_id == @flow_id
+      end
+
+      refute_receive {:chatgpt_stub, :submit, _flow_id, _input}, 0
+    end
+
+    test "a rejected paste keeps the waiting panel with a retryable inline error" do
+      for reason <- [:invalid_callback, :no_code, :already_finished] do
+        install!({:ok, %{id: @flow_id, url: @flow_url, port: 48_123}}, [],
+          submit: {:error, reason}
+        )
+
+        surface = {:status, "profile-2"}
+        waiting = %{waiting_state(surface) | paste: "code=abc"}
+
+        {:noreply, socket} =
+          ChatGPTSignInState.chatgpt_sign_in_submit(socket(waiting), %{
+            "surface" => "status",
+            "profile_id" => "profile-2"
+          })
+
+        assert_receive {:chatgpt_stub, :submit, @flow_id, "code=abc"}, @receive_timeout_ms
+
+        state = assign_state(socket)
+        assert state.phase == :waiting
+        assert state.paste_error == reason
+        assert state.reason == nil
+        assert state.flow_id == @flow_id
+
+        # The surface still renders its waiting block with the inline error.
+        projection = ChatGPTSignInState.surface_state(state, surface)
+        assert projection.phase == :waiting
+        assert projection.paste_error == reason
+        assert render_panel("status", "profile-2", projection) =~ "Submit pasted link"
+      end
+    end
+
+    test "any other flow failure becomes the :error phase" do
+      install!(
+        {:ok, %{id: @flow_id, url: @flow_url, port: 48_123}},
+        [],
+        submit: {:error, :unknown_flow}
+      )
+
+      {:noreply, socket} =
+        ChatGPTSignInState.chatgpt_sign_in_submit(socket(waiting_state(:wizard)), %{
+          "surface" => "wizard",
+          "value" => "abc"
+        })
+
+      assert_receive {:chatgpt_stub, :submit, @flow_id, "abc"}, @receive_timeout_ms
+
+      state = assign_state(socket)
+      assert state.phase == :error
+      assert state.reason == :unknown_flow
+      assert state.paste_error == nil
+    end
+
+    test "a cancelled flow answers :already_finished and keeps the panel retryable" do
+      install!({:ok, %{id: @flow_id, url: @flow_url, port: 48_123}})
+
+      # The stub records the cancel, then answers submits for that id as an
+      # already-finished attempt.
+      _ = ChatGPTLoginStub.cancel(@flow_id)
+      assert_receive {:chatgpt_stub, :cancel, @flow_id}, @receive_timeout_ms
+
+      {:noreply, socket} =
+        ChatGPTSignInState.chatgpt_sign_in_submit(socket(waiting_state(:wizard)), %{
+          "surface" => "wizard",
+          "value" => "abc"
+        })
+
+      assert assign_state(socket).phase == :waiting
+      assert assign_state(socket).paste_error == :already_finished
+    end
+
+    test "a paste for a surface that no longer owns a waiting flow is dropped" do
+      install!({:ok, %{id: @flow_id, url: @flow_url, port: 48_123}})
+
+      # A CLOSED attempt keeps its surface but is idle again.
+      closed = %{
+        ChatGPTSignInState.new()
+        | surface: {:detail, "profile-1"},
+          paste: "stale",
+          paste_error: :invalid_callback
+      }
+
+      {:noreply, submitted} =
+        ChatGPTSignInState.chatgpt_sign_in_submit(socket(closed), %{
+          "surface" => "detail",
+          "profile_id" => "profile-1",
+          "value" => "abc"
+        })
+
+      assert assign_state(submitted) == closed
+      refute_receive {:chatgpt_stub, :submit, _flow_id, _input}, 0
+
+      # A paste typed for ANOTHER surface never mutates the waiting surface's state.
+      waiting = waiting_state({:detail, "profile-1"})
+
+      {:noreply, pasted} =
+        ChatGPTSignInState.chatgpt_sign_in_paste(socket(waiting), %{
+          "surface" => "detail",
+          "profile_id" => "profile-2",
+          "value" => "abc"
+        })
+
+      assert assign_state(pasted) == waiting
+
+      # And a submit addressed to another surface never reaches the flow.
+      {:noreply, foreign} =
+        ChatGPTSignInState.chatgpt_sign_in_submit(socket(waiting), %{
+          "surface" => "detail",
+          "profile_id" => "profile-2",
+          "value" => "abc"
+        })
+
+      assert assign_state(foreign) == waiting
+      refute_receive {:chatgpt_stub, :submit, _flow_id, _input}, 0
     end
   end
 
@@ -299,7 +544,11 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInStateTest do
                flow_id: nil,
                url: nil,
                phase: :idle,
-               reason: nil
+               reason: nil,
+               port: nil,
+               mode: nil,
+               paste: "",
+               paste_error: nil
              }
     end
 
@@ -362,7 +611,11 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInStateTest do
                flow_id: @flow_id,
                url: @flow_url,
                phase: :waiting,
-               reason: nil
+               reason: nil,
+               port: 48_123,
+               mode: :loopback,
+               paste: "",
+               paste_error: nil
              }
 
       assert ChatGPTSignInState.surface_state(state, {:detail, "profile-1"}) == %{}

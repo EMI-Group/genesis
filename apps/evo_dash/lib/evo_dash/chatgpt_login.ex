@@ -3,6 +3,7 @@ defmodule EvoDash.ChatGPTLogin do
   The ONE Sign in with ChatGPT (SIWC) loopback login flow, shared by the terminal CLI (`EvoDash.ChatGPTCLI`) and the dashboard LiveViews.
   Each attempt is ONE `EvoDash.ChatGPTLogin.Flow` process: it binds `127.0.0.1:<port>`, mints the authorization URL against the REAL bound port, waits for the browser callback, exchanges the code through `EvoGit.Auth.ChatGPT.exchange/2` and installs the registration through `EvoGit.Auth.ChatGPT.Store`, then stops — every exit path closes its listener.
   This module is the registry on top of those flows: it issues an opaque id per attempt, keeps ONE live flow per account (a second `begin/2` SUPERSEDES the first), records exactly ONE terminal result per id for a bounded retention window, and is the ONLY party that notifies a registered `:caller`.
+  A flow whose loopback listener cannot be bound degrades to `mode: :manual` instead of failing, and `submit_callback/2` hands a pasted redirect URL (or query string, or bare code) back to the SAME attempt — the manual (remote-host) path of the same PKCE verifier, `state` and install.
   The flow's dependencies are call-time seams — `:exchange`/`:store` options, else the app env keys `:chatgpt_login_exchange` and `:chatgpt_login_store` (defaults `EvoGit.Auth.ChatGPT.exchange/2` and `EvoGit.Auth.ChatGPT.Store`) — so the whole flow is drivable without a network or a credential file.
   Nothing here raises on a bad id: an unknown id is `{:error, :unknown_flow}` everywhere.
   """
@@ -20,10 +21,17 @@ defmodule EvoDash.ChatGPTLogin do
   @stop_timeout 5_000
 
   @typedoc "The identity a caller needs to open the browser and to ask for the outcome."
-  @type flow :: %{id: binary(), url: binary(), port: pos_integer()}
+  @type flow :: %{
+          id: binary(),
+          url: binary(),
+          port: pos_integer(),
+          mode: :loopback | :manual
+        }
 
   @doc """
-  Starts ONE loopback login attempt and returns its id, authorization URL and bound port.
+  Starts ONE sign-in attempt and returns its id, authorization URL, redirect port and mode.
+
+  `mode` is `:loopback` while the attempt owns a `127.0.0.1` callback listener, and `:manual` when that listener could not be bound — the attempt is then completed by pasting the redirect URL back through `submit_callback/2`.
 
   Options: `:port` (`0` picks a free ephemeral port), `:timeout_ms` (the sign-in window, default ten minutes), `:retention_ms` (how long the terminal result stays readable, default five minutes), `:caller` (a pid that receives `{:chatgpt_login, id, result}` once the attempt reaches a terminal state), `:exchange` (a `fun/2` replacing the core exchange) and `:store` (a module replacing the core credential store).
 
@@ -50,6 +58,23 @@ defmodule EvoDash.ChatGPTLogin do
           :pending | {:ok, %{account: binary(), status: map()}} | {:error, term()}
   def status(id) do
     call({:status, id}, {:error, :unknown_flow})
+  end
+
+  @doc """
+  Hands a pasted redirect back to ONE pending attempt and acknowledges it.
+
+  Accepted shapes: a full redirect URL (any scheme or host), a `?`-prefixed query string, a bare query string (`code=…&state=…`) or a bare authorization code — see `EvoDash.ChatGPTLogin.Paste.parse/1`.
+
+  The paste completes the SAME attempt `begin/2` started (same PKCE verifier, same `state`, same install), so a browser on another machine — or a host where no listener could be bound — can still finish the sign-in. Validation is synchronous and cheap while the token exchange runs off the attempt's call path, so this call only acks: the terminal outcome always arrives through `status/1` and the `:caller` notification `{:chatgpt_login, id, result}`.
+
+  A paste with a foreign `state` (`{:error, :invalid_callback}`) or with no code (`{:error, :no_code}`) leaves the attempt PENDING, so the user can paste again.
+  """
+  @spec submit_callback(binary(), term()) ::
+          {:ok, %{id: binary()}}
+          | {:error,
+             :unknown_flow | :already_finished | :invalid_callback | :no_code | :login_unavailable}
+  def submit_callback(id, input) do
+    call({:submit_callback, id, input}, {:error, :login_unavailable})
   end
 
   @doc """
@@ -121,6 +146,13 @@ defmodule EvoDash.ChatGPTLogin do
     end
   end
 
+  def handle_call({:submit_callback, id, input}, _from, state) do
+    case Map.fetch(state.flows, id) do
+      {:ok, flow} -> {:reply, submit_to_flow(flow.pid, input), state}
+      :error -> {:reply, missing_flow_answer(state, id), state}
+    end
+  end
+
   def handle_call({:cancel, id}, _from, state) do
     case Map.fetch(state.flows, id) do
       {:ok, flow} -> {:reply, :ok, retire(state, id, flow, {:error, :cancelled}, true)}
@@ -161,6 +193,10 @@ defmodule EvoDash.ChatGPTLogin do
   def handle_info({:DOWN, _reference, :process, pid, reason}, state) do
     case flow_id_for_pid(state, pid) do
       nil ->
+        # A flow that reported its own terminal (`{:flow_terminal, …}`) already
+        # left `flows` when its `:DOWN` arrives — Erlang preserves signal order
+        # between one sender/receiver pair, so the terminal message is always
+        # first — and retire/5 therefore never runs twice for one id.
         {:noreply, state}
 
       id ->
@@ -180,6 +216,24 @@ defmodule EvoDash.ChatGPTLogin do
       nil -> fallback
       pid -> GenServer.call(pid, message, @call_timeout)
     end
+  end
+
+  # The flow answers a submit synchronously (parse, validate, spawn the
+  # exchange) and only acks, so this call can never block on the token exchange.
+  defp submit_to_flow(pid, input) do
+    GenServer.call(pid, {:submit, input}, @call_timeout)
+  catch
+    # The flow is gone (crashed, cancelled or already stopped); its own `:DOWN`
+    # retires it and notifies the caller, so the paste is simply too late.
+    :exit, _reason -> {:error, :already_finished}
+  end
+
+  # An id that is not live either finished within the retention window
+  # (`:already_finished`) or never existed (`:unknown_flow`).
+  defp missing_flow_answer(state, id) do
+    if Map.has_key?(state.terminals, id),
+      do: {:error, :already_finished},
+      else: {:error, :unknown_flow}
   end
 
   defp start_flow(account, opts) do

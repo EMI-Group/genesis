@@ -17,7 +17,11 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
         flow_id: nil | binary,
         url: nil | binary,
         phase: :idle | :waiting | :ok | :error,
-        reason: nil | atom
+        reason: nil | atom,
+        port: nil | pos_integer,
+        mode: nil | :loopback | :manual,
+        paste: String.t(),
+        paste_error: nil | atom
       }
 
   Only ONE flow can be live at a time (`begin/4` closes whatever was waiting
@@ -25,12 +29,18 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
   superseded, cancelled or closed flow no longer matches the state, so its late
   result is dropped (`apply_result/3`).
 
+  `port`/`mode` are the flow's redirect identity (`mode: :manual` means no
+  local listener could be bound), and `paste`/`paste_error` carry the manual
+  "paste the redirect URL" fallback: the text the user typed and the retryable
+  inline rejection of the last submit.
+
   The SOCKET glue belongs to this module too, so the whole feature lives in ONE
-  place: `chatgpt_sign_in/2`, `chatgpt_sign_in_cancel/2` and
-  `chatgpt_signin_result/3` are the `/settings` page's handlers (they take and
-  answer a socket, exactly like the page's other event handlers), and
-  `close_surface/2`, `detail_surface/1` and `ensure_wizard_keys/2` are the
-  helpers every close site and every wizard build already calls.
+  place: `chatgpt_sign_in/2`, `chatgpt_sign_in_cancel/2`,
+  `chatgpt_sign_in_paste/2`, `chatgpt_sign_in_submit/2` and
+  `chatgpt_signin_result/3` are the page's handlers (they take and answer a
+  socket, exactly like the page's other event handlers), and `close_surface/2`,
+  `detail_surface/1` and `ensure_wizard_keys/2` are the helpers every close site
+  and every wizard build already calls.
 
   The state functions are pure plumbing around
   `EvoDashWeb.LLMSetup.ChatGPTSignIn` (which owns the flow, the bounded poll
@@ -59,14 +69,34 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
           flow_id: nil | String.t(),
           url: nil | String.t(),
           phase: phase(),
-          reason: nil | atom()
+          reason: nil | atom(),
+          port: nil | pos_integer(),
+          mode: nil | :loopback | :manual,
+          paste: String.t(),
+          paste_error: nil | atom()
         }
+
+  # A paste rejection that keeps the attempt PENDING: the user simply pastes
+  # again, so these never leave the waiting panel.
+  @retryable_paste_errors [:invalid_callback, :no_code, :already_finished]
 
   @doc """
   The idle state with NO owning surface — the page's initial value.
   """
   @spec new() :: t()
-  def new, do: %{surface: nil, flow_id: nil, url: nil, phase: :idle, reason: nil}
+  def new do
+    %{
+      surface: nil,
+      flow_id: nil,
+      url: nil,
+      phase: :idle,
+      reason: nil,
+      port: nil,
+      mode: nil,
+      paste: "",
+      paste_error: nil
+    }
+  end
 
   @doc "Alias of `new/0` (the idle page state)."
   @spec defaults() :: t()
@@ -148,8 +178,9 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
   LiveView passes `self()`, this module never does), and the poll runs
   off-process through `ChatGPTSignIn.start_poll/2`.
 
-  Answers the new state: `:waiting` with the flow id and authorization URL, or
-  `:error` with the flow module's reason and NO poll.
+  Answers the new state: `:waiting` with the flow id, authorization URL and the
+  flow's redirect identity (`port`, `mode`), or `:error` with the flow module's
+  reason and NO poll.
   """
   @spec begin(t(), term(), term(), pid()) :: t()
   def begin(state, account, surface, owner) when is_pid(owner) do
@@ -157,11 +188,20 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
     _state = close_waiting(state)
 
     case ChatGPTSignIn.begin(account) do
-      {:ok, %{id: id, url: url}} ->
+      {:ok, %{id: id, url: url} = flow} ->
         # Total: an unavailable supervisor delivers the error result
         # immediately instead of leaving the surface waiting forever.
         ChatGPTSignIn.start_poll(id, owner)
-        %{new() | surface: surface, flow_id: id, url: url, phase: :waiting}
+
+        %{
+          new()
+          | surface: surface,
+            flow_id: id,
+            url: url,
+            phase: :waiting,
+            port: Map.get(flow, :port),
+            mode: Map.get(flow, :mode)
+        }
 
       {:error, reason} ->
         %{new() | surface: surface, phase: :error, reason: reason}
@@ -264,6 +304,80 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
     ChatGPT.accounts(Map.get(socket.assigns, :current_node) || node())
   end
 
+  # ── Manual paste fallback (the ONE transition set) ─────────────────────────
+  #
+  # `/settings` (three surfaces) and `/welcome` (the wizard surface) both offer
+  # the "paste the redirect URL" disclosure while a flow waits. These four
+  # functions are the WHOLE transition logic, so no page re-derives how a paste
+  # is recorded or how the flow's answer maps onto the state.
+  @doc """
+  The paste fallback applies to ONE surface: the one that currently OWNS a
+  WAITING flow.
+  Everything else — closed, superseded, idle, error — is not a paste target, so
+  a late payload never resurrects a waiting panel.
+  """
+  @spec paste_target?(term(), term()) :: boolean()
+  def paste_target?(state, surface) do
+    owned_by?(state, surface) and Map.get(state, :phase) == :waiting
+  end
+
+  @doc """
+  Records the text typed into a waiting surface's "paste the redirect URL"
+  input: verbatim in `:paste` (the user may still be typing) with a cleared
+  inline `:paste_error`.
+  Pure and cheap — it never touches the flow. A non-map state answers the idle
+  state holding that text.
+  """
+  @spec put_paste(term(), term()) :: t()
+  def put_paste(state, text) do
+    state = if is_map(state), do: state, else: new()
+    Map.merge(state, %{paste: raw_text(text), paste_error: nil})
+  end
+
+  @doc """
+  Hands the recorded paste back to the OWNING waiting flow — the manual
+  (remote-host) completion of the same attempt.
+  `params` is the surface's payload: the text is `:paste` when the user typed
+  something, else the payload's `value` (a form-style submit carries the input
+  in the payload, a bare button click carries none). A blank text answers the
+  inline, retryable `:no_code` error WITHOUT touching the flow; a state with no
+  flow degrades to the `:error` phase; otherwise
+  `EvoDashWeb.LLMSetup.ChatGPTSignIn.submit/2` acknowledges the paste and the
+  terminal outcome still arrives through the poll.
+  """
+  @spec submit_paste(term(), term()) :: t()
+  def submit_paste(state, params) do
+    state = if is_map(state), do: state, else: new()
+
+    case paste_input(state, params) do
+      "" ->
+        # Nothing to hand the flow: an inline, retryable hint only.
+        Map.merge(state, %{paste: "", paste_error: :no_code})
+
+      text ->
+        case flow_id(state) do
+          nil ->
+            Map.merge(state, %{phase: :error, reason: :sign_in_unavailable, paste_error: nil})
+
+          flow_id ->
+            apply_submit_result(state, ChatGPTSignIn.submit(flow_id, text))
+        end
+    end
+  end
+
+  @doc """
+  Maps ONE flow acknowledgement onto the state:
+    * `:ok` keeps `:waiting` and clears the paste (the poll resolves the flow);
+    * `:invalid_callback` / `:no_code` / `:already_finished` keep `:waiting`
+      with an inline, retryable `:paste_error`, so the waiting panel stays
+      visible and the user can paste again;
+    * any other failure becomes the `:error` phase.
+  """
+  @spec apply_submit_result(term(), term()) :: t()
+  def apply_submit_result(state, result) do
+    if is_map(state), do: apply_paste(state, result), else: new()
+  end
+
   # ── Socket glue (the `/settings` page's handlers) ──────────────────────────
 
   @doc """
@@ -298,6 +412,57 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
   def chatgpt_sign_in_cancel(socket, params) do
     surface = surface_from_params(params)
     state = cancel_owned_by(page_sign_in(socket), surface)
+
+    {:noreply, socket |> assign(:chatgpt_sign_in, state) |> sync_sign_in_state()}
+  end
+
+  @doc """
+  Records the text typed into a waiting surface's "paste the redirect URL" input.
+
+  A `phx-change`, so it is CHEAP and never touches the flow: it only stores
+  `params["value"]` in `:paste` and clears the previous inline `:paste_error`.
+  A payload for another surface — or for a surface that is not waiting any more
+  — changes NOTHING (the same stale guard `owned_by?/2` applies), so a closed or
+  superseded attempt never resurfaces.
+  """
+  @spec chatgpt_sign_in_paste(term(), term()) :: {:noreply, term()}
+  def chatgpt_sign_in_paste(socket, params) do
+    surface = surface_from_params(params)
+    state = page_sign_in(socket)
+
+    state =
+      if paste_target?(state, surface) do
+        put_paste(state, param_value(params, "value"))
+      else
+        state
+      end
+
+    {:noreply, socket |> assign(:chatgpt_sign_in, state) |> sync_sign_in_state()}
+  end
+
+  @doc """
+  Hands the recorded paste back to the OWNING waiting flow — the manual
+  (remote-host) completion of the same attempt.
+
+  A blank paste answers the inline, retryable `:no_code` error WITHOUT touching
+  the flow. Otherwise `EvoDashWeb.LLMSetup.ChatGPTSignIn.submit/2` acknowledges
+  the paste and the terminal outcome still arrives through the poll, so:
+
+    * `:ok` keeps `:waiting` and clears the paste (the poll resolves it);
+    * `:invalid_callback` / `:no_code` / `:already_finished` keep `:waiting`
+      with an inline, retryable `:paste_error` — the waiting panel must stay
+      visible so the user can paste again;
+    * any other failure becomes the `:error` phase.
+
+  A submit for a surface that no longer owns a waiting flow (superseded, closed,
+  cancelled) is dropped before the flow is called at all.
+  """
+  @spec chatgpt_sign_in_submit(term(), term()) :: {:noreply, term()}
+  def chatgpt_sign_in_submit(socket, params) do
+    surface = surface_from_params(params)
+    state = page_sign_in(socket)
+
+    state = if paste_target?(state, surface), do: submit_paste(state, params), else: state
 
     {:noreply, socket |> assign(:chatgpt_sign_in, state) |> sync_sign_in_state()}
   end
@@ -395,6 +560,49 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
   end
 
   defp page_sign_in(_socket), do: new()
+
+  defp apply_paste(state, :ok) do
+    # The flow ACKED the paste; the poll delivers the terminal result, so the
+    # surface stays waiting (with the paste cleared) until then.
+    Map.merge(state, %{phase: :waiting, paste: "", paste_error: nil})
+  end
+
+  defp apply_paste(state, {:error, reason}) when reason in @retryable_paste_errors do
+    Map.merge(state, %{phase: :waiting, paste_error: reason})
+  end
+
+  defp apply_paste(state, {:error, reason}) do
+    Map.merge(state, %{phase: :error, reason: reason, paste_error: nil})
+  end
+
+  # The typed text wins; a payload-level `value` is the fallback for a
+  # form-style submit (a bare button click carries none).
+  defp paste_input(state, params) do
+    case text_value(Map.get(state, :paste)) do
+      "" -> text_value(param_value(params, "value"))
+      text -> text
+    end
+  end
+
+  defp param_value(params, key) when is_map(params) do
+    case Map.fetch(params, key) do
+      {:ok, value} -> value
+      :error -> other_key(params, key)
+    end
+  end
+
+  defp param_value(_params, _key), do: nil
+
+  # Both spellings are tolerated: the panel sends string keys, a hand-built
+  # payload may use atoms.
+  defp other_key(_params, key) when is_binary(key), do: nil
+  defp other_key(params, key), do: Map.get(params, Atom.to_string(key))
+
+  defp raw_text(value) when is_binary(value), do: value
+  defp raw_text(_value), do: ""
+
+  defp text_value(value) when is_binary(value), do: String.trim(value)
+  defp text_value(_value), do: ""
 
   # The account a surface signs in: its own selection, else the registration the
   # store treats as default (`ChatGPT.account_name(nil)`).

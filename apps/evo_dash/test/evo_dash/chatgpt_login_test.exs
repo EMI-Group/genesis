@@ -200,15 +200,134 @@ defmodule EvoDash.ChatGPTLoginTest do
     wait_until(fn -> ChatGPTLogin.status(flow.id) == {:error, :unknown_flow} end)
   end
 
-  test "a port that cannot be bound is reported and leaves the facade alive", %{account: account} do
+  test "a port that cannot be bound degrades to a usable manual attempt", %{account: account} do
     {:ok, socket} = :gen_tcp.listen(0, [:binary, ip: {127, 0, 0, 1}, active: false])
     {:ok, port} = :inet.port(socket)
     on_exit(fn -> :gen_tcp.close(socket) end)
 
-    assert ChatGPTLogin.begin(account, port: port, store: StubStore) ==
-             {:error, :loopback_listener_unavailable}
+    {:ok, flow} =
+      ChatGPTLogin.begin(account,
+        port: port,
+        store: StubStore,
+        exchange: stub_exchange(),
+        caller: self()
+      )
 
-    assert ChatGPTLogin.status("no-such-flow") == {:error, :unknown_flow}
+    on_exit(fn -> _ = ChatGPTLogin.cancel(flow.id) end)
+
+    assert flow.mode == :manual
+    assert flow.port == port
+    assert flow.url =~ "redirect_uri=http%3A%2F%2F127.0.0.1%3A#{port}%2Fauth%2Fcallback"
+    assert ChatGPTLogin.status(flow.id) == :pending
+
+    state = state_from_url(flow.url)
+
+    assert {:ok, %{id: id}} =
+             ChatGPTLogin.submit_callback(
+               flow.id,
+               "http://127.0.0.1:#{port}/auth/callback?state=#{state}&code=manual-code"
+             )
+
+    assert id == flow.id
+    assert_receive {:stub_install, ^account, record}, @async_wait_budget_ms
+    assert record["code"] == "manual-code"
+    assert_receive {:chatgpt_login, ^id, {:ok, %{account: ^account}}}, @async_wait_budget_ms
+
+    wait_until(fn -> match?({:ok, %{account: ^account}}, ChatGPTLogin.status(flow.id)) end)
+  end
+
+  test "a pasted redirect URL completes the attempt and notifies the caller exactly once", %{
+    account: account
+  } do
+    flow = start_flow(account, caller: self())
+    assert flow.mode == :loopback
+
+    state = state_from_url(flow.url)
+
+    pasted =
+      "http://127.0.0.1:#{flow.port}/auth/callback?state=#{URI.encode_www_form(state)}&code=pasted-code"
+
+    assert {:ok, %{id: id}} = ChatGPTLogin.submit_callback(flow.id, pasted)
+    assert id == flow.id
+
+    assert_receive {:stub_exchange, _attempt, %{"code" => "pasted-code"}}, @async_wait_budget_ms
+    assert_receive {:stub_install, ^account, record}, @async_wait_budget_ms
+    assert record["code"] == "pasted-code"
+
+    assert_receive {:chatgpt_login, ^id, {:ok, %{account: ^account} = result}},
+                   @async_wait_budget_ms
+
+    assert result.status == %{account_id: account}
+    wait_until(fn -> ChatGPTLogin.status(flow.id) == {:ok, result} end)
+    refute_receive {:chatgpt_login, _id, _result}, 100
+    wait_until(fn -> port_closed?(flow.port) end)
+  end
+
+  test "a paste with a foreign state is refused and the attempt stays pending", %{
+    account: account
+  } do
+    flow = start_flow(account, caller: self())
+
+    assert ChatGPTLogin.submit_callback(flow.id, "code=abc&state=not-the-state") ==
+             {:error, :invalid_callback}
+
+    assert ChatGPTLogin.status(flow.id) == :pending
+    refute_received {:stub_exchange, _attempt, _params}
+
+    state = state_from_url(flow.url)
+
+    assert {:ok, %{id: id}} =
+             ChatGPTLogin.submit_callback(
+               flow.id,
+               "http://127.0.0.1:1455/auth/callback?code=after-retry&state=#{URI.encode_www_form(state)}"
+             )
+
+    assert id == flow.id
+
+    assert_receive {:stub_exchange, _attempt, %{"code" => "after-retry"}},
+                   @async_wait_budget_ms
+
+    assert_receive {:chatgpt_login, ^id, {:ok, %{account: ^account}}}, @async_wait_budget_ms
+  end
+
+  test "a bare pasted code completes the attempt against its own PKCE attempt", %{
+    account: account
+  } do
+    flow = start_flow(account, caller: self())
+    state = state_from_url(flow.url)
+
+    assert {:ok, %{id: id}} = ChatGPTLogin.submit_callback(flow.id, "  bare-code-123\n")
+    assert id == flow.id
+
+    assert_receive {:stub_exchange, attempt, params}, @async_wait_budget_ms
+    assert params["code"] == "bare-code-123"
+    assert params["state"] == state
+    assert attempt.state == state
+
+    assert_receive {:chatgpt_login, ^id, {:ok, %{account: ^account}}}, @async_wait_budget_ms
+  end
+
+  test "a second paste after completion is already finished and a bogus id is unknown", %{
+    account: account
+  } do
+    flow = start_flow(account, caller: self())
+
+    assert {:ok, %{id: id}} = ChatGPTLogin.submit_callback(flow.id, "one-code")
+    assert_receive {:chatgpt_login, ^id, {:ok, _result}}, @async_wait_budget_ms
+    wait_until(fn -> ChatGPTLogin.status(flow.id) != :pending end)
+
+    assert ChatGPTLogin.submit_callback(flow.id, "second-code") == {:error, :already_finished}
+    assert ChatGPTLogin.submit_callback("no-such-flow", "one-code") == {:error, :unknown_flow}
+  end
+
+  test "a paste with neither a code nor an error leaves the attempt pending", %{account: account} do
+    flow = start_flow(account)
+
+    assert ChatGPTLogin.submit_callback(flow.id, "http://127.0.0.1:1455/auth/callback") ==
+             {:error, :no_code}
+
+    assert ChatGPTLogin.submit_callback(flow.id, "") == {:error, :no_code}
+    assert ChatGPTLogin.status(flow.id) == :pending
   end
 
   defp start_flow(account, opts \\ []) do

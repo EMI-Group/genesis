@@ -1039,4 +1039,232 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
       refute assigns(view).chatgpt_sign_in.flow_id
     end
   end
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 9. the MANUAL "paste the redirect URL" fallback
+  # ═══════════════════════════════════════════════════════════════════════════
+  describe "manual paste fallback" do
+    test "a pasted redirect URL reaches the same flow and keeps it waiting", %{conn: conn} do
+      ChatGPTStub.install!(
+        begin: {:ok, %{id: @flow_id, url: @flow_url, port: 48_123}},
+        statuses: %{},
+        submit: {:ok, %{id: @flow_id}}
+      )
+
+      seed_openai_codex_profile()
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_account(view, @profile_id)
+      panel = detail_panel(@profile_id)
+      view |> element("#" <> panel <> "-sign-in") |> render_click()
+      assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, {:detail, @profile_id})
+      html = render(view)
+      # The disclosure is ALWAYS in the waiting DOM (this page may be viewed
+      # from a machine that cannot reach the flow's loopback listener) and it
+      # names the exact address the flow expects from its own port.
+      assert html =~ panel <> "-sign-in-paste-hint"
+      assert html =~ panel <> "-sign-in-paste-input"
+      assert html =~ panel <> "-sign-in-paste-submit"
+      assert html =~ "http://127.0.0.1:48123/auth/callback"
+      typed = "http://127.0.0.1:48123/auth/callback?code=abc&state=s1"
+
+      view
+      |> element("#" <> panel <> "-sign-in-paste-input")
+      |> render_change(%{
+        "value" => typed,
+        "surface" => "detail",
+        "profile_id" => @profile_id
+      })
+
+      # `phx-change` records the text verbatim and calls nothing.
+      assert assigns(view).chatgpt_sign_in.paste == typed
+      assert assigns(view).chatgpt_sign_in.paste_error == nil
+      refute_receive {:chatgpt_stub, :submit, _flow_id, _input}, 0
+      view |> element("#" <> panel <> "-sign-in-paste-submit") |> render_click()
+      assert_receive {:chatgpt_stub, :submit, @flow_id, ^typed}, @async_wait_budget_ms
+      state = assigns(view).chatgpt_sign_in
+      # The flow ACKED the paste; the terminal result still rides the poll.
+      assert state.phase == :waiting
+      assert state.paste == ""
+      assert state.paste_error == nil
+      assert has_element?(view, "#" <> panel <> "-waiting")
+      refute has_element?(view, "#" <> panel <> "-sign-in-paste-error")
+    end
+
+    test "a rejected paste keeps the waiting panel with an inline error", %{conn: conn} do
+      ChatGPTStub.install!(
+        begin: {:ok, %{id: @flow_id, url: @flow_url, port: 48_123}},
+        statuses: %{},
+        submit: {:error, :invalid_callback}
+      )
+
+      seed_openai_codex_profile()
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_account(view, @profile_id)
+      panel = detail_panel(@profile_id)
+      view |> element("#" <> panel <> "-sign-in") |> render_click()
+      assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, {:detail, @profile_id})
+
+      view
+      |> element("#" <> panel <> "-sign-in-paste-input")
+      |> render_change(%{
+        "value" => "code=stale",
+        "surface" => "detail",
+        "profile_id" => @profile_id
+      })
+
+      view |> element("#" <> panel <> "-sign-in-paste-submit") |> render_click()
+      assert_receive {:chatgpt_stub, :submit, @flow_id, "code=stale"}, @async_wait_budget_ms
+      state = assigns(view).chatgpt_sign_in
+      # Still WAITING with a retryable inline rejection — never a terminal
+      # error phase, and the pasted text is kept for correction.
+      assert state.phase == :waiting
+      assert state.paste_error == :invalid_callback
+      assert state.reason == nil
+      assert state.paste == "code=stale"
+      assert has_element?(view, "#" <> panel <> "-waiting")
+      error = view |> element("#" <> panel <> "-sign-in-paste-error") |> render()
+      assert error =~ "does not belong to this sign-in"
+      refute error =~ "invalid_callback"
+      refute has_element?(view, "#" <> panel <> "-sign-in-error")
+    end
+
+    test "a paste for a superseded surface never reaches the flow", %{conn: conn} do
+      ChatGPTStub.install!(
+        begin: [
+          {:ok, %{id: "flow-detail", url: @flow_url, port: 48_123}},
+          {:ok, %{id: "flow-status", url: @flow_url, port: 48_123}}
+        ],
+        statuses: %{}
+      )
+
+      seed_openai_codex_profile()
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_account(view, @profile_id)
+      detail = detail_panel(@profile_id)
+      status = status_panel(@profile_id)
+      view |> element("#" <> detail <> "-sign-in") |> render_click()
+      assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, {:detail, @profile_id})
+
+      view
+      |> element("#" <> detail <> "-sign-in-paste-input")
+      |> render_change(%{
+        "value" => "code=detail",
+        "surface" => "detail",
+        "profile_id" => @profile_id
+      })
+
+      # A NEW sign-in on another surface abandons the detail attempt.
+      view |> element("#" <> status <> "-sign-in") |> render_click()
+      assert_receive {:chatgpt_stub, :cancel, "flow-detail"}, @async_wait_budget_ms
+      assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, {:status, @profile_id})
+      refute has_element?(view, "#" <> detail <> "-waiting")
+      # A paste addressed to the superseded detail surface is dropped before the
+      # flow is called, and it never resurrects the detail waiting panel.
+      for event <- ["chatgpt_sign_in_paste", "chatgpt_sign_in_submit"] do
+        render_click(view, event, %{
+          "surface" => "detail",
+          "profile_id" => @profile_id,
+          "value" => "code=stale"
+        })
+      end
+
+      refute_receive {:chatgpt_stub, :submit, _flow_id, _input}, 0
+      state = assigns(view).chatgpt_sign_in
+      assert state.phase == :waiting
+      assert state.paste == ""
+      assert ChatGPTSignInState.surface(state) == {:status, @profile_id}
+      assert has_element?(view, "#" <> status <> "-waiting")
+      refute has_element?(view, "#" <> detail <> "-waiting")
+      refute has_element?(view, "#" <> detail <> "-sign-in-paste-error")
+    end
+  end
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 10. the paste input never leaks into a provider draft
+  # ═══════════════════════════════════════════════════════════════════════════
+  # The waiting panel's `name="paste"` input lives INSIDE the provider-detail
+  # form, so LiveView serializes the typed redirect with every provider-field
+  # change. The draft boundary (`ProviderProfiles.submission/2`) drops it, and
+  # these tests pin that end to end: the draft stays clean while the panel keeps
+  # the typed text. `provider_wizard_change` gets the same treatment because the
+  # same panel can sit inside a wizard-step form.
+  describe "the sign-in paste input never enters a provider draft" do
+    @paste "http://127.0.0.1:48123/auth/callback?code=abc&state=xyz"
+
+    test "a provider-field change keeps paste out of the expanded account's draft", %{
+      conn: conn
+    } do
+      ChatGPTStub.install!(begin: {:ok, %{id: @flow_id, url: @flow_url, port: 48_123}})
+      seed_openai_codex_profile()
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_account(view, @profile_id)
+      panel = detail_panel(@profile_id)
+
+      view |> element("#" <> panel <> "-sign-in") |> render_click()
+      assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, {:detail, @profile_id})
+
+      view
+      |> element("#" <> panel <> "-sign-in-paste-input")
+      |> render_change(%{"value" => @paste, "surface" => "detail", "profile_id" => @profile_id})
+
+      assert assigns(view).chatgpt_sign_in.paste == @paste
+
+      # The whole enclosing form is serialized, paste included — exactly what a
+      # keystroke in any provider field sends.
+      render_change(view, "provider_profile_form_change", %{
+        "paste" => @paste,
+        "profile_id" => @profile_id,
+        "name" => "Renamed account",
+        "provider" => "openai_codex",
+        "auth_mode" => "oauth"
+      })
+
+      draft = assigns(view).profile_form_draft
+      refute Map.has_key?(draft, "paste")
+      assert draft["name"] == "Renamed account"
+
+      # The sign-in fallback keeps its typed text on the SAME panel.
+      assert assigns(view).chatgpt_sign_in.paste == @paste
+      input = view |> element("#" <> panel <> "-sign-in-paste-input") |> render()
+      assert attr(input, "name") == "paste"
+      assert attr(input, "value") == @paste
+      assert has_element?(view, "#" <> panel <> "-waiting")
+    end
+
+    test "a provider_wizard_change keeps paste out of the wizard draft", %{conn: conn} do
+      ChatGPTStub.install!(begin: {:ok, %{id: @flow_id, url: @flow_url, port: 48_123}})
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_chatgpt_auth_step(view)
+      panel = "settings-chatgpt"
+
+      view |> element("#" <> panel <> "-sign-in") |> render_click()
+      assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, :wizard)
+
+      view
+      |> element("#" <> panel <> "-sign-in-paste-input")
+      |> render_change(%{"value" => @paste, "surface" => "wizard"})
+
+      assert assigns(view).chatgpt_sign_in.paste == @paste
+
+      render_hook(view, "provider_wizard_change", %{
+        "paste" => @paste,
+        "provider" => "openai_codex",
+        "siwc_account" => "default"
+      })
+
+      wizard = assigns(view).provider_wizard
+      refute Map.has_key?(wizard.draft, "paste")
+      assert wizard.draft["provider"] == "openai_codex"
+      assert assigns(view).chatgpt_sign_in.paste == @paste
+      input = view |> element("#" <> panel <> "-sign-in-paste-input") |> render()
+      assert attr(input, "value") == @paste
+      assert has_element?(view, "#" <> panel <> "-waiting")
+    end
+  end
 end
