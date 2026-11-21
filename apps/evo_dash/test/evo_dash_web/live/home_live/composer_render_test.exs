@@ -141,6 +141,57 @@ defmodule EvoDashWeb.HomeLive.ComposerRenderTest do
     end
   end
 
+  test "the chip row, the interrupt button and the followed-tasks strip fade out" do
+    # Each puts its `:if` ON the node a patch removes and had no entrance
+    # motion, so the shared motion.css section-6 `phx-remove` recipe owns its
+    # exit instead of a one-frame pop.
+    chips =
+      render_component(&Composer.composer/1,
+        chat_status: :running,
+        pending_attachments: %{
+          text: "",
+          entries: [
+            %{kind: "image", name: "a.png", block: nil, media_type: "image/png", data: <<1>>}
+          ]
+        }
+      )
+      |> Floki.parse_document!()
+
+    interrupt =
+      render_component(&Composer.interrupt_button/1, chat_status: :running)
+      |> Floki.parse_document!()
+
+    tracking =
+      render_component(&EvoDashWeb.HomeLive.TaskCard.cards/1,
+        tracked_tasks: [
+          %{
+            id: "t1",
+            title: "Task",
+            status: "running",
+            path: "/repo",
+            agent_count: 1,
+            updated_at: "now",
+            error: nil,
+            has_result: false
+          }
+        ],
+        task_tracking_error: nil,
+        current_node_id: nil,
+        task_action_pending: MapSet.new()
+      )
+      |> Floki.parse_document!()
+
+    for {id, dom} <- [
+          {"#chat-attachment-chips", chips},
+          {"#chat-interrupt-button", interrupt},
+          {"#assistant-task-tracking", tracking}
+        ] do
+      assert [js] = dom |> Floki.find(id) |> Floki.attribute("phx-remove")
+      assert js =~ "motion-exit-fade"
+      assert js =~ "motion-exit-visible"
+    end
+  end
+
   test "the project menu stays mounted and states its open/closed intent" do
     # The MotionPanel hook owns `data-motion-state` + `hidden`; the server owns
     # only the intent. An OPEN panel carries no `hidden`, a CLOSED one keeps the

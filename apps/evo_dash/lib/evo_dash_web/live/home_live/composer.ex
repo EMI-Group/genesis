@@ -199,6 +199,9 @@ defmodule EvoDashWeb.HomeLive.Composer do
       phx-click="interrupt_turn"
       disabled={@interrupt_disabled?}
       title={gettext("Queue for the next turn")}
+      phx-remove={
+        JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})
+      }
       class="btn btn-ghost btn-xs shrink-0 gap-1 rounded-full text-base-content/80"
     >
       <.icon name="hero-bolt" class="size-3.5" />
@@ -231,6 +234,9 @@ defmodule EvoDashWeb.HomeLive.Composer do
       :if={@chip_entries != []}
       id="chat-attachment-chips"
       class="flex flex-wrap items-center gap-1 px-2 pt-1"
+      phx-remove={
+        JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})
+      }
     >
       <span
         :for={{name, index} <- @chip_entries}
