@@ -5,9 +5,18 @@
 // .agents-page-layout's persisted translateY transform (animation-fill-mode:
 // both) creates a containing block that would trap even fixed descendants —
 // so the tip must live outside the layout entirely.
+//
+// ONE node per chip, reused for its whole lifetime: `show()` repositions it and
+// arms the entry frame, `hide()` only DROPS the `is-visible` class so the CSS
+// opacity transition in css/app.css plays in BOTH directions, and the node is
+// removed for good in `destroyed()`. Removing it on hide() would leave the
+// transition entry-only and pop the tooltip out. The class toggle is guarded by
+// a pending-frame handle, so a hide landing between `show()` and its frame can
+// never be undone by the stale frame (no timers involved).
 const LegendTooltip = {
   mounted() {
     this.tipEl = null;
+    this._frame = null;
     this._mouseenter = () => this.show();
     this._mouseleave = () => this.hide();
     this.el.addEventListener('mouseenter', this._mouseenter);
@@ -33,6 +42,8 @@ const LegendTooltip = {
     }
 
     const tip = this.tipEl;
+    if (tip.textContent !== tipText) tip.textContent = tipText;
+
     const rect = this.el.getBoundingClientRect();
     const tipWidth = tip.offsetWidth;
     const tipHeight = tip.offsetHeight;
@@ -55,15 +66,29 @@ const LegendTooltip = {
     tip.style.right = 'auto';
 
     // Show after the text is rendered and measured so the CSS opacity
-    // transition runs.
-    requestAnimationFrame(() => tip.classList.add('is-visible'));
+    // transition runs — for a node that is being re-shown as well as a new one.
+    this.cancelFrame();
+    this._frame = requestAnimationFrame(() => {
+      this._frame = null;
+      tip.classList.add('is-visible');
+    });
   },
 
   hide() {
-    this.removeTip();
+    // Exit frame only: the node stays in the DOM (hidden by opacity) so the
+    // transition in css/app.css can run; it is reused by the next show().
+    this.cancelFrame();
+    if (this.tipEl) this.tipEl.classList.remove('is-visible');
+  },
+
+  cancelFrame() {
+    if (this._frame === null) return;
+    cancelAnimationFrame(this._frame);
+    this._frame = null;
   },
 
   removeTip() {
+    this.cancelFrame();
     if (this.tipEl) {
       this.tipEl.remove();
       this.tipEl = null;
