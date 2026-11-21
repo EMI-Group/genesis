@@ -52,7 +52,6 @@ defmodule EvoDashWeb.HomeLive.WorkspaceComponent do
         phx-hook="MotionPanel"
         data-motion-want={to_string(@workspace_open)}
         hidden={!@workspace_open}
-        phx-mounted={JS.focus(to: "#workspace-path")}
         phx-click-away={JS.push("workspace_close") |> JS.focus(to: "#workspace-toggle")}
         phx-window-keydown={JS.push("workspace_close") |> JS.focus(to: "#workspace-toggle")}
         phx-key="Escape"
@@ -179,6 +178,7 @@ defmodule EvoDashWeb.HomeLive.WorkspaceComponent do
             field={@workspace_form[:path]}
             id="workspace-path"
             type="text"
+            data-motion-focus="true"
             placeholder={gettext("Full directory path")}
             aria-label={gettext("Project directory")}
             disabled={@workspace_locked or @workspace_loading}

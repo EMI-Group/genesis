@@ -161,6 +161,12 @@ defmodule EvoDashWeb.HomeLive.ComposerRenderTest do
     assert closed_attrs["data-motion-want"] == "false"
     assert closed_attrs["phx-hook"] == "MotionPanel"
     assert Map.has_key?(closed_attrs, "hidden")
+    # Focus on open is DECLARATIVE: the `MotionPanel` writer focuses the
+    # `[data-motion-focus]` marker once the panel settled open. `phx-mounted`
+    # could only ever fire at mount (where the panel is still hidden), so a
+    # later open never focused anything.
+    refute Map.has_key?(open_attrs, "phx-mounted")
+    assert Enum.count(LazyHTML.query(open, "#workspace-path[data-motion-focus]")) == 1
     # The toggle keeps its expanded/controls contract pointing at that node.
     assert Enum.count(
              LazyHTML.query(

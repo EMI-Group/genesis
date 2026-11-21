@@ -9,9 +9,9 @@
 // convention — which is why the block itself imports nothing: every decision it
 // needs already lives in the pure block above it, and the two imports under it
 // are outside the slice.
-import {PANEL_WANT_ATTR, PANEL_STATE_ATTR, PANEL_OPENING, PANEL_CLOSING, wantedOpen,
-  initialPanelState, planPanelChange, completePanelSettle, settleWaitsForAnimation,
-  isPanelSettleAnimationEnd, PANEL_SETTLE_FALLBACK_MS} from "./motion_panel"
+import {PANEL_WANT_ATTR, PANEL_STATE_ATTR, PANEL_FOCUS_ATTR, PANEL_OPENING, PANEL_OPEN,
+  PANEL_CLOSING, wantedOpen, initialPanelState, planPanelChange, completePanelSettle,
+  settleWaitsForAnimation, isPanelSettleAnimationEnd, PANEL_SETTLE_FALLBACK_MS} from "./motion_panel"
 import {prefersReducedMotion} from "./disclosure_motion"
 
 // --- MotionPanel DOM writer: intent → state, one armed settle per element
@@ -50,6 +50,22 @@ function createPanelWriter(reducedMotion = () => false) {
     settles.delete(el)
   }
 
+  // Opt-in declarative focus — the MOUNTED panel's replacement for
+  // `phx-mounted={JS.focus(...)}`, which fires once at mount (never on a later
+  // open) and is swallowed while the panel is still `hidden`. The first element
+  // carrying `data-motion-focus` takes focus only once the panel SETTLED into
+  // open, i.e. when it is really displayed; a closed mount, an unchanged
+  // re-assert and a close never reach `open` here. Capability-guarded
+  // (`querySelector` / `focus`), so a fake panel, a detached node and a marker
+  // without its own `focus` are silent no-ops instead of a thrown hook, and
+  // `preventScroll` keeps the page from jumping (the codebase convention).
+  const focusSettledTarget = el => {
+    if (el.hidden || typeof el.querySelector !== "function") return
+    const target = el.querySelector("[" + PANEL_FOCUS_ATTR + "]")
+    if (!target || typeof target.focus !== "function") return
+    target.focus({preventScroll: true})
+  }
+
   // Exactly-once completion: `completePanelSettle` returns null for anything
   // that is not mid-settle, so a duplicated event, the fallback timer after the
   // event, or a stale captured callback applies nothing (and cannot hide a
@@ -63,6 +79,7 @@ function createPanelWriter(reducedMotion = () => false) {
     // displayed for its whole animation.
     setHidden(el, done.hidden)
     setState(el, done.state)
+    if (done.state === PANEL_OPEN) focusSettledTarget(el)
     return true
   }
 

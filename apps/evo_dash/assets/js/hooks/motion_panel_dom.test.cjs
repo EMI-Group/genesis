@@ -54,11 +54,13 @@ function harness() {
   return {api: vm.runInContext(source, context), timers};
 }
 
-function fakeRoot({want = null, hidden = true, state = null} = {}) {
+function fakeRoot({want = null, hidden = true, state = null, focusTarget = null,
+  focusCapable = true} = {}) {
   const attrs = new Map();
   if (want !== null) attrs.set('data-motion-want', want);
   if (state !== null) attrs.set('data-motion-state', state);
   const listeners = new Map();
+  const queries = [];
   const root = {
     hidden,
     getAttribute(name) {
@@ -78,6 +80,14 @@ function fakeRoot({want = null, hidden = true, state = null} = {}) {
       listeners.get(type)?.delete(fn);
     },
   };
+  // `focusCapable: false` models an element whose DOM surface is even thinner
+  // (nothing here throws, so the writer's capability guards stay accountable).
+  if (focusCapable) {
+    root.querySelector = selector => {
+      queries.push(selector);
+      return focusTarget;
+    };
+  }
   const dispatch = event => {
     for (const fn of [...(listeners.get('animationend') || [])]) fn(event);
   };
@@ -87,10 +97,25 @@ function fakeRoot({want = null, hidden = true, state = null} = {}) {
     attrs,
     dispatch,
     armed,
+    queries,
     state: () => attrs.get('data-motion-state'),
     want: value => {
       if (value === null) attrs.delete('data-motion-want');
       else attrs.set('data-motion-want', value);
+    },
+  };
+}
+
+// The `[data-motion-focus]` marker: records every focus() call and its options,
+// so "focused exactly once, without scrolling" is one assertion.
+function fakeFocusTarget() {
+  const calls = [];
+  return {
+    calls,
+    node: {
+      focus(options) {
+        calls.push(options);
+      },
     },
   };
 }
@@ -301,6 +326,122 @@ test('destroy releases every armed settle and the module schedules no frame', ()
   assert.equal(second.armed(), false);
   assert.equal(/requestAnimationFrame/.test(domSrc), false,
     'a CSS animation needs no frame schedule');
+});
+
+// ---- Declarative focus: `data-motion-focus` on the settle into `open`.
+// This is the mounted panel's replacement for `phx-mounted={JS.focus(...)}`,
+// which fires once at mount, never on a later open, and is swallowed while the
+// panel is still hidden.
+
+test('a settled open focuses the [data-motion-focus] target exactly once', () => {
+  const {api, timers} = harness();
+  const writer = api.createPanelWriter(() => false);
+  const target = fakeFocusTarget();
+  const panel = fakeRoot({want: 'true', focusTarget: target.node});
+
+  writer.apply(panel.root);
+
+  // Still animating in: focusing now would be focusing an element the user
+  // cannot see yet.
+  assert.equal(panel.state(), 'opening');
+  assert.equal(target.calls.length, 0);
+  assert.equal(panel.queries.length, 0, 'the marker is queried only on a settle');
+
+  panel.dispatch({target: panel.root, animationName: 'motion-fade-in'});
+
+  assert.equal(panel.state(), 'open');
+  assert.equal(target.calls.length, 1);
+  assert.equal(target.calls[0].preventScroll, true, 'never scrolls the page');
+  assert.deepEqual([...panel.queries], ['[data-motion-focus]']);
+
+  // A duplicated event and an unchanged re-assert never focus a second time.
+  panel.dispatch({target: panel.root});
+  writer.apply(panel.root);
+  assert.equal(target.calls.length, 1);
+
+  writer.destroy();
+  panel.dispatch({target: panel.root});
+  assert.equal(target.calls.length, 1, 'no listener survives destroy');
+  assert.equal(timers.size, 0);
+});
+
+test('a closed mount, an unchanged re-assert and a close never focus', () => {
+  const {api, timers} = harness();
+  const writer = api.createPanelWriter(() => false);
+  const target = fakeFocusTarget();
+  const panel = fakeRoot({want: 'false', focusTarget: target.node});
+
+  writer.apply(panel.root); // mount with closed intent
+  writer.apply(panel.root); // unchanged re-assert
+  assert.equal(panel.state(), 'closed');
+  assert.equal(target.calls.length, 0);
+  assert.equal(panel.queries.length, 0, 'the marker is not even queried');
+
+  panel.want('true');
+  writer.apply(panel.root);
+  panel.dispatch({target: panel.root});
+  assert.equal(target.calls.length, 1);
+
+  panel.want('false');
+  writer.apply(panel.root);
+  assert.equal(panel.state(), 'closing');
+  panel.dispatch({target: panel.root, animationName: 'motion-fade-out'});
+
+  assert.equal(panel.state(), 'closed');
+  assert.equal(target.calls.length, 1, 'the exit never focuses');
+  writer.destroy();
+});
+
+test('a bound fallback that settles an entry also focuses it', () => {
+  const {api, timers} = harness();
+  const writer = api.createPanelWriter(() => false);
+  const target = fakeFocusTarget();
+  const panel = fakeRoot({want: 'true', focusTarget: target.node});
+
+  writer.apply(panel.root);
+  const [, pending] = [...timers.entries()][0];
+  pending.fn(); // no animationend ever arrives
+
+  assert.equal(panel.state(), 'open');
+  assert.equal(target.calls.length, 1);
+  writer.destroy();
+});
+
+test('reduced motion focuses in the SAME task as the open', () => {
+  const {api, timers} = harness();
+  const writer = api.createPanelWriter(() => true);
+  const target = fakeFocusTarget();
+  const panel = fakeRoot({want: 'false', focusTarget: target.node});
+
+  writer.apply(panel.root);
+  assert.equal(target.calls.length, 0);
+
+  panel.want('true');
+  writer.apply(panel.root);
+
+  assert.equal(panel.state(), 'open');
+  assert.equal(target.calls.length, 1, 'no animationend is needed');
+  assert.equal(timers.size, 0);
+  writer.destroy();
+});
+
+test('a panel without a usable focus target is a silent no-op', () => {
+  // No marker at all, a marker without focus(), and a panel whose DOM surface
+  // has no querySelector: a unit-test fake and a detached node both land here.
+  for (const options of [{}, {focusTarget: {}}, {focusCapable: false}]) {
+    const {api, timers} = harness();
+    const writer = api.createPanelWriter(() => false);
+    const panel = fakeRoot({want: 'true', ...options});
+
+    assert.doesNotThrow(() => {
+      writer.apply(panel.root);
+      panel.dispatch({target: panel.root});
+    });
+
+    assert.equal(panel.state(), 'open', 'the settle still completes');
+    assert.equal(timers.size, 0);
+    writer.destroy();
+  }
 });
 
 test('the writer never imports, so the vm slice stays module-free', () => {

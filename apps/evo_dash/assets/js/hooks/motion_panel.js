@@ -15,6 +15,11 @@ const PANEL_WANT_ATTR = "data-motion-want"
 // keys the keyframes off it, so a LiveView patch can re-render the panel
 // without cutting a running exit short.
 const PANEL_STATE_ATTR = "data-motion-state"
+// Opt-in declarative focus: ONE element inside a mounted panel may carry this
+// attribute and receives focus when the panel SETTLES into `open` — the
+// replacement for `phx-mounted={JS.focus(...)}`, which fires once at mount
+// (never on a later open) and is a silent no-op while the panel is hidden.
+const PANEL_FOCUS_ATTR = "data-motion-focus"
 const PANEL_OPENING = "opening"
 const PANEL_OPEN = "open"
 const PANEL_CLOSING = "closing"
@@ -107,7 +112,7 @@ function isPanelSettleAnimationEnd(state, eventTarget, root) {
 }
 // MotionPanel hook:
 
-export {PANEL_WANT_ATTR, PANEL_STATE_ATTR, PANEL_OPENING, PANEL_OPEN, PANEL_CLOSING,
-  PANEL_CLOSED, PANEL_SETTLE_FALLBACK_MS, wantedOpen, hiddenFor, initialPanelState,
-  planPanelChange, completePanelSettle, settleWaitsForAnimation,
+export {PANEL_WANT_ATTR, PANEL_STATE_ATTR, PANEL_FOCUS_ATTR, PANEL_OPENING, PANEL_OPEN,
+  PANEL_CLOSING, PANEL_CLOSED, PANEL_SETTLE_FALLBACK_MS, wantedOpen, hiddenFor,
+  initialPanelState, planPanelChange, completePanelSettle, settleWaitsForAnimation,
   isPanelSettleAnimationEnd}
