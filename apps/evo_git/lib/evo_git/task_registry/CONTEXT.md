@@ -50,7 +50,7 @@ Processes not descending from the wrapper (self-reflective `agent/tools/*`, `age
 Its wrapper is alive, so the row is LIVE (lease renewed, never swept as leaked, never deleted by `clear_finished_tasks`) but IDLE — no LLM slot, tool slot or worker — so it must not count toward an update/idle gate (that "busy" set belongs to the dashboard / `/server/status`).
 Sessions are in-memory only, so boot reconciliation resolves an orphaned `:awaiting_input` row to `:failed` ("Runtime restarted during interactive session", `error.kind :restart`, `source :startup_reconcile`) — never resumed.
 `:running` ↔ `:awaiting_input` is an ordinary legal non-terminal pair (a plain `update_task_status/4` write; `finished_at` and the lease untouched); `:awaiting_input → :cancelled` is IMMEDIATE (never via `:cancelling`).
-`EvoGit.TaskRegistry.update_status/2` is the status-only cast the session lifecycle calls (through `update_task_status/4`, so the stale-terminal guard and `:cancelling` force-map apply); it carries no result, is for non-terminal flips only, and a repeat of the current status writes and broadcasts nothing.
+`EvoGit.TaskRegistry.update_status/2` is the status-only cast the session lifecycle calls (through `update_task_status/4`); it carries no result, is for non-terminal flips only, and a repeat of the current status writes and broadcasts nothing.
 Status enumerations live ONE place each with a `@doc false` accessor so a table-driven test asserts totality (`:awaiting_input` wherever `:running` appears, `:pausing` wherever `:running` appears, `:paused` wherever `:awaiting_input` appears):
 
 | Owner | Accessor | Content | Meaning |
