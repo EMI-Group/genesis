@@ -1,8 +1,8 @@
 # Agent Runtime Refactor — One Session Process, Two Drivers
 
-**Status:** design record + phased implementation plan — **implemented**: P0–P4 (core session runtime, control plane, streaming, interactive mode) and P6 (dashboard) landed; P5 (durability) is deliberately deferred. See `## Implementation status` for what shipped per phase and the known leftovers. The design sections below remain the rationale and contract record.
+**Status:** design record + phased implementation plan — **implemented**: P0–P4 (core session runtime, control plane, streaming, interactive mode), P5 (per-run durability + resume) and P6 (dashboard) landed; what stays out of scope is transparent survival of a live session across a BEAM restart (§4.10). See `## Implementation status` for what shipped per phase and the known leftovers. The design sections below remain the rationale and contract record.
 **Scope:** the agent runtime (`apps/evo_git/lib/evo_git/agent/`, `agent_scheduler/`, `runtime/`, `task_registry/`) and the dashboard surfaces that read it (`apps/evo_dash`).
-**Companion records:** [harness-alignment.md](harness-alignment.md) (tool/loop contracts), [genesis-assistant.md](genesis-assistant.md) (the `/assistant` product surface), [process-management.md](process-management.md) (tool execution), [virtual-tree.md](virtual-tree.md).
+**Companion records:** [agent-run-durability.md](agent-run-durability.md) (durable per-agent state + whole-tree resume), [task-pause.md](task-pause.md) (clean vs dirty task pause/resume), [harness-alignment.md](harness-alignment.md) (tool/loop contracts), [genesis-assistant.md](genesis-assistant.md) (the `/assistant` product surface), [process-management.md](process-management.md) (tool execution), [virtual-tree.md](virtual-tree.md).
 
 ---
 
@@ -15,7 +15,7 @@
 | P3 | yes | Interactive mode — the `{:yield}`/`{:finish}` split, the non-terminal `:awaiting_input` status (persisted `session_mode`, root-only in v1), `start_session/1` / `send_session_message/3` / `close_session/1` / `await_close/1` (+ `RemoteAPI`/`RemoteNode` verbs), `Agent.Completion` once at the outcome, `Agent.Completion.Builder`, `Runtime.Assistant`, and a `prompt_cache_key` minted once at registration. |
 | P4 | yes | Push-only streaming — `EvoGit.Agent.Stream` (`watch/1`, snapshot, `seq`, `topic/1`, `stale?/2`) with a session-owned monitored watcher set gating callbacks per LLM attempt, ~75 ms coalesced `{:agent_delta, agent_id, seq, events}` broadcasts, `:interrupt` halting the in-flight stream between chunks, and remote watch verbs. |
 | P6 | yes | Dashboard: `/help` as ONE long-lived interactive session per conversation (`/help?session=<agent_id>`), a session rail (since removed — see the current UI state note below), `HomeLive.Watch` + `HomeLive.Delta`, the `:awaiting_input` badge/sidebar group/filter/reply box/close action, `/server/status` keeping its busy set `[:running, :pending, :finalizing, :cancelling]` (an idle session is not busy), and idle sessions closed gracefully on update. |
-| P5 | **deferred** | Durability: sessions are in-memory only, so a BEAM restart fails `:awaiting_input` sessions (reconciled to `:failed`) and reclaims their worktree. |
+| P5 | yes | Durability — `EvoGit.Agent.Session.Persistence`, the one module that knows both `%State{}` and `EvoGit.AgentState`, checkpoints at the session's `:checkpoint` boundary into `<data_dir>/agent_state.sqlite`: append when the new message list extends the previous one, rewrite otherwise, with a compact redispatch blob, branch/base/current commit and a `refs/genesis/agent-state/<task>/<agent>` anchor; a crash retry (`EvoGit.AgentScheduler.ResumePlan` + `EvoGit.Agent.Resume.RosterBatch`, which rebuilds a whole dangling subagent batch) and an explicit `resume_task` (`:clean_pause`/`:dirty_pause` via `EvoGit.TaskRegistry.Pause`) rehydrate the conversation, worktree base and `prompt_cache_key`, and the task opt `:persistent_state` (absent → `true`) switches it off. A LIVE interactive session is still in-memory: a BEAM restart fails `:awaiting_input` sessions (reconciled to `:failed`) and reclaims their worktree. |
 
 **Current UI state (correction to the P6 row above, not a rewrite of it).** The Assistant page is `GET /assistant` and the legacy `/help` route only 302-redirects there with the query string preserved, so every `/help` reference in this record's history means today's `/assistant` page.
 The per-page conversation rail is gone: the conversation list is the shared app-layout sidebar's **Conversations** section, rendered below **Active Tasks** on every dashboard page and loaded asynchronously by the layout, not by the Assistant page.
@@ -23,11 +23,11 @@ Approvals are presented as a fixed-height status strip above the composer plus O
 Transcript geometry is fixed while streaming: reserved heights for the strip, the interrupt slot and the composer, and a stick-to-bottom scroller with no animated scroll.
 
 **Known leftovers / deviations**
-- Durability (P5) is not implemented, as above.
+- Transparent session survival is not implemented: durable state restores a crashed run or an explicit `resume_task`, not a live `:awaiting_input` session, which boot reconciliation still fails with its worktree reclaimed, and an interactive task never enters the paused state at all (`:not_pausable`).
 - `/tasks` shows interactive sessions by default (the `:session_mode` filter defaults to `"all"`) instead of hiding them; one-shot `:reflect` chat tasks stay hidden behind "Show chat tasks". The page has a server-side `session_mode` filter, so sessions can be isolated with one click.
 - The store's page/WHERE builder has no `session_mode` predicate, so the `/tasks` filter is applied in Elixir over pages (rows and total are correct; it costs an extra scan).
 - `send_session_message/3`'s `:interrupt` halts the in-flight stream between chunks only when a watcher is registered; with zero watchers it degrades to plain queue semantics (no callbacks are installed).
-- `agent/session.ex` is ~1100 lines; the rest is extracted into `agent/session/` and `agent/stream/`.
+- `agent/session.ex` is ~1900 lines; the rest is extracted into `agent/session/`, `agent/stream/` and `agent/resume/`.
 ---
 ## 1. The ask, and the answer
 
@@ -112,9 +112,10 @@ Session lifetime is an explicit operator decision (`close_session/1`, dashboard 
 **D9 — The engine stays role-agnostic.**
 No role name appears in the session or the exchange. New optional callbacks may be added (`session_mode/0` default `:oneshot`), but the existing 8 zero-arity callbacks keep their exact shape and their "callable from any process" property.
 
-**D10 — Durability is deferred, and the seams that keep it additive are pinned.**
-Sessions are in-memory only: a BEAM restart loses open sessions, which reconcile to `:failed` with the worktree reclaimed and the archived results preserved. The documented consequence is that sessions do not survive a restart.
-So that a later persistence phase is purely additive, P0–P4 respect four constraints:
+**D10 — Durability is a recovery layer beside the session, never a change to it.**
+A live session is in-memory only: a BEAM restart loses open sessions, so an interactive `:awaiting_input` session reconciles to `:failed` (never transparently resumed) while a resumable one-shot `:running`/`:pausing` task reconciles to `:paused` with `pause_kind: :dirty`; the worktree is reclaimed and the archived results are preserved either way.
+What does exist is per-RUN durability (`EvoGit.AgentState` + `EvoGit.Agent.Session.Persistence`), which restores a crashed or explicitly resumed run's conversation, worktree base and cache identity; the record is [agent-run-durability.md](agent-run-durability.md).
+It stays additive because P0–P4 respect four constraints:
 - `%State{}` stays snapshot-able at every exchange boundary (the archive path already proves the payload is JSON-clean).
 - The transcript has exactly one writer (the session).
 - The worktree path and the per-session `prompt_cache_key` are carried in `%State{}`.
@@ -192,7 +193,7 @@ There is deliberately **no idle-TTL timeout**: `:awaiting_input` has no timer, a
 
 Why `gen_statem` and not `GenServer`: the lifecycle *is* a state machine, and the states have different legal commands (a `:yield` is illegal in `:oneshot`; `input` is illegal in `:finalizing`). `gen_statem` gives explicit `state_enter` hooks — the natural place for "commit + publish + set `:awaiting_input`" and for the completion bookkeeping — and turns illegal transitions into loud `{:error, {:bad_state, phase}}` instead of `if` ladders inside `handle_info`. The cost (one more OTP behaviour to know) is paid once, in one module, and the worker remains a plain `Task`.
 
-Crash semantics: the session is supervised `:temporary`. A crash is handled by the scheduler exactly as today (`handle_agent_crash/3`): retry from scratch for `:oneshot`; for `:interactive`, mark the task failed with a clear message — sessions are in-memory only, so there is no checkpoint to resume from (§4.10).
+Crash semantics: the session is supervised `:temporary`. A crash is handled by the scheduler as today (`handle_agent_crash/3`): a `:oneshot` run is retried from its salvage commit with its durable conversation restored when `:persistent_state` is on (`EvoGit.AgentScheduler.ResumePlan`); for `:interactive`, mark the task failed with a clear message, because a live interactive session is never transparently resumed (§4.10).
 
 ### 4.5 The two modes
 
@@ -264,11 +265,14 @@ New status `:awaiting_input` (non-terminal). It is admitted in the core enumerat
 - **Lease**: `:awaiting_input` is lease-renewable (the wrapper is alive), but a session whose wrapper is gone reconciles to `:failed` on boot (P3).
 - **Waiters**: the dashboard, the Assistant, `EvoDash.NodeContext`, `RemoteNode` and the MCP endpoint must not block forever on it — a non-terminal-but-waiting status counts as "still running" only when the caller asked for it, and MCP waits are bounded by `wait_seconds`.
 
-### 4.10 Durability (deferred; not designed now)
+### 4.10 Durability (per-run state shipped; transparent session survival out of scope)
 
-Sessions are in-memory only. A BEAM restart loses every open session: boot reconciliation marks them `:failed`, reclaims their worktrees and keeps their archived results intact. The documented consequence is that **sessions do not survive a restart**.
-P0–P4 keep a later persistence phase additive by honouring the seams in §3 D10: `%State{}` snapshot-able at every exchange boundary, one writer for the transcript, the worktree path and per-session `prompt_cache_key` inside `%State{}`, and no durable record keyed on a pid.
-A durability phase would then add a table written at each exchange boundary, rehydrate the context and re-attach the worktree on resume, and reuse the stored `prompt_cache_key` — nothing in P0–P4 blocks any of it.
+A LIVE session is in-memory only. A BEAM restart loses every open session: boot reconciliation fails an `:awaiting_input` interactive session (it is never resumed across a restart, and an interactive task is refused at the pause gate with `:not_pausable`) and parks a resumable one-shot `:running`/`:pausing` task as `:paused` with `pause_kind: :dirty`, reclaiming the worktree and keeping the archived results intact in both cases.
+What shipped instead is durability per RUN, beside the session: `EvoGit.Agent.Session.Persistence` is the one module that knows both `%EvoGit.Agent.State{}` and `EvoGit.AgentState`, called from the SESSION process at the `:checkpoint` boundary, and it writes each turn into `<data_dir>/agent_state.sqlite` — a separate database with its own dynamic repo/migrations and one serialized writer, holding a compact redispatch blob, branch/base/current commit plus a `refs/genesis/agent-state/<task>/<agent>` commit anchor, and append-only compressed message chunks.
+That is the durable table this phase projected — written per turn rather than per exchange, with the context rehydrated on restore, the worktree re-attached to its salvaged or checkpoint commit, and the stored `prompt_cache_key` reused — and it is additive because P0–P4 honoured the seams in §3 D10: a checkpoint appends when the new message list extends the old one (rewrite otherwise), the transcript has one writer, `%State{}` carries the worktree path and per-session `prompt_cache_key`, and every durable key is `task_id`/`agent_id` rather than a pid.
+Restore paths: a crash retry resolves its branch, worktree base and restored conversation through `EvoGit.AgentScheduler.ResumePlan` and rebuilds a whole dangling subagent batch from the durable rows through `EvoGit.Agent.Resume.RosterBatch` (a `done` child's stored result is reused, a `running` one re-spawns on its anchored commit, a record-less slot reports `:subagent_result_lost`); an explicit `resume_task/1` additionally re-establishes the persisted agent ids, branch and worktree base on `:clean_pause`/`:dirty_pause` via `EvoGit.TaskRegistry.Pause`.
+`:persistent_state` (task opt, absent → `true`, inherited by every agent of the task) is the switch, and `false` is fully inert.
+Records: [agent-run-durability.md](agent-run-durability.md) and [task-pause.md](task-pause.md).
 
 ### 4.11 Customization surface after the refactor
 
@@ -332,8 +336,12 @@ Each phase is independently shippable and keeps `mix test` green. Sizes are rela
 **Tests:** zero broadcasts and zero callback installs with no watcher; one watcher ⇒ coalesced rate; seq ordering and snapshot reconciliation; watcher death (`:DOWN`) clears the gate and removes the entry; a remote watcher on a connected node receives pushes and its `:DOWN` closes the gate; N-agent broadcast budget.
 **Acceptance:** measured per-turn overhead delta < ~2% on a 200-agent soak; a watched turn shows text within ~100 ms.
 
-### P5 — Durability — deliberately not scheduled
-No phase plans a durable transcript. Sessions are in-memory only, so a BEAM restart fails them (§3 D10, §4.10); a later phase may add a per-exchange-boundary table plus resume, and the seams P0–P4 pin keep that additive.
+### P5 — Durability (L)
+**Intent:** a run's work survives the loss of its process, so a crash retry or an explicit task resume restores the conversation, the worktree base and the cache identity instead of restarting the objective.
+**Changes:** `EvoGit.AgentState` (`<data_dir>/agent_state.sqlite`, own dynamic repo/migrations, one serialized writer, compressed append-only message chunks, `redispatch` blob, `refs/genesis/agent-state/<task>/<agent>` anchors), `agent/session/persistence.ex` (the checkpoint/restore/resync/complete boundary, total by construction), stable `agent_id` across restarts, `:persistent_state` task opt, `EvoGit.AgentScheduler.ResumePlan`, `EvoGit.Agent.Resume.RosterBatch`, `EvoGit.AgentScheduler.SubagentRebuild`/`SubagentReattach`, `EvoGit.TaskRegistry.Pause` (`:clean_pause`/`:dirty_pause`).
+**Tests:** append vs rewrite checkpoints; a restore rehydrates the transcript and the scalars; a cropped/corrupt/absent row never fails the run; whole-tree resume re-spawns running children and reuses done ones; a pause resume restores the root on its checkpoint commit.
+**Out of scope:** transparent survival of a LIVE session, including one waiting in `:awaiting_input` — it still reconciles to `:failed` on boot (§3 D10, §4.10).
+**Records:** [agent-run-durability.md](agent-run-durability.md), [task-pause.md](task-pause.md).
 
 ### P6 — Dashboard session UX (M, `apps/evo_dash`, parallel with P3/P4)
 Ordered: session RPC passthroughs in `EvoDash.NodeContext` → session identity in the URL + list panel (`ChatHistory.current_chat_id` is a single BEAM-global pointer today) → send path switch to `send_session_message/3` with the existing `:reflect` fallback → delta rendering (reuse `Messages.to_entries/1`, `ContentText`, the thought-process component) → `:awaiting_input` badge/label in `Helpers` + sidebar/session group → composer-while-running + queue echo → "interrupt turn" → approval scoping to the session → reattach-after-navigate → chat attachments (port `AttachedFile`) → per-message reasoning retention + transcript cap.
@@ -366,7 +374,7 @@ Ordered: session RPC passthroughs in `EvoDash.NodeContext` → session identity 
 7. **Yield ≠ finish.** A yield never deletes the transcript and never emits a terminal task status.
 8. **Every status enumeration is total.** A table-driven test asserts each whitelist/list constant contains `:awaiting_input` where it contains `:running`.
 9. **Signal always wins.** A message sent to a session is either queued, applied, or answered with an error — never silently dropped.
-10. **Pid-free durable keys.** Nothing persisted or reconciled is keyed on a process — only `task_id`/`agent_id` — so a future durability phase can rehydrate a session under a new pid.
+10. **Pid-free durable keys.** Nothing persisted or reconciled is keyed on a process — only `task_id`/`agent_id` — so durable state can rehydrate a run under a new pid.
 11. **Old suite unchanged.** The complete existing behavioural suite passes without weakening an assertion (the refactor is internal).
 
 ---
