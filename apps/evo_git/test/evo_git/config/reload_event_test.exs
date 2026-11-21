@@ -229,7 +229,8 @@ defmodule EvoGit.Config.ReloadEventWatchTest do
 
     # The save's file write also reaches the live watcher, but by the time its
     # debounce fires the bytes are already in the snapshot: a fingerprint no-op.
-    Process.sleep(400)
+    # 250 ms keeps that negative window comfortably past the ~150 ms debounce.
+    Process.sleep(250)
     assert Cache.get(dir).generation == 2
     refute_receive {:config_reloaded, _node, ^dir, _generation}, 200
 
@@ -239,7 +240,8 @@ defmodule EvoGit.Config.ReloadEventWatchTest do
     assert Cache.get(dir).generation == 3
     assert_receive {:config_reloaded, ^this_node, ^dir, 3}, 1_000
 
-    Process.sleep(400)
+    # Same negative window for the credentials write: past the ~150 ms debounce.
+    Process.sleep(250)
     assert Cache.get(dir).generation == 3
     refute_receive {:config_reloaded, _node, ^dir, _generation}, 200
   end
@@ -261,8 +263,9 @@ defmodule EvoGit.Config.ReloadEventWatchTest do
     assert_receive {:config_reloaded, ^this_node, ^dir, 2}, 1_000
 
     # The write's own debounced file event lands on the same reload and, with
-    # the bytes already in the snapshot, bumps nothing.
-    Process.sleep(400)
+    # the bytes already in the snapshot, bumps nothing; 250 ms stays comfortably
+    # past the ~150 ms debounce for this negative window.
+    Process.sleep(250)
     assert Cache.get(dir).generation == 2
     refute_receive {:config_reloaded, _node, ^dir, _generation}, 200
   end

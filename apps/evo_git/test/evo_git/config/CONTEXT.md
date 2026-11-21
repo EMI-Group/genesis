@@ -79,6 +79,8 @@ These tests establish the snapshot/persistence boundary without injecting schedu
 `Config.__atomize_enum_values__/1` remains a hardcoded per-key-path normalization list rather than schema-derived behavior.
 Config freshness has ONE reload implementation: the watcher's debounced file event, the save event `EvoGit.Config.Watcher.notify_change/2` routes into the watcher, and the bounded fallback that same function runs when no watcher answers all call `EvoGit.Config.Cache.reload_safely/1`, so one content change bumps the generation exactly once.
 `EvoGit.Config.Watcher.notify_change/2` is total and bounded: a `nil`, unregistered, dead or timed-out target falls back to the caller-side guarded reload and still returns `:ok`, so a save never fails, crashes or indefinitely blocks on the watcher.
+`watcher_test.exs` awaits a refresh with a 10 ms poll of the `:persistent_term` snapshot and re-writes the same bytes every 200 ms (at most six times) to recover the port-arming race; the retry spacing must stay ABOVE the watcher's ~150 ms debounce, otherwise each re-write restarts the coalesced reload timer and it never fires.
+Negative windows there and in `reload_event_test.exs` are 250 ms — the floor that still comfortably exceeds that debounce — while the negative "no second broadcast" checks keep their own bounded `refute_receive` window.
 The `[tmp]` enum is `[:system, :custom, :per_repo]`, with rejected values reported at `[:tmp, :mode]` under the corresponding `{:in, ...}` rule.
 
 ## Test Inventory
