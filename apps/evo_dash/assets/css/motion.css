@@ -67,10 +67,25 @@ details.motion-disclosure[data-disclosure-state="closing"] > :not(summary) {
   animation: motion-fade-out var(--motion-fast) var(--motion-ease-in) both;
 }
 
-/* 4. State-driven panels — class="motion-panel" + data-motion-state.
-   `both` fill holds the closing frame until the hook removes the node, so a
+/* 4. State-driven panels — class="motion-panel" + the two data attributes.
+   TWO writers, and the split is load-bearing:
+   (a) a panel the server KEEPS MOUNTED and toggles: the MotionPanel hook
+       (assets/js/hooks/motion_panel_dom.js). The server owns the INTENT
+       (`data-motion-want="true|false"`), the hook owns the STATE
+       (`data-motion-state="opening|open|closing|closed"`) and writes `hidden`
+       only once an exit SETTLED — so the state rules below are the whole
+       animation and JS never carries a duration. A MOUNTED panel is required
+       whenever the exit must fade real content (a form, a list): `:if`
+       unmounting tears the content out of the layout in the same frame, and
+       there is nothing left to fade.
+   (b) a node the server REMOVES: the section-6 `phx-remove` + JS.hide
+       (transition: {...}) recipe. A removed node keeps its children alive only
+       through LiveView's deferred removal, so that is the only recipe whose
+       exit can still show content — and it needs no state attribute at all.
+   `both` fill holds the closing frame until the hook writes `hidden`, and a
    later package never needs per-component keyframes. The class-only variants
-   are escape hatches for markup that cannot carry the data attribute. */
+   (`motion-panel-open` / `motion-panel-close`) are escape hatches for markup
+   that cannot carry the state attribute — an entry-only consumer. */
 .motion-panel[data-motion-state="opening"],
 .motion-panel-open {
   animation: motion-fade-in var(--motion-base) var(--motion-ease-out) both;
@@ -82,6 +97,16 @@ details.motion-disclosure[data-disclosure-state="closing"] > :not(summary) {
 .motion-panel.motion-panel-slide[data-motion-state="opening"],
 .motion-panel-slide.motion-panel-open {
   animation-name: motion-slide-in;
+}
+/* The closed frame: the hook's settled state AND the attribute the server
+   renders for a panel that wants to be closed (`hidden={!@open}`), so a panel
+   the hook has not touched yet is hidden too. No `!important` — the two
+   selectors' specificity (0,2,0) already beats a single utility display class,
+   which is exactly the case that would otherwise leave a "hidden" panel on
+   screen. */
+.motion-panel[data-motion-state="closed"],
+.motion-panel[hidden] {
+  display: none;
 }
 
 /* 5. The ONLY layout animation allowed — for a panel that stays MOUNTED (so it

@@ -125,3 +125,77 @@ test("the legend tooltip fade uses the shared tokens, never a literal", () => {
   const [tip] = blocks(".agents-legend-tip", appCss);
   assert.equal(values(tip).transition, "opacity var(--motion-fast) var(--motion-ease-in)");
 });
+
+// The declarations of the rule whose SELECTOR LIST starts at `selector` — the
+// section-4 rules group a state selector with its class-only escape hatch.
+function declared(selector, source) {
+  const at = source.indexOf(selector);
+  assert.ok(at !== -1, `missing selector: ${selector}`);
+  const open = source.indexOf("{", at);
+  assert.ok(open !== -1, `missing block: ${selector}`);
+  const body = source.slice(open + 1, source.indexOf("}", open));
+  return {selectors: source.slice(at, open), declared: values(body), body};
+}
+
+test("the state-driven panel keeps its token-only entry and exit", () => {
+  // motion-panel / data-motion-state is the ONE two-direction panel vocabulary:
+  // both directions animate opacity (or a small slide) with the shared tokens,
+  // and the MotionPanel hook only writes the state attribute.
+  const entry = declared('.motion-panel[data-motion-state="opening"]', motionCss);
+  assert.equal(entry.declared.animation,
+    "motion-fade-in var(--motion-base) var(--motion-ease-out) both");
+  assertTokenOnly(entry.declared.animation, "motion-panel opening");
+  // The class-only escape hatch an entry-only consumer may use instead.
+  assert.match(entry.selectors, /\.motion-panel-open\b/);
+
+  const exit = declared('.motion-panel[data-motion-state="closing"]', motionCss);
+  assert.equal(exit.declared.animation,
+    "motion-fade-out var(--motion-fast) var(--motion-ease-in) both");
+  assertTokenOnly(exit.declared.animation, "motion-panel closing");
+  assert.match(exit.selectors, /\.motion-panel-close\b/);
+
+  // The slide variant only swaps the keyframe NAME, so it inherits the entry's
+  // duration/easing from the rule above instead of repeating a literal.
+  const slide = declared('.motion-panel.motion-panel-slide[data-motion-state="opening"]', motionCss);
+  assert.deepEqual(slide.declared, {"animation-name": "motion-slide-in"});
+
+  // No duration may leak into section 4 as a literal.
+  for (const {declared: body} of [entry, exit]) {
+    assert.doesNotMatch(JSON.stringify(body), /\d+(\.\d+)?m?s\b/);
+  }
+});
+
+test("a settled or unhooked closed panel is display: none without !important", () => {
+  // The hook writes data-motion-state="closed" before it writes `hidden`, and
+  // the server renders `hidden` for an intent that starts closed: BOTH frames
+  // must hide the panel, or a "closed" panel would paint.
+  const closed = declared('.motion-panel[data-motion-state="closed"]', motionCss);
+  assert.equal(closed.declared.display, "none");
+  assert.match(closed.selectors, /\.motion-panel\[hidden\]/);
+  assert.doesNotMatch(closed.body, /!important/,
+    "the two selectors' specificity must carry it, never !important");
+  // Exactly one closed-frame rule, so no later rule can re-show the panel.
+  assert.equal((motionCss.match(/\.motion-panel\[data-motion-state="closed"\]/g) || []).length, 1);
+});
+
+test("the reduced-motion backstop is still the LAST rule in motion.css", () => {
+  const trimmed = motionCss.trimEnd();
+  const at = trimmed.lastIndexOf("@media (prefers-reduced-motion: reduce)");
+  assert.ok(at > 0, "the global reduced-motion backstop is missing");
+  const tail = trimmed.slice(at);
+  // The media block must run to the very end of the file: nothing may be added
+  // after it, or the backstop stops being the last word.
+  let depth = 0;
+  let end = -1;
+  for (let index = tail.indexOf("{"); index < tail.length; index++) {
+    if (tail[index] === "{") depth++;
+    if (tail[index] === "}") depth--;
+    if (depth === 0 && tail[index] === "}") {
+      end = index + 1;
+      break;
+    }
+  }
+  assert.equal(end, tail.length, "a rule follows the reduced-motion backstop");
+  assert.match(tail, /animation-duration:\s*\.01ms\s*!important/);
+  assert.match(tail, /transition-duration:\s*\.01ms\s*!important/);
+});

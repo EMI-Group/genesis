@@ -155,6 +155,26 @@ defmodule EvoDashWeb.HomeLive.WorkspaceTest do
     assert {:error, _} = Workspace.open(nil, node(), "relative-path")
   end
 
+  test "closing the picker is idempotent and never a toggle" do
+    project = normalized_project()
+    open = socket(%{workspace: project, workspace_open: true, workspace_error: "unavailable"})
+
+    closed = Workspace.close(open)
+
+    assert closed.assigns.workspace_open == false
+    # Closing is VISIBILITY only: the selection, the draft and the inline error
+    # survive, and no project list is reloaded.
+    assert closed.assigns.workspace == project
+    assert closed.assigns.chat_draft == "keep this"
+    assert closed.assigns.workspace_error == "unavailable"
+    assert closed.assigns.workspace_loading == open.assigns.workspace_loading
+    # A click-away or Escape while the panel is already closed does nothing —
+    # which is exactly why it is not `workspace_toggle` (the panel stays
+    # mounted for its exit, so its window keydown fires while it is closed).
+    assert Workspace.close(closed) == closed
+    assert Workspace.close(closed).assigns.workspace_open == false
+  end
+
   test "running replies lock project clearing and selection" do
     project = normalized_project()
     socket = socket(%{workspace: project, chat_status: :running, workspace_loading: false})

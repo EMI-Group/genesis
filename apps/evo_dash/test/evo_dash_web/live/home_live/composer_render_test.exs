@@ -101,8 +101,16 @@ defmodule EvoDashWeb.HomeLive.ComposerRenderTest do
     [panel] = LazyHTML.query(html, "#workspace-panel[role=dialog]") |> Enum.to_list()
     attributes = LazyHTML.attributes(panel) |> List.first() |> Map.new()
     assert attributes["phx-key"] == "Escape"
-    assert attributes["phx-window-keydown"] =~ "workspace-toggle"
-    assert attributes["phx-click-away"] =~ "workspace-toggle"
+    # Click-away and Escape push the IDEMPOTENT close, never the toggle: the
+    # panel now stays MOUNTED for its exit, so a keydown anywhere on the page
+    # would otherwise OPEN a closed picker.
+    for attribute <- ["phx-window-keydown", "phx-click-away"] do
+      assert attributes[attribute] =~ ~s("event":"workspace_close")
+      # …and the toggle is never pushed by either of them (the focus target
+      # `#workspace-toggle` is a different thing than a pushed event).
+      refute attributes[attribute] =~ ~s("event":"workspace_toggle")
+    end
+
     assert Enum.count(LazyHTML.query(html, "#workspace-error[role=alert]")) == 1
   end
 
@@ -131,5 +139,34 @@ defmodule EvoDashWeb.HomeLive.ComposerRenderTest do
       assert js =~ "motion-exit-fade"
       assert js =~ "motion-exit-visible"
     end
+  end
+
+  test "the project menu stays mounted and states its open/closed intent" do
+    # The MotionPanel hook owns `data-motion-state` + `hidden`; the server owns
+    # only the intent. An OPEN panel carries no `hidden`, a CLOSED one keeps the
+    # same node with `hidden` — presence of `#workspace-panel` no longer means
+    # "open".
+    open = render_composer(%{workspace_open: true})
+    [panel] = LazyHTML.query(open, "#workspace-panel[role=dialog]") |> Enum.to_list()
+    open_attrs = LazyHTML.attributes(panel) |> List.first() |> Map.new()
+    assert open_attrs["data-motion-want"] == "true"
+    assert open_attrs["phx-hook"] == "MotionPanel"
+    assert open_attrs["class"] =~ "motion-panel"
+    refute Map.has_key?(open_attrs, "hidden")
+
+    closed = render_composer(%{workspace_open: false})
+    assert Enum.count(LazyHTML.query(closed, "#workspace-panel[role=dialog]")) == 1
+    [panel] = LazyHTML.query(closed, "#workspace-panel[role=dialog]") |> Enum.to_list()
+    closed_attrs = LazyHTML.attributes(panel) |> List.first() |> Map.new()
+    assert closed_attrs["data-motion-want"] == "false"
+    assert closed_attrs["phx-hook"] == "MotionPanel"
+    assert Map.has_key?(closed_attrs, "hidden")
+    # The toggle keeps its expanded/controls contract pointing at that node.
+    assert Enum.count(
+             LazyHTML.query(
+               closed,
+               "#workspace-toggle[aria-expanded=false][aria-controls=workspace-panel]"
+             )
+           ) == 1
   end
 end
