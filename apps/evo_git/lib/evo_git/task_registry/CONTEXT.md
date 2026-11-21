@@ -265,9 +265,7 @@ Call sites pick the CONSERVATIVE direction: `handle_update_status/6` and the rev
 `Pause.pause_kind_for_restart/1,2` stays public and delegates `/2` through `Restart.classify(store, [task_id])` (tests use both arities).
 `list_tasks/0` is bounded to `@list_tasks_limit` (100) rows, `started_at DESC`, decoded through `Store.safe_select_paginated_tasks/1`; the return shape stays `[%TaskInfo{}]`.
 
-## Naming & Vocabulary Debt (open)
+## API Conventions
 
-- **Duplicated rules**: the interactive-session predicate exists as `Pause`'s private `interactive?/1` (atom AND string `:session_mode` keys), `TaskExecutor`'s `interactive_session?/1` (atom key only) and `RuntimeOpts.session_mode/1`; the persistent-state default-true rule as `Pause`'s non-raising `persistent_state_on?/1`, `RuntimeOpts.persistent_state/1` and `admit_persistent_state/1`; and `resume_context.ex` re-implements `PrevTaskRepos.normalize_foreign_repos/1` inline. A shared non-raising `RuntimeOpts` predicate should own the first two.
-- **`safe_store_read/3`/`safe_store_write/2` are one-line aliases of `StoreGuard.read/write`** used only inside the registry (`pause.ex`/`read_offload.ex` call `StoreGuard` directly); delete the aliases.
-- **Four `list_*` return conventions**: `list_tasks/0` → plain list (bounded 100), `list_tasks_paginated/1` → `{tasks, total}`, `list_tasks_page/1` → `%{rows:, total:}`, `list_task_archives/2` → `%{entries:, total:}`; each `@doc` names its own.
-- **Lease vocabulary: four words for two facts** — "orphaned" (a wrapper-less row), "leaked" (`Lease.leaked?/3`), "expired" (the timestamp, error kind `:lease_expired`), "stale" (an out-of-date update).
+- `list_*` returns: `list_tasks/0` → plain list (bounded 100), `list_tasks_paginated/1` → `{tasks, total}`, `list_tasks_page/1` → `%{rows:, total:}`, `list_task_archives/2` → `%{entries:, total:}`; each `@doc` names its own.
+- `safe_store_read/3`/`safe_store_write/2` are one-line aliases of `StoreGuard.read/write` used only inside the registry (`pause.ex`/`read_offload.ex` call `StoreGuard` directly).
