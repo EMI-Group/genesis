@@ -1,6 +1,9 @@
 defmodule EvoGit.ProcessManagerTest do
   # async-safe: every test starts its OWN named registry (never the app-global
-  # `EvoGit.ProcessManager`), so no app-env seam is touched here. The
+  # `EvoGit.ProcessManager`), so no app-env seam is touched here. The one
+  # production timer a test needs to shrink (the TERM→KILL grace) has a
+  # PER-PROCESS form (`:process_kill_grace_ms` in the calling process
+  # dictionary), so it stays async-safe too.
   # `"processes"` topic itself IS shared — the app-global manager (fed by
   # `EvoGit.BackgroundJobs` in other modules) AND any other module's isolated
   # registry publish the same message shapes.
@@ -293,6 +296,13 @@ defmodule EvoGit.ProcessManagerTest do
   ## POSIX round trip (Linux/macOS only)
 
   test "POSIX round trip: sample, pause, resume, kill", %{srv: srv} do
+    # Per-PROCESS shrink of the TERM→KILL grace (the control layer's own seam,
+    # `EvoGit.ProcessManager.Control.kill_grace_ms/0`): the kill does its OS work
+    # in THIS calling process, so the production 1 500 ms flush window would
+    # dominate the round trip. Nothing BEAM-global is touched (the entry dies
+    # with the test process) and the escalation itself is unchanged.
+    Process.put(:process_kill_grace_ms, 0)
+
     if EvoGit.Platform.windows?() do
       :ok
     else

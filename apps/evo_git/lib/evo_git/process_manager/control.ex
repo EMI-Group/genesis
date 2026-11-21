@@ -36,9 +36,10 @@ defmodule EvoGit.ProcessManager.Control do
 
   ## Kill escalation
 
-  Killing is TERM → short grace → KILL (the grace window is read at CALL time
-  from the app env `:process_kill_grace_ms`, default
-  `#{1500}`), then a final `alive?/1` verification: a well-behaved process gets
+  Killing is TERM → short grace → KILL (the grace window is read at CALL time —
+  the calling process's `:process_kill_grace_ms` dictionary entry, then the app
+  env `:process_kill_grace_ms`, default `#{1500}`), then a final `alive?/1`
+  verification: a well-behaved process gets
   the chance to flush and exit, and the caller learns whether the handle is
   really gone. The KILL attempt ALWAYS happens, even when the TERM itself
   failed (a dead group leader with live children is exactly what the
@@ -58,7 +59,8 @@ defmodule EvoGit.ProcessManager.Control do
   @type signal :: :term | :kill | :int | :hup | :stop | :cont | :usr1 | :usr2 | String.t()
 
   # Grace between SIGTERM and SIGKILL — time for a well-behaved process to
-  # flush and exit before the hard kill. Read at CALL time (app env
+  # flush and exit before the hard kill. Read at CALL time (the calling
+  # process's `:process_kill_grace_ms` dictionary entry, then the app env
   # `:process_kill_grace_ms`), so a suite can shrink it.
   @kill_grace_ms 1_500
 
@@ -183,14 +185,32 @@ defmodule EvoGit.ProcessManager.Control do
 
   @doc """
   The grace (ms) between SIGTERM and SIGKILL.
-  Read at CALL time from the app env `:process_kill_grace_ms` (a non-negative
-  integer), falling back to `#{@kill_grace_ms}`.
+
+  Read at CALL time — and the OS work runs in the CALLING process, so the
+  override lives there too:
+
+    1. the calling process's `:process_kill_grace_ms` dictionary entry (a
+       per-process, default-inert test seam: nothing in production writes it,
+       and it dies with the process that set it, so an `async: true` suite can
+       shrink the grace without touching BEAM-global state);
+    2. the app env `:process_kill_grace_ms` (a non-negative integer);
+    3. `#{@kill_grace_ms}`.
   """
   @spec kill_grace_ms() :: non_neg_integer()
   def kill_grace_ms do
-    case Application.get_env(:evo_git, :process_kill_grace_ms, @kill_grace_ms) do
+    case grace_ms_override() do
       ms when is_integer(ms) and ms >= 0 -> ms
       _other -> @kill_grace_ms
+    end
+  end
+
+  # The per-process override wins only when it is a USABLE value; anything else
+  # falls through to the app env (then the production default), so an invalid
+  # entry can never silently remove the flush window.
+  defp grace_ms_override do
+    case Process.get(:process_kill_grace_ms) do
+      ms when is_integer(ms) and ms >= 0 -> ms
+      _absent_or_invalid -> Application.get_env(:evo_git, :process_kill_grace_ms, @kill_grace_ms)
     end
   end
 
