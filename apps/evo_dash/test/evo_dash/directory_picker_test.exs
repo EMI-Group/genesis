@@ -285,12 +285,12 @@ defmodule EvoDash.DirectoryPickerTest do
   #
   # This same ordering is what makes the post-fence `refute_receive …, 0`
   # windows sound — see invariant (A) at the top of the module.
-  defp await_pick_idle(timeout \\ 10_000) do
+  defp await_pick_idle(timeout \\ @async_wait_budget_ms) do
     do_await_pick_idle(System.monotonic_time(:millisecond) + timeout)
   end
 
   defp do_await_pick_idle(deadline) do
-    if :sys.get_state(DirectoryPicker).busy do
+    if :sys.get_state(DirectoryPicker, @async_wait_budget_ms).busy do
       if System.monotonic_time(:millisecond) >= deadline do
         flunk("picker GenServer stayed busy past the await-pick-idle deadline")
       else

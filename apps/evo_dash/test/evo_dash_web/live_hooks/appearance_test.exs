@@ -240,7 +240,8 @@ defmodule EvoDashWeb.LiveHooks.AppearanceTest do
 
     # Phoenix.LiveViewTest does not export assigns/1 — same local helper idiom
     # as settings_live_test.exs:506.
-    defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
+    defp assigns(view),
+      do: :sys.get_state(view.pid, @async_wait_budget_ms).socket.assigns
 
     test "the app shell carries data-accent-color on the initial connected render", %{
       conn: conn

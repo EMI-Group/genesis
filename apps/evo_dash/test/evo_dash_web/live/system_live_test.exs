@@ -2527,7 +2527,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
 
       view |> element("#update-download") |> render_click()
 
-      assert_push_event(view, "update_download_requested", %{}, 1_000)
+      assert_push_event(view, "update_download_requested", %{}, @async_wait_budget_ms)
 
       EvoDash.UpdateStatus.handle_download_result(%{"status" => "ready"})
       await_update_phase(view, :ready)
@@ -2548,7 +2548,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       view |> element("#update-restart") |> render_click()
 
       await_update_phase(view, :applying)
-      assert_push_event(view, "update_apply_requested", %{}, 1_000)
+      assert_push_event(view, "update_apply_requested", %{}, @async_wait_budget_ms)
     end
 
     test "applying with active tasks shows the busy modal and Defer keeps the update ready", %{
@@ -2906,7 +2906,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       # The gate sees no active task, so the update applies IMMEDIATELY: no busy
       # modal, no wind-down, and the session is never even asked to close.
       await_update_phase(view, :applying)
-      assert_push_event(view, "update_apply_requested", %{}, 1_000)
+      assert_push_event(view, "update_apply_requested", %{}, @async_wait_budget_ms)
       assert assigns(view)[:update_apply_busy_count] == nil
       refute render(view) =~ "Tasks still running"
       assert :ets.lookup_element(counter, :closes, 2) == 0
@@ -2944,7 +2944,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       render_click(view, "confirm_apply_graceful")
       # Completion is reported (the update applies), never the timeout fallback.
       await_update_phase(view, :applying)
-      assert_push_event(view, "update_apply_requested", %{}, 1_000)
+      assert_push_event(view, "update_apply_requested", %{}, @async_wait_budget_ms)
       assert assigns(view)[:update_winddown] == false
       assert assigns(view)[:update_force_kill_count] == nil
       refute render(view) =~ "Force Kill"
@@ -2990,7 +2990,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       # never opens the force-kill fallback): the grace expires, the session
       # stops counting and is left alive for the user.
       await_update_phase(view, :applying)
-      assert_push_event(view, "update_apply_requested", %{}, 1_000)
+      assert_push_event(view, "update_apply_requested", %{}, @async_wait_budget_ms)
       assert assigns(view)[:update_winddown] == false
       assert assigns(view)[:update_force_kill_count] == nil
       refute render(view) =~ "Force Kill"
@@ -3039,7 +3039,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       assert await_view_assign(view, :update_apply_busy_count, 1) == :ok
       render_click(view, "confirm_apply_graceful")
       await_update_phase(view, :applying)
-      assert_push_event(view, "update_apply_requested", %{}, 1_000)
+      assert_push_event(view, "update_apply_requested", %{}, @async_wait_budget_ms)
       # The busy task went through the GRACEFUL path (persisted `:cancelled`) and
       # the idle session was closed — neither needed the kill fallback.
       assert %EvoGit.TaskInfo{status: :cancelled} = EvoGit.TaskRegistry.get_task(task_id)

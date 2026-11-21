@@ -314,7 +314,7 @@ defmodule EvoDash.DesktopLifetimeTest do
   defp assert_disabled(pid) do
     assert Process.alive?(pid)
 
-    state = :sys.get_state(pid)
+    state = :sys.get_state(pid, @async_wait_budget_ms)
     assert state.enabled == false
     assert state.stopped == false
 
@@ -327,7 +327,7 @@ defmodule EvoDash.DesktopLifetimeTest do
   # can invoke the stop fun — so the FIFO `:sys.get_state/1` round-trip proves a
   # second stop is impossible. The refute is a plain mailbox scan.
   defp assert_no_further_stop(pid) do
-    state = :sys.get_state(pid)
+    state = :sys.get_state(pid, @async_wait_budget_ms)
     assert state.stopped == true
 
     refute_receive @stop_message, 0
@@ -345,7 +345,7 @@ defmodule EvoDash.DesktopLifetimeTest do
   # accepted too, covering a build that reports the `default_recv/1` wrapper
   # frame instead. Bounded 1ms poll with a `flunk` on exhaustion (never a fixed
   # sleep, and never a silently-shrunk assertion if the observation regresses).
-  defp await_recv_blocked(pid, timeout \\ 5_000) do
+  defp await_recv_blocked(pid, timeout \\ @async_wait_budget_ms) do
     poll_recv_blocked(pid, System.monotonic_time(:millisecond) + timeout)
   end
 
