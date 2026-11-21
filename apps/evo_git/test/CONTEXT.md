@@ -80,6 +80,7 @@ What is serialized, by forcing class: (a) the global `EvoGit.AgentScheduler` / a
 ## Cost Profile (measured)
 Suite wall clock = the `async: true` phase + the serial sum of the `async: false` modules (ExUnit drains the whole async cohort first, then runs sync modules one at a time), so only work removed from that serial tail, or made cheaper, shortens the suite.
 Absolute totals swing ±2x under sibling load (the ASYNC cohort absorbs host load): compare a before/after in ONE session and prefer a structural win over one noisy total.
+Measured on a 16-core host at `--seed 0`: ~98 s with a sibling app suite running (async ~67 s, sync ~31 s) and ~52 s on an idle host (async ~14 s, sync ~38 s).
 **TOTAL wall clock is the criterion, not the sync figure** — moving git/shell tests into `async: true` shrinks the sync phase but inflates the ~28-way async cohort (measured adjacent-pair totals were positive).
 The per-file serial cost is a long FLAT tail — the largest remaining `async: false` file is ~3.7 s (`remote_connection_test` / `agent/tools/job_tools_test`, both at the real-fork/real-child floor), most are 0.1-0.6 s — so the lever is modules LEAVING the cohort, never one hot module.
 The tail is real OS subprocess FORKS: a `git` fork is 2.4-6 ms, a trivial `#!/bin/sh` child 2.2-2.9 ms, `git worktree add` ~10 ms, `File.cp_r!` of a template 0.6-2.8 ms — so FORK COUNT, not fixture size, is the lever, and the big suites sit at the production-fork floor (merge path, CoW create pipeline, LSP handshake, job-child spawns).
