@@ -1038,6 +1038,16 @@ defmodule EvoDashWeb.Helpers do
   def format_cost(_), do: "0.000000"
 
   @doc """
+  Formats a millisecond duration as a one-decimal seconds string.
+
+  Returns `""` for anything that is not an integer, so a message without a
+  timing renders nothing instead of a placeholder.
+  """
+  @spec format_duration(term()) :: String.t()
+  def format_duration(ms) when is_integer(ms), do: "#{Float.round(ms / 1000, 1)}s"
+  def format_duration(_ms), do: ""
+
+  @doc """
   Formats the cache hit rate as a percentage (cached tokens / input tokens).
   """
   def format_cache_hit_rate(usage) when is_map(usage) do

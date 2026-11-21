@@ -476,6 +476,22 @@ defmodule EvoDashWeb.HelpersTest do
     end
   end
 
+  describe "format_duration/1" do
+    test "formats a millisecond count as one-decimal seconds" do
+      assert format_duration(0) == "0.0s"
+      assert format_duration(500) == "0.5s"
+      assert format_duration(1500) == "1.5s"
+      assert format_duration(45_600) == "45.6s"
+      assert format_duration(3_600_000) == "3600.0s"
+      assert format_duration(-500) == "-0.5s"
+    end
+    test "renders nothing for a non-integer duration" do
+      assert format_duration(nil) == ""
+      assert format_duration("12") == ""
+      assert format_duration(1.5) == ""
+      assert format_duration(:atom) == ""
+    end
+  end
   describe "cost_estimate_notice/1" do
     import Phoenix.LiveViewTest
 

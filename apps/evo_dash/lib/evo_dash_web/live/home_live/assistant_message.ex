@@ -430,8 +430,6 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
 
   defp stream_meta?(_meta), do: false
 
-  defp format_duration(ms) when is_integer(ms), do: "#{Float.round(ms / 1000, 1)}s"
-  defp format_duration(_ms), do: ""
 
   defp tool_label(entry) do
     case Map.get(entry, :tool_name) do

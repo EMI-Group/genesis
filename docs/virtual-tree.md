@@ -63,7 +63,7 @@ Parsing/normalization rules (`parse/1`; `parse!/1` raises `ArgumentError`):
 
 `format/1` always emits the canonical form: one slash between segments and no trailing slash except the root (`vct:///`).
 The canonical round-trip holds: `parse(format(p)) == {:ok, p}` for every successfully parsed URL, and formatting is stable under repeated parse/format.
-`join/2`, `segments/1`, `name/1`, `ancestor?/2` (strict segment prefix), `under?/2` (prefix incl. equality) and `relative_to/2` operate on segments only — never on a filesystem.
+`join/2`, `segments/1`, `last_segment/1`, `ancestor?/2` (strict segment prefix), `under?/2` (prefix incl. equality) and `relative_to/2` operate on segments only — never on a filesystem.
 A `String.Chars` implementation renders the canonical URL.
 
 Mount points are **virtual**: they are never created as directories, and a mount entry may point at an OS path that does not exist (portability across machines, backup/restore, or a repo on a detached volume).
