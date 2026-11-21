@@ -735,6 +735,8 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
 
       view |> element("#settings-chatgpt-sign-in") |> render_click()
       assert_receive {:chatgpt_stub, :begin, _account}
+      # The flow call is an async RPC, so await the APPLIED phase first.
+      await_sign_in(view, :waiting)
       assert has_element?(view, "#settings-chatgpt-waiting")
 
       view |> element("#settings-chatgpt-sign-in-cancel") |> render_click()
@@ -755,6 +757,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
       open_chatgpt_auth_step(view)
 
       html = view |> element("#settings-chatgpt-sign-in") |> render_click()
+      await_sign_in(view, :error)
 
       refute has_element?(view, "#settings-chatgpt-waiting")
       assert has_element?(view, "#settings-chatgpt-sign-in-error")

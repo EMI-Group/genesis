@@ -361,6 +361,9 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
 
       view |> element("#" <> detail_panel(@profile_id) <> "-sign-in") |> render_click()
       assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      # The flow call is an async RPC, so await the APPLIED phase before reading
+      # its markup (the stub stays `:pending` here).
+      await_page_sign_in(view, :waiting, {:detail, @profile_id})
 
       assert has_element?(view, "#" <> detail_panel(@profile_id) <> "-waiting")
       link = view |> element("#" <> detail_panel(@profile_id) <> "-sign-in-url") |> render()
@@ -386,6 +389,7 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
 
       view |> element("#" <> status_panel(@profile_id) <> "-sign-in") |> render_click()
       assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, {:status, @profile_id})
 
       assert has_element?(view, "#" <> status_panel(@profile_id) <> "-waiting")
       link = view |> element("#" <> status_panel(@profile_id) <> "-sign-in-url") |> render()
@@ -406,6 +410,7 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
       # Detail: wait, cancel, return to its idle button.
       view |> element("#" <> detail_panel(@profile_id) <> "-sign-in") |> render_click()
       assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, {:detail, @profile_id})
       assert has_element?(view, "#" <> detail_panel(@profile_id) <> "-waiting")
 
       view |> element("#" <> detail_panel(@profile_id) <> "-sign-in-cancel") |> render_click()
@@ -419,6 +424,7 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
       # Status: wait, cancel, return to its idle button.
       view |> element("#" <> status_panel(@profile_id) <> "-sign-in") |> render_click()
       assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, {:status, @profile_id})
       assert has_element?(view, "#" <> status_panel(@profile_id) <> "-waiting")
 
       view |> element("#" <> status_panel(@profile_id) <> "-sign-in-cancel") |> render_click()
@@ -651,6 +657,7 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
 
       view |> element("#" <> detail_panel(@profile_id) <> "-sign-in") |> render_click()
       assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, {:detail, @profile_id})
       assert has_element?(view, "#" <> detail_panel(@profile_id) <> "-waiting")
       assert waiting_block_count(view) == 1
 
@@ -669,6 +676,7 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
       view |> element("#" <> status_panel(@profile_id) <> "-sign-in") |> render_click()
       assert_receive {:chatgpt_stub, :cancel, "flow-detail"}, @async_wait_budget_ms
       assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, {:status, @profile_id})
 
       refute has_element?(view, "#" <> detail_panel(@profile_id) <> "-waiting")
       assert has_element?(view, "#" <> status_panel(@profile_id) <> "-waiting")
@@ -700,6 +708,7 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
 
       view |> element("#settings-chatgpt-sign-in") |> render_click()
       assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, :wizard)
       assert has_element?(view, "#settings-chatgpt-waiting")
 
       send(view.pid, {:chatgpt_signin_result, "flow-detail", {:ok, %{account: "ghost"}}})
@@ -723,6 +732,7 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
 
       view |> element("#settings-chatgpt-sign-in") |> render_click()
       assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, :wizard)
       assert has_element?(view, "#settings-chatgpt-waiting")
 
       render_hook(view, "provider_wizard_cancel", %{})
@@ -747,6 +757,7 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
 
       view |> element("#" <> detail_panel(@profile_id) <> "-sign-in") |> render_click()
       assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, {:detail, @profile_id})
       assert has_element?(view, "#" <> detail_panel(@profile_id) <> "-waiting")
 
       # `edit_provider_profile` toggles the open row closed.
@@ -773,6 +784,7 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
 
       view |> element("#" <> detail_panel(@profile_id) <> "-sign-in") |> render_click()
       assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, {:detail, @profile_id})
       assert has_element?(view, "#" <> detail_panel(@profile_id) <> "-waiting")
 
       target = "chatgpt-switch-#{System.unique_integer([:positive])}"
