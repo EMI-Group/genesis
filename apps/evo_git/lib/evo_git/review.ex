@@ -329,17 +329,29 @@ defmodule EvoGit.Review do
   branch — a detached HEAD is skipped), then `main`, `master`, `dev`, `prod` in
   order, then falls back to the first local branch.
   Returns `{:ok, name}` or `{:error, :no_branch_found}`.
+
+  The answer is derived from ONE branch listing plus ONE current-branch read —
+  never one existence probe per candidate.
   """
   def default_merge_target(repo_path) do
-    case Enum.find(merge_target_candidates(repo_path), &Git.branch_exists?(repo_path, &1)) do
-      nil ->
-        case first_local_branch(repo_path) do
-          {:ok, name} -> {:ok, name}
-          :none -> {:error, :no_branch_found}
-        end
+    default_merge_target(repo_path, Git.list_branches(repo_path))
+  end
 
-      name ->
-        {:ok, name}
+  @doc """
+  Same as `default_merge_target/1`, but resolves from a PRE-FETCHED branch
+  listing — either the raw names or an `EvoGit.Adapters.Git.list_branches/1`
+  result (`{:ok, names} | {:error, reason}`) — so a caller that already listed
+  the branches pays one read instead of a listing plus per-candidate existence
+  probes. The result is identical to `default_merge_target/1`; an unreadable
+  listing returns `{:error, :no_branch_found}`.
+
+  Returns `{:ok, name}` or `{:error, :no_branch_found}`.
+  """
+  def default_merge_target(repo_path, branches) when is_binary(repo_path) do
+    case branches do
+      {:ok, names} when is_list(names) -> default_merge_target_from_names(repo_path, names)
+      names when is_list(names) -> default_merge_target_from_names(repo_path, names)
+      _ -> {:error, :no_branch_found}
     end
   end
 
@@ -437,11 +449,29 @@ defmodule EvoGit.Review do
     end
   end
 
+  # Shared selection over an already-fetched branch listing: the first of
+  # [current branch | well-known candidates] present in the listing, else the
+  # FIRST listed name (git's `for-each-ref refs/heads` order), else none.
+  defp default_merge_target_from_names(repo_path, names) do
+    case Enum.filter(names, &valid_branch_name?/1) do
+      [first | _] = usable ->
+        candidates = merge_target_candidates(current_local_branch(repo_path))
+
+        case Enum.find(candidates, &(&1 in usable)) do
+          nil -> {:ok, first}
+          name -> {:ok, name}
+        end
+
+      [] ->
+        {:error, :no_branch_found}
+    end
+  end
+
   # The candidate list is the current branch (when HEAD is on a real local
   # branch) followed by the well-known branch names, de-duplicated so a HEAD on
-  # `main` does not check `main` twice.
-  defp merge_target_candidates(repo_path) do
-    [current_local_branch(repo_path) | @merge_target_candidates]
+  # `main` does not list `main` twice.
+  defp merge_target_candidates(current_branch) do
+    [current_branch | @merge_target_candidates]
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq()
   end
@@ -452,13 +482,6 @@ defmodule EvoGit.Review do
     case Git.current_branch(repo_path) do
       {:ok, name} -> if name != "HEAD" and valid_branch_name?(name), do: name, else: nil
       _ -> nil
-    end
-  end
-
-  defp first_local_branch(repo_path) do
-    case Git.list_branches(repo_path) do
-      {:ok, [first | _]} -> {:ok, first}
-      _ -> :none
     end
   end
 

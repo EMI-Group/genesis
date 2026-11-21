@@ -800,6 +800,57 @@ defmodule EvoGit.ReviewTest do
     assert {:error, :no_branch_found} = Review.default_merge_target(tmp_dir)
   end
 
+  test "default_merge_target/1 resolves main, then master, then the current branch",
+       %{tmp_dir: tmp_dir} do
+    {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+    rename_current_branch(tmp_dir, "feature/x")
+    # Detach HEAD so the well-known candidate order (main before master) is the
+    # thing under test rather than the current branch's #1 precedence.
+    System.cmd("git", ["checkout", "--detach"], cd: tmp_dir, stderr_to_stdout: true)
+    System.cmd("git", ["branch", "master"], cd: tmp_dir, stderr_to_stdout: true)
+    System.cmd("git", ["branch", "main"], cd: tmp_dir, stderr_to_stdout: true)
+
+    assert {:ok, "main"} = Review.default_merge_target(tmp_dir)
+
+    # Without `main`, `master` wins.
+    System.cmd("git", ["branch", "-D", "main"], cd: tmp_dir, stderr_to_stdout: true)
+    assert {:ok, "master"} = Review.default_merge_target(tmp_dir)
+
+    # With neither well-known candidate left, a real current branch is the target.
+    System.cmd("git", ["branch", "-D", "master"], cd: tmp_dir, stderr_to_stdout: true)
+    {:ok, _} = Git.checkout(tmp_dir, "feature/x")
+    assert {:ok, "feature/x"} = Review.default_merge_target(tmp_dir)
+  end
+
+  test "default_merge_target/1 derives the target from ONE listing and no existence probes",
+       %{tmp_dir: tmp_dir} do
+    {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+    rename_current_branch(tmp_dir, "feature/x")
+    System.cmd("git", ["branch", "master"], cd: tmp_dir, stderr_to_stdout: true)
+    System.cmd("git", ["branch", "main"], cd: tmp_dir, stderr_to_stdout: true)
+    System.cmd("git", ["checkout", "--detach"], cd: tmp_dir, stderr_to_stdout: true)
+
+    Git.record_calls()
+    assert {:ok, "main"} = Review.default_merge_target(tmp_dir)
+    calls = Git.recorded_calls()
+
+    # ONE listing + ONE current-branch read, and never a `branch_exists?`
+    # (`git show-ref --verify`) probe per candidate.
+    assert Enum.count(calls, &match?({:list_branches, _}, &1)) == 1
+    assert Enum.count(calls, &match?({:current_branch, _}, &1)) == 1
+    assert Enum.count(calls, &match?({:branch_exists?, _, _}, &1)) == 0
+
+    # The pre-fetched-listing form agrees with arity 1 on the same repo.
+    assert {:ok, names} = Git.list_branches(tmp_dir)
+    assert {:ok, "main"} == Review.default_merge_target(tmp_dir, names)
+
+    # A listing that could not be read degrades exactly like arity 1 did.
+    assert {:error, :no_branch_found} =
+             Review.default_merge_target(tmp_dir, {:error, {:enoent, "gone"}})
+
+    assert {:error, :no_branch_found} = Review.default_merge_target(tmp_dir, {:ok, []})
+  end
+
   test "list_branches/1 returns all local branches", %{tmp_dir: tmp_dir} do
     {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
     System.cmd("git", ["branch", "alpha"], cd: tmp_dir)

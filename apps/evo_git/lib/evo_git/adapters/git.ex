@@ -48,6 +48,10 @@ defmodule EvoGit.Adapters.Git do
 
   @co_author_trailer "\n\nCo-Authored-By: Genesis <noreply@evogit.ai>"
 
+  # Process-dictionary key for the default-inert call recorder behind
+  # `record_calls/0` / `recorded_calls/0`. See `record_calls/0`.
+  @recorded_calls_key :"$evogit_git_recorded_calls"
+
   # Compiled regex patterns for parse_repo_url and get_github_username
   @repo_url_re ~r/https:\/\/github\.com\/[^\/]+\/[^\/\s]+/
   @gh_username_re ~r/Logged in as ([^\s]+)/
@@ -632,6 +636,8 @@ defmodule EvoGit.Adapters.Git do
   Uses `git for-each-ref --format=%(refname:short) refs/heads`.
   """
   def list_branches(repo_root) when is_binary(repo_root) do
+    record_call({:list_branches, repo_root})
+
     parse_list_result(
       run(["for-each-ref", "--format=%(refname:short)", "refs/heads"], repo_root),
       fn output -> output |> String.split("\n", trim: true) |> Enum.map(&String.trim/1) end
@@ -703,6 +709,7 @@ defmodule EvoGit.Adapters.Git do
   Uses `git rev-parse --abbrev-ref HEAD`.
   """
   def current_branch(repo_path) when is_binary(repo_path) do
+    record_call({:current_branch, repo_path})
     run(["rev-parse", "--abbrev-ref", "HEAD"], repo_path)
   end
 
@@ -713,6 +720,8 @@ defmodule EvoGit.Adapters.Git do
   """
   def branch_exists?(repo_path, branch_name)
       when is_binary(repo_path) and is_binary(branch_name) do
+    record_call({:branch_exists?, repo_path, branch_name})
+
     if not File.dir?(repo_path) do
       false
     else
@@ -720,6 +729,31 @@ defmodule EvoGit.Adapters.Git do
         {_output, 0} -> true
         {_output, _code} -> false
       end
+    end
+  end
+
+  @doc false
+  # DEFAULT-INERT, process-local call recorder for the three branch-inspection
+  # helpers (`list_branches/1`, `branch_exists?/2`, `current_branch/1`). Git
+  # runs in the CALLING process, so enabling it here only records the enabling
+  # process's own calls — no global state, so tests that use it stay `async:
+  # true`. Production never calls `record_calls/0`, and the only cost on the
+  # normal path is one process-dictionary miss per helper call.
+  def record_calls do
+    Process.put(@recorded_calls_key, [])
+    :ok
+  end
+
+  @doc false
+  # Returns the tags recorded by `record_calls/0` in CALL order (oldest first).
+  def recorded_calls do
+    @recorded_calls_key |> Process.get([]) |> Enum.reverse()
+  end
+
+  defp record_call(tag) do
+    case Process.get(@recorded_calls_key) do
+      nil -> :ok
+      calls -> Process.put(@recorded_calls_key, [tag | calls])
     end
   end
 
