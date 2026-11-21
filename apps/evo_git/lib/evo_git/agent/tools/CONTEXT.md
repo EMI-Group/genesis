@@ -214,7 +214,7 @@ Every tools-node commit uses `git commit -F <tempfile>`, never `-m <message>` ar
 - Callers consume `{:ok, output}`/`{:error, message}`, and `write_context`/`edit_context` render `"\n\nCommitted:\n" <> output` or the message. The adapter (`EvoGit.Adapters.Git.commit/2`) keeps its own inline `-F` pattern with `System.tmp_dir!()` (correct for raw `System.cmd`, wrong for sandboxed reads), so the two stay separate while both generators carry the OS pid (`../../adapters/CONTEXT.md`).
 
 ### Audit: other git invocations in this node
-- `Shared.commit_files/4,5` — SAFE (`["add" | paths]` plus a `-F` tempfile under `resolve_tmpdir()`), and `write_context`/`edit_context` are the only `-m` argv instances in this node (kept for commits that predate the `-F` helper).
+- `Shared.commit_files/4,5` — SAFE (`["add" | paths]` plus a `-F` tempfile under `resolve_tmpdir()`); `write_context`/`edit_context` go through that same helper (amend path), so this node has NO `-m` argv commit instance.
 - `SearchHistory.do_search` — SAFE: `["log", format, commit_id, "--max-count=N", …]` (refs/flags only), with the user pattern applied by Elixir `Regex` after the log is fetched.
 - `Git.execute` (run_git) — LATENT: it would pass LLM `sanitized_args` verbatim to `EvoGit.sandbox_run/4` and `fetch_array_arg/2` validates shape only, so `["commit", "-m", "…"]` would hit the MSYS2 class; a re-enable must intercept `-m`/`-F`.
 
