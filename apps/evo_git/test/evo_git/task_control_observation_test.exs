@@ -1,8 +1,9 @@
 defmodule EvoGit.TaskControl.ObservationTest do
-  # `async: false`: every test writes per-test rows into the app-owned
-  # `:evogit_sched_meta` / `:evogit_agent_summary` ETS tables owned by the
-  # app-global `EvoGit.AgentScheduler`, and one test queues an injected message
-  # in `EvoGit.AgentScheduler.ControlPlane`'s app-owned inbox table.
+  # `async: false`: `Observation.snapshot/1` reads the app-owned
+  # `:evogit_sched_meta` / `:evogit_agent_summary` ETS tables WHOLESALE through
+  # `EvoGit.AgentScheduler.RemoteAPI.list_agents/0` (every test then filters by
+  # its own unique task id), and one test queues an injected message in the
+  # app-global `EvoGit.AgentScheduler.ControlPlane` inbox table.
   use ExUnit.Case, async: false
 
   alias EvoGit.AgentScheduler.{AgentState, ControlPlane, SchedMeta}
@@ -88,9 +89,15 @@ defmodule EvoGit.TaskControl.ObservationTest do
   test "change token ignores observation time but changes with real activity and saved state", %{
     task: task
   } do
+    # `elapsed_seconds` truncates to WHOLE SECONDS and `Observation` reads the
+    # wall clock directly (there is no clock seam to pass an observation
+    # timestamp through), so proving the observation clock advances costs one
+    # real second tick. Anchor `started_at` just short of that tick and sleep
+    # only the remainder the tick needs, instead of a flat 1 050 ms.
+    task = %{task | started_at: DateTime.add(DateTime.utc_now(), -900, :millisecond)}
     id = put_agent(task.id, :running, turn: 1)
     before = Observation.snapshot(task)
-    Process.sleep(1_050)
+    sleep_to_next_elapsed_tick(task.started_at)
     later = Observation.snapshot(task)
     assert later.elapsed_seconds > before.elapsed_seconds
     assert later.change_token == before.change_token
@@ -168,6 +175,15 @@ defmodule EvoGit.TaskControl.ObservationTest do
     after_change = Observation.snapshot(task)
     assert after_change.agents == before.agents
     refute after_change.change_token == before.change_token
+  end
+
+  # Sleeps exactly until the next whole-second boundary of the task's elapsed
+  # clock — the only granularity `Observation` distinguishes. Measuring at call
+  # time keeps the wait correct even when the `before` snapshot lands after the
+  # boundary (the sleep then aims at the following one).
+  defp sleep_to_next_elapsed_tick(started_at) do
+    elapsed_us = DateTime.diff(DateTime.utc_now(), started_at, :microsecond)
+    Process.sleep(div(1_000_000 - rem(elapsed_us, 1_000_000), 1_000) + 2)
   end
 
   # A registered agent is TWO rows: the scheduler metadata in
