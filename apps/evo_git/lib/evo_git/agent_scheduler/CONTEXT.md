@@ -109,7 +109,7 @@ Resolution runs ONLY when the dispatch carries resume input at all (`:resume_kin
 
 ## Agent-facing submodule awareness (repo_notes)
 
-`AgentSpec.repo_notes` carries the ALREADY-RENDERED git-submodules note, rendered ONCE at root spec build by `Runtime.Helpers.load_repo_notes/2` (`Git.ls_tree_gitlinks/2`; nil when none/fails) → `%State{}.repo_notes` → `ContextBuilder.build_repo_notes_section/1`; subagents inherit the rendered TEXT (no re-detection), so a foreign-repo subagent still carries the PRIMARY's note.
+`AgentSpec.repo_notes` carries the ALREADY-RENDERED git-submodules note (`Runtime.Helpers.load_repo_notes/2` → `Git.ls_tree_gitlinks/2` at root spec build, nil when none/fails) → `%State{}.repo_notes` → `ContextBuilder.build_repo_notes_section/1`; subagents inherit the rendered TEXT (no re-detection), so a foreign-repo subagent still carries the PRIMARY's note.
 
 ## Repo-Nil Tolerance & Repo-Less Agent Plumbing
 
