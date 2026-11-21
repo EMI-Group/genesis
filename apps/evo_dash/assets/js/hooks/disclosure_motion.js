@@ -14,6 +14,14 @@
 // motion.css's; JS only decides WHEN an exit is over. Opening stays the
 // CSS-only path (`details.motion-disclosure[open] > :not(summary)` animates
 // entry from the attribute the browser already toggles).
+//
+// `open` stays browser-native and this hook only OWNS it for the surfaces whose
+// markup renders it from server state (the Settings provider account's
+// "Advanced" disclosure). There a patch would otherwise morph the content away
+// instantly, so `updated()` reconciles after every patch: it re-asserts the
+// previous frame in the SAME task while our exit runs (or plays that exit when
+// the server closed what we believe is open), and it drops a stale server
+// `open` while the server catches up with the user's close.
 
 // --- DisclosureMotion: pure close decisions (unit-tested)
 // Bounded fallback: an unrendered / zero-content panel fires no animationend at
@@ -52,6 +60,35 @@ function isPanelAnimationEnd(state, eventTarget, panel) {
 // close that is already running is completed instead of re-armed.
 function closeWaitsForAnimation({reduced, panelPresent, closing} = {}) {
   return !reduced && Boolean(panelPresent) && !closing
+}
+
+// --- DisclosureMotion: pure server-`open` reconcile decisions (unit-tested)
+// A `toggle` listener keeps `wantOpen` (the hook's own intent) current, so the
+// plan below answers one question per patch: may this patch change `open`, or
+// must the previous frame survive the task?
+//   "none"            — server and hook agree, or a running exit already
+//                       settled the intent (it removes `open` itself).
+//   "readd"           — mid-exit and the patch already dropped `open`: keep the
+//                       frame so the exit keyframe can finish.
+//   "readd-and-close" — the server closed a disclosure the hook believes is
+//                       open: re-assert `open`, then play the exit instead of
+//                       snapping the content away.
+//   "drop"            — a stale server `open` for a hook that is closed (the
+//                       close round-trip has not landed yet): client intent wins
+//                       until the server catches up.
+// Pure and total: no DOM, no timers, missing/garbage input reads as "closed".
+function planOpenReconcile({domOpen, wantOpen, closing} = {}) {
+  const dom = domOpen === true
+  const want = wantOpen === true
+
+  // A running exit owns `open` until `closeAnimated` settles it — whatever the
+  // patch rendered, the intent is already closed.
+  if (closing === true) return {wantOpen: false, action: dom ? "none" : "readd"}
+
+  if (dom === want) return {wantOpen: want, action: "none"}
+  if (!want) return {wantOpen: false, action: "drop"}
+
+  return {wantOpen: false, action: "readd-and-close"}
 }
 // DisclosureMotion: DOM orchestration + hook
 
@@ -132,19 +169,58 @@ function closeAnimated(root, {panel, attr = DISCLOSURE_STATE_ATTR,
 
 const DisclosureMotion = {
   mounted() {
+    // The hook's own intent, seeded from the rendered `open` (a server-owned
+    // disclosure can arrive open) and then kept current by the two listeners.
+    this.wantOpen = this.el.open === true
     this.onClick = event => this.handleClick(event)
+    // A native change of `open` — the browser's toggle, keyboard activation, or
+    // our own releaseOpen — is the intent's truth. Never while OUR exit runs:
+    // closeAnimated settles that one itself.
+    this.onToggle = () => {
+      if (!pendingCloses.has(this.el)) this.wantOpen = this.el.open === true
+    }
     this.el.addEventListener("click", this.onClick)
+    this.el.addEventListener("toggle", this.onToggle)
   },
 
-  // LiveView patches re-render the <details>. `open` belongs to the browser (and
-  // to the server's markup), never to this hook, so a patch is left alone: no
-  // re-arming, no re-assertion, nothing that could fight the user's toggle.
-  updated() {},
+  // LiveView patches re-render the <details>. For a browser-owned disclosure the
+  // server never writes `open`, so the plan is always "none" and a patch can
+  // never fight the user's toggle. Where the SERVER owns `open` (the Settings
+  // provider "Advanced" disclosure) the patch is reconciled instead: a mid-exit
+  // frame is re-asserted so the exit can finish, a server close is animated
+  // rather than snapped, and a stale server re-open is dropped.
+  updated() {
+    const el = this.el
+    // Leaving the DOM: nothing to keep a frame for (destroyed() releases it).
+    if (!el || el.isConnected === false) return
+
+    const plan = planOpenReconcile({
+      domOpen: el.open === true,
+      wantOpen: this.wantOpen === true,
+      closing: el.getAttribute(DISCLOSURE_STATE_ATTR) === DISCLOSURE_CLOSING,
+    })
+    this.wantOpen = plan.wantOpen
+
+    if (plan.action === "readd") {
+      // SAME task, before paint: the computed style never sees the gap, so the
+      // running exit keyframe continues undisturbed.
+      el.open = true
+    } else if (plan.action === "readd-and-close") {
+      el.open = true
+      // No second close is possible: `pendingCloses` holds ONE close per root,
+      // and the `closing` state (which is false here) is what excludes this arm.
+      closeAnimated(el, {panel: this.panel()})
+    } else if (plan.action === "drop") {
+      el.open = false
+    }
+  },
 
   destroyed() {
     if (!this.el) return
     this.el.removeEventListener("click", this.onClick)
+    if (this.onToggle) this.el.removeEventListener("toggle", this.onToggle)
     this.onClick = null
+    this.onToggle = null
     // Release a running exit (its listener and its timer) with the element — it
     // is leaving the DOM, so the close simply completes now.
     if (this.el.getAttribute(DISCLOSURE_STATE_ATTR) === DISCLOSURE_CLOSING) {
@@ -156,13 +232,19 @@ const DisclosureMotion = {
   // Opening stays native (the CSS entry keyframes key off `[open]`), a nested
   // disclosure's summary keeps its own toggle, and the browser's keyboard
   // activation of a summary arrives here as the same click — so Enter/Space
-  // still close, they just close animated.
+  // still close, they just close animated. A click runs BEFORE the native
+  // toggle, so setting the intent here closes the window in which a patch could
+  // see a freshly toggled `open` against a stale intent.
   handleClick(event) {
     const summary = event?.target?.closest?.("summary")
     if (!summary || summary !== this.rootSummary()) return
-    if (!this.el.open) return
     if (this.el.getAttribute(DISCLOSURE_STATE_ATTR) === DISCLOSURE_CLOSING) return
+    if (!this.el.open) {
+      this.wantOpen = true
+      return
+    }
     event.preventDefault()
+    this.wantOpen = false
     closeAnimated(this.el, {panel: this.panel()})
   },
 
@@ -186,5 +268,6 @@ if (typeof globalThis !== "undefined") {
 }
 
 export {DISCLOSURE_CLOSE_FALLBACK_MS, DISCLOSURE_STATE_ATTR, DISCLOSURE_CLOSING,
-  prefersReducedMotion, isPanelAnimationEnd, closeWaitsForAnimation, closeAnimated}
+  prefersReducedMotion, isPanelAnimationEnd, closeWaitsForAnimation,
+  planOpenReconcile, closeAnimated}
 export default DisclosureMotion
