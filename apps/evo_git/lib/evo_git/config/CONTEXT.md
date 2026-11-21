@@ -44,6 +44,7 @@ No facade operation changes credentials, reloads the scheduler or applies runtim
 - Resolution: `resolve_model/2` → `"provider:model"` (backward-compat); `resolve_runtime_spec/3` (`:base_url`/`:variant`/`:extra`) → the CANONICAL `%{provider: atom, id: string}` ReqLLM `runtime_spec()` (+ optional `base_url`/`extra`), NOT a task `model_spec` — `resolve_model_spec/3` is its documented compatibility alias; `requires_base_url?/1` is `true` for `:openai_compatible` (default `false`).
 - Auth: `auth_modes/1` (`[:api_key] | [:api_key, :oauth] | [:oauth]`, default `[:api_key]` for an unknown/API-key-only provider), `oauth_source/1` (`:chatgpt` for `:openai_codex`, `:claude_code` for `:anthropic`, else `nil`), `oauth_only?/1` (`:api_key` NOT in `auth_modes/1`), `supports_oauth?/1`.
 - `known_credential_keys/0`: all unique credential key names — an entry contributes its `credential_key` ONLY when `:api_key` is in its `auth_modes` (so OAuth-only `:openai_codex` never makes `api_key_present?/1` report a key); VARIANT keys are unconditional.
+
 **Model lists are derived data**: ChatGPT registrations supply the available model IDs/display names; other providers use shortcuts derived from the vendored LLMDB snapshot (`deps/llm_db/priv/llm_db/snapshot.json`).
 
 ### `EvoGit.Config.ProviderPresets` (built-in schedule presets)
