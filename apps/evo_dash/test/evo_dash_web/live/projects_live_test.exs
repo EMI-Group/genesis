@@ -4083,7 +4083,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
 
       render_hook(view, "directory_pick", %{picker_id: "project"})
-      assert_push_event(view, "picker_result:project", %{unavailable: true})
+      assert_push_event(view, "picker_result:project", %{unavailable: true}, async_wait_budget())
     end
 
     test "remote render never shows the browse button even when tauri is detected", %{
@@ -4129,7 +4129,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # The fake sends its result synchronously during handle_event; the
       # handle_info-driven push is delivered to the client afterwards.
       render_hook(view, "directory_pick", %{picker_id: "foreign-repo"})
-      assert_push_event(view, "picker_result:foreign-repo", %{path: "/fake/picked/dir"})
+
+      assert_push_event(
+        view,
+        "picker_result:foreign-repo",
+        %{path: "/fake/picked/dir"},
+        async_wait_budget()
+      )
     end
   end
 
@@ -4178,12 +4184,20 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       block = "\n\n---\n## Attached file: note.txt\n\nHello file content\n"
       expected = "my base prompt" <> block
 
-      assert_push_event(view, "picker_result:objective_file", %{
-        prompt: ^expected,
-        block: ^block,
-        attached: true,
-        name: "note.txt"
-      })
+      assert_push_event(
+        view,
+        "picker_result:objective_file",
+        %{
+          prompt: ^expected,
+          block: ^block,
+          attached: true,
+          name: "note.txt"
+        },
+        # The push rides `{:directory_picker_result, ...}` -> `handle_info` ->
+        # an off-process read in `EvoDash.TaskSupervisor`, so its 100 ms default
+        # is a load assumption, never a correctness bound.
+        async_wait_budget()
+      )
 
       assert assigns(view)[:task_prompt] == expected
       # The snapshot base is consumed after the append, proving the snapshot
@@ -4215,7 +4229,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       before = assigns(view)[:task_prompt]
 
       render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
-      assert_push_event(view, "picker_result:objective_file", %{error: true})
+      assert_push_event(view, "picker_result:objective_file", %{error: true}, async_wait_budget())
 
       assert render(view) =~ "Failed to attach file"
       assert assigns(view)[:task_prompt] == before
@@ -4240,7 +4254,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       before = assigns(view)[:task_prompt]
 
       render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
-      assert_push_event(view, "picker_result:objective_file", %{cancelled: true})
+
+      assert_push_event(
+        view,
+        "picker_result:objective_file",
+        %{cancelled: true},
+        async_wait_budget()
+      )
 
       refute render(view) =~ "Failed to attach file"
       assert assigns(view)[:task_prompt] == before
@@ -4264,7 +4284,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
-      assert_push_event(view, "picker_result:objective_file", %{unavailable: true})
+
+      assert_push_event(
+        view,
+        "picker_result:objective_file",
+        %{unavailable: true},
+        async_wait_budget()
+      )
     end
 
     test "file_pick on a remote node pushes unavailable without any picker involvement", %{
@@ -4284,7 +4310,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
 
       render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
-      assert_push_event(view, "picker_result:objective_file", %{unavailable: true})
+
+      assert_push_event(
+        view,
+        "picker_result:objective_file",
+        %{unavailable: true},
+        async_wait_budget()
+      )
     end
 
     test "file_pick_manual with a valid path appends the file content to the prompt", %{
@@ -4305,12 +4337,17 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       block = "\n\n---\n## Attached file: manual-note.txt\n\nHello manual file\n"
       expected = "my base prompt" <> block
 
-      assert_push_event(view, "picker_result:objective_file", %{
-        prompt: ^expected,
-        block: ^block,
-        attached: true,
-        name: "manual-note.txt"
-      })
+      assert_push_event(
+        view,
+        "picker_result:objective_file",
+        %{
+          prompt: ^expected,
+          block: ^block,
+          attached: true,
+          name: "manual-note.txt"
+        },
+        async_wait_budget()
+      )
 
       assert assigns(view)[:task_prompt] == expected
       # The snapshot base is consumed after the append, proving the snapshot
@@ -4330,10 +4367,15 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         prompt: "my base prompt"
       })
 
-      assert_push_event(view, "picker_result:objective_file", %{
-        error: true,
-        reason: "Please enter a file path."
-      })
+      assert_push_event(
+        view,
+        "picker_result:objective_file",
+        %{
+          error: true,
+          reason: "Please enter a file path."
+        },
+        async_wait_budget()
+      )
 
       assert render(view) =~ "Please enter a file path."
       assert assigns(view)[:task_prompt] == before
@@ -4349,10 +4391,15 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         prompt: "my base prompt"
       })
 
-      assert_push_event(view, "picker_result:objective_file", %{
-        error: true,
-        reason: "Please enter a file path."
-      })
+      assert_push_event(
+        view,
+        "picker_result:objective_file",
+        %{
+          error: true,
+          reason: "Please enter a file path."
+        },
+        async_wait_budget()
+      )
 
       assert assigns(view)[:task_prompt] == before
     end
@@ -4363,7 +4410,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # No path and no picker_id at all — must not crash the LiveView (the
       # handler falls back to @attach_picker_id for the push channel).
       render_hook(view, "file_pick_manual", %{})
-      assert_push_event(view, "picker_result:objective_file", %{error: true})
+      assert_push_event(view, "picker_result:objective_file", %{error: true}, async_wait_budget())
     end
 
     test "file_pick_manual with a nonexistent file pushes an error and keeps the prompt", %{
@@ -4381,10 +4428,15 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         prompt: "my base prompt"
       })
 
-      assert_push_event(view, "picker_result:objective_file", %{
-        error: true,
-        reason: "File not found: " <> ^missing
-      })
+      assert_push_event(
+        view,
+        "picker_result:objective_file",
+        %{
+          error: true,
+          reason: "File not found: " <> ^missing
+        },
+        async_wait_budget()
+      )
 
       assert render(view) =~ "File not found"
       assert assigns(view)[:task_prompt] == before
@@ -4407,11 +4459,20 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       pick_staged(view, "objective_file_image", "image", png_path)
 
-      assert_push_event(view, "picker_result:objective_file_image", %{
-        attached: true,
-        name: "pic.png",
-        kind: "image"
-      })
+      assert_push_event(
+        view,
+        "picker_result:objective_file_image",
+        %{
+          attached: true,
+          name: "pic.png",
+          kind: "image"
+        },
+        # Every `picker_result:*` push is an ASYNC handshake: the fake picker
+        # sends `{:directory_picker_result, ...}`, the page starts the read in
+        # `EvoDash.TaskSupervisor` from its `handle_info`, and only that read's
+        # result pushes. The 100 ms default is a load assumption.
+        async_wait_budget()
+      )
 
       # Staged entries are STRING-keyed maps; "data" holds the raw binary
       # (server-side only — never rendered, so reading the written bytes back
@@ -4463,11 +4524,16 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       pick_staged(view, "objective_file_audio", "audio", mp3_path)
 
-      assert_push_event(view, "picker_result:objective_file_audio", %{
-        attached: true,
-        name: "note.mp3",
-        kind: "audio"
-      })
+      assert_push_event(
+        view,
+        "picker_result:objective_file_audio",
+        %{
+          attached: true,
+          name: "note.mp3",
+          kind: "audio"
+        },
+        async_wait_budget()
+      )
 
       assert assigns(view)[:staged_attachments] == [
                %{
@@ -4513,9 +4579,22 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       open_staging_project(view, tmp_dir)
 
       pick_staged(view, "objective_file_image", "image", png_path)
-      assert_push_event(view, "picker_result:objective_file_image", %{attached: true})
+
+      assert_push_event(
+        view,
+        "picker_result:objective_file_image",
+        %{attached: true},
+        async_wait_budget()
+      )
+
       pick_staged(view, "objective_file_audio", "audio", mp3_path)
-      assert_push_event(view, "picker_result:objective_file_audio", %{attached: true})
+
+      assert_push_event(
+        view,
+        "picker_result:objective_file_audio",
+        %{attached: true},
+        async_wait_budget()
+      )
 
       assert length(assigns(view)[:staged_attachments]) == 2
 
@@ -4565,7 +4644,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # consumed so the staged assign is settled before the next pick.
       for _ <- 1..4 do
         pick_staged(view, "objective_file_image", "image", png_path)
-        assert_push_event(view, "picker_result:objective_file_image", %{attached: true})
+
+        assert_push_event(
+          view,
+          "picker_result:objective_file_image",
+          %{attached: true},
+          async_wait_budget()
+        )
       end
 
       assert length(assigns(view)[:staged_attachments]) == 4
@@ -4573,7 +4658,14 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # The count-cap check runs BEFORE the file is read, so a 5th pick fails
       # fast and the staged list stays at 4.
       pick_staged(view, "objective_file_image", "image", png_path)
-      assert_push_event(view, "picker_result:objective_file_image", %{error: true})
+
+      assert_push_event(
+        view,
+        "picker_result:objective_file_image",
+        %{error: true},
+        async_wait_budget()
+      )
+
       assert render(view) =~ "Maximum of 4 attachments per task"
       assert length(assigns(view)[:staged_attachments]) == 4
     end
@@ -4590,7 +4682,14 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       pick_staged(view, "objective_file_image", "image", txt_path)
-      assert_push_event(view, "picker_result:objective_file_image", %{error: true})
+
+      assert_push_event(
+        view,
+        "picker_result:objective_file_image",
+        %{error: true},
+        async_wait_budget()
+      )
+
       assert render(view) =~ "Unsupported file type for attachment: .txt"
       assert assigns(view)[:staged_attachments] == []
     end
@@ -4614,7 +4713,14 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       pick_staged(view, "objective_file_image", "image", big_path)
-      assert_push_event(view, "picker_result:objective_file_image", %{error: true})
+
+      assert_push_event(
+        view,
+        "picker_result:objective_file_image",
+        %{error: true},
+        async_wait_budget()
+      )
+
       assert render(view) =~ "File is too large (max 15 MiB)"
       assert assigns(view)[:staged_attachments] == []
     end
@@ -4639,11 +4745,20 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         kind: "image"
       })
 
-      assert_push_event(view, "picker_result:objective_file_image", %{
-        attached: true,
-        name: "pic.png",
-        kind: "image"
-      })
+      assert_push_event(
+        view,
+        "picker_result:objective_file_image",
+        %{
+          attached: true,
+          name: "pic.png",
+          kind: "image"
+        },
+        # Every `picker_result:*` push is an ASYNC handshake: the fake picker
+        # sends `{:directory_picker_result, ...}`, the page starts the read in
+        # `EvoDash.TaskSupervisor` from its `handle_info`, and only that read's
+        # result pushes. The 100 ms default is a load assumption.
+        async_wait_budget()
+      )
 
       assert assigns(view)[:staged_attachments] == [
                %{
@@ -4682,7 +4797,14 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       pick_staged(view, "objective_file_image", "image", missing)
-      assert_push_event(view, "picker_result:objective_file_image", %{error: true})
+
+      assert_push_event(
+        view,
+        "picker_result:objective_file_image",
+        %{error: true},
+        async_wait_budget()
+      )
+
       assert render(view) =~ "File not found:"
       assert assigns(view)[:staged_attachments] == []
     end
@@ -6126,7 +6248,13 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_hook(view, "directory_pick", %{picker_id: "new-project"})
-      assert_push_event(view, "picker_result:new-project", %{unavailable: true})
+
+      assert_push_event(
+        view,
+        "picker_result:new-project",
+        %{unavailable: true},
+        async_wait_budget()
+      )
     end
   end
 
@@ -6161,7 +6289,13 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
-      assert_push_event(view, "picker_result:objective_file", %{unavailable: true})
+
+      assert_push_event(
+        view,
+        "picker_result:objective_file",
+        %{unavailable: true},
+        async_wait_budget()
+      )
     end
 
     test "submitting with a staged attachment threads base64 attachments and clears the staged list",

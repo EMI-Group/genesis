@@ -203,15 +203,25 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     end
   end
 
-  # The sign-in flow calls (`begin` included) are ASYNC RPCs: a click can return
-  # before the page assigns the resulting phase, so reading sign-in markup right
-  # after it would race the result callback under load. This waits for the
-  # APPLIED phase (bounded, still failing loudly), then the markup read below is
-  # a settled page. `Map.get/2` keeps the read total for the initial `%{}` state.
+  # Bounded wait for an APPLIED *terminal* phase (`:error`).
+  #
+  # NEVER use this for `:waiting`: the page assigns it SYNCHRONOUSLY inside the
+  # `chatgpt_sign_in` handler (`ChatGPTSignIn.begin/1` is a bounded call the
+  # handler awaits before the assign), so the triggering click's OWN render
+  # already carries the waiting markup — pin that render instead. Awaiting an
+  # INTERMEDIATE phase is a racy barrier by construction: any later poll tick
+  # that settles the phase (including a flow call that fails under load) makes
+  # it unobservable. `Map.get/2` keeps the read total for the initial `%{}` state.
   defp await_sign_in_phase(view, phase) do
     await(fn -> Map.get(assigns(view).chatgpt_sign_in, :phase) == phase end)
     view
   end
+
+  # Selector membership on a CAPTURED render (`render_click/1` answers the whole
+  # view): the ONE instrument for a state pinned at event time instead of read
+  # later. Same helper the settings sign-in surface suite uses.
+  defp rendered?(html, selector),
+    do: html |> Floki.parse_fragment!() |> Floki.find(selector) != []
 
   # Drains the poll notifications the stub already sent, so a following
   # `assert_receive` proves a status call made AFTER the test changed its mind.
@@ -506,21 +516,22 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       # Nothing is connected yet, so the step gate holds.
       assert has_element?(view, ~s(button[phx-click="wizard_next"][disabled]))
 
-      view |> element("#welcome-chatgpt-sign-in") |> render_click()
-
-      # The rendered waiting state is the observable half of the click; the
-      # begin RPC is async, so the phase is awaited (bounded) before the markup
-      # is read. The stub's `begin` notification rides the flow call's own task,
-      # so it is asserted on the load-tolerant budget.
-      await_sign_in_phase(view, :waiting)
+      # The page assigns `:waiting` SYNCHRONOUSLY inside the click handler
+      # (`ChatGPTSignIn.begin/1` is a bounded call the handler awaits before the
+      # assign), so the click's OWN render is the one snapshot atomic with that
+      # phase — every waiting-state read (markup, authorization link) is taken
+      # from it. Awaiting `:waiting` on the live page would race the poll's
+      # first tick, which can already have settled the phase.
+      click_html = view |> element("#welcome-chatgpt-sign-in") |> render_click()
+      assert rendered?(click_html, "#welcome-chatgpt-waiting")
       assert has_element?(view, "#welcome-chatgpt-waiting")
       # The draft has no pick yet, so the store default is signed in.
       assert_receive {:signin_stub, {:begin, "default"}}, @async_wait_budget_ms
       refute has_element?(view, "#welcome-chatgpt-sign-in")
 
       link =
-        view
-        |> doc()
+        click_html
+        |> Floki.parse_document!()
         |> Floki.find("#welcome-chatgpt-sign-in-url")
         |> List.first()
 
@@ -553,8 +564,10 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     test "cancelling returns to the sign-in button and stops the flow", %{conn: conn} do
       {:ok, view, _html} = start(conn)
       pick(view, "openai_codex")
-      view |> element("#welcome-chatgpt-sign-in") |> render_click()
-      await_sign_in_phase(view, :waiting)
+      click_html = view |> element("#welcome-chatgpt-sign-in") |> render_click()
+      # `:waiting` is assigned SYNCHRONOUSLY by the click, so it is pinned on the
+      # click's own render and never awaited (`await_sign_in_phase/2`).
+      assert rendered?(click_html, "#welcome-chatgpt-waiting")
 
       assert has_element?(view, "#welcome-chatgpt-waiting")
       assert_receive {:signin_stub, {:begin, "default"}}, @async_wait_budget_ms
@@ -587,8 +600,8 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     test "unmounting the page cancels a flow that is still waiting", %{conn: conn} do
       {:ok, view, _html} = start(conn)
       pick(view, "openai_codex")
-      view |> element("#welcome-chatgpt-sign-in") |> render_click()
-      await_sign_in_phase(view, :waiting)
+      click_html = view |> element("#welcome-chatgpt-sign-in") |> render_click()
+      assert rendered?(click_html, "#welcome-chatgpt-waiting")
 
       assert has_element?(view, "#welcome-chatgpt-waiting")
       assert_receive {:signin_stub, {:begin, "default"}}, @async_wait_budget_ms
@@ -626,8 +639,8 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       # (b) the flow already reached its terminal `:ok` phase.
       {:ok, view, _html} = start(conn)
       pick(view, "openai_codex")
-      view |> element("#welcome-chatgpt-sign-in") |> render_click()
-      await_sign_in_phase(view, :waiting)
+      click_html = view |> element("#welcome-chatgpt-sign-in") |> render_click()
+      assert rendered?(click_html, "#welcome-chatgpt-waiting")
       assert has_element?(view, "#welcome-chatgpt-waiting")
       assert_receive {:signin_stub, {:begin, "default"}}, @async_wait_budget_ms
 
@@ -656,8 +669,8 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       # friendly sentence in the same line.
       Process.put(:signin_stub_begin, {:ok, %{id: "welcome-flow-2", url: @sign_in_url}})
 
-      view |> element("#welcome-chatgpt-sign-in") |> render_click()
-      await_sign_in_phase(view, :waiting)
+      click_html = view |> element("#welcome-chatgpt-sign-in") |> render_click()
+      assert rendered?(click_html, "#welcome-chatgpt-waiting")
       assert has_element?(view, "#welcome-chatgpt-waiting")
 
       Process.put(:signin_stub_statuses, %{"welcome-flow-2" => {:error, :authorization_denied}})
@@ -689,8 +702,8 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     test "switching provider drops a waiting sign-in", %{conn: conn} do
       {:ok, view, _html} = start(conn)
       pick(view, "openai_codex")
-      view |> element("#welcome-chatgpt-sign-in") |> render_click()
-      await_sign_in_phase(view, :waiting)
+      click_html = view |> element("#welcome-chatgpt-sign-in") |> render_click()
+      assert rendered?(click_html, "#welcome-chatgpt-waiting")
       assert has_element?(view, "#welcome-chatgpt-waiting")
 
       pick(view, "anthropic")
