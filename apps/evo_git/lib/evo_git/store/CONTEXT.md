@@ -187,7 +187,7 @@ Reads NEVER raise/exit/return `{:error, _}` — they return the empty value of t
 
 **Caller-side containment (`EvoGit.TaskRegistry.StoreGuard`)** — the registry wraps every SYNCHRONOUS store call in `StoreGuard.read(op, degraded, fun)` / `StoreGuard.write(op, fun)`, catching `:exit`/raise/throw, logging at `:error` and degrading: reads to their documented empty value, writes to `{:error, :store_unavailable}` (handled exactly like `{:error, :disk_full}`), so a Store crash — or an absent store at `TaskRegistry.init/1` — never kills the registry.
 
-**Not offloaded**: the two test seams `__repo_pid__/1` / `__writer__/1`; everything else that reads a DB column goes through `offload/5`.
+**Not offloaded**: the test seams `__repo_pid__/1` / `__writer__/1`; every other DB read goes through `offload/5`.
 
 ## Read-path profile & index inventory
 **Query plans**: `select_task_ids` → `SEARCH … USING COVERING INDEX idx_tasks_status_updated_at_id`; the page statement → `USE TEMP B-TREE FOR ORDER BY` (`count(*) OVER ()` must see every matching row); `select_tasks_summary*` with the add-only `:limit` → `idx_tasks_updated_at`; the archive roster / per-task `count(*)` / `DELETE … WHERE task_id = ?` → `task_agent_archives_task_depth_idx`.
