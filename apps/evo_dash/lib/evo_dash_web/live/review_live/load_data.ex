@@ -295,11 +295,14 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
     # Merge-target branch selector: list local branches and resolve the
     # default merge target. Degrades gracefully to [] / nil when branches
     # cannot be listed (e.g. missing repo or unreachable remote node) —
-    # plain case on the tuple returns, no try/rescue.
-    {merge_targets, default_merge_target} =
+    # plain case on the tuple returns, no try/rescue. The raw listing is kept
+    # so the branch-exists answer below comes from it instead of a second call.
+    {branch_listing, merge_targets, default_merge_target} =
       if repo_available do
+        listing = EvoDash.NodeContext.list_branches(node, repo_path)
+
         targets =
-          case EvoDash.NodeContext.list_branches(node, repo_path) do
+          case listing do
             {:ok, names} -> Enum.filter(names, &(is_binary(&1) and String.trim(&1) != ""))
             _ -> []
           end
@@ -310,13 +313,20 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
             _ -> nil
           end
 
-        {targets, default}
+        {listing, targets, default}
       else
-        {[], nil}
+        {nil, [], nil}
       end
 
+    # The listing is `git for-each-ref refs/heads` SHORTNAMES, so for a plain
+    # local-branch name membership is exactly the existence check that
+    # `branch_exists_on_node?/3` shells out for (`git show-ref --verify`). A
+    # listing that failed or is unavailable, or a non-plain ref spelling, falls
+    # back to that call — so unavailable repos, unreachable remote nodes, nil
+    # branch names and full `refs/...` spellings all answer as before.
     branch_exists =
-      !!(branch_name && repo_available && branch_exists_on_node?(node, repo_path, branch_name))
+      !!(branch_name && repo_available &&
+           branch_exists_from_listing(branch_listing, node, repo_path, branch_name))
 
     # Load-time resolution seeding: a repo that HAD a branch but whose branch no
     # longer exists (a merge/reject already deleted it on a previous visit)
@@ -362,11 +372,29 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
 
     commits =
       cond do
-        branch_exists && repo_path ->
-          case EvoDash.NodeContext.list_commits(node, repo_path, branch_name) do
+        # `review_data` already resolved exactly these two SHAs (`rev-parse` of
+        # the branch and `merge-base HEAD <tip>`), and
+        # `list_commits_from_shas/4` runs the very same
+        # `git log --format=... base..commit` — so the commit list is read from
+        # the resolved SHAs instead of resolving them a second time.
+        branch_exists && repo_path && review_data ->
+          case EvoDash.NodeContext.list_commits_from_shas(
+                 node,
+                 repo_path,
+                 review_data.base_sha,
+                 review_data.commit_sha
+               ) do
             {:ok, commits} -> commits
             # Graceful degradation (missing repo, unreachable remote
             # node): render an empty commit list instead of crashing.
+            _ -> []
+          end
+
+        # Metadata load failed, so there are no resolved SHAs to reuse: keep the
+        # branch-based read unchanged.
+        branch_exists && repo_path ->
+          case EvoDash.NodeContext.list_commits(node, repo_path, branch_name) do
+            {:ok, commits} -> commits
             _ -> []
           end
 
@@ -399,6 +427,23 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
       merge_status: nil,
       resolution: resolution
     }
+  end
+
+  # Branch existence answered from the SAME `for-each-ref refs/heads` listing
+  # the merge-target selector already fetched. Only a successful listing of a
+  # plain local-branch name (no `refs/` prefix) is decidable from it; every
+  # other shape defers to the dedicated call so the answer never changes.
+  defp branch_exists_from_listing({:ok, names}, node, repo_path, branch_name)
+       when is_list(names) and is_binary(branch_name) do
+    if String.starts_with?(branch_name, "refs/") do
+      branch_exists_on_node?(node, repo_path, branch_name)
+    else
+      branch_name in names
+    end
+  end
+
+  defp branch_exists_from_listing(_listing, node, repo_path, branch_name) do
+    branch_exists_on_node?(node, repo_path, branch_name)
   end
 
   # Branch existence on the current node. For the local node this is
