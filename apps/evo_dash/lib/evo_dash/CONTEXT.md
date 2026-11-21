@@ -139,6 +139,12 @@ Routing compares the supplied node atom with `node()`: local → guarded `EvoGit
 The local guard catches exits and missing modules only, so a local responder exception can still raise; the remote branch catches every exception/exit/throw into an error tuple. `restart_remote/1` and `stop_remote/1` discard the RPC result and return `:ok`, so their success value cannot prove delivery.
 Data wrappers (`list_agents/1`, `get_agent_history/2`, `paused?/1`, task lists) document empty/false fallbacks that conflate unavailable with genuinely empty; `get_resolved_config/1` and `get_recent_system_samples/1` preserve explicit envelopes and are preferable when a consumer must tell the two apart.
 
+### `EvoDash.SafeCall` (`safe_call.ex`)
+
+The ONE exit-safe boundary for store/registry/cross-node (`EvoDash.NodeContext`) calls made from a LiveView or a supervised loader task: a `GenServer.call` timeout or dead target EXITS its caller (`rescue` cannot catch it), and a loader task that dies before replying would wedge a `loading` flag forever.
+`run/1` → `{:ok, value}` or `{:error, {:exit, reason} | {:exception, exception} | {:throw, reason} | {:invalid_function, term}}`; `run/2` unwraps to a caller-supplied fallback; neither unwraps a backend tuple, so a guarded read of `{:ok, value}` yields `{:ok, {:ok, value}}`.
+`start/4` runs the same boundary under `EvoDash.TaskSupervisor` (overridable `:supervisor`) and ALWAYS sends `{tag, result}` to the caller — even on exit — returning `{:ok, pid}`, or an error value when the child could not start (nothing is sent then, so the spawning arm must clear its own flag).
+
 ### `EvoDash.ProjectDirectories` (`project_directories.ex`)
 
 Node-aware project folder browser and mount helper behind the workbench project window's Browse/Create actions; every filesystem, `Path` and `Enum` step runs on the selected node through `EvoGit.RemoteNode.call_remote/4`, including that node's own `Path` implementation.
