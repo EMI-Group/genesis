@@ -53,7 +53,8 @@ defmodule EvoDashWeb.ProjectsLive.WorkspacesTest do
     File.mkdir_p!(tmp_dir)
 
     on_exit(fn ->
-      # Teardown-only rescue: a cleanup failure must never mask a test failure.
+      # `forget_quietly/1` swallows its own failure; the REMOVAL stays loud (a
+      # tree that genuinely cannot be removed must fail the teardown).
       forget_quietly(tmp_dir)
       EvoDash.Test.FsCleanup.rm_rf!(tmp_dir)
     end)
