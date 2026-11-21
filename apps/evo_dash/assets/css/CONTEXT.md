@@ -80,10 +80,13 @@ A server-initiated `push_patch` dispatches no page-loading events, so it still s
 
 ## Constraints
 Use existing theme tokens and the standalone accent for focus outlines; keep fill/content roles unchanged.
-The workbench right panel (`./workbench.css`, `.workbench-history` = `#workbench-history` + `#workbench-git`) animates `transform` + `opacity` (220ms ease-out) plus — while docked (`min-width: 1280px`) — `flex-basis`/padding, so the center column glides instead of snapping; the drawer range (`max-width: 1279.98px`) slides `translateX(100%)` instead.
-`[data-panel-state="closed"|"closing"]` is the shared exit geometry (`opacity: 0`, `pointer-events: none`, `overflow: hidden`); `closed` exists only as the single frame an entrance is painted at before it becomes `open`.
+The workbench right panel (`./workbench.css`, `.workbench-history` = `#workbench-history` + `#workbench-git`) transitions `transform`, `opacity`, `flex-basis`, `padding` and `border-inline-start-width`, ALL with the shared `var(--motion-slow)` / `var(--motion-ease-out)` tokens and never a duration or easing literal (fastest route to a regression is pasting `220ms ease-out` back in).
+While docked (`min-width: 1280px`) it also collapses `flex-basis`/padding/the inline border, so the center column glides instead of snapping; the drawer range (`max-width: 1279.98px`) slides `translateX(100%)` instead.
+Open and close both animate from the SAME `closed` + `closing` geometry, so the panel's motion is symmetric in both directions.
+The open start frame is forced by the JS half (`../js/hooks/workbench_panel_dom.js`), never by CSS: a panel arriving at `display: none` has no before-change style, so the DOM layer un-hides it, flushes one style/layout read and only then flips `data-panel-state` to `open` in the same task.
+`[data-panel-state="closed"|"closing"]` is the shared exit geometry (`opacity: 0`, `pointer-events: none`, `overflow: hidden`); `closed` exists only as the frame an entrance is painted at before it becomes `open`.
 Those state rules must NEVER declare `display`: `hidden` stays owned by `#workbench-history[hidden], #workbench-git[hidden] { display: none }`, which is what makes the server-rendered closed state flash-free.
-`@media (prefers-reduced-motion: reduce)` drops the panel transition entirely (the hook then closes in the same task).
+`@media (prefers-reduced-motion: reduce)` still drops the panel transition per component (`.workbench-history { transition: none }`) alongside `motion.css`'s global backstop (the hook then closes in the same task).
 Keep Assistant adjustments scoped, normal-flow message actions untouched, and reduced-motion overrides after the caret animation rule.
 Never use `transition: all` in `app.css`: the `.input-*` rules enumerate their properties (`min-height`, `padding`, `gap`, `box-shadow`, `border-color`) so `AdaptiveInput`'s inline height writes are not animated.
 Do not edit generated static assets or translations.
@@ -103,6 +106,7 @@ Paused-family card styling lives in the markup / `task_card_components` utilitie
 
 ## Validation
 Run `node --test apps/evo_dash/assets/css/assistant_motion.test.cjs` from the repository root for focused source contracts covering opacity-only motion, visible reduced-motion fallbacks, native-dialog transition guards, history exclusions, instant-scroll invariants, the `motion.css` tokens/keyframes/state rules, the last-block reduced-motion backstop and the absence of `transition: all` in `app.css`.
+Run `node --test apps/evo_dash/assets/css/workbench_motion.test.cjs` for the workbench right-panel contracts: the transition-bearing `.workbench-history` rule declares exactly `transform`/`opacity`/`flex-basis`/`padding`/`border-inline-start-width`, each with `var(--motion-slow)` + `var(--motion-ease-out)` and no bare duration or literal easing keyword, the `closed` + `closing` pair is ONE shared geometry rule carrying `opacity`/`transform`/`pointer-events`, `hidden` still owns `display`, the docked and drawer media queries collapse/slide that same family, and the per-component reduced-motion guard stays.
 This dependency-free Node suite is not part of `mix test` or the existing JS-only globs; include `apps/evo_dash/assets/css/*.test.cjs` in any aggregate asset-test command alongside `apps/evo_dash/assets/js/*.test.cjs apps/evo_dash/assets/js/hooks/*.test.cjs`.
 Run `mix tailwind evo_dash` from the repository root to compile the CSS and `git diff --check` for whitespace checks.
 View transitions need browser review, not source assertions: open `/projects`, switch projects and patch-navigate (e.g. `/projects` → `/tasks` on a patched link) in a Chromium-based browser, then repeat under `prefers-reduced-motion: reduce` to confirm the fades disappear and the patch still lands.
