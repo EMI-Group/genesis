@@ -62,7 +62,7 @@ Kill/timeout primitives:
 ## Behaviour Contract
 All four backends (`Linux`, `Bwrap`, `MacOS`, `None`) implement `@behaviour EvoGit.Sandbox.Behaviour`: `enabled?/0` (available for this platform/mode), `ensure_initialized/0` (lazy backend resources, e.g. the systemd slice; no-op when unneeded), `run/4` (synchronous → `{output, exit_code}`) and `run_with_partial/6` (timeout + partial output → `{:ok, output, exit_code}` | `{:timeout, partial_output}`).
 `run_with_partial/7` is OPTIONAL: the same params plus `opts :: keyword()` with `:execution_id` (`"proc-<n>"`, a live `EvoGit.ProcessManager` record) and `:record_exit_status` (default `true`).
-The dispatcher calls the 7-arity form only when the selected backend exports it (`Code.ensure_loaded?` + `function_exported?`), else the 6-arity form, so every backend's `/6` and `/5`…`/3` arities keep working unchanged.
+The dispatcher calls the 7-arity form only when the selected backend exports it (`Code.ensure_loaded?` + `function_exported?`), else the 6-arity form, so every lower arity keeps working unchanged.
 Every backend's `/7` is its `/6` body plus ONE `Helpers.attach_execution/3` call where its OS identity is known, and it SETTLES that execution when the run ends; with `:execution_id` nil (or absent) both are no-ops.
 Tracking is best-effort and observability-only: `attach_execution/3`, `record_exit/2` and `record_timeout/1` never raise, so a missing/restarting manager cannot fail, slow or alter a command.
 `Helpers.run_task_with_partial/9` (the shared non-sandbox/Unix tail) owns a directly-spawned port, resolves the executable with `None.resolve_executable/1` (nil → `:erlang.error(:enoent)`, `System.cmd/3` semantics), publishes the real OS pid via `wait_for_os_pid/2` + `attach_execution/3`, drains/discards `{:data, _}`, and on timeout kills the whole process TREE before closing the port; `run_tracked_command/7` is the same primitive reused by the macOS `sandbox-exec` path.
@@ -142,7 +142,7 @@ Only the systemd-run unit survives the BEAM, so its `status/1` stays queryable a
 14. `(allow network*)` KEPT (default-allow, deliberate): agents need `git fetch/push`, `mix deps.get`, `curl`, web tools; no `[sandbox]` TOML key gates it.
 15. Baseline mach/sysctl/ipc allows (`mach-lookup`, `sysctl-read`, `process-info*`, `signal`, `ipc-posix-sem`, `ipc-posix-shm`).
 
-Rules below the root read allow (nix, home, host `$TMPDIR`, vendored git, file-read-metadata, ssh literals) are REDUNDANT but intentionally KEPT as belt-and-suspenders; the composition rationale and the planned `-D`/fragment rework live in `../../../docs/platform-sandbox.md` § macOS.
+Rules below the root read allow (nix, home, host `$TMPDIR`, vendored git, ssh literals) are REDUNDANT but intentionally KEPT as belt-and-suspenders; composition rationale and the planned `-D`/fragment rework: `../../../docs/platform-sandbox.md` § macOS.
 
 ### Unverified-rule fail-safe — do not remove
 TWO emitted rules could not be validated without a macOS host (CI is Linux), and a rejected rule makes `sandbox-exec` refuse the WHOLE profile → every sandboxed command would fail on macOS in `:auto`: the exact SBPL `limit` syntax (`(limit number N)` vs `(limit (number N))`) and the `system-fcntl` deny's argument form.
