@@ -63,6 +63,8 @@ Unlisted MFAs and wrong arities stay denied and refusal never escalates a tier; 
 Profile replacement keeps live holder/waiter/backoff/last-granted maps and non-LLM state but rebuilds profile concurrency and default generation parameters; a direct `llm_model` assignment alone does not rewrite `model_profiles`.
 That branch logs ONE `Logger.warning`, BEFORE `ModelSelection.update_opts/2`, when `legacy_replacement?/1` holds while a canonical snapshot is installed (`provider_profiles != []` or `model_selection_config != nil`), naming the consequence (`:model_spec_schema_unavailable`) and the `config_opts/1` / `build_reload_opts/1` remedy; the reply stays `:ok`.
 Every update sweeps available slots, broadcasts a config change and (Linux) enqueues an asynchronous slice update, so `:ok` is not confirmation of OS application; nothing here persists files, rewrites existing agents' ETS snapshots or survives reinitialization.
+`%State{}`'s `sandbox_backend`/`sandbox_capabilities` are a LAZY MEMO: both start `nil` (unprobed for the current config identity), the first `config_value/2` read computes one and stores it back (the single-key and map forms share the memo through `Enum.map_reduce`), and `State.do_update_config/2` clears both — the ONE handler every config-refresh route funnels through (`RemoteAPI.reload_config/0`, `save_user_config/1`, dashboard config pushes, PeakHourEngine patches) — so `EvoGit.Platform.sandbox_backend/0`'s PATH cascade runs once per config identity instead of once per read.
+The probe seam is the DEFAULT-INERT call-time `Application.get_env(:evo_git, :sandbox_backend_probe_fun)` (arity 0; production never sets it).
 
 ## Agent identity: parent_id & depth (root ⇔ parent_id nil ⇔ depth 0)
 
