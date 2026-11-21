@@ -831,18 +831,19 @@ defmodule EvoDashWeb.TasksLiveTest do
       for i <- 0..25, do: insert_timed_fixture!(i)
 
       # Non-integer page → defaults to 1.
-      {:ok, view_abc, _html} = live(conn, ~p"/tasks?page=abc")
-      html_abc = flush_tasks_load(view_abc)
+      {:ok, view, _html} = live(conn, ~p"/tasks?page=abc")
+      html_abc = flush_tasks_load(view)
       assert html_abc =~ "Page 1 of 2"
 
-      # Negative page → clamps to 1.
-      {:ok, view_neg, _html} = live(conn, ~p"/tasks?page=-1")
-      html_neg = flush_tasks_load(view_neg)
+      # Negative page → clamps to 1. A push_patch re-runs handle_params against
+      # the SAME mounted page, so the remaining clamps need no second mount.
+      render_patch(view, "/tasks?page=-1")
+      html_neg = flush_tasks_load(view)
       assert html_neg =~ "Page 1 of 2"
 
       # Out-of-range page → clamps to last page (2).
-      {:ok, view_big, _html} = live(conn, ~p"/tasks?page=9999")
-      html_big = flush_tasks_load(view_big)
+      render_patch(view, "/tasks?page=9999")
+      html_big = flush_tasks_load(view)
       assert html_big =~ "Page 2 of 2"
       assert html_big =~ "task number 0"
     end
@@ -2417,18 +2418,29 @@ defmodule EvoDashWeb.TasksLiveTest do
   # element render replies with only that button's own HTML, while a view-level
   # `render_hook/3` replies with the WHOLE page — and an expanded card's archive
   # can hold 500 rendered entries, so those whole-page replies dominated the
-  # archive tests (the click also pins the button's own presence).
-  # `task_id` is passed explicitly because these archive buttons carry the id as
-  # `phx-value-task-id` (kebab), which the client and LiveViewTest both forward
-  # verbatim as "task-id" while the page reads "task_id" — a pre-existing
-  # production mismatch (same class the review page guards with a "task-id"
-  # clause), reported rather than fixed here.
+  # archive tests.
+  # The selector pins the button's OWN `phx-value-task_id`, and the click passes
+  # no explicit values: the component's own value carries the id to the handler
+  # exactly as a real browser click does (LiveView keeps the attribute suffix
+  # verbatim, so the event params are `%{"task_id" => id}`).
   # `extra` narrows the selector when one state renders two buttons for the same
   # event (the append-error Retry beside the main "Load more").
   defp click_archive(view, event, task_id, extra \\ "") do
     view
-    |> element(~s(button#{extra}[phx-click="#{event}"]))
-    |> render_click(%{"task_id" => task_id})
+    |> element(~s(button#{extra}[phx-click="#{event}"][phx-value-task_id="#{task_id}"]))
+    |> render_click()
+  end
+
+  # Clicks ONE entry's "Show result" (or its Retry) through the rendered button;
+  # the button's own `phx-value-task_id` / `phx-value-agent_id` carry the ids, so
+  # nothing is passed explicitly and the real contract is what is exercised.
+  defp click_agent_result(view, task_id, agent_id) do
+    view
+    |> element(
+      ~s(button[phx-click="load_task_archive_agent_result"]) <>
+        ~s([phx-value-task_id="#{task_id}"][phx-value-agent_id="#{agent_id}"])
+    )
+    |> render_click()
   end
 
   # Waits for the archive envelope to satisfy `predicate`, then drains the async
@@ -2827,8 +2839,8 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       # One explicit button per paged entry — nothing is fetched on render.
       assert html =~ ~s(phx-click="load_task_archive_agent_result")
-      assert html =~ ~s(phx-value-agent-id="agent-1")
-      assert html =~ ~s(phx-value-agent-id="agent-2")
+      assert html =~ ~s(phx-value-agent_id="agent-1")
+      assert html =~ ~s(phx-value-agent_id="agent-2")
       assert html =~ "Show result"
 
       # No Result header is rendered for a paged entry (its body was never read).
@@ -2862,10 +2874,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       # No agent result is fetched until its own control is used (drained above).
       refute_receive {:agent_fetch, _, _, _}, 0
 
-      render_hook(view, "load_task_archive_agent_result", %{
-        "task_id" => id,
-        "agent_id" => "agent-1"
-      })
+      click_agent_result(view, id, "agent-1")
 
       wait_until(fn -> agent_result_state(view, id, "agent-1") == :ok end)
       drain_async_loads(view, 5000)
@@ -2880,7 +2889,18 @@ defmodule EvoDashWeb.TasksLiveTest do
       refute html =~ tail
       assert html =~ "Showing 8,192 of"
 
-      # Cached: a second click is a guarded no-op.
+      # Cached: the control is GONE (there is nothing left to fetch), and the
+      # server-side in-flight/cache guard still ignores a repeat of the event.
+      # The guard is no longer reachable through the UI, so it is exercised
+      # directly — an element click would have no button to click.
+      # (Asserted against the render already captured above, so this costs no
+      # extra round trip.)
+      refute html
+             |> Floki.find(
+               ~s(button[phx-click="load_task_archive_agent_result"][phx-value-agent_id="agent-1"])
+             )
+             |> Enum.any?()
+
       render_hook(view, "load_task_archive_agent_result", %{
         "task_id" => id,
         "agent_id" => "agent-1"
@@ -2902,10 +2922,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       wait_for_archive(view, id, &match?(%{state: :ok}, &1))
       assert_receive {:archive_page, _node, ^id, _opts}, @async_wait_budget_ms
 
-      render_hook(view, "load_task_archive_agent_result", %{
-        "task_id" => id,
-        "agent_id" => "agent-1"
-      })
+      click_agent_result(view, id, "agent-1")
 
       wait_until(fn -> agent_result_state(view, id, "agent-1") == :ok end)
       drain_async_loads(view, 5000)
@@ -2940,10 +2957,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert_receive {:archive_page_node, ^remote, ^id}, @async_wait_budget_ms
       wait_for_archive(view, id, &match?(%{state: :ok}, &1))
 
-      render_hook(view, "load_task_archive_agent_result", %{
-        "task_id" => id,
-        "agent_id" => "agent-1"
-      })
+      click_agent_result(view, id, "agent-1")
 
       assert_receive {:agent_fetch_node, ^remote, ^id, "agent-1"}, @async_wait_budget_ms
       wait_until(fn -> agent_result_state(view, id, "agent-1") == :ok end)

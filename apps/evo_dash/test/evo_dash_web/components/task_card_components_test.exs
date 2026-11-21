@@ -658,9 +658,9 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
 
       assert html =~ "500 agents — showing 1–1"
       assert html =~ ~s(phx-click="load_more_task_archive")
-      assert html =~ ~s(phx-value-task-id="t_fail")
+      assert html =~ ~s(phx-value-task_id="t_fail")
       assert html =~ ~s(phx-click="load_task_archive_agent_result")
-      assert html =~ ~s(phx-value-agent-id="agent-root")
+      assert html =~ ~s(phx-value-agent_id="agent-root")
       assert html =~ "Show result"
     end
 
