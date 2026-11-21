@@ -161,12 +161,12 @@ The project-settings editor implements the multi-repo read-write UI on `%EvoGit.
 - **Latent focus bug (open, benign)**: `FocusInput` re-focuses on `updated()` only when the element HAS class `focus-on-update` (inverted intent) and no markup adds it.
 - **Regression guard**: `project_components_test.exs` pins the search input's `phx-keydown`, the overlay's `phx-click-away` (+ backdrop's `phx-click`), and trigger rendering.
 
-### Shell motion — remaining gaps outside this node
+### Shell motion — remaining gaps
 
-- `assets/css/view_transitions.css` does not exist yet, so the `<meta name="view-transition" content="same-origin">` transition runs with the browser-default cross-fade; it must define `::view-transition-old(page)`/`new(page)`, `#main-content { view-transition-name: page }`, `#dashboard-root { view-transition-name: project-swap }`, reduced-motion overrides, and be `@import`ed from `app.css` LAST.
-- Per-patch subtree swaps need `LiveSocket`'s `dom.onDocumentPatch` in `assets/js/app.js` (LiveView 1.2 exposes no markup attribute); `#main-content` keeps `phx-hook="NodeSwitchFade"` until then, and `AutoClearFlash` still removes toasts without the shipped `animate-toast-exit` transition.
-- `WorkbenchActiveTasks.format_elapsed/1` (seconds) and `live/home_live/assistant_message.ex`'s private `format_duration/1` (milliseconds) are different units, not duplicates; **a shared `EvoDashWeb.Helpers.format_duration/1` CANNOT be added while that private copy exists** — modules do `use EvoDashWeb, :html`, which imports ALL of `Helpers` (`imported … conflicts with local function`). The switch-over is ONE atomic change owned by `live/`: delete the private pair, contract `"#{Float.round(ms / 1000, 1)}s"` for an integer (`0` → `"0.0s"`) and `""` for `nil`/binaries/floats.
-- `live/projects_live/async_load.ex` still resolves workspace members with `NodeContext.workspace_members/2` per workspace (1 + W calls, each an `:erpc.call` when remote) instead of the batched `EvoGit.VCT.workspace_entries/1,2`; the palette consumes whatever list it is handed, so switching needs no markup change.
+- `assets/css/view_transitions.css` does not exist yet (the `<meta name="view-transition">` transition runs with the browser-default cross-fade): it must define `::view-transition-old(page)`/`new(page)`, `#main-content { view-transition-name: page }`, `#dashboard-root { view-transition-name: project-swap }`, reduced-motion overrides, and be `@import`ed from `app.css` LAST.
+- Per-patch subtree swaps need `LiveSocket`'s `dom.onDocumentPatch` in `assets/js/app.js`; `AutoClearFlash` still removes toasts without `animate-toast-exit`.
+- `WorkbenchActiveTasks.format_elapsed/1` (seconds) and `live/home_live/assistant_message.ex`'s private `format_duration/1` (milliseconds) are different units; a shared `EvoDashWeb.Helpers.format_duration/1` CANNOT be added while that private copy exists (`use EvoDashWeb, :html` imports ALL of `Helpers`). The switch-over is ONE atomic change owned by `live/`: contract `"#{Float.round(ms / 1000, 1)}s"` for an integer (`0` → `"0.0s"`), `""` for `nil`/binaries/floats.
+- `live/projects_live/async_load.ex` resolves workspace members per workspace instead of the batched `EvoGit.VCT.workspace_entries/1,2`; no markup change needed.
 
 ### Sidebar must stay `overflow-visible` — SSH node-selector dropdown clipping
 
