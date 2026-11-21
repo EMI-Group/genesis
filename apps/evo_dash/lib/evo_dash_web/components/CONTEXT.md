@@ -42,15 +42,9 @@ Reusable Phoenix function components and layout templates for the EvoDash web in
 
 `layouts/root.html.heex` is the only template (meta tags, CSRF, LiveView title, asset links, client-side theme script); all component modules `use EvoDashWeb, :html` and are pure function components (`<.task_card task={@task} />`, `<.flash kind={:warning} flash={@flash} />`).
 
-| Flash kind | CSS Class | Icon | Use Case |
-|------|-----------|------|----------|
-| `:info` | `alert-info` | `hero-information-circle` | Success messages, informational notices |
-| `:error` | `alert-error` | `hero-exclamation-circle` | Error messages, validation failures |
-| `:warning` | `alert-warning` | `hero-exclamation-triangle` | Warnings, missing configuration alerts |
+Flash kinds: `:info` → `alert-info` + `hero-information-circle` (success/informational), `:error` → `alert-error` + `hero-exclamation-circle` (errors, validation failures), `:warning` → `alert-warning` + `hero-exclamation-triangle` (warnings, missing configuration).
 
-Theme is 100% client-side (`localStorage["phx:theme"]`, default `"system"`, resolved via `matchMedia` into `data-theme`/`data-theme-mode`; toggles only fire `phx-click={JS.dispatch("phx:set-theme")}` + `data-phx-theme`).
-The global accent IS server-driven: `Layouts.app`'s `attr(:accent_color, :string, default: "blue")` sets `data-accent-color` on `#app-layout` from `LiveHooks.Appearance`'s node-aware `EvoGit.Config.resolve([:appearance, :accent_color])` via `EvoDash.AccentCache` — distinct from ProjectsLive's per-project `--project-accent`/`--project-ring-accent` on `#dashboard-root`.
-Shell chrome is Adwaita token-based (`#app-layout` + sidebar `bg-base-200`, `#main-scroll`/`main#main-content` `bg-base-100`); the full engine (Tailwind `@custom-variant dark`, `themes: false` → `--color-base-*` + `color-mix`, the ten accent rules) is the parent `lib/evo_dash_web/CONTEXT.md` "Theming & Color System".
+Theme is 100% client-side (`localStorage["phx:theme"]`, default `"system"`, resolved via `matchMedia` into `data-theme`/`data-theme-mode`; toggles only fire `phx-click={JS.dispatch("phx:set-theme")}` + `data-phx-theme`). The global accent IS server-driven: `Layouts.app`'s `attr(:accent_color, :string, default: "blue")` sets `data-accent-color` on `#app-layout` from `LiveHooks.Appearance`'s node-aware `EvoGit.Config.resolve([:appearance, :accent_color])` via `EvoDash.AccentCache` — distinct from ProjectsLive's per-project `--project-accent`/`--project-ring-accent` on `#dashboard-root`. Shell chrome is Adwaita token-based (`#app-layout` + sidebar `bg-base-200`, `#main-scroll`/`main#main-content` `bg-base-100`); the full engine (Tailwind `@custom-variant dark`, `themes: false` → `--color-base-*` + `color-mix`, the ten accent rules) is the parent `lib/evo_dash_web/CONTEXT.md` "Theming & Color System".
 
 ## Constraints
 
