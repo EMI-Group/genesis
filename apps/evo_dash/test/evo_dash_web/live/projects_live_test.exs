@@ -209,7 +209,7 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
         _ -> :ok
       end
 
-      File.rm_rf!(tmp_dir)
+      EvoDash.Test.FsCleanup.rm_rf!(tmp_dir)
     end)
 
     {:ok, Map.put(context, :tmp_dir, tmp_dir)}
@@ -226,13 +226,15 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   # there. The layout is `<dir>/genesis/...` (what `EvoGit.Platform.config_dir/0`
   # expects); the mechanism is per-process, never a BEAM-global env var.
   def set_onboarding_completed(%{conn: conn} = _context) do
-    dir = EvoDash.Test.ConfigDir.isolate!("evogit_dashboard_test_config")
+    EvoDash.Test.ConfigDir.isolate!("evogit_dashboard_test_config")
 
     # Create the version-state file so onboarding_needed?/0 returns false.
     EvoGit.Config.VersionState.complete_onboarding()
 
-    on_exit(fn -> File.rm_rf!(dir) end)
-
+    # `isolate!/1` registers the directory's ONLY cleanup (drain-backed, then
+    # deadline-bounded removal); registering a second raw `File.rm_rf!/1` here
+    # would run FIRST (LIFO) with no drain and race a supervised page-load
+    # writer — the `File.Error ... file already exists` teardown flake.
     {:ok, conn: Plug.Test.init_test_session(conn, %{})}
   end
 

@@ -147,11 +147,10 @@ defmodule EvoDashWeb.HomeLiveTest do
     # dir in its own test body.
     #
     # `isolate!/1` creates the temp dir, activates it in THIS process and
-    # registers the `File.rm_rf!` cleanup itself; the explicit `on_exit` below
-    # keeps the dir lifetime visible at the call site (both removals are
-    # idempotent).
-    dir = EvoDash.Test.ConfigDir.isolate!("evogit_home_live_test_config")
-    on_exit(fn -> File.rm_rf!(dir) end)
+    # registers the directory's ONLY cleanup (drain-backed, deadline-bounded),
+    # so no second `File.rm_rf!/1` may be registered here: a raw removal runs
+    # FIRST (LIFO) with no drain and races a supervised page-load writer.
+    EvoDash.Test.ConfigDir.isolate!("evogit_home_live_test_config")
 
     if Code.ensure_loaded?(EvoGit.Config.VersionState) do
       EvoGit.Config.VersionState.complete_onboarding()
@@ -805,8 +804,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # fresh directory and re-activates this process) so VersionState's
       # path-keyed :persistent_term cache re-reads from disk, finds no
       # version-state file, and reports onboarding_needed?() == true again.
-      dir = EvoDash.Test.ConfigDir.isolate!("evogit_home_live_onboarding")
-      on_exit(fn -> File.rm_rf!(dir) end)
+      EvoDash.Test.ConfigDir.isolate!("evogit_home_live_onboarding")
 
       assert {:error, {:live_redirect, %{to: "/welcome"}}} = live(conn, "/assistant")
     end
@@ -4373,7 +4371,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
     on_exit(fn ->
       EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.forget_project(node(), root) end)
-      File.rm_rf!(root)
+      EvoDash.Test.FsCleanup.rm_rf!(root)
     end)
 
     open_tab = fn draft ->
@@ -4523,7 +4521,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       on_exit(fn ->
         EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.forget_project(node(), root) end)
-        File.rm_rf!(root)
+        EvoDash.Test.FsCleanup.rm_rf!(root)
       end)
 
       {:ok, view, _} = live(conn, "/assistant")
@@ -5123,7 +5121,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, mount} ->
         on_exit(fn ->
           EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.forget_project(node(), mount.point) end)
-          File.rm_rf!(path)
+          EvoDash.Test.FsCleanup.rm_rf!(path)
         end)
 
         mount

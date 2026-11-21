@@ -44,10 +44,8 @@ defmodule EvoDashWeb.ProjectsLive.WorkspacesTest do
     # applies. The mounted view and its supervised load tasks inherit the
     # override through `$callers`, and the path-keyed config caches stay
     # cache-safe because the directory is unique per test.
-    dir = EvoDash.Test.ConfigDir.isolate!("evogit_workspaces_test_config")
+    EvoDash.Test.ConfigDir.isolate!("evogit_workspaces_test_config")
     EvoGit.Config.VersionState.complete_onboarding()
-
-    on_exit(fn -> File.rm_rf!(dir) end)
 
     tmp_dir =
       Path.join(System.tmp_dir!(), "evogit_workspaces_#{System.unique_integer([:positive])}")
@@ -57,7 +55,7 @@ defmodule EvoDashWeb.ProjectsLive.WorkspacesTest do
     on_exit(fn ->
       # Teardown-only rescue: a cleanup failure must never mask a test failure.
       forget_quietly(tmp_dir)
-      File.rm_rf!(tmp_dir)
+      EvoDash.Test.FsCleanup.rm_rf!(tmp_dir)
     end)
 
     {:ok, conn: Plug.Test.init_test_session(conn, %{}), tmp_dir: tmp_dir}
