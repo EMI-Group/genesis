@@ -40,7 +40,7 @@ Surface: `get_file_content/3`, `list_commits/2`, `load_review_data/2`, `load_rev
 
 ### Project-mount and workspace RPC surface (VCT)
 
-`RemoteAPI.projects/0` → PROJECT mounts only, newest first (`[]` when none or the VCT is down); `mount_project/2` → `{:ok, mount} | {:error, :relative_path | :store_unavailable | :vct_unavailable}`; `forget_project/1` → `:ok | {:error, :not_found | :invalid_point | :reserved_point}` over a point, OS path or bare workspace name.
+`RemoteAPI.projects/0` → PROJECT mounts only, newest first (`[]` when none or the VCT is down); `mount_project/2` → `{:ok, mount} | {:error, reason}`; `forget_project/1` → `:ok | {:error, reason}` over a point, OS path or bare workspace name (atom sets: `../../CONTEXT.md`).
 Workspaces: `workspaces/0`, `create_workspace/3` (idempotent slug-keyed upsert), `workspace_members/1` → `{:ok, %{workspace:, members:, missing:, nested:}} | {:error, :not_found | :not_a_workspace | :invalid_point | :vct_unavailable}`, `workspace_entries/1,2` (all members resolved in ONE round trip) and `workspaces_for/1`.
 `RemoteNode` mirrors each with a leading `node`, degrading to `[]` for list reads and `{:error, {kind, reason}}` otherwise; every mutation still emits its ONE `{:vct_updated, node}` (`../vct/CONTEXT.md`).
 
