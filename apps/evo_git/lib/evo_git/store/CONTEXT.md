@@ -21,7 +21,7 @@ The public client API — names, arities, defaults, 30 s `@call_timeout`, return
 - **Pool size — `Boot.default_pool_size/0` = 6**, overridable per store via `start_link(pool_size: n)` (non-positive/non-integer raises `ArgumentError`). One connection belongs to the writer, so 6 gives five concurrent readers.
 - **Connection tuning lives in `EvoGit.Repo.start_opts/0`**, passed as START OPTS by `Boot.start_dynamic/2` and by `mix store.maintenance`: `timeout: 60_000`, `queue_target: 500`, `queue_interval: 5_000`, `cache_size: -8_000` (8 MiB page cache per connection), `temp_store: :memory`.
 - **`EvoGit.Repo.config/0` does NOT report the effective tuning** — it re-runs `init/2` without the start opts and shows Ecto's defaults (`timeout: 15_000`, `pool_size: 10`); `start_opts/0` holds the effective values, while `defaults/0` keeps only keys Ecto does not override (`journal_mode: :wal`, `synchronous: :normal`, `busy_timeout: 30_000`, fallback `pool_size: 2`, `default_transaction_mode: :immediate`, `ownership_timeout: 30_000`).
-- **Test seam**: `__repo_pid__/1` (`@doc false`) exposes the facade's dynamic repo instance — the sanctioned way for tests to reach the store's own connection (e.g. `XqliteEcto3.with_xqlite/2`).
+- **Test seam**: `__repo_pid__/1` (`@doc false`) exposes the facade's dynamic repo instance — the sanctioned way for tests to reach the store's own connection.
 
 ## Boot & Migrations
 
