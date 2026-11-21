@@ -3981,10 +3981,10 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       _pid ->
         EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
-        _ = :sys.get_state(throttle)
+        _ = :sys.get_state(throttle, @assigns_timeout_ms)
 
         wait_until(
-          fn -> :sys.get_state(throttle) == nil end,
+          fn -> :sys.get_state(throttle, @assigns_timeout_ms) == nil end,
           @async_wait_budget_ms
         )
 

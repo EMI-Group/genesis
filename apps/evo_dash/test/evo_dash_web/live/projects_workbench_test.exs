@@ -295,14 +295,8 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
 
     File.mkdir_p!(dir)
 
-    on_exit(fn ->
-      # Teardown-only rescue: a cleanup failure must never mask a test failure.
-      try do
-        File.rm_rf!(dir)
-      rescue
-        _ -> :ok
-      end
-    end)
+    # Deadline-bounded removal: a page load may still be reading the tree.
+    on_exit(fn -> EvoDash.Test.FsCleanup.rm_rf!(dir) end)
 
     dir
   end
@@ -312,17 +306,12 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
   # mounted view and its supervised load tasks through `$callers`) and mark
   # onboarding complete in it.
   defp set_onboarding_completed(%{conn: conn}) do
-    dir = EvoDash.Test.ConfigDir.isolate!("evogit_workbench_test_config")
+    # `isolate!/1` registers the directory's ONLY cleanup (drain-backed, then
+    # deadline-bounded removal); a second raw `File.rm_rf!/1` would run FIRST
+    # (LIFO) with no drain and race a supervised page-load writer.
+    EvoDash.Test.ConfigDir.isolate!("evogit_workbench_test_config")
 
     EvoGit.Config.VersionState.complete_onboarding()
-
-    on_exit(fn ->
-      try do
-        File.rm_rf!(dir)
-      rescue
-        _ -> :ok
-      end
-    end)
 
     {:ok, conn: Plug.Test.init_test_session(conn, %{})}
   end

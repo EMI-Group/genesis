@@ -3,6 +3,13 @@ defmodule EvoDashWeb.HomeLive.BrowserUploadTest do
   import Phoenix.LiveViewTest
   alias EvoDashWeb.HomeLive.Attachments
 
+  # `await_uploads_empty/1` polls an OFF-PROCESS upload/drain cycle and
+  # `assigns/1` is a `:sys.get_state` round trip; their old fixed budgets
+  # (100 × 5 ms, the 5 s default) expire on a shared host whose scheduling
+  # swings 10-30x (test/CONTEXT.md).
+  @async_wait_budget_ms 30_000
+  @wait_poll_ms 2
+
   setup do
     EvoDash.Test.ConfigDir.isolate!("browser_upload")
     EvoGit.Config.VersionState.complete_onboarding()
@@ -228,16 +235,24 @@ defmodule EvoDashWeb.HomeLive.BrowserUploadTest do
     refute render(view) =~ "DASHBOARD_LOCAL_FILE_SENTINEL"
   end
 
-  defp await_uploads_empty(view, remaining \\ 100)
+  defp await_uploads_empty(view, budget_ms \\ @async_wait_budget_ms) do
+    do_await_uploads_empty(view, System.monotonic_time(:millisecond) + budget_ms, budget_ms)
+  end
 
-  defp await_uploads_empty(view, remaining) when remaining > 0 do
-    if assigns(view).uploads.chat_files.entries != [] do
-      Process.sleep(5)
-      await_uploads_empty(view, remaining - 1)
+  defp do_await_uploads_empty(view, deadline, budget_ms) do
+    cond do
+      assigns(view).uploads.chat_files.entries == [] ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("pending uploads did not drain within #{budget_ms}ms")
+
+      true ->
+        # 2 ms cadence: the deadline, not the cadence, is the safety margin.
+        Process.sleep(@wait_poll_ms)
+        do_await_uploads_empty(view, deadline, budget_ms)
     end
   end
 
-  defp await_uploads_empty(view, _), do: assert(assigns(view).uploads.chat_files.entries == [])
-
-  defp assigns(view), do: :sys.get_state(view.pid, 5000).socket.assigns
+  defp assigns(view), do: :sys.get_state(view.pid, @async_wait_budget_ms).socket.assigns
 end

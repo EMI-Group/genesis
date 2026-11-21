@@ -9,7 +9,7 @@ defmodule EvoDash.ProjectGitTest do
   setup do
     root = Path.join(System.tmp_dir!(), "workbench-git-#{System.unique_integer([:positive])}")
     File.mkdir_p!(root)
-    on_exit(fn -> File.rm_rf!(root) end)
+    on_exit(fn -> EvoDash.Test.FsCleanup.rm_rf!(root) end)
     git!(root, ~w(init -b main))
     File.write!(Path.join(root, "notes.txt"), "main version\n")
     git!(root, ~w(add notes.txt))

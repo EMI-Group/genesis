@@ -281,15 +281,17 @@ defmodule EvoDashWeb.HomeLive.Composer do
 
     ~H"""
     <div class="relative min-w-0">
+      <%!-- This transient menu is dismissed CLIENT-side by `DisclosureMotion`
+           (`data-disclosure-dismiss`), which is what lets the exit animate: it
+           writes `data-disclosure-state="closing"` and only then removes `open`,
+           whereas a server round-trip would strip `open` first and snap the
+           panel shut. `open` therefore stays browser-owned. --%>
       <details
         id="chat-attach-menu"
-        phx-hook="AssistantDisclosure"
-        class="assistant-attach-menu"
-        phx-click-away={JS.remove_attribute("open", to: "#chat-attach-menu")}
-        phx-window-keydown={
-          JS.remove_attribute("open", to: "#chat-attach-menu") |> JS.focus(to: "#chat-attach-button")
-        }
-        phx-key="Escape"
+        class="assistant-attach-menu motion-disclosure"
+        phx-hook="DisclosureMotion"
+        phx-mounted={JS.ignore_attributes("open")}
+        data-disclosure-dismiss="true"
       >
         <summary
           id="chat-attach-button"
@@ -332,7 +334,12 @@ defmodule EvoDashWeb.HomeLive.Composer do
           <p class="px-3 pb-2 text-[11px] text-base-content/50">
             {gettext("Up to 4 files, 15 MiB each. Text, PDF, Word, images and audio.")}
           </p>
-          <details id="chat-server-attachment" class="border-t border-base-300/60 pt-1">
+          <details
+            id="chat-server-attachment"
+            class="border-t border-base-300/60 pt-1 motion-disclosure"
+            phx-hook="DisclosureMotion"
+            phx-mounted={JS.ignore_attributes("open")}
+          >
             <summary class="assistant-menu-item cursor-pointer text-xs">
               {gettext("Add from Genesis server path")}
             </summary>

@@ -23,7 +23,12 @@ defmodule EvoDashWeb.HomeLive.TaskCard do
         JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})
       }
     >
-      <details id="assistant-tracked-panel" phx-hook="AssistantDisclosure">
+      <details
+        id="assistant-tracked-panel"
+        class="motion-disclosure"
+        phx-hook="DisclosureMotion"
+        phx-mounted={JS.ignore_attributes("open")}
+      >
         <summary class="assistant-tasks-summary">
           <.icon name="hero-queue-list" class="size-4" />{gettext("Followed tasks")}
           <span>{length(@tracked_tasks)}</span><.icon name="hero-chevron-down" class="size-3" />
@@ -105,16 +110,17 @@ defmodule EvoDashWeb.HomeLive.TaskCard do
       )
 
     ~H"""
+    <%!-- This transient menu is dismissed CLIENT-side by `DisclosureMotion`
+         (`data-disclosure-dismiss`), which is what lets the exit animate: it
+         writes `data-disclosure-state="closing"` and only then removes `open`,
+         whereas a server round-trip would strip `open` first and snap the
+         panel shut. `open` therefore stays browser-owned. --%>
     <details
       id="assistant-task-menu"
-      phx-hook="AssistantDisclosure"
-      class="assistant-task-control"
-      phx-click-away={JS.remove_attribute("open", to: "#assistant-task-menu")}
-      phx-window-keydown={
-        JS.remove_attribute("open", to: "#assistant-task-menu")
-        |> JS.focus(to: "#assistant-task-menu > summary")
-      }
-      phx-key="Escape"
+      class="assistant-task-control motion-disclosure"
+      phx-hook="DisclosureMotion"
+      phx-mounted={JS.ignore_attributes("open")}
+      data-disclosure-dismiss="true"
     >
       <summary
         id="assistant-task-menu-trigger"
@@ -224,7 +230,12 @@ defmodule EvoDashWeb.HomeLive.TaskCard do
         >
           {if @task_choices.loading, do: gettext("Loading tasks…"), else: gettext("Load more tasks")}
         </button>
-        <details id="assistant-task-by-id" class="assistant-task-by-id">
+        <details
+          id="assistant-task-by-id"
+          class="assistant-task-by-id motion-disclosure"
+          phx-hook="DisclosureMotion"
+          phx-mounted={JS.ignore_attributes("open")}
+        >
           <summary>{gettext("Enter a task ID instead")}</summary>
           <.form
             for={to_form(%{})}

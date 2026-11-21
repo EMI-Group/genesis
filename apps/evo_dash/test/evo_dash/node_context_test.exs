@@ -19,6 +19,29 @@
 #
 # The split itself stays: ExUnit parallelises across MODULES, never within one,
 # so each async module runs on its own runner instead of one.
+
+# The tool-free role the interactive-session passthroughs start. `available_tools/0`
+# is EMPTY and `session_mode/0` is `:interactive` (the Assistant shape): the
+# scripted `:agent_exchange_llm_call` seam answers in plain text, so every
+# exchange yields and no tool schema and no real LLM is ever involved.
+# Defined at the TOP LEVEL of the file and ABOVE every test module on purpose:
+# `mix test` starts the ExUnit async runner BEFORE requiring the test files, so a
+# helper defined after a test module can still be unloaded when the first test
+# runs — `Code.ensure_loaded/1` then answers `{:error, :nofile}` for an in-memory
+# module and the session start would degrade into a bogus product error.
+defmodule EvoDash.NodeContextSessionTest.StubAgent do
+  use EvoGit.Agent
+
+  @doc "The role's fixed system prompt."
+  def system_prompt, do: "You are the NodeContext session test role."
+
+  @doc "No tools: the scripted seam serves every model call."
+  def available_tools, do: []
+
+  @doc "Opt into interactive semantics (a tool-free reply parks the session)."
+  def session_mode, do: :interactive
+end
+
 defmodule EvoDash.NodeContextTest do
   use EvoDashWeb.ConnCase, async: true
 
@@ -981,8 +1004,7 @@ defmodule EvoDash.NodeContextConfigTest do
     # No cache invalidation is needed: the `:persistent_term` config/agent
     # caches are keyed by FILE PATH and every test resolves a unique path.
     setup do
-      dir = EvoDash.Test.ConfigDir.isolate!("evogit_node_context_config")
-      on_exit(fn -> File.rm_rf!(dir) end)
+      EvoDash.Test.ConfigDir.isolate!("evogit_node_context_config")
       :ok
     end
 
@@ -1072,8 +1094,7 @@ defmodule EvoDash.NodeContextConfigTest do
     # every test resolves a unique one, so a cached entry can never leak in
     # from — or into — another test: no reload is needed around the setup.
     setup do
-      dir = EvoDash.Test.ConfigDir.isolate!("evogit_node_context_tools")
-      on_exit(fn -> File.rm_rf!(dir) end)
+      EvoDash.Test.ConfigDir.isolate!("evogit_node_context_tools")
       :ok
     end
 
@@ -1408,25 +1429,6 @@ defmodule EvoDash.NodeContextVctTest do
   end
 end
 
-# The tool-free role the interactive-session passthroughs start. `available_tools/0`
-# is EMPTY and `session_mode/0` is `:interactive` (the Assistant shape): the
-# scripted `:agent_exchange_llm_call` seam answers in plain text, so every
-# exchange yields and no tool schema and no real LLM is ever involved.
-# Defined at the TOP LEVEL of the file (not nested in the test module) so it is
-# loaded before the module that starts sessions with it.
-defmodule EvoDash.NodeContextSessionTest.StubAgent do
-  use EvoGit.Agent
-
-  @doc "The role's fixed system prompt."
-  def system_prompt, do: "You are the NodeContext session test role."
-
-  @doc "No tools: the scripted seam serves every model call."
-  def available_tools, do: []
-
-  @doc "Opt into interactive semantics (a tool-free reply parks the session)."
-  def session_mode, do: :interactive
-end
-
 # `async: false` — the forcing GLOBALS are the interactive-session runtime:
 #   * the app-env engine seam `:agent_exchange_llm_call`, read at CALL time by
 #     every session's exchange worker, so a concurrently running module's agent
@@ -1515,11 +1517,12 @@ defmodule EvoDash.NodeContextSessionTest do
       assert is_pid(entry.session_pid) and Process.alive?(entry.session_pid)
       assert :counters.get(counter, 1) == 1
 
-      # The `reason \\ :normal` default form is the documented close route.
+      # The `reason \\ :normal` default form is the documented close route. The
+      # outcome waiter is registered BEFORE the close (`await_close_waiter/1`).
+      waiter = await_close_waiter(agent_id)
       assert :ok = EvoDash.NodeContext.close_session(node(), agent_id)
 
-      assert {:ok, %Result{result: "first yield"}} =
-               EvoDash.NodeContext.await_close(node(), agent_id, @wait_budget_ms)
+      assert {:ok, %Result{result: "first yield"}} = Task.await(waiter, @wait_budget_ms)
 
       await_idle_gone(agent_id)
       # Closing finalizes the last yielded text — it is NOT another exchange.
@@ -1618,10 +1621,10 @@ defmodule EvoDash.NodeContextSessionTest do
 
       wait_until(fn -> :counters.get(counter, 1) >= 3 and idle?(agent_id) end, @wait_budget_ms)
 
+      waiter = await_close_waiter(agent_id)
       assert :ok = EvoDash.NodeContext.close_session(node(), agent_id, :normal)
 
-      assert {:ok, %Result{result: "three"}} =
-               EvoDash.NodeContext.await_close(node(), agent_id, @wait_budget_ms)
+      assert {:ok, %Result{result: "three"}} = Task.await(waiter, @wait_budget_ms)
 
       await_idle_gone(agent_id)
     end
@@ -1638,16 +1641,17 @@ defmodule EvoDash.NodeContextSessionTest do
 
       assert EvoDash.NodeContext.await_close(node(), unknown, 1_000) == {:error, :not_found}
 
-      # A real session that has FINISHED: once its process is gone the same
-      # documented `:not_found` envelope applies (the registry entry dies with
-      # the session, so no call can be answered).
+      # A real session that has FINISHED: once its row is gone (the terminal
+      # result is delivered only to waiters already registered when it arrives)
+      # the same documented `:not_found` envelope applies, so no call can be
+      # answered.
       script_yields(["finished"])
       agent_id = start_session!(unique_task_id())
       entry = await_idle(agent_id)
+      waiter = await_close_waiter(agent_id)
       assert :ok = EvoDash.NodeContext.close_session(node(), agent_id, :normal)
 
-      assert {:ok, %Result{}} =
-               EvoDash.NodeContext.await_close(node(), agent_id, @wait_budget_ms)
+      assert {:ok, %Result{}} = Task.await(waiter, @wait_budget_ms)
 
       wait_until(fn -> not Process.alive?(entry.session_pid) end, @wait_budget_ms)
 
@@ -1674,10 +1678,13 @@ defmodule EvoDash.NodeContextSessionTest do
       assert idle?(agent_id)
       assert :counters.get(counter, 1) == 1
 
+      # The outcome waiter is registered BEFORE the close: a close is
+      # asynchronous, so an `await_close/3` issued after it can lose the terminal
+      # result to the finalizer (see `await_close_waiter/1`).
+      waiter = await_close_waiter(agent_id)
       assert :ok = EvoDash.NodeContext.close_session(node(), agent_id)
 
-      assert {:ok, %Result{result: "only yield"}} =
-               EvoDash.NodeContext.await_close(node(), agent_id, @wait_budget_ms)
+      assert {:ok, %Result{result: "only yield"}} = Task.await(waiter, @wait_budget_ms)
     end
 
     test "lists the parked session, then degrades to [] when the node cannot be asked" do
@@ -1691,10 +1698,10 @@ defmodule EvoDash.NodeContextSessionTest do
       assert %{agent_id: ^agent_id, task_id: ^task_id} = await_idle(agent_id)
       assert is_list(EvoDash.NodeContext.list_awaiting_input(node()))
 
+      waiter = await_close_waiter(agent_id)
       assert :ok = EvoDash.NodeContext.close_session(node(), agent_id)
 
-      assert {:ok, %Result{}} =
-               EvoDash.NodeContext.await_close(node(), agent_id, @wait_budget_ms)
+      assert {:ok, %Result{}} = Task.await(waiter, @wait_budget_ms)
 
       # Degraded answer: an unreachable node is collapsed to `[]` (never raises,
       # never returns a non-list), exactly like the other list helpers here.
@@ -1778,10 +1785,10 @@ defmodule EvoDash.NodeContextSessionTest do
       # Idempotent: the watcher entry is already gone, which is not a failure.
       assert :ok = EvoDash.NodeContext.unregister_agent_watcher(node(), agent_id, self())
 
+      waiter = await_close_waiter(agent_id)
       assert :ok = EvoDash.NodeContext.close_session(node(), agent_id)
 
-      assert {:ok, %Result{result: "watched"}} =
-               EvoDash.NodeContext.await_close(node(), agent_id, @wait_budget_ms)
+      assert {:ok, %Result{result: "watched"}} = Task.await(waiter, @wait_budget_ms)
     end
 
     test "watch_agent_snapshot/2 reads a parked session and refuses an unknown id" do
@@ -1805,10 +1812,10 @@ defmodule EvoDash.NodeContextSessionTest do
       assert :ok = Phoenix.PubSub.broadcast(EvoGit.PubSub, "agent:#{agent_id}", delta)
       refute_receive ^delta, 50
 
+      waiter = await_close_waiter(agent_id)
       assert :ok = EvoDash.NodeContext.close_session(node(), agent_id)
 
-      assert {:ok, %Result{}} =
-               EvoDash.NodeContext.await_close(node(), agent_id, @wait_budget_ms)
+      assert {:ok, %Result{}} = Task.await(waiter, @wait_budget_ms)
 
       # An id with no session answers the core's documented refusal.
       unknown = 9_000_000_000 + System.unique_integer([:positive])
@@ -1838,6 +1845,11 @@ defmodule EvoDash.NodeContextSessionTest do
   # Starts a session through the passthrough under test and registers a
   # best-effort teardown, so a failing assertion can never leave an idle session
   # (or its sched-meta rows) behind for another test.
+  #
+  # A refused start is a HARD failure here (never swallowed into a `nil` agent
+  # id): the whole module lives on a live session, and `start_session/2` is the
+  # bounded `GenServer.call` whose refusal would otherwise surface much later as
+  # a misleading `:not_found` from a lookup helper.
   defp start_session!(task_id) do
     assert {:ok, agent_id} = EvoDash.NodeContext.start_session(node(), session_opts(task_id))
     on_exit(fn -> force_kill!(task_id) end)
@@ -1851,6 +1863,37 @@ defmodule EvoDash.NodeContextSessionTest do
     EvoGit.AgentScheduler.force_kill_task_agents_for_task(task_id)
   catch
     :exit, _reason -> :ok
+  end
+
+  # Registers the terminal-outcome waiter for `agent_id` BEFORE the caller closes
+  # the session, and returns the task that will report the outcome.
+  #
+  # A close is ASYNCHRONOUS: `EvoGit.Agent.Session.close/1` replies `:ok`
+  # immediately and the finalizer delivers the result afterwards, and the
+  # scheduler hands a terminal result ONLY to waiters already registered when it
+  # arrives — a later `await_close/3` is answered the documented
+  # `{:error, :not_found}` because the agent's row is gone by then. Awaiting
+  # AFTER the close therefore races the finalizer window, which the shared host
+  # loses whenever the test process is descheduled between the two calls (a
+  # measured 1 ms delay already loses it every time).
+  #
+  # The registration is witnessed STRUCTURALLY on the scheduler state
+  # (`state.close_waiters`) for THIS waiter pid, so a close can never be issued
+  # before the waiter can observe the outcome.
+  defp await_close_waiter(agent_id, timeout \\ @wait_budget_ms) do
+    task = Task.async(fn -> EvoDash.NodeContext.await_close(node(), agent_id, timeout) end)
+
+    wait_until(fn -> close_waiter_registered?(agent_id, task.pid) end, @wait_budget_ms)
+
+    task
+  end
+
+  defp close_waiter_registered?(agent_id, waiter_pid) do
+    EvoGit.AgentScheduler
+    |> :sys.get_state(@wait_budget_ms)
+    |> Map.get(:close_waiters, %{})
+    |> Map.get(agent_id, [])
+    |> Enum.any?(fn {pid, _from} -> pid == waiter_pid end)
   end
 
   # Every scripted turn answers with the next text in the list and YIELDS (an

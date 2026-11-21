@@ -93,6 +93,11 @@ defmodule EvoDashWeb.LiveHooks.AppearanceTest do
 
   alias EvoDashWeb.LiveHooks.Appearance
 
+  # The accent result arrives from a supervised `EvoDash.SafeCall` child, so a
+  # 1 s literal budget is a latency assumption, not a correctness bound: the
+  # shared host swings 10-30x under load (see test/CONTEXT.md).
+  @async_wait_budget_ms 30_000
+
   setup do
     # Per-process config dir (see the module comment). `isolate!/1` creates a
     # unique temp dir, activates it for this process and registers the
@@ -235,7 +240,8 @@ defmodule EvoDashWeb.LiveHooks.AppearanceTest do
 
     # Phoenix.LiveViewTest does not export assigns/1 — same local helper idiom
     # as settings_live_test.exs:506.
-    defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
+    defp assigns(view),
+      do: :sys.get_state(view.pid, @async_wait_budget_ms).socket.assigns
 
     test "the app shell carries data-accent-color on the initial connected render", %{
       conn: conn
@@ -336,7 +342,8 @@ defmodule EvoDashWeb.LiveHooks.AppearanceTest do
 
       # The connected remote re-resolution spawned the async fetch (seq 1) with
       # the view pid = this test process; the fetch resolves "teal".
-      assert_receive {:appearance_accent_result, 1, ^target_id, {:ok, "teal"}}, 1000
+      assert_receive {:appearance_accent_result, 1, ^target_id, {:ok, "teal"}},
+                     @async_wait_budget_ms
 
       # Routing the result through the attached :handle_info interceptor (the
       # non-stale apply path) assigns the accent AND writes the cache.
@@ -390,7 +397,8 @@ defmodule EvoDashWeb.LiveHooks.AppearanceTest do
 
       # The spawned fetch fails and sends an {:error, _} result — assert the
       # message arrived, then route it through the interceptor: no-op.
-      assert_receive {:appearance_accent_result, 1, ^target_id, {:error, _reason}}, 1000
+      assert_receive {:appearance_accent_result, 1, ^target_id, {:error, _reason}},
+                     @async_wait_budget_ms
 
       {:halt, socket} =
         Appearance.handle_info(

@@ -714,6 +714,13 @@ defmodule EvoDashWeb.SystemLiveTest do
   import Phoenix.LiveViewTest
   import EvoDashWeb.SystemLiveTest.Helpers
 
+  # Load-tolerant budget for this module's own `assert_receive`s on messages
+  # produced by supervised runners (the helper module's budget attribute is not
+  # importable): the shared host's scheduling swings 10-30x (test/CONTEXT.md),
+  # so a 1-5 s literal is a latency assumption. Bounded, so real breakage still
+  # fails loudly.
+  @async_wait_budget_ms 30_000
+
   setup do
     # Hermetic + fast mounts: every page mount spawns the system self-check and
     # the chart seed. Both seams are injected here (re-resolved AT
@@ -881,7 +888,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert pending_socket.assigns.system_action == :restarting
 
       assert_receive {{:system_action_result, :nonexistent_remote@host, :restarting}, _result},
-                     5000
+                     @async_wait_budget_ms
 
       assert {:noreply, result_socket} =
                SystemLive.handle_info(
@@ -918,7 +925,8 @@ defmodule EvoDashWeb.SystemLiveTest do
       # {{:system_action_result, node, action}, result} message.
       assert pending_socket.assigns.system_action == :stopping
 
-      assert_receive {{:system_action_result, :nonexistent_remote@host, :stopping}, _result}, 5000
+      assert_receive {{:system_action_result, :nonexistent_remote@host, :stopping}, _result},
+                     @async_wait_budget_ms
 
       assert {:noreply, result_socket} =
                SystemLive.handle_info(
@@ -2407,7 +2415,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       click_tasks = Task.Supervisor.children(EvoDash.TaskSupervisor) -- pre_click_tasks
       assert length(click_tasks) >= 2
 
-      assert_receive {:update_check_runner_started, runner_pid}, 1_000
+      assert_receive {:update_check_runner_started, runner_pid}, @async_wait_budget_ms
       await_update_phase(view, :checking)
       send(runner_pid, :release_update_check)
 
@@ -2519,7 +2527,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
 
       view |> element("#update-download") |> render_click()
 
-      assert_push_event(view, "update_download_requested", %{}, 1_000)
+      assert_push_event(view, "update_download_requested", %{}, @async_wait_budget_ms)
 
       EvoDash.UpdateStatus.handle_download_result(%{"status" => "ready"})
       await_update_phase(view, :ready)
@@ -2540,7 +2548,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       view |> element("#update-restart") |> render_click()
 
       await_update_phase(view, :applying)
-      assert_push_event(view, "update_apply_requested", %{}, 1_000)
+      assert_push_event(view, "update_apply_requested", %{}, @async_wait_budget_ms)
     end
 
     test "applying with active tasks shows the busy modal and Defer keeps the update ready", %{
@@ -2898,7 +2906,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       # The gate sees no active task, so the update applies IMMEDIATELY: no busy
       # modal, no wind-down, and the session is never even asked to close.
       await_update_phase(view, :applying)
-      assert_push_event(view, "update_apply_requested", %{}, 1_000)
+      assert_push_event(view, "update_apply_requested", %{}, @async_wait_budget_ms)
       assert assigns(view)[:update_apply_busy_count] == nil
       refute render(view) =~ "Tasks still running"
       assert :ets.lookup_element(counter, :closes, 2) == 0
@@ -2936,7 +2944,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       render_click(view, "confirm_apply_graceful")
       # Completion is reported (the update applies), never the timeout fallback.
       await_update_phase(view, :applying)
-      assert_push_event(view, "update_apply_requested", %{}, 1_000)
+      assert_push_event(view, "update_apply_requested", %{}, @async_wait_budget_ms)
       assert assigns(view)[:update_winddown] == false
       assert assigns(view)[:update_force_kill_count] == nil
       refute render(view) =~ "Force Kill"
@@ -2982,7 +2990,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       # never opens the force-kill fallback): the grace expires, the session
       # stops counting and is left alive for the user.
       await_update_phase(view, :applying)
-      assert_push_event(view, "update_apply_requested", %{}, 1_000)
+      assert_push_event(view, "update_apply_requested", %{}, @async_wait_budget_ms)
       assert assigns(view)[:update_winddown] == false
       assert assigns(view)[:update_force_kill_count] == nil
       refute render(view) =~ "Force Kill"
@@ -3031,7 +3039,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       assert await_view_assign(view, :update_apply_busy_count, 1) == :ok
       render_click(view, "confirm_apply_graceful")
       await_update_phase(view, :applying)
-      assert_push_event(view, "update_apply_requested", %{}, 1_000)
+      assert_push_event(view, "update_apply_requested", %{}, @async_wait_budget_ms)
       # The busy task went through the GRACEFUL path (persisted `:cancelled`) and
       # the idle session was closed — neither needed the kill fallback.
       assert %EvoGit.TaskInfo{status: :cancelled} = EvoGit.TaskRegistry.get_task(task_id)
@@ -3110,7 +3118,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
 
       # The runner signals it started, then blocks — the loading spinner is
       # observable for a deterministic window.
-      assert_receive {:source_status_task_started, runner_pid}, 1_000
+      assert_receive {:source_status_task_started, runner_pid}, @async_wait_budget_ms
       await_checks_done(view)
       html = render(view)
       assert html =~ "Loading…"

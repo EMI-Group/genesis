@@ -51,6 +51,11 @@ defmodule EvoDash.ChatGPTCLITest do
   alias EvoDash.ChatGPTCLI
   alias EvoDash.ChatGPTCLITest.StubStore
 
+  # The CLI drives a supervised loopback flow from its OWN process, so its
+  # 5 s / 10 s literals are latency assumptions, not correctness bounds: the
+  # shared host swings 10-30x under load (see test/CONTEXT.md).
+  @async_wait_budget_ms 30_000
+
   setup do
     _ = Application.ensure_all_started(:req)
     account = unique_account("work")
@@ -98,10 +103,10 @@ defmodule EvoDash.ChatGPTCLITest do
     assert status == 200
     assert body =~ "ChatGPT connected"
 
-    assert_receive {:stub_install, ^account, record}, 5_000
+    assert_receive {:stub_install, ^account, record}, @async_wait_budget_ms
     assert record["code"] == "abc"
 
-    assert_receive {:cli_result, :ok}, 10_000
+    assert_receive {:cli_result, :ok}, @async_wait_budget_ms
 
     printed = output(device)
     assert printed =~ "Waiting for ChatGPT authorization."
@@ -191,7 +196,7 @@ defmodule EvoDash.ChatGPTCLITest do
     "#{prefix}-#{System.unique_integer([:positive, :monotonic])}"
   end
 
-  defp wait_for(fun, timeout \\ 5_000) do
+  defp wait_for(fun, timeout \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_wait_for(fun, deadline)
   end

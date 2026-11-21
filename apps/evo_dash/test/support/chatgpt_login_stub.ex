@@ -32,8 +32,16 @@ defmodule EvoDash.Test.ChatGPTLoginStub do
   `{:chatgpt_stub, :cancel, flow_id}`.
 
   The poll interval is shrunk to 5 ms and the cap lifted far beyond any test's
-  lifetime, so no test here waits on a wall-clock timer.
+  lifetime, so no test here waits on a wall-clock timer. The per-call budget is
+  lifted too: every stub call notifies the test from INSIDE the boundary's
+  `Task.async` call, so the product's call budget also bounds that notification
+  and a starved host could otherwise kill the task before it runs, losing the
+  notification forever (production keeps its own 15 s default).
   """
+
+  # Load-tolerant per-call budget for waits on ASYNC work on a shared host whose
+  # scheduling swings 10-30x (test/CONTEXT.md).
+  @call_budget_ms 30_000
 
   @doc """
   Starts the per-test agent and installs the flow-module seams in the CALLING
@@ -57,6 +65,10 @@ defmodule EvoDash.Test.ChatGPTLoginStub do
     # Keep the poll cheap; the cap is far beyond any test's lifetime.
     Process.put(:chatgpt_signin_poll_interval_ms, 5)
     Process.put(:chatgpt_signin_poll_timeout_ms, 60_000)
+    # A stub call must never be killed by the product's per-call budget: the
+    # notification is sent from inside the spawned task, so a killed call loses
+    # it forever. Same call-time seam, no second mechanism.
+    Process.put(:chatgpt_signin_call_timeout_ms, @call_budget_ms)
     pid
   end
 

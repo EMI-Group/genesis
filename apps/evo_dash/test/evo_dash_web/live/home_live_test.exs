@@ -40,6 +40,36 @@
 #      `:source_availability_runner`, `:source_clone_runner`, `:config_dir_fun`)
 #      are written and restored by the tests that use them; canonical launch
 #      fixtures must also reach TaskRegistry outside the test's caller chain.
+
+# A minimal GenServer that stands in for a real connection manager in
+# `EvoGit.RemoteConnection.Registry`, so `EvoGit.RemoteConnection.status/1`
+# resolves a configured status for a target id without starting any SSH
+# machinery (same pattern as `EvoDashWeb.NodeAwareTest.ConnectionManager`).
+# The process dies (and its Registry entry is auto-removed) at test end via
+# `start_supervised!`.
+#
+# Defined ABOVE the test modules on purpose: `mix test` starts the ExUnit async
+# runner BEFORE requiring the test files, so a helper defined after a test module
+# can still be unloaded when the first test runs — `Code.ensure_loaded/1` then
+# answers `{:error, :nofile}` for an in-memory module and the remote-target seam
+# would degrade into a bogus product error.
+defmodule EvoDashWeb.HomeLiveTest.ConnectionManager do
+  use GenServer
+
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args)
+  end
+
+  @impl true
+  def init({target_id, status}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, status}
+  end
+
+  @impl true
+  def handle_call(:status, _from, status), do: {:reply, status, status}
+end
+
 defmodule EvoDashWeb.HomeLiveTest.ScriptedAgent do
   @moduledoc """
   The role a scripted HomeLive fixture session runs AS.
@@ -147,11 +177,10 @@ defmodule EvoDashWeb.HomeLiveTest do
     # dir in its own test body.
     #
     # `isolate!/1` creates the temp dir, activates it in THIS process and
-    # registers the `File.rm_rf!` cleanup itself; the explicit `on_exit` below
-    # keeps the dir lifetime visible at the call site (both removals are
-    # idempotent).
-    dir = EvoDash.Test.ConfigDir.isolate!("evogit_home_live_test_config")
-    on_exit(fn -> File.rm_rf!(dir) end)
+    # registers the directory's ONLY cleanup (drain-backed, deadline-bounded),
+    # so no second `File.rm_rf!/1` may be registered here: a raw removal runs
+    # FIRST (LIFO) with no drain and races a supervised page-load writer.
+    EvoDash.Test.ConfigDir.isolate!("evogit_home_live_test_config")
 
     if Code.ensure_loaded?(EvoGit.Config.VersionState) do
       EvoGit.Config.VersionState.complete_onboarding()
@@ -805,8 +834,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # fresh directory and re-activates this process) so VersionState's
       # path-keyed :persistent_term cache re-reads from disk, finds no
       # version-state file, and reports onboarding_needed?() == true again.
-      dir = EvoDash.Test.ConfigDir.isolate!("evogit_home_live_onboarding")
-      on_exit(fn -> File.rm_rf!(dir) end)
+      EvoDash.Test.ConfigDir.isolate!("evogit_home_live_onboarding")
 
       assert {:error, {:live_redirect, %{to: "/welcome"}}} = live(conn, "/assistant")
     end
@@ -4373,7 +4401,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
     on_exit(fn ->
       EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.forget_project(node(), root) end)
-      File.rm_rf!(root)
+      EvoDash.Test.FsCleanup.rm_rf!(root)
     end)
 
     open_tab = fn draft ->
@@ -4523,7 +4551,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       on_exit(fn ->
         EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.forget_project(node(), root) end)
-        File.rm_rf!(root)
+        EvoDash.Test.FsCleanup.rm_rf!(root)
       end)
 
       {:ok, view, _} = live(conn, "/assistant")
@@ -5123,7 +5151,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, mount} ->
         on_exit(fn ->
           EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.forget_project(node(), mount.point) end)
-          File.rm_rf!(path)
+          EvoDash.Test.FsCleanup.rm_rf!(path)
         end)
 
         mount
@@ -5700,7 +5728,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).session_id == session_id
       assert assigns(view).session_mode == :interactive
 
-      assert_receive {:attach_called, _node, ^session_id, attach_pid}, 5_000
+      assert_receive {:attach_called, _node, ^session_id, attach_pid}, @async_wait_budget_ms
 
       # Safety net: a failure before the release below must never leave the
       # spawned attach child parked forever.
@@ -5760,7 +5788,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
+      assert_receive {:attach_called, _node, ^session_id, _pid}, @async_wait_budget_ms
       wait_until(fn -> assigns(view).chat_status == :running end)
 
       a = assigns(view)
@@ -5821,7 +5849,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, view, html} = live(conn, "/assistant?session=#{session_id}")
       assert html =~ "cached before vanish"
 
-      assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
+      assert_receive {:attach_called, _node, ^session_id, _pid}, @async_wait_budget_ms
 
       monitor_watch_cleanup(view)
       wait_until(fn -> assigns(view).chat_status == :ended end)
@@ -5873,7 +5901,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
+      assert_receive {:attach_called, _node, ^session_id, _pid}, @async_wait_budget_ms
 
       monitor_watch_cleanup(view)
       wait_until(fn -> assigns(view).chat_status == :ended end)
@@ -5960,7 +5988,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       monitor_watch_cleanup(view)
       assert html =~ "stale cached line"
 
-      assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
+      assert_receive {:attach_called, _node, ^session_id, _pid}, @async_wait_budget_ms
       assert_receive {:watch_pending, watch_pid}, @async_wait_budget_ms
       await_attach_settled(view, session_id)
 
@@ -6059,7 +6087,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # Patching a row ADOPTS that session: ONE attach, never a new task.
       render_patch(view, "/assistant?session=#{cached_id}")
       monitor_watch_cleanup(view)
-      assert_receive {:attach_called, _node, ^cached_id, _pid}, 5_000
+      assert_receive {:attach_called, _node, ^cached_id, _pid}, @async_wait_budget_ms
       await_stream_seeded(view, 7)
       await_attach_settled(view, cached_id)
 
@@ -7022,7 +7050,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:agent_watched, _node, ^session_id, watcher}, 5_000
+      assert_receive {:agent_watched, _node, ^session_id, watcher}, @async_wait_budget_ms
       await_stream_seeded(view, 7)
 
       # Only the SUBSCRIBER receives this: the LiveView itself subscribed (the
@@ -7047,7 +7075,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, @async_wait_budget_ms
       await_stream_seeded(view, 7)
       transcript_before = assigns(view).transcript
 
@@ -7089,7 +7117,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, @async_wait_budget_ms
       await_stream_seeded(view, 7)
 
       # Deliver on the subscribed topic with the WRONG payload identity: merely
@@ -7130,7 +7158,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, @async_wait_budget_ms
       await_stream_seeded(view, 7)
       wait_until(fn -> Enum.any?(assigns(view).transcript, &(&1.text == "snapshot line")) end)
 
@@ -7149,7 +7177,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, @async_wait_budget_ms
       await_stream_seeded(view, 7)
 
       broadcast_delta(session_id, 8, [
@@ -7186,7 +7214,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, @async_wait_budget_ms
       await_stream_seeded(view, 7)
 
       # A streaming assistant bubble must exist for the meta line to render
@@ -7217,7 +7245,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, @async_wait_budget_ms
       await_attach_settled(view, session_id)
       await_stream_seeded(view, 7)
 
@@ -7255,7 +7283,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, @async_wait_budget_ms
       await_attach_settled(view, session_id)
       await_stream_seeded(view, 7)
 
@@ -7279,7 +7307,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, @async_wait_budget_ms
       await_attach_settled(view, session_id)
       await_stream_seeded(view, 7)
 
@@ -7305,12 +7333,12 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, @async_wait_budget_ms
       await_stream_seeded(view, 7)
 
       render_click(view, "new_chat")
 
-      assert_receive {:agent_unwatched, ^local_node, ^session_id, pid}, 5_000
+      assert_receive {:agent_unwatched, ^local_node, ^session_id, pid}, @async_wait_budget_ms
       assert is_pid(pid)
       assert assigns(view).chat_stream == nil
       assert assigns(view).session_id == nil
@@ -7323,7 +7351,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, @async_wait_budget_ms
       await_stream_seeded(view, 7)
 
       broadcast_delta(session_id, 8, [
@@ -7362,7 +7390,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, @async_wait_budget_ms
       await_stream_seeded(view, 7)
 
       broadcast_delta(session_id, 8, [
@@ -7403,7 +7431,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:watch_pending, watch_pid}, 5_000
+      assert_receive {:watch_pending, watch_pid}, @async_wait_budget_ms
       await_attach_settled(view, session_id)
 
       broadcast_delta(session_id, 8, [{:text, " plus suffix"}])
@@ -7444,7 +7472,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, @async_wait_budget_ms
       await_attach_settled(view, session_id)
       await_stream_seeded(view, 7)
 
@@ -7480,7 +7508,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
-      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, @async_wait_budget_ms
       await_stream_seeded(view, 7)
 
       install_session_seam(:home_agent_history_runner, fn _node, _agent_id ->
@@ -7522,27 +7550,4 @@ defmodule EvoDashWeb.HomeLiveTest do
       _other -> false
     end
   end
-end
-
-# A minimal GenServer that stands in for a real connection manager in
-# `EvoGit.RemoteConnection.Registry`, so `EvoGit.RemoteConnection.status/1`
-# resolves a configured status for a target id without starting any SSH
-# machinery (same pattern as `EvoDashWeb.NodeAwareTest.ConnectionManager`).
-# The process dies (and its Registry entry is auto-removed) at test end via
-# `start_supervised!`.
-defmodule EvoDashWeb.HomeLiveTest.ConnectionManager do
-  use GenServer
-
-  def start_link(args) do
-    GenServer.start_link(__MODULE__, args)
-  end
-
-  @impl true
-  def init({target_id, status}) do
-    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
-    {:ok, status}
-  end
-
-  @impl true
-  def handle_call(:status, _from, status), do: {:reply, status, status}
 end

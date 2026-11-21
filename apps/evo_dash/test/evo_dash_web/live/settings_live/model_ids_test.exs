@@ -60,8 +60,7 @@ defmodule EvoDashWeb.SettingsLive.ModelIdsTest do
     # Per-process config dir: an EMPTY temp dir guarantees no config.toml
     # exists, so the page renders catalog/schema defaults deterministically
     # regardless of the developer's real `~/.config/genesis`.
-    dir = EvoDash.Test.ConfigDir.isolate!("evogit_settings_model_ids_test")
-    on_exit(fn -> File.rm_rf!(dir) end)
+    EvoDash.Test.ConfigDir.isolate!("evogit_settings_model_ids_test")
 
     # Process-less public ETS table shared by the whole run — clear ONLY the
     # local `{nil, node()}` context (a whole-table reset would delete a

@@ -46,9 +46,18 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignIn do
   def login_module,
     do: seam(:chatgpt_login_module, :chatgpt_login, @default_login_module)
 
-  @doc "The bounded timeout for ONE flow-module call (milliseconds)."
+  @doc """
+  The bounded timeout for ONE flow-module call (milliseconds).
+
+  Resolved at CALL TIME, in this order: `Process.get(:chatgpt_signin_call_timeout_ms)`,
+  then the same key on a `:"$callers"` ancestor, then the
+  `:evo_dash, :chatgpt_signin_call_timeout_ms` app env, then the 15-second
+  production default. Default-inert: with nothing seeded this is exactly the
+  production budget, so a runtime that never touches the seam behaves as before.
+  """
   @spec call_timeout_ms() :: pos_integer()
-  def call_timeout_ms, do: @call_timeout_ms
+  def call_timeout_ms,
+    do: seam(:chatgpt_signin_call_timeout_ms, :chatgpt_signin_call_timeout_ms, @call_timeout_ms)
 
   @doc "The poll interval used by `start_poll/2` (milliseconds)."
   @spec poll_interval_ms() :: pos_integer()
@@ -290,6 +299,10 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignIn do
   defp call(_module, _fun, _args), do: {:error, :sign_in_unavailable}
 
   defp bounded_apply(module, fun, args) do
+    # Resolved ONCE, in the CALLING process: a seam read from inside the
+    # spawned task would only see its own dictionary, never the caller's.
+    timeout = call_timeout_ms()
+
     task =
       Task.async(fn ->
         case SafeCall.run(fn -> apply(module, fun, args) end) do
@@ -300,7 +313,7 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignIn do
         end
       end)
 
-    case Task.yield(task, @call_timeout_ms) || Task.shutdown(task, :brutal_kill) do
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
       {:ok, {:module_result, value}} -> {:ok, value}
       {:ok, :module_failure} -> {:error, :sign_in_unavailable}
       {:exit, _reason} -> {:error, :sign_in_unavailable}

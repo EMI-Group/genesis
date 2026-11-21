@@ -22,9 +22,8 @@ defmodule EvoDashWeb.LayoutHeightContractTest do
     # additionally gates on `EvoGit.Config.VersionState.onboarding_needed?/0`
     # (a first-run mount redirects to /welcome). Isolate the config dir per
     # test and mark onboarding complete, exactly like the projects suite does.
-    dir = EvoDash.Test.ConfigDir.isolate!("evogit_layout_height_contract_config")
+    EvoDash.Test.ConfigDir.isolate!("evogit_layout_height_contract_config")
     EvoGit.Config.VersionState.complete_onboarding()
-    on_exit(fn -> File.rm_rf!(dir) end)
 
     :ok
   end

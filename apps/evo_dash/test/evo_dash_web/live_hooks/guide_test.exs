@@ -28,6 +28,10 @@ defmodule EvoDashWeb.LiveHooks.GuideTest do
   use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
 
+  # `:sys.get_state/2`'s 5 s default exits the test when the LiveView is
+  # starved on this shared host (scheduling swings 10-30x, test/CONTEXT.md).
+  @async_wait_budget_ms 30_000
+
   describe "Genesis Guide panel (Tasks page integration)" do
     defp mount_tasks!(conn) do
       {:ok, view, html} = live(conn, ~p"/tasks")
@@ -41,7 +45,7 @@ defmodule EvoDashWeb.LiveHooks.GuideTest do
     # 0 ms window instead of a fixed wait.
     defp broadcast_guide!(view, payload) do
       send(view.pid, {:guide_updated, "g1", payload, node()})
-      _ = :sys.get_state(view.pid)
+      _ = :sys.get_state(view.pid, @async_wait_budget_ms)
       :ok
     end
 

@@ -33,11 +33,13 @@ const hookSource = src.slice(hookStart, hookEnd);
 // matchMedia and of this test runner itself.
 const pure = vm.runInContext(`${pureSource}
   ({DISCLOSURE_CLOSE_FALLBACK_MS, DISCLOSURE_STATE_ATTR, DISCLOSURE_CLOSING,
-    prefersReducedMotion, isPanelAnimationEnd, closeWaitsForAnimation,
-    planOpenReconcile});`, vm.createContext({}));
+    DISCLOSURE_DISMISS_ATTR, prefersReducedMotion, isPanelAnimationEnd,
+    closeWaitsForAnimation, planOpenReconcile, wantsDismissOnOutside,
+    wantsDismissOnEscape});`, vm.createContext({}));
 const {
   DISCLOSURE_CLOSE_FALLBACK_MS, DISCLOSURE_STATE_ATTR, DISCLOSURE_CLOSING,
-  prefersReducedMotion, isPanelAnimationEnd, closeWaitsForAnimation, planOpenReconcile,
+  DISCLOSURE_DISMISS_ATTR, prefersReducedMotion, isPanelAnimationEnd,
+  closeWaitsForAnimation, planOpenReconcile, wantsDismissOnOutside, wantsDismissOnEscape,
 } = pure;
 
 // A fake node records its own attributes and listeners, so a close can be driven
@@ -54,6 +56,10 @@ function fakeNode({open = true} = {}) {
     isConnected: true,
     summary: undefined,
     panelNode: undefined,
+    // `contains` answers from a settable value: `false` (the default) means the
+    // gesture landed OUTSIDE, which is the dismissal case.
+    containsTarget: false,
+    focusedWith: undefined,
     listeners,
     getAttribute: name => attributes.get(name) ?? null,
     setAttribute(name, value) {
@@ -68,12 +74,37 @@ function fakeNode({open = true} = {}) {
     addEventListener(name, fn) { listeners.set(name, fn); },
     removeEventListener(name, fn) { if (listeners.get(name) === fn) listeners.delete(name); },
     fire(name, target) { listeners.get(name)?.({target}); },
+    // Focus restoration is the only DOM capability the dismissal needs beyond
+    // containment; recording the options keeps `preventScroll` pinned.
+    focus(options) { this.focusedWith = options; },
+    contains(target) {
+      return typeof this.containsTarget === 'function'
+        ? this.containsTarget(target)
+        : this.containsTarget === true;
+    },
     close() { this.closedNatively = true; this.removeAttribute('open'); },
     querySelector(selector) {
       if (selector === ':scope > summary') return this.summary ?? null;
       if (selector === ':scope > :not(summary)') return this.panelNode ?? null;
       return null;
     }
+  };
+}
+
+// A recording `document`, because the opt-in dismissal registers on it in the
+// CAPTURE phase. Handlers are keyed by `type:capture`, so a bubble-phase
+// registration would be visible as a different key (and never fire below).
+function fakeDocument() {
+  const handlers = new Map();
+  const key = (type, capture) => `${type}:${capture === true}`;
+  return {
+    handlers,
+    addEventListener(type, fn, capture) { handlers.set(key(type, capture), fn); },
+    removeEventListener(type, fn, capture) {
+      if (handlers.get(key(type, capture)) === fn) handlers.delete(key(type, capture));
+    },
+    fire(type, event, capture = true) { handlers.get(key(type, capture))?.(event); },
+    count: () => handlers.size
   };
 }
 
@@ -102,8 +133,10 @@ function motionContext({reduced = false} = {}) {
 // `handleClick`/`destroyed` run as shipped (no reimplementation in the test).
 function hookContext({reduced = false} = {}) {
   const timers = [];
+  const doc = fakeDocument();
   const context = vm.createContext({
     window: {matchMedia: () => ({matches: reduced})},
+    document: doc,
     setTimeout: (fn, ms) => { const timer = {fn, ms, cleared: false}; timers.push(timer); return timer; },
     clearTimeout: timer => { if (timer) timer.cleared = true; },
   });
@@ -113,17 +146,20 @@ function hookContext({reduced = false} = {}) {
     ${domSource}
     ${hookSource}
     ;({DisclosureMotion});`, context);
-  return {DisclosureMotion, timers};
+  return {DisclosureMotion, timers, document: doc};
 }
 
-function mountDisclosure(ctx, {open = true, panel = true} = {}) {
+function mountDisclosure(ctx, {open = true, panel = true, dismiss = false} = {}) {
   const root = fakeNode({open});
+  // Opt-in is by PRESENCE, so the value is deliberately a rendered-looking
+  // "true" rather than an empty string.
+  if (dismiss) root.setAttribute(DISCLOSURE_DISMISS_ATTR, 'true');
   const panelNode = panel ? fakeNode() : undefined;
   root.panelNode = panelNode;
   root.summary = fakeNode();
   const hook = Object.assign(Object.create(ctx.DisclosureMotion), {el: root});
   hook.mounted();
-  return {hook, root, panelNode};
+  return {hook, root, panelNode, summary: root.summary};
 }
 
 test('reduced motion is a guarded, never-throwing preference lookup', () => {
@@ -452,4 +488,122 @@ test('a detached element is never re-opened, closed or re-animated by a patch', 
   assert.equal(root.open, false, 'the element is leaving the DOM');
   assert.equal(ctx.timers.length, 0);
   assert.equal(root.getAttribute(DISCLOSURE_STATE_ATTR), null);
+});
+
+// --- data-disclosure-dismiss: the opt-in dismissal contract
+// A transient menu (the Assistant attach/kind picker, a task control) opts in by
+// PRESENCE of the attribute; a disclosure without it keeps exactly its
+// browser-native behaviour — summary toggles it, nothing else does.
+
+test('an outside pointerdown dismisses only an opted-in, open, not-yet-closing disclosure', () => {
+  const open = {dismiss: true, open: true, closing: false, insideTarget: false};
+  assert.equal(wantsDismissOnOutside(open), true);
+  // No opt-in (the value is irrelevant — presence is the whole contract).
+  assert.equal(wantsDismissOnOutside({...open, dismiss: undefined}), false);
+  assert.equal(wantsDismissOnOutside({...open, dismiss: 'true'}), false);
+  // Closed, or already playing its exit: a second close must never be armed.
+  assert.equal(wantsDismissOnOutside({...open, open: false}), false);
+  assert.equal(wantsDismissOnOutside({...open, closing: true}), false);
+  // The gesture landed inside the element (its own content, a nested summary).
+  assert.equal(wantsDismissOnOutside({...open, insideTarget: true}), false);
+  // Total: a missing/garbage plan is no dismissal, never a throw.
+  assert.equal(wantsDismissOnOutside(), false);
+  assert.equal(wantsDismissOnOutside({dismiss: true, open: 'yes'}), false);
+});
+
+test('only Escape dismisses, and only for an opted-in open disclosure', () => {
+  const open = {dismiss: true, open: true, closing: false, key: 'Escape'};
+  assert.equal(wantsDismissOnEscape(open), true);
+  // Enter/Space belong to the native summary toggle; every other key is inert.
+  assert.equal(wantsDismissOnEscape({...open, key: 'Enter'}), false);
+  assert.equal(wantsDismissOnEscape({...open, key: 'Esc'}), false);
+  assert.equal(wantsDismissOnEscape({...open, key: 'e'}), false);
+  assert.equal(wantsDismissOnEscape({...open, key: undefined}), false);
+  // Same gate as the outside click.
+  assert.equal(wantsDismissOnEscape({...open, dismiss: undefined}), false);
+  assert.equal(wantsDismissOnEscape({...open, open: false}), false);
+  assert.equal(wantsDismissOnEscape({...open, closing: true}), false);
+  assert.equal(wantsDismissOnEscape(), false);
+});
+
+test('an outside pointerdown closes an opted-in disclosure through the animated exit', () => {
+  const ctx = hookContext();
+  const {hook, root, panelNode} = mountDisclosure(ctx, {open: true, dismiss: true});
+
+  // Capture phase, both gestures: an inner handler must not run first.
+  assert.deepEqual([...ctx.document.handlers.keys()].sort(),
+    ['keydown:true', 'pointerdown:true']);
+
+  ctx.document.fire('pointerdown', {target: fakeNode()});
+  assert.equal(hook.wantOpen, false, 'the intent is settled before the exit runs');
+  assert.equal(root.getAttribute(DISCLOSURE_STATE_ATTR), DISCLOSURE_CLOSING);
+  assert.equal(ctx.timers.length, 1, 'the exit is played, not the raw open removal');
+  assert.equal(root.open, true, 'the content stays in the layout while it fades');
+
+  panelNode.fire('animationend', panelNode);
+  assert.equal(root.open, false);
+  assert.equal(root.getAttribute(DISCLOSURE_STATE_ATTR), null);
+});
+
+test('a pointerdown inside the disclosure — including a nested summary — dismisses nothing', () => {
+  const ctx = hookContext();
+  const {hook, root} = mountDisclosure(ctx, {open: true, dismiss: true});
+
+  const nestedSummary = fakeNode();
+  const inside = fakeNode();
+  inside.containsTarget = target => target === nestedSummary || target === inside;
+  root.containsTarget = target => target === nestedSummary || target === inside;
+
+  ctx.document.fire('pointerdown', {target: nestedSummary});
+  assert.equal(root.open, true, 'opening a nested disclosure never closes its parent');
+  assert.equal(root.getAttribute(DISCLOSURE_STATE_ATTR), null);
+  assert.equal(hook.wantOpen, true);
+  assert.equal(ctx.timers.length, 0, 'nothing is armed');
+
+  ctx.document.fire('pointerdown', {target: inside});
+  assert.equal(root.open, true);
+  assert.equal(ctx.timers.length, 0);
+});
+
+test('Escape closes an opted-in disclosure and returns focus to its summary', () => {
+  const ctx = hookContext();
+  const {hook, root, panelNode, summary} = mountDisclosure(ctx, {open: true, dismiss: true});
+
+  // Every other key is the element's own business.
+  ctx.document.fire('keydown', {key: 'Enter'});
+  ctx.document.fire('keydown', {key: 'Esc'});
+  assert.equal(root.open, true);
+  assert.equal(ctx.timers.length, 0);
+
+  ctx.document.fire('keydown', {key: 'Escape'});
+  assert.equal(hook.wantOpen, false);
+  assert.equal(root.getAttribute(DISCLOSURE_STATE_ATTR), DISCLOSURE_CLOSING);
+  // Cross-realm object: compare the property, not the prototype.
+  assert.equal(summary.focusedWith?.preventScroll, true);
+
+  panelNode.fire('animationend', panelNode);
+  assert.equal(root.open, false);
+});
+
+test('a disclosure without data-disclosure-dismiss registers no document listeners', () => {
+  const ctx = hookContext();
+  const {hook, root} = mountDisclosure(ctx, {open: true});
+  assert.equal(ctx.document.count(), 0, 'no opt-in, no document-level handling');
+
+  ctx.document.fire('pointerdown', {target: fakeNode()});
+  ctx.document.fire('keydown', {key: 'Escape'});
+  assert.equal(root.open, true, 'an outside gesture leaves it open, as before');
+  assert.equal(hook.wantOpen, true);
+  assert.equal(ctx.timers.length, 0);
+});
+
+test('destroyed() removes the document dismissal listeners', () => {
+  const ctx = hookContext();
+  const {hook} = mountDisclosure(ctx, {open: true, dismiss: true});
+  assert.equal(ctx.document.count(), 2);
+
+  hook.destroyed();
+  assert.equal(ctx.document.count(), 0, 'both capture-phase listeners are released');
+  assert.equal(hook.onOutsidePointer, null);
+  assert.equal(hook.onEscapeKey, null);
 });

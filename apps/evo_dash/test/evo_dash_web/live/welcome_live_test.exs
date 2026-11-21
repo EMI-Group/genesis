@@ -1,3 +1,91 @@
+defmodule EvoDashWeb.WelcomeLiveTest.SignInStub do
+  @moduledoc false
+  # The Sign in with ChatGPT (SIWC) flow stand-in for the `/welcome` sign-in
+  # tests.
+  #
+  # `EvoDashWeb.LLMSetup.ChatGPTSignIn.login_module/0` resolves the flow module
+  # per process (this pid, then `$callers`, then the app env), and
+  # `Phoenix.LiveViewTest` puts the test pid in the mounted view's `$callers`, so
+  # a test selects this module with `Process.put(:chatgpt_login_module, ...)` in
+  # its OWN process. This module reads its behaviour, and reports its calls,
+  # through that same dictionary — it touches no BEAM-global state, which keeps
+  # the suite `async: true`.
+  #
+  # `status/1` is called from the `ChatGPTSignIn` poll task, which inherits the
+  # caller chain, so it resolves the same owner and answers the SAME result every
+  # time (one terminal result, then the poll exits). Its notification carries the
+  # answer the poll READ, because the tick is asynchronous: a test waits for the
+  # tick that saw its terminal answer, not merely for any tick.
+  #
+  # Defined ABOVE the `async: true` test module on purpose: `mix test` starts the
+  # ExUnit async runner BEFORE requiring the test files, so a module defined after
+  # the test module can still be unloaded when the first test runs — and this stub
+  # is reached through the flow's call-time seam, so an unloaded module collapses
+  # the sign-in to `:sign_in_unavailable` instead of rendering the waiting surface.
+
+  @default_begin {:ok, %{id: "welcome-flow", url: "https://auth.example.test/authorize"}}
+  # `:pending` until a test flips the result it wants the poll to see, which
+  # makes the WAITING state deterministic (no race against the poll).
+  @default_statuses %{}
+
+  @doc "Starts a flow: the configured `{:ok, %{id:, url:}}` result, else its error."
+  def begin(account, _opts \\ []) do
+    notify({:begin, account})
+    config(:signin_stub_begin, @default_begin)
+  end
+
+  @doc """
+  The configured terminal result for `flow_id`, else `:pending` (waiting).
+
+  The notification carries the answer this call READ, so a test can wait for the
+  exact tick that saw its terminal result instead of a merely earlier `:pending`
+  one.
+  """
+  def status(flow_id) do
+    answer = :signin_stub_statuses |> config(@default_statuses) |> Map.get(flow_id, :pending)
+    notify({:status, flow_id, answer})
+    answer
+  end
+
+  @doc "Cancels a flow, reporting the call to the owning test."
+  def cancel(flow_id) do
+    notify({:cancel, flow_id})
+    :ok
+  end
+
+  defp notify(message) do
+    case owner() do
+      nil -> :ok
+      pid -> send(pid, {:signin_stub, message})
+    end
+
+    :ok
+  end
+
+  # The process that selected this module — the test — found exactly the way
+  # `ChatGPTSignIn.login_module/0` finds the selection.
+  defp owner do
+    :"$callers"
+    |> Process.get([])
+    |> List.wrap()
+    |> Enum.find(fn pid -> dictionary(pid, :chatgpt_login_module) == __MODULE__ end)
+  end
+
+  defp dictionary(pid, key) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dictionary} -> Keyword.get(dictionary, key)
+      _unavailable -> nil
+    end
+  end
+
+  defp config(key, default) do
+    case owner() do
+      nil -> default
+      pid -> dictionary(pid, key) || default
+    end
+  end
+end
+
 defmodule EvoDashWeb.WelcomeLiveTest do
   # Config files are per-process isolated (`EvoDash.Test.ConfigDir`), and the
   # connection-test runner seam is owned exclusively by this module and never
@@ -17,9 +105,10 @@ defmodule EvoDashWeb.WelcomeLiveTest do
   # reach the LiveView. The wait stays bounded and still fails loudly.
   # EVERY cross-process stub notification in this file is asserted on this
   # budget, `begin` and `cancel` included: they are emitted from inside the
-  # flow call's own `Task.async` (bounded by the product's 15 s call timeout,
-  # NOT by the event handler that awaits it), so a second-scale budget here
-  # would be a latency assumption rather than a correctness bound.
+  # flow call's own `Task.async` (bounded by the per-call budget this suite
+  # injects through `:chatgpt_signin_call_timeout_ms` — see the sign-in setup
+  # below — NOT by the event handler that awaits it), so a second-scale budget
+  # here would be a latency assumption rather than a correctness bound.
   @async_wait_budget_ms 30_000
   # `:sys.get_state/2` timeout for `assigns/1`: the LiveView can be starved for
   # seconds on a loaded host, where the 5 s default exits the test.
@@ -27,7 +116,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
   @anthropic_key "sk-ant-welcome-test-123"
   @custom_base_url "https://api.example.test/v1"
   @custom_key "sk-openai-compatible-test-123"
-  # The authorization URL the sign-in stub mints (see the stub module below).
+  # The authorization URL the sign-in stub mints (see the stub module above).
   @sign_in_url "https://auth.example.test/authorize"
 
   setup do
@@ -499,6 +588,12 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       # test flips its result, so the WAITING state is deterministic instead of
       # racing the poll.
       Process.put(:chatgpt_signin_poll_interval_ms, 5)
+      # The stub notifies from INSIDE the boundary's `Task.async` call, so the
+      # product's call budget also bounds a stub notification: on a starved host
+      # the task can be killed before it runs and the notification is lost
+      # forever. Inject the suite's load-tolerant budget so the product can
+      # never kill a stub call (production keeps its own 15 s default).
+      Process.put(:chatgpt_signin_call_timeout_ms, @async_wait_budget_ms)
       :ok
     end
 
@@ -1378,87 +1473,5 @@ defmodule EvoDashWeb.WelcomeLiveTest.TaskBroadcast do
     )
 
     assert render(view) =~ "Welcome to Genesis"
-  end
-end
-
-defmodule EvoDashWeb.WelcomeLiveTest.SignInStub do
-  @moduledoc false
-  # The Sign in with ChatGPT (SIWC) flow stand-in for the `/welcome` sign-in
-  # tests.
-  #
-  # `EvoDashWeb.LLMSetup.ChatGPTSignIn.login_module/0` resolves the flow module
-  # per process (this pid, then `$callers`, then the app env), and
-  # `Phoenix.LiveViewTest` puts the test pid in the mounted view's `$callers`, so
-  # a test selects this module with `Process.put(:chatgpt_login_module, ...)` in
-  # its OWN process. This module reads its behaviour, and reports its calls,
-  # through that same dictionary — it touches no BEAM-global state, which keeps
-  # the suite `async: true`.
-  #
-  # `status/1` is called from the `ChatGPTSignIn` poll task, which inherits the
-  # caller chain, so it resolves the same owner and answers the SAME result every
-  # time (one terminal result, then the poll exits). Its notification carries the
-  # answer the poll READ, because the tick is asynchronous: a test waits for the
-  # tick that saw its terminal answer, not merely for any tick.
-
-  @default_begin {:ok, %{id: "welcome-flow", url: "https://auth.example.test/authorize"}}
-  # `:pending` until a test flips the result it wants the poll to see, which
-  # makes the WAITING state deterministic (no race against the poll).
-  @default_statuses %{}
-
-  @doc "Starts a flow: the configured `{:ok, %{id:, url:}}` result, else its error."
-  def begin(account, _opts \\ []) do
-    notify({:begin, account})
-    config(:signin_stub_begin, @default_begin)
-  end
-
-  @doc """
-  The configured terminal result for `flow_id`, else `:pending` (waiting).
-
-  The notification carries the answer this call READ, so a test can wait for the
-  exact tick that saw its terminal result instead of a merely earlier `:pending`
-  one.
-  """
-  def status(flow_id) do
-    answer = :signin_stub_statuses |> config(@default_statuses) |> Map.get(flow_id, :pending)
-    notify({:status, flow_id, answer})
-    answer
-  end
-
-  @doc "Cancels a flow, reporting the call to the owning test."
-  def cancel(flow_id) do
-    notify({:cancel, flow_id})
-    :ok
-  end
-
-  defp notify(message) do
-    case owner() do
-      nil -> :ok
-      pid -> send(pid, {:signin_stub, message})
-    end
-
-    :ok
-  end
-
-  # The process that selected this module — the test — found exactly the way
-  # `ChatGPTSignIn.login_module/0` finds the selection.
-  defp owner do
-    :"$callers"
-    |> Process.get([])
-    |> List.wrap()
-    |> Enum.find(fn pid -> dictionary(pid, :chatgpt_login_module) == __MODULE__ end)
-  end
-
-  defp dictionary(pid, key) do
-    case Process.info(pid, :dictionary) do
-      {:dictionary, dictionary} -> Keyword.get(dictionary, key)
-      _unavailable -> nil
-    end
-  end
-
-  defp config(key, default) do
-    case owner() do
-      nil -> default
-      pid -> dictionary(pid, key) || default
-    end
   end
 end

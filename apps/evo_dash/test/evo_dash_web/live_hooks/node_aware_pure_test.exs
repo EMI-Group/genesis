@@ -16,6 +16,11 @@ defmodule EvoDashWeb.NodeAwarePureTest do
 
   alias EvoDashWeb.LiveHooks.NodeAware
 
+  # The debounce message is produced by a `Process.send_after` timer, so a 2 s
+  # literal budget is a latency assumption, not a correctness bound: the shared
+  # host swings 10-30x under load (see test/CONTEXT.md).
+  @async_wait_budget_ms 30_000
+
   # Build a minimal LiveView socket with the assigns the helper reads.
   # `redirected: nil` is required for push_patch to work (it raises if already
   # set). `assigns.__changed__` is required by Phoenix.LiveView.Socket's default.
@@ -331,7 +336,7 @@ defmodule EvoDashWeb.NodeAwarePureTest do
                NodeAware.handle_task_info(sock, {:task_updated, "t1", :running, node()})
 
       assert result.assigns[:tasks_reload_pending] == true
-      assert_receive :node_aware_reload_tasks, 2_000
+      assert_receive :node_aware_reload_tasks, @async_wait_budget_ms
     end
 
     test "{:task_updated, _, _, foreign_node} is dropped (socket unchanged, no reload scheduled)" do
@@ -359,7 +364,7 @@ defmodule EvoDashWeb.NodeAwarePureTest do
                NodeAware.handle_task_info(sock, {:task_deleted, "t1", node()})
 
       assert result.assigns[:tasks_reload_pending] == true
-      assert_receive :node_aware_reload_tasks, 2_000
+      assert_receive :node_aware_reload_tasks, @async_wait_budget_ms
     end
 
     test "{:task_deleted, _, foreign_node} is dropped (socket unchanged, no reload scheduled)" do
@@ -389,7 +394,7 @@ defmodule EvoDashWeb.NodeAwarePureTest do
                NodeAware.handle_task_info(sock, {:task_updated, "t1", :completed, remote_node})
 
       assert result.assigns[:tasks_reload_pending] == true
-      assert_receive :node_aware_reload_tasks, 2_000
+      assert_receive :node_aware_reload_tasks, @async_wait_budget_ms
 
       # A local-node event while viewing the remote node → dropped.
       sock2 = socket(%{current_node: remote_node, tasks_reload_pending: false})
@@ -416,7 +421,7 @@ defmodule EvoDashWeb.NodeAwarePureTest do
                NodeAware.handle_task_info(sock, {:task_updated, "t1", nil, node()})
 
       assert result.assigns[:tasks_reload_pending] == true
-      assert_receive :node_aware_reload_tasks, 2_000
+      assert_receive :node_aware_reload_tasks, @async_wait_budget_ms
     end
 
     test "a second matching broadcast while a reload is pending is dropped (coalescing)" do
@@ -434,7 +439,7 @@ defmodule EvoDashWeb.NodeAwarePureTest do
       assert result2 == result
 
       # Exactly ONE :node_aware_reload_tasks message was scheduled.
-      assert_receive :node_aware_reload_tasks, 2_000
+      assert_receive :node_aware_reload_tasks, @async_wait_budget_ms
 
       # Deterministic backstop: `result2 == result` (asserted above) with
       # `tasks_reload_pending` still true proves the coalescing drop branch ran

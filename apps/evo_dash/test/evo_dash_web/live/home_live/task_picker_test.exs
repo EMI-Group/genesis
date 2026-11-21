@@ -3,6 +3,13 @@ defmodule EvoDashWeb.HomeLive.TaskPickerTest do
   import Phoenix.LiveViewTest
   alias EvoDashWeb.HomeLive.{TaskPicker, TaskTracking}
 
+  # `await/3` polls an OFF-PROCESS async picker load, and `state/1` is a
+  # `:sys.get_state` round trip; both deadlines were fixed magic numbers (a
+  # 2 s iteration budget, the 5 s default) that expire on a loaded host, where
+  # scheduling swings 10-30x (test/CONTEXT.md).
+  @async_wait_budget_ms 30_000
+  @wait_poll_ms 2
+
   setup do
     EvoDash.Test.IsolatedTaskStore.isolate!("task_picker")
     EvoDash.Test.ConfigDir.isolate!("task_picker")
@@ -116,18 +123,26 @@ defmodule EvoDashWeb.HomeLive.TaskPickerTest do
     })
   end
 
-  defp state(view), do: :sys.get_state(view.pid).socket.assigns
-  defp await(view, check, left \\ 200)
+  defp state(view), do: :sys.get_state(view.pid, @async_wait_budget_ms).socket.assigns
+  defp await(view, check, budget_ms \\ @async_wait_budget_ms)
 
-  defp await(view, check, left) when left > 0 do
-    if check.(view),
-      do: :ok,
-      else:
-        (
-          Process.sleep(10)
-          await(view, check, left - 1)
-        )
+  defp await(view, check, budget_ms) do
+    do_await(view, check, System.monotonic_time(:millisecond) + budget_ms, budget_ms)
   end
 
-  defp await(view, check, _), do: assert(check.(view))
+  defp do_await(view, check, deadline, budget_ms) do
+    cond do
+      check.(view) ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("assistant task picker did not settle within #{budget_ms}ms")
+
+      true ->
+        # 2 ms cadence: the poll observes an off-process result that typically
+        # lands within a few ms; the DEADLINE (not the cadence) is the margin.
+        Process.sleep(@wait_poll_ms)
+        do_await(view, check, deadline, budget_ms)
+    end
+  end
 end

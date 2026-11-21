@@ -10,6 +10,11 @@ defmodule EvoDash.UpdateStatusTest do
 
   alias EvoDash.UpdateStatus
 
+  # Every broadcast below crosses the hub GenServer + PubSub, so a 1 s literal
+  # budget is a latency assumption, not a correctness bound: the shared host
+  # swings 10-30x under load (see test/CONTEXT.md).
+  @async_wait_budget_ms 30_000
+
   setup do
     # The hub is a shared global GenServer; reset it so tests are independent.
     # The notify-only override seam defaults to false so the full download flow
@@ -415,24 +420,24 @@ defmodule EvoDash.UpdateStatusTest do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "updates")
 
       UpdateStatus.check_started()
-      assert_receive {:update_status, %{phase: :checking} = state}, 1000
+      assert_receive {:update_status, %{phase: :checking} = state}, @async_wait_budget_ms
       assert state.phase == :checking
 
       UpdateStatus.handle_check_result(%{"status" => "available", "version" => "1.0.0"})
-      assert_receive {:update_status, %{phase: :available} = state}, 1000
+      assert_receive {:update_status, %{phase: :available} = state}, @async_wait_budget_ms
       assert state.latest_version == "1.0.0"
 
       UpdateStatus.handle_download_result(%{"status" => "ready"})
-      assert_receive {:update_status, %{phase: :ready}}, 1000
+      assert_receive {:update_status, %{phase: :ready}}, @async_wait_budget_ms
 
       UpdateStatus.applying()
-      assert_receive {:update_status, %{phase: :applying}}, 1000
+      assert_receive {:update_status, %{phase: :applying}}, @async_wait_budget_ms
 
       UpdateStatus.apply_failed("boom")
-      assert_receive {:update_status, %{phase: :error, error: "boom"}}, 1000
+      assert_receive {:update_status, %{phase: :error, error: "boom"}}, @async_wait_budget_ms
 
       UpdateStatus.reset()
-      assert_receive {:update_status, %{phase: :idle}}, 1000
+      assert_receive {:update_status, %{phase: :idle}}, @async_wait_budget_ms
     end
   end
 

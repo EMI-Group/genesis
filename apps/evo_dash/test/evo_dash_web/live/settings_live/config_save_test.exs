@@ -134,8 +134,7 @@ defmodule EvoDashWeb.SettingsLive.ConfigSaveTest do
   # `[[llm.models]]` fixture reads back in its migrated canonical shape, which
   # is NOT byte-equal to the in-memory candidate.
   test "a real legacy fixture write verified through the read is SAVED despite a lost acknowledgement" do
-    dir = EvoDash.Test.ConfigDir.isolate!("evogit_config_save_test-#{System.pid()}")
-    on_exit(fn -> File.rm_rf!(dir) end)
+    EvoDash.Test.ConfigDir.isolate!("evogit_config_save_test-#{System.pid()}")
 
     path = EvoGit.Config.config_path()
     File.mkdir_p!(Path.dirname(path))

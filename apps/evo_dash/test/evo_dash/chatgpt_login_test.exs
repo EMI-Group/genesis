@@ -52,6 +52,12 @@ defmodule EvoDash.ChatGPTLoginTest do
   alias EvoDash.ChatGPTLogin
   alias EvoDash.ChatGPTLoginTest.StubStore
 
+  # The flow's exchange/install/outcome messages are emitted by the supervised
+  # loopback flow process, so a 5 s literal is a latency assumption, not a
+  # correctness bound: the shared host swings 10-30x under load (see
+  # test/CONTEXT.md).
+  @async_wait_budget_ms 30_000
+
   setup do
     _ = Application.ensure_all_started(:req)
     account = unique_account("flow")
@@ -87,11 +93,13 @@ defmodule EvoDash.ChatGPTLoginTest do
     assert header(headers, "cache-control") == "no-store"
     assert header(headers, "referrer-policy") == "no-referrer"
 
-    assert_receive {:stub_exchange, _attempt, %{"code" => "abc"}}, 5_000
-    assert_receive {:stub_install, ^account, record}, 5_000
+    assert_receive {:stub_exchange, _attempt, %{"code" => "abc"}}, @async_wait_budget_ms
+    assert_receive {:stub_install, ^account, record}, @async_wait_budget_ms
     assert record["code"] == "abc"
 
-    assert_receive {:chatgpt_login, id, {:ok, %{account: ^account} = result}}, 5_000
+    assert_receive {:chatgpt_login, id, {:ok, %{account: ^account} = result}},
+                   @async_wait_budget_ms
+
     assert id == flow.id
 
     assert result.status == %{
@@ -134,7 +142,7 @@ defmodule EvoDash.ChatGPTLoginTest do
     assert status == 400
     assert body =~ "cancelled"
 
-    assert_receive {:chatgpt_login, id, {:error, :authorization_denied}}, 5_000
+    assert_receive {:chatgpt_login, id, {:error, :authorization_denied}}, @async_wait_budget_ms
     assert id == flow.id
     assert ChatGPTLogin.status(flow.id) == {:error, :authorization_denied}
     refute_received {:stub_exchange, _attempt, _params}
@@ -150,7 +158,7 @@ defmodule EvoDash.ChatGPTLoginTest do
     flow = start_flow(account, caller: self(), timeout_ms: 50)
 
     wait_until(fn -> ChatGPTLogin.status(flow.id) == {:error, :authorization_timeout} end)
-    assert_receive {:chatgpt_login, id, {:error, :authorization_timeout}}, 5_000
+    assert_receive {:chatgpt_login, id, {:error, :authorization_timeout}}, @async_wait_budget_ms
     assert id == flow.id
     wait_until(fn -> port_closed?(flow.port) end)
   end
@@ -160,7 +168,7 @@ defmodule EvoDash.ChatGPTLoginTest do
 
     assert :ok = ChatGPTLogin.cancel(flow.id)
     assert ChatGPTLogin.status(flow.id) == {:error, :cancelled}
-    assert_receive {:chatgpt_login, id, {:error, :cancelled}}, 5_000
+    assert_receive {:chatgpt_login, id, {:error, :cancelled}}, @async_wait_budget_ms
     assert id == flow.id
     wait_until(fn -> port_closed?(flow.port) end)
 
@@ -175,7 +183,7 @@ defmodule EvoDash.ChatGPTLoginTest do
     assert ChatGPTLogin.status(first.id) == {:error, :superseded}
     assert ChatGPTLogin.status(second.id) == :pending
     assert ChatGPTLogin.active_for(account) == second.id
-    assert_receive {:chatgpt_login, id, {:error, :superseded}}, 5_000
+    assert_receive {:chatgpt_login, id, {:error, :superseded}}, @async_wait_budget_ms
     assert id == first.id
     wait_until(fn -> port_closed?(first.port) end)
   end
@@ -257,7 +265,7 @@ defmodule EvoDash.ChatGPTLoginTest do
     end
   end
 
-  defp wait_until(fun, timeout \\ 5_000) do
+  defp wait_until(fun, timeout \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_wait_until(fun, deadline)
   end

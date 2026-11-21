@@ -35,6 +35,13 @@ const DISCLOSURE_CLOSE_FALLBACK_MS = 200
 // rewrites the element.
 const DISCLOSURE_STATE_ATTR = "data-disclosure-state"
 const DISCLOSURE_CLOSING = "closing"
+// Opt-in dismissal, by PRESENCE only (the value is ignored, so markup may write
+// data-disclosure-dismiss="true" or the bare attribute). A <details> without it
+// registers no document listener at all, which is why every existing disclosure
+// site keeps exactly its browser-native behaviour: the summary toggles it and
+// nothing else does. Transient menus — an attach/kind picker, a task menu — opt
+// in so an outside pointerdown or Escape also closes them.
+const DISCLOSURE_DISMISS_ATTR = "data-disclosure-dismiss"
 
 // ONE guarded matchMedia call for the whole dashboard (assets/js/dialog_modal.js
 // reaches this same helper through the bridge at the bottom of this file). An
@@ -89,6 +96,27 @@ function planOpenReconcile({domOpen, wantOpen, closing} = {}) {
   if (!want) return {wantOpen: false, action: "drop"}
 
   return {wantOpen: false, action: "readd-and-close"}
+}
+
+// --- DisclosureMotion: pure opt-in dismissal decisions (unit-tested)
+// Dismissal is ADDITIVE: it only ever asks "may this gesture close the menu?".
+// A dismissal therefore never opens anything, never intercepts the gesture (no
+// preventDefault/stopPropagation), and never touches a disclosure that did not
+// opt in.
+// Every affirmative condition is an exact `=== true`: missing or garbage input
+// reads as "no dismissal" rather than as a license to close a live menu. The two
+// negative conditions (`closing`, `insideTarget`) are read the same way — only an
+// explicit "already closing" or "inside the element" vetoes, so a caller that
+// cannot measure the gesture cannot silently disarm the menu.
+function wantsDismissOnOutside({dismiss, open, closing, insideTarget} = {}) {
+  return dismiss === true && open === true && closing !== true && insideTarget !== true
+}
+
+// Escape is the keyboard parity of the outside click, and the ONLY key that
+// dismisses: Enter/Space on a summary belong to the native toggle above, and
+// every other key must reach the element's own controls untouched.
+function wantsDismissOnEscape({dismiss, open, closing, key} = {}) {
+  return dismiss === true && open === true && closing !== true && key === "Escape"
 }
 // DisclosureMotion: DOM orchestration + hook
 
@@ -172,6 +200,8 @@ const DisclosureMotion = {
     // The hook's own intent, seeded from the rendered `open` (a server-owned
     // disclosure can arrive open) and then kept current by the two listeners.
     this.wantOpen = this.el.open === true
+    this.dismiss = typeof this.el.hasAttribute === "function" &&
+      this.el.hasAttribute(DISCLOSURE_DISMISS_ATTR)
     this.onClick = event => this.handleClick(event)
     // A native change of `open` — the browser's toggle, keyboard activation, or
     // our own releaseOpen — is the intent's truth. Never while OUR exit runs:
@@ -181,6 +211,18 @@ const DisclosureMotion = {
     }
     this.el.addEventListener("click", this.onClick)
     this.el.addEventListener("toggle", this.onToggle)
+    // Opt-in dismissal listens on `document` in the CAPTURE phase (the legacy
+    // assistant-disclosure hook did the same): a menu must close BEFORE an inner
+    // handler for the same gesture runs, and a pointerdown whose target stops
+    // propagation never reaches a bubble-phase listener at all.
+    if (this.dismiss) {
+      this.onOutsidePointer = event => this.handleOutsidePointer(event)
+      this.onEscapeKey = event => this.handleEscapeKey(event)
+      if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+        document.addEventListener("pointerdown", this.onOutsidePointer, true)
+        document.addEventListener("keydown", this.onEscapeKey, true)
+      }
+    }
   },
 
   // LiveView patches re-render the <details>. For a browser-owned disclosure the
@@ -197,7 +239,7 @@ const DisclosureMotion = {
     const plan = planOpenReconcile({
       domOpen: el.open === true,
       wantOpen: this.wantOpen === true,
-      closing: el.getAttribute(DISCLOSURE_STATE_ATTR) === DISCLOSURE_CLOSING,
+      closing: this.closing(),
     })
     this.wantOpen = plan.wantOpen
 
@@ -216,6 +258,17 @@ const DisclosureMotion = {
   },
 
   destroyed() {
+    // Document listeners go FIRST: a detached element can still be mid-mount, and
+    // a document-level handler outliving the hook would keep closing a menu that
+    // no longer exists.
+    if (this.dismiss) {
+      if (typeof document !== "undefined" && typeof document.removeEventListener === "function") {
+        document.removeEventListener("pointerdown", this.onOutsidePointer, true)
+        document.removeEventListener("keydown", this.onEscapeKey, true)
+      }
+      this.onOutsidePointer = null
+      this.onEscapeKey = null
+    }
     if (!this.el) return
     this.el.removeEventListener("click", this.onClick)
     if (this.onToggle) this.el.removeEventListener("toggle", this.onToggle)
@@ -223,7 +276,7 @@ const DisclosureMotion = {
     this.onToggle = null
     // Release a running exit (its listener and its timer) with the element — it
     // is leaving the DOM, so the close simply completes now.
-    if (this.el.getAttribute(DISCLOSURE_STATE_ATTR) === DISCLOSURE_CLOSING) {
+    if (this.closing()) {
       closeAnimated(this.el, {panel: this.panel(), fallbackMs: 0})
     }
   },
@@ -248,6 +301,47 @@ const DisclosureMotion = {
     closeAnimated(this.el, {panel: this.panel()})
   },
 
+  // An OUTSIDE pointerdown closes an opted-in menu. Additive on purpose: no
+  // preventDefault/stopPropagation, so the gesture that dismissed the menu still
+  // reaches whatever it landed on. A pointerdown on the element's OWN content
+  // (including a NESTED disclosure's summary) is inside, so nothing closes —
+  // opening a submenu never dismisses the parent that owns it.
+  handleOutsidePointer(event) {
+    if (!wantsDismissOnOutside({
+      dismiss: this.dismiss === true,
+      open: this.el.open === true,
+      closing: this.closing(),
+      insideTarget: typeof this.el.contains === "function" &&
+        this.el.contains(event && event.target),
+    })) return
+    // The intent FIRST: a patch landing between here and the exit must not read
+    // a still-open `open` as the user's choice.
+    this.wantOpen = false
+    closeAnimated(this.el, {panel: this.panel()})
+  },
+
+  // Escape closes an opted-in menu and hands the focus back to the summary,
+  // which is where a keyboard user expects to be once the content is gone.
+  handleEscapeKey(event) {
+    if (!wantsDismissOnEscape({
+      dismiss: this.dismiss === true,
+      open: this.el.open === true,
+      closing: this.closing(),
+      key: event && event.key,
+    })) return
+    this.wantOpen = false
+    closeAnimated(this.el, {panel: this.panel()})
+    const summary = this.rootSummary()
+    if (summary && typeof summary.focus === "function") summary.focus({preventScroll: true})
+  },
+
+  // The exit gate, read in one place: a close already running owns `open` and
+  // must not be re-armed by a second gesture.
+  closing() {
+    return typeof this.el.getAttribute === "function" &&
+      this.el.getAttribute(DISCLOSURE_STATE_ATTR) === DISCLOSURE_CLOSING
+  },
+
   rootSummary() {
     return this.el.querySelector(":scope > summary")
   },
@@ -268,6 +362,7 @@ if (typeof globalThis !== "undefined") {
 }
 
 export {DISCLOSURE_CLOSE_FALLBACK_MS, DISCLOSURE_STATE_ATTR, DISCLOSURE_CLOSING,
-  prefersReducedMotion, isPanelAnimationEnd, closeWaitsForAnimation,
-  planOpenReconcile, closeAnimated}
+  DISCLOSURE_DISMISS_ATTR, prefersReducedMotion, isPanelAnimationEnd,
+  closeWaitsForAnimation, planOpenReconcile, wantsDismissOnOutside,
+  wantsDismissOnEscape, closeAnimated}
 export default DisclosureMotion

@@ -71,10 +71,15 @@ defmodule EvoDash.Test.ConfigDir do
   stops children per test, so an async load task spawned by a mounted view
   outlives its test process and, when it resolves `<override>/genesis` and
   writes a skeleton file, it `File.mkdir_p/1`s the whole tree back — which is
-  what made the `on_exit` removal fail with `{:error, :eexist, _}` once every
-  few thousand tests. Cleanup therefore runs in ONE order: wait for every live
-  `EvoDash.TaskSupervisor` child that is a writer FOR THIS DIRECTORY, and only
-  then remove it.
+  what makes a bare `on_exit` removal fail with `{:error, :eexist, _}` (the
+  listing is complete, the `rmdir` is not). Cleanup therefore runs in ONE order:
+  wait for every live `EvoDash.TaskSupervisor` child that is a writer FOR THIS
+  DIRECTORY, and only then remove it.
+
+  This module is the directory's ONLY cleanup owner: `isolate!/1` and
+  `isolate_module!/1` register the drain-backed removal, so a suite must NOT
+  register its own second `File.rm_rf!/1` (an earlier LIFO callback with no
+  drain is exactly the race this contract exists to prevent).
 
   A child is a writer for `dir` when ANY of these holds:
 
@@ -92,20 +97,31 @@ defmodule EvoDash.Test.ConfigDir do
       used the directory does appear there (through its view / load task) and is
       remembered on disk instead of in a dictionary that dies with it.
 
-  A `{:error, :eexist, _}` that survives that drain is retried a bounded number
-  of times — the honest backstop for a re-creator whose caller chain identifies
-  no registrar AND resolves no override (a raw `spawn/1`) — and every OTHER
-  error is raised through `File.rm_rf!/1`, exactly as before.
+  The removal itself is `EvoDash.Test.FsCleanup.rm_rf!/2` — a bounded DEADLINE
+  that re-drains (with the remaining window) before every attempt and retries
+  both transient races (`:eexist`, `:enotempty`) instead of re-raising on a
+  fixed attempt count. That is the honest backstop for a re-creator whose caller
+  chain identifies no registrar AND resolves no override (a raw `spawn/1`), and
+  for a matched writer that is merely starved for longer than one drain. A tree
+  that genuinely cannot be removed still raises `File.Error` (logged with its
+  residual entries), so a real failure never gets swallowed.
   """
 
-  # How long the `on_exit` drain may wait for the test's own supervised writers
-  # before removing the directory anyway (the removal then still has the
-  # bounded `@cleanup_attempts` retry below as its backstop).
+  alias EvoDash.Test.FsCleanup
+
+  # Default budget of ONE drain (the public `await_*_writers` helpers use it).
+  # The teardown removal passes its own REMAINING window instead, so a matched
+  # writer that is merely starved is not abandoned at this mark.
   @cleanup_writer_budget_ms 5_000
-  # Total directory-removal attempts, i.e. the first try plus two retries; each
-  # retry re-drains first, so a writer that lands in between is awaited rather
-  # than merely re-raced.
-  @cleanup_attempts 3
+  # Overall teardown window for draining the directory's writers AND removing
+  # the tree. It is a DEADLINE, not an attempt count: a re-creator that is slow
+  # but alive (a starved page-load child) is waited for rather than re-raced,
+  # and the window is paid only when a writer actually loses the race — the
+  # healthy path is one drain that finds nobody plus one `File.rm_rf/1`.
+  @cleanup_budget_ms 10_000
+  # Cadence between removal attempts (the writer needs to be scheduled, not
+  # waited out); see `EvoDash.Test.FsCleanup`.
+  @cleanup_retry_delay_ms 20
   # A drain that had to WAIT longer than this is a defect, not a slow machine:
   # the test left a supervised child that only ended by TIMING OUT (a stub's own
   # safety `after`, a `GenServer.call`'s timeout, a wedged app-global server), so
@@ -157,10 +173,11 @@ defmodule EvoDash.Test.ConfigDir do
   @doc """
   Creates a unique temporary config directory for a whole test module.
 
-  Intended for `setup_all`: registers an `on_exit` cleanup that removes the
-  directory. It does NOT touch the process dictionary, because `setup_all` runs
-  in a different process than the tests — call `activate/1` from `setup`
-  instead (or use `isolate!/1`).
+  Intended for `setup_all`: registers the ONLY `on_exit` cleanup that removes
+  the directory (drain-backed, deadline-bounded — a caller must NOT register a
+  second `File.rm_rf!/1`). It does NOT touch the process dictionary, because
+  `setup_all` runs in a different process than the tests — call `activate/1`
+  from `setup` instead (or use `isolate!/1`).
   """
   @spec isolate_module!(String.t()) :: String.t()
   def isolate_module!(prefix \\ "evogit_config") when is_binary(prefix) do
@@ -261,6 +278,10 @@ defmodule EvoDash.Test.ConfigDir do
   keeps in its `:"$callers"` chain, so the ownership predicate already covers
   every writer this directory can have. Skipping the marker keeps the per-test
   hot path free of file I/O.
+  `isolate_module!/1` registers the directory's ONLY `on_exit` cleanup (the
+  drain-backed, deadline-bounded removal), so calling this from a `setup` block
+  needs no `on_exit` of its own — and adding one would reintroduce the very
+  race the drain prevents.
   """
   @spec isolate!(String.t()) :: String.t()
   def isolate!(prefix \\ "evogit_config") when is_binary(prefix) do
@@ -442,13 +463,14 @@ defmodule EvoDash.Test.ConfigDir do
     end
   end
 
-  # Drains the directory's writers and, when the drain actually had to WAIT past
+  # Drains the directory's writers (once per removal attempt, with that
+  # attempt's REMAINING window) and, when the drain actually had to WAIT past
   # `@drain_alarm_ms`, says so — a child that only finished by timing out is
   # billed to the SERIAL `on_exit` phase, where ExUnit's per-test timing cannot
   # see it. Silent on the healthy path (two clock reads).
-  defp drain_and_alarm(registrar, dir) do
+  defp drain_and_alarm(registrar, dir, budget_ms) do
     started = System.monotonic_time(:millisecond)
-    result = await_dir_writers(registrar, dir)
+    result = await_dir_writers(registrar, dir, budget_ms)
     elapsed = System.monotonic_time(:millisecond) - started
 
     if elapsed >= @drain_alarm_ms do
@@ -467,25 +489,18 @@ defmodule EvoDash.Test.ConfigDir do
     :ok
   end
 
-  # The registered `on_exit` cleanup. Drain FIRST (the invariant the moduledoc
-  # states), then remove; a racing re-creation that survives the drain
-  # (`{:error, :eexist, _}`) is retried a bounded number of times, and every
-  # other error is raised by `File.rm_rf!/1` so a real failure still fails the
-  # test loudly instead of being swallowed.
-  defp remove_isolated_dir!(dir, registrar, attempts \\ @cleanup_attempts)
-
-  defp remove_isolated_dir!(dir, registrar, attempts) do
-    _ = drain_and_alarm(registrar, dir)
-
-    case File.rm_rf(dir) do
-      {:ok, _removed} ->
-        :ok
-
-      {:error, :eexist, _path} when attempts > 1 ->
-        remove_isolated_dir!(dir, registrar, attempts - 1)
-
-      {:error, _reason, _path} ->
-        File.rm_rf!(dir)
-    end
+  # The registered `on_exit` cleanup — the ONE owner of this directory's
+  # removal. Drain first (the invariant the moduledoc states), then remove
+  # through the shared deadline-bounded primitive: a writer that recreates an
+  # entry between the enumeration and the final `rmdir` is retried (re-draining
+  # with the REMAINING budget each time, so a matched writer that is merely
+  # starved gets the whole window to finish), and a tree that genuinely cannot
+  # be removed still raises through `File.Error` instead of being swallowed.
+  defp remove_isolated_dir!(dir, registrar) do
+    FsCleanup.rm_rf!(dir,
+      budget_ms: @cleanup_budget_ms,
+      retry_delay_ms: @cleanup_retry_delay_ms,
+      before_attempt: fn remaining_ms -> drain_and_alarm(registrar, dir, remaining_ms) end
+    )
   end
 end

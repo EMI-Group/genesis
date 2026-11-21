@@ -69,7 +69,6 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     # by `test/test_helper.exs`): every mount + load task inherits it via
     # `$callers`, so nothing is BEAM-global and no env restore is needed.
     dir = EvoDash.Test.ConfigDir.isolate!("evogit_settings_auth_status_test-#{System.pid()}")
-    on_exit(fn -> File.rm_rf!(dir) end)
 
     # Process-less public ETS table shared by the whole run — clear ONLY the
     # local context (a whole-table reset would delete a concurrent module's

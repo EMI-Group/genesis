@@ -13,6 +13,16 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignInTest do
 
   alias EvoDashWeb.LLMSetup.ChatGPTSignIn
 
+  # Load-tolerant budget for waits on ASYNC work on a shared host whose
+  # scheduling swings 10-30x (test/CONTEXT.md); also injected as the product's
+  # call budget so a starved host can never kill a stub call.
+  @async_wait_budget_ms 30_000
+
+  # A "generous" per-call budget for the seam-behaviour tests: far above the
+  # slow stub's 5 ms sleep (so a loaded host cannot turn the positive case into
+  # a flake) and far below the 15 s production default (so the test stays fast).
+  @generous_call_budget_ms 2_000
+
   @reasons [
     :authorization_denied,
     :plan_not_authorized,
@@ -72,6 +82,19 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignInTest do
     def status(_flow), do: :pending
   end
 
+  # Answers only AFTER a short real sleep, so the product's per-call budget is
+  # what decides whether the call is seen to finish. The 5 ms sleep is far below
+  # every budget used here, so the outcome is never a scheduling guess.
+  defmodule SlowStub do
+    def begin(_account, _opts) do
+      Process.sleep(5)
+      {:ok, %{id: "flow-slow", url: "https://example.test/slow"}}
+    end
+
+    def cancel(_flow), do: :ok
+    def status(_flow), do: :pending
+  end
+
   # Answers the next status from a per-test sequence held in an Agent that the
   # POLL TASK finds through the `$callers` chain (so no global state is used).
   defmodule SequenceStub do
@@ -98,6 +121,12 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignInTest do
   defp inject(module) do
     Process.put(:chatgpt_login_module, module)
     Process.put(:chatgpt_signin_poll_interval_ms, 5)
+    # The stub notifies from INSIDE the boundary's `Task.async` call, so the
+    # product's call budget also bounds a stub notification: on a starved host
+    # the task can be killed before it runs and the notification is lost
+    # forever. Inject the suite's load-tolerant budget so the product can never
+    # kill a stub call (production keeps its own 15 s default).
+    Process.put(:chatgpt_signin_call_timeout_ms, @async_wait_budget_ms)
     module
   end
 
@@ -111,7 +140,7 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignInTest do
   # `refute_receive …, 0` conclusive (the suite's 0 ms rule: a zero window is
   # sound only after a completed fence).
   defp await_poll_stopped(owner) do
-    await_poll_stopped(owner, System.monotonic_time(:millisecond) + 30_000)
+    await_poll_stopped(owner, System.monotonic_time(:millisecond) + @async_wait_budget_ms)
   end
 
   defp await_poll_stopped(owner, deadline) do
@@ -159,6 +188,37 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignInTest do
 
       resolved = Task.async(fn -> ChatGPTSignIn.login_module() end) |> Task.await()
       assert resolved == OkStub
+    end
+  end
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # call_timeout_ms/0 — the documented production budget
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  describe "call_timeout_ms/0" do
+    test "the production default stays 15 s when nothing is seeded" do
+      assert ChatGPTSignIn.call_timeout_ms() == 15_000
+    end
+
+    test "an injected generous budget lets a slow flow call finish" do
+      inject(SlowStub)
+      # Well under the 15 s production default, well over the stub's 5 ms sleep:
+      # the call only answers within budget because the seam moved the cut-off.
+      Process.put(:chatgpt_signin_call_timeout_ms, @generous_call_budget_ms)
+
+      assert ChatGPTSignIn.call_timeout_ms() == @generous_call_budget_ms
+
+      assert {:ok, %{id: "flow-slow", url: "https://example.test/slow"}} =
+               ChatGPTSignIn.begin(nil)
+    end
+
+    test "an injected tiny budget cuts the SAME call off as unavailable" do
+      inject(SlowStub)
+      # The identical 5 ms call the test above sees finish: at 1 ms the spawned
+      # call cannot complete, so the boundary answers its documented failure.
+      Process.put(:chatgpt_signin_call_timeout_ms, 1)
+
+      assert {:error, :sign_in_unavailable} = ChatGPTSignIn.begin(nil)
     end
   end
 
