@@ -430,7 +430,6 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
 
   defp stream_meta?(_meta), do: false
 
-
   defp tool_label(entry) do
     case Map.get(entry, :tool_name) do
       name when is_binary(name) ->

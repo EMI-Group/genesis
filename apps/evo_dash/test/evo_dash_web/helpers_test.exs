@@ -485,6 +485,7 @@ defmodule EvoDashWeb.HelpersTest do
       assert format_duration(3_600_000) == "3600.0s"
       assert format_duration(-500) == "-0.5s"
     end
+
     test "renders nothing for a non-integer duration" do
       assert format_duration(nil) == ""
       assert format_duration("12") == ""
@@ -492,6 +493,7 @@ defmodule EvoDashWeb.HelpersTest do
       assert format_duration(:atom) == ""
     end
   end
+
   describe "cost_estimate_notice/1" do
     import Phoenix.LiveViewTest
 
