@@ -765,6 +765,19 @@ defmodule EvoDashWeb.SettingsLive do
            ],
       do: ProviderPanelEvents.dispatch(event, params, socket)
 
+  # The waiting sign-in panel's manual "paste the redirect URL" fallback: its
+  # `phx-change` records the typed text and its `type="button"` submit hands it
+  # back to the SAME flow. Both are pure page-state transitions owned by
+  # `ChatGPTSignInState` (the panel's dispatch map is the frozen sign-in SURFACE
+  # vocabulary), so the page delegates straight to it like the two events above.
+  @impl true
+  def handle_event("chatgpt_sign_in_paste", params, socket),
+    do: ChatGPTSignInState.chatgpt_sign_in_paste(socket, params)
+
+  @impl true
+  def handle_event("chatgpt_sign_in_submit", params, socket),
+    do: ChatGPTSignInState.chatgpt_sign_in_submit(socket, params)
+
   # The model-row buttons are spelled both canonically ("provider") and with
   # the legacy editor names; both act on the expanded account's rows.
   @impl true

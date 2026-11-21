@@ -15,7 +15,7 @@ defmodule EvoDashWeb.WelcomeLive do
   """
   use EvoDashWeb, :live_view
 
-  alias EvoDashWeb.LLMSetup.{ChatGPT, ChatGPTSignIn, Reasoning}
+  alias EvoDashWeb.LLMSetup.{ChatGPT, Reasoning}
   alias EvoDashWeb.SettingsComponents.ProviderWizard
   alias EvoDashWeb.SettingsLive.ChatGPTSignInState
   alias EvoDashWeb.SettingsLive.ConfigIO
@@ -43,7 +43,7 @@ defmodule EvoDashWeb.WelcomeLive do
        llm_providers: providers,
        flat_models: Setup.flatten_models(providers),
        chatgpt_accounts: %{},
-       chatgpt_sign_in: %{},
+       chatgpt_sign_in: ChatGPTSignInState.new(),
        chatgpt_sign_in_manual: manual_sign_in?(socket),
        current_version: Application.spec(:evo_git, :vsn) |> to_string(),
        draft: Wizard.new(),
@@ -80,7 +80,7 @@ defmodule EvoDashWeb.WelcomeLive do
 
         viewed
         |> assign(:chatgpt_accounts, %{})
-        |> assign(:chatgpt_sign_in, %{})
+        |> assign(:chatgpt_sign_in, ChatGPTSignInState.new())
         |> assign(:chatgpt_sign_in_manual, manual_sign_in?(viewed))
         |> invalidate_test()
       end
@@ -155,7 +155,7 @@ defmodule EvoDashWeb.WelcomeLive do
           |> assign(draft: draft, error: nil)
           # The draft restarts at the provider step, so every sign-in state
           # (waiting, ok, error) belongs to the previous run and is dropped.
-          |> assign(:chatgpt_sign_in, %{})
+          |> assign(:chatgpt_sign_in, ChatGPTSignInState.new())
           |> assign(
             :chatgpt_accounts,
             if(chatgpt?, do: ChatGPT.accounts(node()), else: %{})
@@ -224,37 +224,47 @@ defmodule EvoDashWeb.WelcomeLive do
   end
 
   # Starts ONE in-browser sign-in for the account the draft already points at
-  # (its current pick, else the store's default registration). A repeated click
-  # is safe: the flow module supersedes the previous attempt for that account.
+  # (its current pick, else the store's default registration).
+  # `ChatGPTSignInState.begin/4` is the SAME lifecycle `/settings` uses: it
+  # abandons a previous waiting attempt, starts the poll BEFORE answering (so a
+  # result can never arrive while the page is not yet waiting for that flow id)
+  # and records the flow's redirect identity (`port`/`mode`) the manual paste
+  # fallback explains.
   def handle_event("chatgpt_sign_in", _params, socket) do
     account = ChatGPT.account_name(socket.assigns.draft["siwc_account"])
-
-    case ChatGPTSignIn.begin(account) do
-      {:ok, %{id: flow_id, url: url}} ->
-        # Poll BEFORE the assign so the result message can never arrive while
-        # the page is not yet waiting for that flow id.
-        _ = ChatGPTSignIn.start_poll(flow_id, self())
-
-        {:noreply,
-         assign(socket, :chatgpt_sign_in, %{
-           flow_id: flow_id,
-           url: url,
-           phase: :waiting,
-           reason: nil
-         })}
-
-      {:error, reason} ->
-        {:noreply, assign(socket, :chatgpt_sign_in, %{phase: :error, reason: reason})}
-    end
+    state = ChatGPTSignInState.begin(socket.assigns.chatgpt_sign_in, account, :wizard, self())
+    {:noreply, assign(socket, :chatgpt_sign_in, state)}
   end
 
   def handle_event("chatgpt_sign_in_cancel", _params, socket) do
-    case Map.get(socket.assigns.chatgpt_sign_in, :flow_id) do
-      flow_id when is_binary(flow_id) -> _ = ChatGPTSignIn.cancel(flow_id)
-      _none -> :ok
-    end
+    state = ChatGPTSignInState.cancel(socket.assigns.chatgpt_sign_in)
+    {:noreply, assign(socket, :chatgpt_sign_in, state)}
+  end
 
-    {:noreply, assign(socket, :chatgpt_sign_in, %{phase: :idle})}
+  # The waiting panel's manual "paste the redirect URL" fallback. `/welcome`
+  # renders ONE sign-in surface (the wizard's auth step), so the SAME shared
+  # transitions `/settings` uses apply: recording the typed text is cheap and
+  # never touches the flow, and the submit hands it back to the SAME attempt.
+  def handle_event("chatgpt_sign_in_paste", params, socket) do
+    state = socket.assigns.chatgpt_sign_in
+
+    state =
+      if ChatGPTSignInState.paste_target?(state, :wizard),
+        do: ChatGPTSignInState.put_paste(state, Map.get(params, "value")),
+        else: state
+
+    {:noreply, assign(socket, :chatgpt_sign_in, state)}
+  end
+
+  def handle_event("chatgpt_sign_in_submit", params, socket) do
+    state = socket.assigns.chatgpt_sign_in
+
+    state =
+      if ChatGPTSignInState.paste_target?(state, :wizard),
+        do: ChatGPTSignInState.submit_paste(state, params),
+        else: state
+
+    {:noreply, assign(socket, :chatgpt_sign_in, state)}
   end
 
   def handle_event("wizard_model_search", params, socket) do
@@ -387,7 +397,7 @@ defmodule EvoDashWeb.WelcomeLive do
        error: nil,
        search_query: "",
        preset_dismissed: false,
-       chatgpt_sign_in: %{},
+       chatgpt_sign_in: ChatGPTSignInState.new(),
        has_model?: true
      )
      |> invalidate_test()}
@@ -690,7 +700,8 @@ defmodule EvoDashWeb.WelcomeLive do
 
   # Dropping the flow id is the WHOLE invalidation: the poll's result is matched
   # against the current flow id, and the flow itself expires on its own window.
-  defp reset_sign_in(socket), do: assign(socket, :chatgpt_sign_in, %{})
+  defp reset_sign_in(socket),
+    do: assign(socket, :chatgpt_sign_in, ChatGPTSignInState.new())
 
   # TOTAL: the assigned sign-in state, else the idle state (which cancels
   # nothing). `terminate/2` runs after the socket is gone, so a shape this page
@@ -724,17 +735,26 @@ defmodule EvoDashWeb.WelcomeLive do
     socket
     |> assign(:chatgpt_accounts, accounts)
     |> assign(:draft, draft)
-    |> assign(:chatgpt_sign_in, %{phase: :ok})
+    |> assign(:chatgpt_sign_in, sign_in_phase(socket, :ok, nil))
     # A connection test started against the previous authentication state can no
     # longer describe what is about to be saved.
     |> invalidate_test()
   end
 
   defp apply_sign_in_result(socket, {:error, reason}),
-    do: assign(socket, :chatgpt_sign_in, %{phase: :error, reason: reason})
+    do: assign(socket, :chatgpt_sign_in, sign_in_phase(socket, :error, reason))
 
   defp apply_sign_in_result(socket, _unexpected),
-    do: assign(socket, :chatgpt_sign_in, %{phase: :error, reason: :sign_in_unavailable})
+    do: assign(socket, :chatgpt_sign_in, sign_in_phase(socket, :error, :sign_in_unavailable))
+
+  # The terminal phase keeps the flow's redirect identity (`port`/`mode`) and
+  # the wizard surface, and clears the manual-fallback input: a finished attempt
+  # has nothing left to paste into.
+  defp sign_in_phase(socket, phase, reason) do
+    socket
+    |> assigned_sign_in()
+    |> Map.merge(%{phase: phase, reason: reason, paste: "", paste_error: nil})
+  end
 
   defp maybe_reset_model_choices(draft, previous_account) do
     if ChatGPT.account_name(draft["siwc_account"]) == previous_account,

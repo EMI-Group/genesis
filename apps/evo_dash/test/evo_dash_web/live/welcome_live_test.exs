@@ -53,6 +53,20 @@ defmodule EvoDashWeb.WelcomeLiveTest.SignInStub do
     :ok
   end
 
+  @doc """
+  Acknowledges a pasted redirect (the manual completion of a waiting flow).
+  The configured `:signin_stub_submit` answer, else the default acknowledgement
+  `{:ok, %{id: flow_id}}`; a zero-arity fun is resolved at call time.
+  """
+  def submit_callback(flow_id, input) do
+    notify({:submit, flow_id, input})
+
+    case config(:signin_stub_submit, {:ok, %{id: flow_id}}) do
+      answer when is_function(answer, 0) -> answer.()
+      answer -> answer
+    end
+  end
+
   defp notify(message) do
     case owner() do
       nil -> :ok
@@ -646,7 +660,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       end)
 
       assert assigns(view).draft["siwc_account"] == "work"
-      assert assigns(view).chatgpt_sign_in == %{phase: :ok}
+      assert assigns(view).chatgpt_sign_in.phase == :ok
       refute has_element?(view, "#welcome-chatgpt-waiting")
       refute has_element?(view, "#welcome-chatgpt-sign-in-error")
       assert has_element?(view, ~s(#welcome-chatgpt-account option[value="work"][selected]))
@@ -672,7 +686,8 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       # The return to the sign-in button is the observable half of the cancel;
       # the stub's notification rides the flow call's own task, so it is
       # asserted after that state, on the load-tolerant budget.
-      assert assigns(view).chatgpt_sign_in == %{phase: :idle}
+      assert assigns(view).chatgpt_sign_in.phase == :idle
+      assert assigns(view).chatgpt_sign_in.flow_id == nil
       assert has_element?(view, "#welcome-chatgpt-sign-in")
       assert_receive {:signin_stub, {:cancel, "welcome-flow"}}, @async_wait_budget_ms
       refute has_element?(view, "#welcome-chatgpt-waiting")
@@ -740,7 +755,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert_receive {:signin_stub, {:begin, "default"}}, @async_wait_budget_ms
 
       Process.put(:signin_stub_statuses, %{"welcome-flow" => {:ok, %{account: "work"}}})
-      await(fn -> assigns(view).chatgpt_sign_in == %{phase: :ok} end)
+      await(fn -> assigns(view).chatgpt_sign_in.phase == :ok end)
 
       GenServer.stop(view.pid)
       refute_receive {:signin_stub, {:cancel, _flow_id}}, 0
@@ -777,6 +792,112 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       refute has_element?(view, "#welcome-chatgpt-waiting")
     end
 
+    # The MANUAL "paste the redirect URL" fallback: the browser of a dashboard
+    # running on another machine is redirected to its OWN loopback and lands on
+    # a connection error, so the address bar still holds the callback the
+    # wizard's waiting panel must accept.
+    test "a pasted redirect URL finishes the same sign-in", %{conn: conn} do
+      EvoGit.TestSupport.ChatGPTFixture.seed!("work")
+
+      Process.put(
+        :signin_stub_begin,
+        {:ok, %{id: "welcome-flow", url: @sign_in_url, port: 48_123}}
+      )
+
+      {:ok, view, _html} = start(conn)
+      pick(view, "openai_codex")
+      click_html = view |> element("#welcome-chatgpt-sign-in") |> render_click()
+      assert rendered?(click_html, "#welcome-chatgpt-waiting")
+      assert_receive {:signin_stub, {:begin, "default"}}, @async_wait_budget_ms
+      # The disclosure is ALWAYS part of the waiting panel, and it explains the
+      # exact address the flow expects from the flow's own port.
+      assert rendered?(click_html, "#welcome-chatgpt-sign-in-paste-hint")
+      assert rendered?(click_html, "#welcome-chatgpt-sign-in-paste-input")
+      assert rendered?(click_html, "#welcome-chatgpt-sign-in-paste-submit")
+      assert click_html =~ "http://127.0.0.1:48123/auth/callback"
+      typed = "http://127.0.0.1:48123/auth/callback?code=abc&state=s1"
+
+      view
+      |> element("#welcome-chatgpt-sign-in-paste-input")
+      |> render_change(%{"value" => typed})
+
+      # `phx-change` only records the text; the flow is untouched.
+      assert assigns(view).chatgpt_sign_in.paste == typed
+      refute_receive {:signin_stub, {:submit, _flow_id, _input}}, 0
+      view |> element("#welcome-chatgpt-sign-in-paste-submit") |> render_click()
+      assert_receive {:signin_stub, {:submit, "welcome-flow", ^typed}}, @async_wait_budget_ms
+      state = assigns(view).chatgpt_sign_in
+      assert state.phase == :waiting
+      assert state.paste == ""
+      assert state.paste_error == nil
+      assert has_element?(view, "#welcome-chatgpt-waiting")
+      # The acknowledged paste resolves through the SAME poll as a loopback
+      # callback.
+      Process.put(:signin_stub_statuses, %{"welcome-flow" => {:ok, %{account: "work"}}})
+      await(fn -> assigns(view).chatgpt_sign_in.phase == :ok end)
+      assert assigns(view).draft["siwc_account"] == "work"
+      refute has_element?(view, "#welcome-chatgpt-waiting")
+      refute has_element?(view, "#welcome-chatgpt-sign-in-error")
+    end
+
+    test "a rejected paste keeps the waiting state with an inline error", %{conn: conn} do
+      {:ok, view, _html} = start(conn)
+      pick(view, "openai_codex")
+      view |> element("#welcome-chatgpt-sign-in") |> render_click()
+      assert_receive {:signin_stub, {:begin, "default"}}, @async_wait_budget_ms
+      Process.put(:signin_stub_submit, {:error, :invalid_callback})
+
+      view
+      |> element("#welcome-chatgpt-sign-in-paste-input")
+      |> render_change(%{"value" => "code=stale"})
+
+      view |> element("#welcome-chatgpt-sign-in-paste-submit") |> render_click()
+
+      assert_receive {:signin_stub, {:submit, "welcome-flow", "code=stale"}},
+                     @async_wait_budget_ms
+
+      state = assigns(view).chatgpt_sign_in
+      # Still WAITING (the attempt is not finished) and the pasted text is kept
+      # so the user can correct it.
+      assert state.phase == :waiting
+      assert state.paste_error == :invalid_callback
+      assert state.reason == nil
+      assert state.paste == "code=stale"
+      assert has_element?(view, "#welcome-chatgpt-waiting")
+      error = view |> element("#welcome-chatgpt-sign-in-paste-error") |> render()
+      assert error =~ "does not belong to this sign-in"
+      refute error =~ "invalid_callback"
+      refute has_element?(view, "#welcome-chatgpt-sign-in-error")
+      # Typing again clears the inline rejection without a flow call.
+      view
+      |> element("#welcome-chatgpt-sign-in-paste-input")
+      |> render_change(%{"value" => "code=second"})
+
+      assert assigns(view).chatgpt_sign_in.paste_error == nil
+      assert assigns(view).chatgpt_sign_in.phase == :waiting
+    end
+
+    test "a step change resets the recorded paste", %{conn: conn} do
+      {:ok, view, _html} = start(conn)
+      pick(view, "openai_codex")
+      view |> element("#welcome-chatgpt-sign-in") |> render_click()
+      assert_receive {:signin_stub, {:begin, "default"}}, @async_wait_budget_ms
+
+      view
+      |> element("#welcome-chatgpt-sign-in-paste-input")
+      |> render_change(%{"value" => "code=abc"})
+
+      assert assigns(view).chatgpt_sign_in.paste == "code=abc"
+      # Leaving the auth step drops the whole attempt, the typed text included.
+      back(view)
+      state = assigns(view).chatgpt_sign_in
+      assert state == ChatGPTSignInState.new()
+      assert state.paste == ""
+      assert state.paste_error == nil
+      assert state.flow_id == nil
+      refute has_element?(view, "#welcome-chatgpt-waiting")
+    end
+
     test "ignores a result for a flow it is not waiting for", %{conn: conn} do
       EvoGit.TestSupport.ChatGPTFixture.seed!("work")
 
@@ -787,7 +908,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       # Messages are handled in mailbox order, so the page rendered here is the
       # state AFTER the stale result was dropped.
-      assert assigns(view).chatgpt_sign_in == %{}
+      assert assigns(view).chatgpt_sign_in == ChatGPTSignInState.new()
       assert assigns(view).draft["siwc_account"] == nil
       refute has_element?(view, ~s(#welcome-chatgpt-account option[value="work"][selected]))
       refute has_element?(view, "#welcome-chatgpt-sign-in-error")
@@ -803,7 +924,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       pick(view, "anthropic")
 
-      assert assigns(view).chatgpt_sign_in == %{}
+      assert assigns(view).chatgpt_sign_in == ChatGPTSignInState.new()
       refute has_element?(view, "#welcome-chatgpt")
     end
 
@@ -1430,7 +1551,9 @@ defmodule EvoDashWeb.WelcomeLiveTest do
             "test_connection",
             "skip_test",
             "chatgpt_sign_in",
-            "chatgpt_sign_in_cancel"
+            "chatgpt_sign_in_cancel",
+            "chatgpt_sign_in_paste",
+            "chatgpt_sign_in_submit"
           ] do
         assert {:noreply, guarded} =
                  EvoDashWeb.WelcomeLive.handle_event(event, %{"provider" => "deepseek"}, socket)

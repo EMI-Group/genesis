@@ -58,7 +58,9 @@ Before `Supervisor.start_link`, `start/2` creates `:evo_dash_active_tasks` throu
 ### `EvoDash.ChatGPTLogin` (`chatgpt_login.ex` + `chatgpt_login/`)
 
 The ONE SIWC loopback implementation shared by the dashboard wizard and the CLI (PKCE/state/callback/exchange/persist exists exactly once).
-`begin(account, opts)` → `{:ok, %{id, url, port}} | {:error, reason}` binds `127.0.0.1` on `:port` (default `0` = ephemeral; the CLI keeps 1455) BEFORE minting the authorization URL, so the redirect URI is always the REAL `http://127.0.0.1:<bound port>/auth/callback`; the attempt (state/nonce/verifier) lives in the listener's own state.
+`begin(account, opts)` → `{:ok, %{id, url, port, mode}} | {:error, reason}` binds `127.0.0.1` on `:port` (default `0` = ephemeral; the CLI keeps 1455) BEFORE minting the authorization URL, so the redirect URI is always the REAL `http://127.0.0.1:<bound port>/auth/callback`; the attempt (state/nonce/verifier) lives in the listener's own state.
+`mode` is `:loopback` while the attempt owns that listener and `:manual` when it could NOT be bound — a bind failure degrades the attempt instead of failing it, the redirect URI then names a concrete port (1455 for an ephemeral request) and only a pasted callback can finish it.
+`submit_callback(id, input)` → `{:ok, %{id: id}} | {:error, :unknown_flow | :already_finished | :invalid_callback | :no_code | :login_unavailable}` hands a pasted redirect URL, query string or bare code to the SAME attempt (the ACK only: the terminal result still arrives through `status/1` / the `:caller` notification) and is the manual completion `EvoDashWeb.SettingsComponents.ChatGPTSignInPanel` and the CLI both use; a rejected paste leaves the attempt pending.
 `status(id)` → `:pending | {:ok, %{account, status}} | {:error, reason}`; `cancel(id)` → `:ok | {:error, :unknown_flow}`; `active_for(account)` → `id | nil`; `pending?/0`.
 Terminal values `{:ok, %{account:, status:}}` (the store's status map, else `%{account_id: account}`) or `{:error, reason}` with `:authorization_denied` | `:authorization_timeout` | `:cancelled` | `:superseded` | `:loopback_listener_unavailable` | `{:flow_crashed, reason}` | any store/exchange reason (`:plan_not_authorized`, `:chatgpt_account_alias_in_use`, …) unchanged; retained `:retention_ms` (default `300_000`), after which `status/1` answers `{:error, :unknown_flow}` (as for an id never issued).
 ONE flow per account: a repeat `begin/2` supersedes the old (terminal `{:error, :superseded}`, its `:caller` notified); a `:caller` gets exactly ONE `{:chatgpt_login, id, result}`.
@@ -70,7 +72,9 @@ The store's install lock owns persistence and cross-process serialization (CLI a
 ### `EvoDash.ChatGPTCLI` (`chatgpt_cli.ex`)
 
 Thin terminal client for `genesis chatgpt <login|status|models|logout|import FILE> [--account NAME] [--port PORT]` (default port 1455): `EvoDash.ChatGPTLogin.begin(account, port: port, caller: self())`, then a bounded wait for `{:chatgpt_login, id, result}` with a `status/1` fallback.
-`login` prints the URL, "Waiting for ChatGPT authorization." and, on success, "Connected ChatGPT account <name>." plus the model list; the usage text and the `ChatGPT: <inspect>` / exit-code-1 error contract are unchanged. `status`/`models`/`logout`/`import` stay store-backed through the same call-time `:store` seam, which makes every command hermetically testable.
+`login` prints the URL, "Waiting for ChatGPT authorization." and, on success, "Connected ChatGPT account <name>." plus the model list; the usage text and the `ChatGPT: <inspect>` / exit-code-1 error contract are unchanged.
+Because a browser on another machine cannot reach this host's loopback listener, `login` ALSO reads stdin: a pasted redirect address (or just the code) goes through `ChatGPTLogin.submit_callback/2` to the SAME attempt, a rejected paste prints a retry hint and restarts the bounded wait, and a `mode: :manual` attempt says up front that only the pasted link can complete it.
+`status`/`models`/`logout`/`import` stay store-backed through the same call-time `:store` seam, which makes every command hermetically testable.
 
 ### `EvoDash.ChatHistory` (`chat_history.ex`)
 

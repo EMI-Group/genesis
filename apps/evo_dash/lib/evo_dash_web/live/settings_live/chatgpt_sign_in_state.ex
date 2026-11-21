@@ -304,6 +304,80 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
     ChatGPT.accounts(Map.get(socket.assigns, :current_node) || node())
   end
 
+  # ── Manual paste fallback (the ONE transition set) ─────────────────────────
+  #
+  # `/settings` (three surfaces) and `/welcome` (the wizard surface) both offer
+  # the "paste the redirect URL" disclosure while a flow waits. These four
+  # functions are the WHOLE transition logic, so no page re-derives how a paste
+  # is recorded or how the flow's answer maps onto the state.
+  @doc """
+  The paste fallback applies to ONE surface: the one that currently OWNS a
+  WAITING flow.
+  Everything else — closed, superseded, idle, error — is not a paste target, so
+  a late payload never resurrects a waiting panel.
+  """
+  @spec paste_target?(term(), term()) :: boolean()
+  def paste_target?(state, surface) do
+    owned_by?(state, surface) and Map.get(state, :phase) == :waiting
+  end
+
+  @doc """
+  Records the text typed into a waiting surface's "paste the redirect URL"
+  input: verbatim in `:paste` (the user may still be typing) with a cleared
+  inline `:paste_error`.
+  Pure and cheap — it never touches the flow. A non-map state answers the idle
+  state holding that text.
+  """
+  @spec put_paste(term(), term()) :: t()
+  def put_paste(state, text) do
+    state = if is_map(state), do: state, else: new()
+    Map.merge(state, %{paste: raw_text(text), paste_error: nil})
+  end
+
+  @doc """
+  Hands the recorded paste back to the OWNING waiting flow — the manual
+  (remote-host) completion of the same attempt.
+  `params` is the surface's payload: the text is `:paste` when the user typed
+  something, else the payload's `value` (a form-style submit carries the input
+  in the payload, a bare button click carries none). A blank text answers the
+  inline, retryable `:no_code` error WITHOUT touching the flow; a state with no
+  flow degrades to the `:error` phase; otherwise
+  `EvoDashWeb.LLMSetup.ChatGPTSignIn.submit/2` acknowledges the paste and the
+  terminal outcome still arrives through the poll.
+  """
+  @spec submit_paste(term(), term()) :: t()
+  def submit_paste(state, params) do
+    state = if is_map(state), do: state, else: new()
+
+    case paste_input(state, params) do
+      "" ->
+        # Nothing to hand the flow: an inline, retryable hint only.
+        Map.merge(state, %{paste: "", paste_error: :no_code})
+
+      text ->
+        case flow_id(state) do
+          nil ->
+            Map.merge(state, %{phase: :error, reason: :sign_in_unavailable, paste_error: nil})
+
+          flow_id ->
+            apply_submit_result(state, ChatGPTSignIn.submit(flow_id, text))
+        end
+    end
+  end
+
+  @doc """
+  Maps ONE flow acknowledgement onto the state:
+    * `:ok` keeps `:waiting` and clears the paste (the poll resolves the flow);
+    * `:invalid_callback` / `:no_code` / `:already_finished` keep `:waiting`
+      with an inline, retryable `:paste_error`, so the waiting panel stays
+      visible and the user can paste again;
+    * any other failure becomes the `:error` phase.
+  """
+  @spec apply_submit_result(term(), term()) :: t()
+  def apply_submit_result(state, result) do
+    if is_map(state), do: apply_paste(state, result), else: new()
+  end
+
   # ── Socket glue (the `/settings` page's handlers) ──────────────────────────
 
   @doc """
@@ -358,7 +432,7 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
 
     state =
       if paste_target?(state, surface) do
-        Map.merge(state, %{paste: raw_text(param_value(params, "value")), paste_error: nil})
+        put_paste(state, param_value(params, "value"))
       else
         state
       end
@@ -486,29 +560,6 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
   end
 
   defp page_sign_in(_socket), do: new()
-
-  # The paste fallback only applies to the surface that currently OWNS a
-  # WAITING flow; everything else (closed, superseded, idle, error) is left
-  # exactly as it is — a late payload never resurrects a waiting panel.
-  defp paste_target?(state, surface) do
-    owned_by?(state, surface) and Map.get(state, :phase) == :waiting
-  end
-
-  defp submit_paste(state, params) do
-    text = paste_input(state, params)
-
-    cond do
-      text == "" ->
-        # Nothing to hand the flow: an inline, retryable hint only.
-        Map.merge(state, %{paste: "", paste_error: :no_code})
-
-      is_nil(flow_id(state)) ->
-        Map.merge(state, %{phase: :error, reason: :sign_in_unavailable, paste_error: nil})
-
-      true ->
-        apply_paste(state, ChatGPTSignIn.submit(flow_id(state), text))
-    end
-  end
 
   defp apply_paste(state, :ok) do
     # The flow ACKED the paste; the poll delivers the terminal result, so the
