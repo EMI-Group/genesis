@@ -80,7 +80,6 @@ MODEL-FACING names differ from the INTERNAL dispatch keys `execute_tool/5` match
 - Keenable is OPT-IN and the only keyless-capable provider: `KEENABLE_API_KEY` present → keyed POST (`X-API-Key`); absent/empty → the public `POST <base_url>/public` with `X-Keenable-Title: Genesis` and no key, so the missing-key failure is gated on `Definitions.search_provider_keyless?/1`.
 - `WebSearch` owns schema/validation/API keys and the `Req` call through the call-time `:web_search_http_runner` seam; `do_web_search/4` is `@doc false` public for execute-level tests.
 - `timeout` is coerced like the shell's and clamped to `[:scheduler, :max_tool_timeout]`; an absent/unusable argument falls back to the provider-config `:timeout`, then `@default_timeout` 30_000, so `receive_timeout` is always an integer.
-- `search_depth` is Tavily/Exa-only (Exa maps advanced→`type: "neural"`, basic→`"keyword"`); Perplexity ignores `max_results`/`search_depth`; Bing/Brave/Keenable ignore `search_depth` and honour `max_results` (Keenable's summary comes from `results[].snippet`).
 
 ### Web Fetch (`web_fetch`)
 - READ-ONLY page reader (ONE GET → Markdown) in both schema lists, never a write tool, not serial, and NOT schema-gated.
