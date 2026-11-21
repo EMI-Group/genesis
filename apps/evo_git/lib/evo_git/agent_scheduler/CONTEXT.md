@@ -34,9 +34,9 @@ One module per file: `model_selection.ex` (schema/dispatch adapter), `session_op
 
 Every review RPC takes `repo_path` FIRST, so one RPC serves the primary and every writable foreign repo; shapes are `EvoGit.Review`'s verbatim (`../../CONTEXT.md`).
 Surface: `get_file_content/3`, `list_commits/2`, `load_review_data/2`, `load_review_metadata/2`, `load_review_metadata_from_shas/3`, `list_commits_from_shas/3`, `load_file_diff/4,5`, `load_commit_files/2`, `load_commit_file_diff/3`, `check_merge/3`, `merge_branch/2,3`, `default_merge_target/1`, `list_branches/1`, `reject_branch/2`, `create_github_pr/4`, `branch_exists?/2`, `list_commit_graph/3`, `list_task_commit_graph/4`.
-`list_commit_graph/3` → `{:ok, %{commits: [commit], refs: %{sha => [ref_name]}}}`; `list_task_commit_graph/4` resolves its base as `opts[:base_sha]` → task/foreign `base_sha` → `Git.merge_base` and adds `truncated: boolean`.
-`set_review_status/2` and `set_review_metadata/3` key on `task_id` ONLY (per-repo outcomes live in dashboard assigns); `get_foreign_repo_commits/1` is NOT an RPC.
-`RemoteNode` mirrors `list_tasks_page/2` (delegating to `TaskRegistry.list_tasks_page/1`, unlike `select_tasks_page/1`), `get_task_lite/2`, `list_task_archives/3`, `get_agent_archive/3`, `list_commit_graph/4`, `list_task_commit_graph/5`, returning the Store's degraded shape on transport failure (`../store/CONTEXT.md`); guards exist only on `send_agent_message/2`, `get_recent_system_samples/0`, `respond_approval/2`.
+`list_commit_graph/3` → `{:ok, %{commits: [commit], refs: %{sha => [ref_name]}}}`; `list_task_commit_graph/4` resolves base as `opts[:base_sha]` → task/foreign `base_sha` → `Git.merge_base`, adding `truncated: boolean`.
+`set_review_status/2` + `set_review_metadata/3` key on `task_id` ONLY (per-repo outcomes live in dashboard assigns); `get_foreign_repo_commits/1` is NOT an RPC.
+`RemoteNode` mirrors the paged/lite/archive/commit-graph reads, returning the Store's degraded shape on transport failure (`../store/CONTEXT.md`); guards exist only on `send_agent_message/2`, `get_recent_system_samples/0`, `respond_approval/2`.
 
 ### Project-mount and workspace RPC surface (VCT)
 
