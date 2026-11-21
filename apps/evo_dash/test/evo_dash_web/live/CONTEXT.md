@@ -229,6 +229,7 @@ Live-page deltas:
   The mounted-only config-dir proof runs sync because async Projects tests own the global `:projects_async_load_runner`.
 - **`agents_live_test.exs` is `async: true`**: it seeds the global `:evogit_sched_meta` / `:evogit_agent_summary` rows under a UNIQUE per-test agent id (`System.unique_integer([:positive]) + 10_000_000`, via `agent_id/0` reading the process dictionary), so no two concurrent modules collide.
 - **`agents_live_test.exs` fixed waits (by design, seam-less)**: THREE `Process.sleep(250)` sites, each followed by `flush_agent_events(view)` to keep a real core write's THROTTLED `{:agents_updated, node}` bulk signal (core `@throttle_ms` ≈ 200 ms) on THIS socket; plus one sampled negative poll with a 40 ms deadline (4× the 10 ms debounce seam) asserting `tasks_reload_pending` never becomes true. The duplicated page load is freed with a shared `:atomics` release latch (`await_latch/2`, 5 s non-raising fallback).
+`await_view_async_loads/1` awaits only ONE-SHOT `EvoDash.TaskSupervisor` loads and skips the pid the page declares long-lived (`:inspector_stream_worker`), because that serial watch worker never exits while a watch is attached and a `:DOWN` await on it could only resolve through the helper's 5 s fallback.
 
 ## Mounted Assistant lifecycle and recovery
 
