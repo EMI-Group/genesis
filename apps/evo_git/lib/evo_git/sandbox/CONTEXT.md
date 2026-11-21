@@ -3,7 +3,7 @@
 ## Intent
 Platform-specific sandboxing for agent-executed commands.
 `EvoGit.Sandbox` (sibling `lib/evo_git/sandbox.ex`) dispatches to the active backend, chosen by `EvoGit.Platform.sandbox_backend/0` from `[sandbox] mode`/`[sandbox] backend` (`../config/CONTEXT.md`): systemd-run first, then bwrap, then no sandbox in `:auto`.
-The target design, P0–P4 plan, non-goals, gotchas and test strategy live in `../../../docs/platform-sandbox.md` — read it before adding a backend or changing the policy spec; this file documents the CURRENT state.
+The target design, P0–P4 plan, non-goals, gotchas and test strategy live in `../../../docs/platform-sandbox.md` — read it before adding a backend or changing the policy spec.
 
 ## Routing Table
 - `../process_manager/` → sibling node (`EvoGit.ProcessManager` + `.Handle`/`.Execution`/`.Control`/`.Stats`): the live-execution registry every backend ATTACHES its real OS handle to and SETTLES with the run's terminal fact; read-only from here.
@@ -65,7 +65,7 @@ All four backends (`Linux`, `Bwrap`, `MacOS`, `None`) implement `@behaviour EvoG
 The dispatcher calls the 7-arity form only when the selected backend exports it (`Code.ensure_loaded?` + `function_exported?`), else the 6-arity form, so every lower arity keeps working unchanged.
 Every backend's `/7` is its `/6` body plus ONE `Helpers.attach_execution/3` call where its OS identity is known, and it SETTLES that execution when the run ends; with `:execution_id` nil (or absent) both are no-ops.
 Tracking is best-effort and observability-only: `attach_execution/3`, `record_exit/2` and `record_timeout/1` never raise, so a missing/restarting manager cannot fail, slow or alter a command.
-`Helpers.run_task_with_partial/9` (the shared non-sandbox/Unix tail) owns a directly-spawned port, resolves the executable with `None.resolve_executable/1` (nil → `:erlang.error(:enoent)`, `System.cmd/3` semantics), publishes the real OS pid via `wait_for_os_pid/2` + `attach_execution/3`, drains/discards `{:data, _}`, and on timeout kills the whole process TREE before closing the port; `run_tracked_command/7` is the same primitive reused by the macOS `sandbox-exec` path.
+`Helpers.run_task_with_partial/9` (the shared non-sandbox/Unix tail) owns a directly-spawned port, resolves the executable with `None.resolve_executable/1` (nil → `:erlang.error(:enoent)`, `System.cmd/3` semantics), publishes the real OS pid via `wait_for_os_pid/2` + `attach_execution/3`, and on timeout kills the whole process TREE before closing the port; `run_tracked_command/7` is the same primitive reused by the macOS `sandbox-exec` path.
 No tracking or settlement is added for internal `rg`/git/skill invocations: threading happens ONLY when a caller supplies `:execution_id`.
 
 ## Foreground Execution Terminal Fact (settlement)
