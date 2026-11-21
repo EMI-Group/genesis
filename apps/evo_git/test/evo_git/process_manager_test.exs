@@ -1,6 +1,9 @@
 defmodule EvoGit.ProcessManagerTest do
   # async-safe: every test starts its OWN named registry (never the app-global
-  # `EvoGit.ProcessManager`), so no app-env seam is touched here. The
+  # `EvoGit.ProcessManager`), so no app-env seam is touched here. The one
+  # production timer a test needs to shrink (the TERM→KILL grace) has a
+  # PER-PROCESS form (`:process_kill_grace_ms` in the calling process
+  # dictionary), so it stays async-safe too.
   # `"processes"` topic itself IS shared — the app-global manager (fed by
   # `EvoGit.BackgroundJobs` in other modules) AND any other module's isolated
   # registry publish the same message shapes.
@@ -293,6 +296,13 @@ defmodule EvoGit.ProcessManagerTest do
   ## POSIX round trip (Linux/macOS only)
 
   test "POSIX round trip: sample, pause, resume, kill", %{srv: srv} do
+    # Per-PROCESS shrink of the TERM→KILL grace (the control layer's own seam,
+    # `EvoGit.ProcessManager.Control.kill_grace_ms/0`): the kill does its OS work
+    # in THIS calling process, so the production 1 500 ms flush window would
+    # dominate the round trip. Nothing BEAM-global is touched (the entry dies
+    # with the test process) and the escalation itself is unchanged.
+    Process.put(:process_kill_grace_ms, 0)
+
     if EvoGit.Platform.windows?() do
       :ok
     else
@@ -707,9 +717,9 @@ end
 defmodule EvoGit.ProcessManagerSeamsTest do
   # sync: these tests mutate the SHARED app-env seams
   # (`:process_finished_retention_ms`, `:process_finished_max_records`,
-  # `:process_stats_enabled`, `:process_manager_sample_interval_ms`) that a
-  # concurrently running module could observe. Every seam is restored in
-  # `on_exit`.
+  # `:process_stats_enabled`, `:process_manager_sample_interval_ms`,
+  # `:process_kill_grace_ms`) that a concurrently running module could observe.
+  # Every seam is restored in `on_exit`.
   use ExUnit.Case, async: false
 
   alias EvoGit.ProcessManager
@@ -717,10 +727,23 @@ defmodule EvoGit.ProcessManagerSeamsTest do
 
   setup do
     name = :"process_manager_seams_#{System.unique_integer([:positive])}"
+
+    # Test-only CALL-TIME seam (`EvoGit.ProcessManager.Control.kill_grace_ms/0`):
+    # every test here kills a real POSIX child, and a production 1500 ms
+    # TERM→KILL flush window would cost more than the behaviour under test. The
+    # escalation itself is unchanged (TERM, grace, KILL, post-KILL verdict).
+    previous_grace_ms = Application.get_env(:evo_git, :process_kill_grace_ms)
+    Application.put_env(:evo_git, :process_kill_grace_ms, 0)
+
     start_supervised!({ProcessManager, name: name})
     :ok = ProcessManager.subscribe()
     flush()
-    on_exit(fn -> restore_seams() end)
+
+    on_exit(fn ->
+      restore_seams()
+      restore_seam(:process_kill_grace_ms, previous_grace_ms)
+    end)
+
     %{srv: [server: name]}
   end
 
@@ -849,6 +872,11 @@ defmodule EvoGit.ProcessManagerSeamsTest do
     Application.delete_env(:evo_git, :process_stats_enabled)
     Application.delete_env(:evo_git, :process_manager_sample_interval_ms)
   end
+
+  # Nil-aware restore for a seam whose ambient value is captured in `setup/0`
+  # (an absent key must stay absent so the production default applies again).
+  defp restore_seam(key, nil), do: Application.delete_env(:evo_git, key)
+  defp restore_seam(key, value), do: Application.put_env(:evo_git, key, value)
 
   defp flush do
     receive do

@@ -20,10 +20,41 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInStateTest do
   # poll interval is 5 ms; `assert_receive` is the wait mechanism (never a
   # fixed sleep).
   @receive_timeout_ms 2_000
-  # The NEGATIVE window that IS the detection mechanism for "no poll started".
-  # 100 ms is far beyond the stub's 5 ms poll interval, so a started poll would
-  # certainly be observed.
-  @no_poll_window_ms 100
+
+  # ── Negative proofs are STRUCTURAL, never a wall-clock window ─────────────
+  #
+  # Every `refute_receive …` below falls into one of two classes, and each
+  # class has a deterministic fence instead of a sleep-length window:
+  #
+  #   * a `:begin` / `:cancel` notification is sent SYNCHRONOUSLY, from THIS
+  #     process, inside the stub call the state module just made. Once the last
+  #     such call has returned, this process' mailbox is COMPLETE: no other
+  #     producer can ever add one, so a 0 ms mailbox scan is conclusive (the
+  #     same "already drained at a synchronous fence" rule the picker suite
+  #     uses). Those refutes are therefore `, 0`.
+  #   * a `:status` notification comes from the ASYNCHRONOUS poll task that
+  #     `ChatGPTSignIn.start_poll/2` starts. "No poll exists" is proven with
+  #     `assert_no_poll/1`: the poll is a `EvoDash.TaskSupervisor` child whose
+  #     `:"$callers"` starts with the process that started it, so an empty
+  #     child set IS the fence — and with no poll alive, no status read can
+  #     ever happen.
+  defp assert_no_poll(owner) do
+    assert poll_children(owner) == [],
+           "a poll was started for #{inspect(owner)} but none was expected"
+  end
+
+  defp poll_children(owner) do
+    EvoDash.TaskSupervisor
+    |> Task.Supervisor.children()
+    |> Enum.filter(&(owner in callers(&1)))
+  end
+
+  defp callers(pid) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dictionary} -> Keyword.get(dictionary, :"$callers", [])
+      _ -> []
+    end
+  end
 
   defp waiting_state(surface, flow_id \\ @flow_id) do
     %{
@@ -117,8 +148,10 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInStateTest do
       assert_receive {:chatgpt_stub, :status, @flow_id}, @receive_timeout_ms
       assert ChatGPTSignInState.waiting?(state)
       assert ChatGPTSignInState.flow_id(state) == @flow_id
-      # Exactly one flow was started (one begin, never a second one).
-      refute_receive {:chatgpt_stub, :begin, _account}, @no_poll_window_ms
+      # Exactly one flow was started (one begin, never a second one). The
+      # `:begin` notification is sent synchronously by the stub inside the
+      # state module's own call, so the mailbox is already complete.
+      refute_receive {:chatgpt_stub, :begin, _account}, 0
     end
 
     test "a flow that cannot start answers the :error phase with its reason and NO poll" do
@@ -133,8 +166,10 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInStateTest do
       refute ChatGPTSignInState.waiting?(state)
 
       assert_receive {:chatgpt_stub, :begin, _account}, @receive_timeout_ms
-      # No poll may be started for a flow that never existed.
-      refute_receive {:chatgpt_stub, :status, _flow_id}, @no_poll_window_ms
+      # No poll may be started for a flow that never existed: with no
+      # supervised poll alive, no status read can ever reach the stub.
+      assert_no_poll(self())
+      refute_receive {:chatgpt_stub, :status, _flow_id}, 0
     end
 
     test "a second flow on ANY surface cancels the still-waiting first one" do
@@ -169,8 +204,9 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInStateTest do
       assert state.phase == :error
       assert state.reason == :sign_in_unavailable
       assert state.flow_id == nil
-      # No flow module call is even attempted without an owner.
-      refute_receive {:chatgpt_stub, :begin, _account}, @no_poll_window_ms
+      # No flow module call is even attempted without an owner (`:begin` is a
+      # synchronous notification, so the mailbox is conclusive here too).
+      refute_receive {:chatgpt_stub, :begin, _account}, 0
     end
   end
 
@@ -271,7 +307,8 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInStateTest do
       state = ChatGPTSignInState.new()
 
       assert ChatGPTSignInState.cancel(state) == state
-      refute_receive {:chatgpt_stub, :cancel, _flow_id}, @no_poll_window_ms
+      # `:cancel` is a synchronous notification from this process.
+      refute_receive {:chatgpt_stub, :cancel, _flow_id}, 0
     end
 
     test "is total for a non-map state" do
@@ -288,7 +325,8 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInStateTest do
       assert ChatGPTSignInState.cancel_owned_by(state, {:status, "profile-1"}) == state
       assert ChatGPTSignInState.cancel_owned_by(state, {:detail, "profile-2"}) == state
       assert ChatGPTSignInState.cancel_owned_by(state, :wizard) == state
-      refute_receive {:chatgpt_stub, :cancel, _flow_id}, @no_poll_window_ms
+      # `:cancel` is a synchronous notification from this process.
+      refute_receive {:chatgpt_stub, :cancel, _flow_id}, 0
 
       # The owning surface's dismissal abandons the flow.
       owned = ChatGPTSignInState.cancel_owned_by(state, {:detail, "profile-1"})

@@ -25,6 +25,17 @@ defmodule EvoGit.Config.WatcherTest do
 
   @backend_available match?({:ok, _}, FileSystem.Backend.backend(nil))
 
+  # Poll cadence while awaiting a refresh: `Cache.get/1` is a `:persistent_term`
+  # lookup, so a tight-ish poll costs nothing and returns as soon as the reload
+  # lands instead of up to one whole tick late.
+  @poll_ms 10
+  # The race-retry cadence and bound (see `poll_depth/6`): the retry spacing is
+  # longer than the watcher's ~150 ms debounce so each re-write's event lets the
+  # coalesced reload fire instead of restarting its timer, and the bound keeps a
+  # load-delayed reload from being starved of that gap forever.
+  @nudge_ms 200
+  @max_nudges 6
+
   if not @backend_available do
     @moduletag skip: "file_system backend unavailable on this host (no native watcher)"
   end
@@ -60,9 +71,9 @@ defmodule EvoGit.Config.WatcherTest do
     generation = Cache.get(dir).generation
 
     File.write!(Path.join(dir, "notes.txt"), "unrelated\n")
-    # Longer than the watcher's ~150 ms debounce, so a (wrong) reload provoked
-    # by the unrelated file would have landed by now.
-    Process.sleep(400)
+    # Comfortably longer than the watcher's ~150 ms debounce, so a (wrong)
+    # reload provoked by the unrelated file would have landed by now.
+    Process.sleep(250)
 
     assert depth(dir) == 3
     assert Cache.get(dir).generation == generation
@@ -80,9 +91,10 @@ defmodule EvoGit.Config.WatcherTest do
     prompt = "You are a test agent."
     """)
 
-    # The agents.toml event runs `EvoGit.CustomAgents.reload/0` in the watcher;
-    # give that handler a bounded window before asserting liveness.
-    Process.sleep(400)
+    # The agents.toml event runs `EvoGit.CustomAgents.reload/0` in the watcher
+    # (no debounce at all); a bounded window past the config debounce before
+    # asserting liveness is still ample.
+    Process.sleep(250)
 
     assert Process.alive?(watcher)
     # An agents.toml edit must never be mistaken for a config change.
@@ -91,10 +103,10 @@ defmodule EvoGit.Config.WatcherTest do
 
   defp await_depth(dir, expected, nudge, timeout \\ 5_000) do
     now = System.monotonic_time(:millisecond)
-    poll_depth(dir, expected, now + timeout, now + div(timeout, 4), nudge)
+    poll_depth(dir, expected, now + timeout, now + @nudge_ms, nudge, @max_nudges)
   end
 
-  defp poll_depth(dir, expected, deadline, nudge_at, nudge) do
+  defp poll_depth(dir, expected, deadline, nudge_at, nudge, nudges_left) do
     now = System.monotonic_time(:millisecond)
 
     cond do
@@ -108,20 +120,29 @@ defmodule EvoGit.Config.WatcherTest do
         """)
 
       true ->
-        # The native watch is armed asynchronously inside the port process, so a
-        # write issued in the first moments can be missed. Re-writing the SAME
-        # bytes is a genuine change event (and a no-op reload otherwise), so ONE
-        # retry recovers the race without weakening the assertion.
-        nudge_at =
-          if now >= nudge_at do
-            nudge.()
-            :infinity
-          else
-            nudge_at
-          end
+        {nudge_at, nudges_left} = maybe_nudge(now, nudge_at, nudge, nudges_left)
+        Process.sleep(@poll_ms)
+        poll_depth(dir, expected, deadline, nudge_at, nudge, nudges_left)
+    end
+  end
 
-        Process.sleep(25)
-        poll_depth(dir, expected, deadline, nudge_at, nudge)
+  # The native watch is armed asynchronously inside the port process, so a write
+  # issued in the first moments can be missed. Re-writing the SAME bytes is a
+  # genuine change event (and a no-op reload otherwise), so the poll re-writes a
+  # few times on a fixed cadence until the event lands — one debounce later
+  # rather than after a quarter of the whole budget. THE ASSERTION IS UNCHANGED:
+  # only the retry cadence moved.
+  defp maybe_nudge(now, nudge_at, nudge, nudges_left) do
+    cond do
+      nudges_left <= 0 ->
+        {:infinity, 0}
+
+      now < nudge_at ->
+        {nudge_at, nudges_left}
+
+      true ->
+        nudge.()
+        {now + @nudge_ms, nudges_left - 1}
     end
   end
 

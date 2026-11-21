@@ -71,15 +71,20 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   @poll_interval_ms_override 5
 
   # The wait budget these tests pin explicitly: small enough that the whole
-  # budget/marker coverage costs ~2 s, large enough that `elapsed` proves WHICH
-  # budget the tool used (the 8000 ms default would be unmistakable).
-  @wait_budget_ms 300
-  @wait_budget_lower_bound_ms 250
+  # budget/marker coverage costs ~1 s, still far enough above the 5 ms poll
+  # cadence (`@poll_interval_ms_override`) that `elapsed` proves WHICH budget the
+  # tool used (the 120 000 ms default would be unmistakable). Every marker
+  # string below is built FROM this constant, never a literal.
+  @wait_budget_ms 120
+  @wait_budget_lower_bound_ms 100
   @wait_elapsed_ceiling_ms 5_000
 
   # The value the default-budget tests install on the call-time seam
-  # `:background_wait_default_ms` (production `wait_default_ms/0` is 8000 ms).
-  @wait_default_seam_ms 350
+  # `:background_wait_default_ms` (production `wait_default_ms/0` is 120 000 ms),
+  # and the shrunk cap the clamp tests install on `:background_wait_max_ms`
+  # (production: the scheduler's tool ceiling minus the dispatch headroom).
+  @wait_default_seam_ms 120
+  @wait_clamp_cap_ms 150
 
   setup do
     registry = :"job_tools_test_#{System.unique_integer([:positive])}"
@@ -691,17 +696,21 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
     end
 
     test "coerces every accepted value shape to the same budget", %{tmp_dir: cwd} do
-      # A float (truncated: 300.0 → exactly 300), a numeric string, a unit string
-      # and the `timeoutMs` harness-alignment alias all land on 300 ms.
+      # A float (truncated to the same integer), a numeric string, a unit string
+      # and the `timeoutMs` harness-alignment alias all land on `@wait_budget_ms`.
       shapes = [
-        {"timeout_ms", 300.0},
-        {"timeout_ms", "300"},
-        {"timeout_ms", "300ms"},
-        {"timeoutMs", 300}
+        {"timeout_ms", @wait_budget_ms * 1.0},
+        {"timeout_ms", Integer.to_string(@wait_budget_ms)},
+        {"timeout_ms", "#{@wait_budget_ms}ms"},
+        {"timeoutMs", @wait_budget_ms}
       ]
 
+      # ONE long-lived job serves every shape: its status never changes, so each
+      # wait below still has to expire on its own budget, while the test pays the
+      # child spawn/reap cost once instead of four times.
+      job = start_job("sleep 30", cwd)
+
       for {key, value} <- shapes do
-        job = start_job("sleep 30", cwd)
         {text, elapsed} = wait_read(job, %{key => value}, cwd)
         label = "#{key} => #{inspect(value)}"
 
@@ -713,9 +722,9 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
         refute text =~ "pass timeout_ms"
         assert job_status(job.id) == :running
-
-        kill_and_reap(job, cwd)
       end
+
+      kill_and_reap(job, cwd)
     end
 
     test "an absent budget uses the default, and only the default gets the hint", %{tmp_dir: cwd} do
@@ -744,7 +753,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
              )
 
       # With the SAME seam installed, an explicit budget stays distinguishable:
-      # 300 ms and no hint.
+      # `@wait_budget_ms` and no hint.
       {explicit, _elapsed} = wait_read(job, %{"timeout" => @wait_budget_ms}, cwd)
 
       assert explicit =~ "[wait: #{@wait_budget_ms} ms budget expired, status: running]"
@@ -796,7 +805,9 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
     test "returns early with the completion marker when the job finishes mid-wait",
          %{tmp_dir: cwd} do
-      job = start_job("sleep 0.3", cwd)
+      # A short-lived child (still ~20 poll intervals long at the 5 ms cadence),
+      # so the terminal transition is observed mid-wait rather than at the budget.
+      job = start_job("sleep 0.1", cwd)
       {text, elapsed} = wait_read(job, %{"timeout_ms" => 5_000}, cwd)
 
       # The 5 s budget was NOT consumed: the wait returned as soon as the job
@@ -857,32 +868,42 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
     end
 
     test "a unit-string budget is honoured and CLAMPED to the derived cap", %{tmp_dir: cwd} do
-      # The cap is shrunk to 500 ms so a 30 minute request is provably clamped in
-      # half a second instead of 30 minutes.
-      put_test_env(:background_wait_max_ms, 500)
+      # The cap is shrunk to `@wait_clamp_cap_ms` so a 30 minute request is
+      # provably clamped in a fraction of a second instead of 30 minutes.
+      put_test_env(:background_wait_max_ms, @wait_clamp_cap_ms)
       put_test_env(:background_poll_interval_ms, 10)
 
-      shapes = [{"timeout", "30m"}, {"timeout_ms", "90s"}, {"timeout_ms", 500.0}]
+      shapes = [
+        {"timeout", "30m"},
+        {"timeout_ms", "90s"},
+        {"timeout_ms", @wait_clamp_cap_ms * 1.0}
+      ]
+
+      # ONE long-lived job serves every shape (its status never changes), so the
+      # child spawn/reap cost is paid once while each wait still proves the cap.
+      job = start_job("sleep 30", cwd)
 
       for {key, value} <- shapes do
-        job = start_job("sleep 30", cwd)
         {text, elapsed} = wait_read(job, %{key => value}, cwd)
         label = "#{key} => #{inspect(value)}"
 
-        assert elapsed >= 400, label
+        assert elapsed >= 100, label
         assert elapsed < 3_000, label
 
-        # The marker reports the CLAMPED budget (500), not the requested one.
-        assert String.ends_with?(text, "[wait: 500 ms budget expired, status: running]"),
-               "#{label} must clamp to the 500 ms cap, got: #{inspect(text)}"
+        # The marker reports the CLAMPED budget, not the requested one.
+        assert String.ends_with?(
+                 text,
+                 "[wait: #{@wait_clamp_cap_ms} ms budget expired, status: running]"
+               ),
+               "#{label} must clamp to the #{@wait_clamp_cap_ms} ms cap, got: #{inspect(text)}"
 
         refute text =~ "pass timeout_ms"
         refute text =~ "1800000"
         refute text =~ "90000"
         assert job_status(job.id) == :running
-
-        kill_and_reap(job, cwd)
       end
+
+      kill_and_reap(job, cwd)
     end
 
     test "the poll backoff curve grows from the base and caps out" do

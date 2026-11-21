@@ -612,7 +612,7 @@ defmodule EvoGit.Agent.Session.DurableRunSessionTest do
 
   # The phase transition is synchronous with the yield handling; the poll only
   # absorbs scheduling latency.
-  defp await_phase(pid, phase, timeout \\ 5_000) do
+  defp await_phase(pid, phase, timeout \\ @wait_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_await_phase(pid, phase, deadline)
   end

@@ -77,6 +77,11 @@ defmodule EvoGit.Agent.Session.InteractiveTest do
   alias EvoGit.AgentScheduler.Store, as: SchedStore
 
   @agent_id_base 9_940_000
+  # The shared host's scheduling swings several-fold under parallel load, so
+  # every awaited event in this module shares this ONE budget. It only absorbs
+  # that latency: each helper returns as soon as it observes the event, so the
+  # happy path never pays it, and an event that never arrives still FAILS.
+  @await_budget_ms 30_000
 
   setup do
     agent_id = @agent_id_base + System.unique_integer([:positive])
@@ -437,7 +442,7 @@ defmodule EvoGit.Agent.Session.InteractiveTest do
          %{agent_id: agent_id, tmp_dir: tmp_dir} do
       # A RUNNING session parked in its seam is put into :cancelling by a
       # graceful cancel (the worker stays alive for the grace budget).
-      {:ok, pid, _ref} =
+      {:ok, pid, ref} =
         start_session(dispatch_ctx(agent_id, tmp_dir, llm_call: blocking_llm_call(self())))
 
       assert_receive {:llm_blocked, worker}, 5_000
@@ -447,8 +452,15 @@ defmodule EvoGit.Agent.Session.InteractiveTest do
       assert Session.start_input(pid, "too late", :queue) == {:error, :finished}
       assert Session.start_input(pid, "too late", :interrupt) == {:error, :finished}
 
+      # Releasing the blocked turn lets the cancel-grace finish it: the session
+      # finalizes that yield and stops `:normal`. The awaited event is the
+      # TERMINATION — `:done` is never observable through `inspect/2` (the
+      # session stops in the same transition that reaches that phase) — so it is
+      # observed as the monitor `:DOWN`, followed by the ONE terminal result the
+      # cancelled run delivers.
       send(worker, :release)
-      assert await_phase(pid, :done, 5_000) == true or not Process.alive?(pid)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5_000
+      assert {:ok, %Result{}} = await_terminal(agent_id, pid)
     end
 
     test "a FINALIZING (or already gone) session refuses input",
@@ -588,12 +600,19 @@ defmodule EvoGit.Agent.Session.InteractiveTest do
   end
 
   # Every scripted turn answers with the next text in the list and yields.
+  # The index is derived from the CONVERSATION itself (how many assistant replies
+  # it already holds) rather than from a process-dictionary counter: each
+  # exchange runs in a FRESH worker process with its own empty dictionary, so a
+  # per-process counter would replay the FIRST text on every resume.
   defp yielding_llm_call(first) do
     texts = [first, "yield two", "yield three"]
 
     fn context, _tools, _params, _agent_id, _retries ->
-      index = Process.get(:interactive_test_turn, 0) |> min(length(texts) - 1)
-      Process.put(:interactive_test_turn, index + 1)
+      index =
+        context.messages
+        |> Enum.count(&(&1.role == :assistant))
+        |> min(length(texts) - 1)
+
       text = Enum.at(texts, index)
       {:implicit_completion, response(context, text), text}
     end
@@ -635,7 +654,7 @@ defmodule EvoGit.Agent.Session.InteractiveTest do
   # Observation helpers — every session message (yield, resumed, result,
   # closed) lands in THIS process' mailbox via the test-owned scheduler sink.
   # ---------------------------------------------------------------------------
-  defp await_terminal(agent_id, session_pid, timeout \\ 5_000) do
+  defp await_terminal(agent_id, session_pid, timeout \\ @await_budget_ms) do
     assert_receive {:agent_session_result, ^agent_id, ^session_pid, result}, timeout
     result
   end
@@ -652,7 +671,7 @@ defmodule EvoGit.Agent.Session.InteractiveTest do
                    "expected NO {:agent_session_closed, ...}, got #{inspect(result)}"
   end
 
-  defp await_phase(pid, phase, timeout \\ 2_000) do
+  defp await_phase(pid, phase, timeout \\ @await_budget_ms) do
     do_await_phase(pid, phase, deadline(timeout))
   end
 
@@ -671,7 +690,7 @@ defmodule EvoGit.Agent.Session.InteractiveTest do
     end
   end
 
-  defp await_yield(pid, text, timeout \\ 2_000) do
+  defp await_yield(pid, text, timeout \\ @await_budget_ms) do
     do_await_yield(pid, text, deadline(timeout))
   end
 

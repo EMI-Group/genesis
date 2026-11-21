@@ -29,10 +29,6 @@ defmodule EvoDashWeb.ProcessesLiveTest do
   # `:sys.get_state` default and 1-2s poll budgets exit on a loaded machine.
   @assigns_timeout_ms 30_000
   @async_wait_budget_ms 30_000
-  # A "did this action spawn a refetch?" window. The loader is spawned inside
-  # the event handler that precedes this assertion, so a refetch's runner call
-  # would already be in flight — this is a bounded mailbox wait, not a sleep.
-  @no_refetch_window_ms 150
 
   # A command comfortably longer than the row's 90-char truncation, so the
   # collapsed cell and the expanded "Full Command" block are distinguishable.
@@ -238,6 +234,21 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     row(view, id)
   end
 
+  # "This action refetched nothing."
+  #
+  # A load paints `executions_loading: true` in the SAME handler that spawns it
+  # and clears it only when the loader's result message lands, and the loader
+  # calls the seam (which sends `{:load_called, ...}` to this test process)
+  # BEFORE reporting that result. So once the page synchronously reports "not
+  # loading", every loader that could ever have been spawned has already sent
+  # its message: a zero-timeout probe is conclusive here and strictly stronger
+  # than a timed window (see test/CONTEXT.md, "The 0 ms rule").
+  defp refute_refetch(view) do
+    wait_until(fn -> assigns(view).executions_loading == false end)
+    :sys.get_state(view.pid, @assigns_timeout_ms)
+    refute_receive {:load_called, _node, _opts}, 0
+  end
+
   defp broadcast(event), do: Phoenix.PubSub.broadcast(EvoGit.PubSub, @processes_topic, event)
 
   defp count_occurrences(text, needle), do: length(String.split(text, needle)) - 1
@@ -358,7 +369,7 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     assert failed =~ "job job_abc"
 
     # A tab switch is a push_patch over already-loaded rows: no RPC.
-    refute_receive {:load_called, _node, _opts}, @no_refetch_window_ms
+    refute_refetch(view)
   end
 
   # ---------------------------------------------------------------------------
@@ -464,7 +475,7 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     refute sampled =~ "12.3%"
     refute sampled =~ "50.0 MB"
 
-    refute_receive {:load_called, _node, _opts}, @no_refetch_window_ms
+    refute_refetch(view)
   end
 
   test "a started process is prepended", %{conn: conn} do
@@ -482,7 +493,7 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     # Newest first: the new row renders ABOVE the previously first row.
     assert index_of(html, "process-row-proc-new") < index_of(html, "process-row-proc-1")
 
-    refute_receive {:load_called, _node, _opts}, @no_refetch_window_ms
+    refute_refetch(view)
   end
 
   test "a status update merges into the row", %{conn: conn} do
@@ -497,7 +508,7 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     # The merge kept the untouched fields.
     assert updated =~ "unit genesis-tool-1.service"
 
-    refute_receive {:load_called, _node, _opts}, @no_refetch_window_ms
+    refute_refetch(view)
   end
 
   test "an exit replaces the row and drops its controls", %{conn: conn} do
@@ -529,7 +540,7 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     refute exited =~ ~s(aria-label="Terminate")
     refute exited =~ ~s(aria-label="Kill")
 
-    refute_receive {:load_called, _node, _opts}, @no_refetch_window_ms
+    refute_refetch(view)
   end
 
   test "a control log entry is appended exactly once", %{conn: conn} do
@@ -563,7 +574,7 @@ defmodule EvoDashWeb.ProcessesLiveTest do
 
     assert count_occurrences(render(view), "operator asked to stop") == 1
 
-    refute_receive {:load_called, _node, _opts}, @no_refetch_window_ms
+    refute_refetch(view)
   end
 
   test "an event from a foreign node is ignored", %{conn: conn} do
@@ -770,10 +781,15 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     assert view |> element("#process-toggle-proc-1") |> render_click() =~ "Full Command"
     assert Map.has_key?(assigns(view).action_busy, "proc-1")
 
-    # A second click on the same row posts nothing.
+    # A second click on the same row posts nothing. `SafeCall.start/3` registers
+    # the supervised child BEFORE the handler returns and the first control is
+    # still parked inside its runner, so the synchronous supervisor read below
+    # is conclusive — no timed window is needed.
+    control_tasks = MapSet.new(Task.Supervisor.children(EvoDash.TaskSupervisor))
+
     view |> element(~s(#process-row-proc-1 button[aria-label="Pause"])) |> render_click()
 
-    refute_receive {:control_called, _node, "proc-1", :pause, _reason}, @no_refetch_window_ms
+    refute Enum.any?(Task.Supervisor.children(EvoDash.TaskSupervisor), &(&1 not in control_tasks))
     assert Map.has_key?(assigns(view).action_busy, "proc-1")
 
     # The outcome flashes and clears the busy marker.
@@ -1027,7 +1043,7 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     refute row(view, "proc-1") =~ "process-row-enter"
     refute row(view, "proc-2") =~ "process-row-enter"
 
-    refute_receive {:load_called, _node, _opts}, @no_refetch_window_ms
+    refute_refetch(view)
   end
 
   test "the enter class clears after the TTL", %{conn: conn} do

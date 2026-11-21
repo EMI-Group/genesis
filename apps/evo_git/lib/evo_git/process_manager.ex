@@ -88,7 +88,10 @@ defmodule EvoGit.ProcessManager do
       (default `200`); live records are never pruned.
     * `:process_stats_probe_timeout_ms` — per-execution `sample_all/1` budget
       (default `2_000`).
-    * `:process_kill_grace_ms` — TERM→KILL escalation grace (default `1_500`).
+    * `:process_kill_grace_ms` — TERM→KILL escalation grace (default `1_500`);
+      the CALLING process's `:process_kill_grace_ms` dictionary entry wins over
+      this key (a per-process, default-inert shrink for an async suite, since
+      the OS kill runs in the caller).
 
   ## Unavailable registry vs wedged registry
 

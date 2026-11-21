@@ -158,10 +158,16 @@ defmodule EvoGit.Agent.Session.InteractiveCloseTest do
       assert_receive {:agent_session_closed, ^agent_id, {:ok, %Result{}}},
                      @async_wait_budget_ms
 
-      refute_receive {:agent_session_result, ^agent_id, ^pid, _other}, @no_reappearance_window_ms
-      refute_receive {:agent_session_closed, ^agent_id, _other}, @no_reappearance_window_ms
-
+      # The `:DOWN` comes FIRST: it is the event that proves the session is dead,
+      # which is what makes the absence window below a "no duplicate" proof
+      # instead of a race against a still-running finalizer.
       assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, @async_wait_budget_ms
+
+      # ONE absence window covering BOTH duplicate notices: a second `%Result{}`
+      # and a second `:agent_session_closed` each still FAIL here, so the
+      # exactly-once contract keeps its full strength without paying two
+      # sequential windows for the same dead session.
+      refute_duplicate_notices(agent_id, pid)
 
       # The manager reclaims the worktree as its reaction to the session's
       # `:DOWN` — a bounded, event-driven wait, never a fixed sleep.
@@ -209,9 +215,10 @@ defmodule EvoGit.Agent.Session.InteractiveCloseTest do
       assert_receive {:agent_session_closed, ^agent_id, {:ok, %Result{result: "three"}}},
                      @async_wait_budget_ms
 
-      refute_receive {:agent_session_result, ^agent_id, ^pid, _other}, @no_reappearance_window_ms
-      refute_receive {:agent_session_closed, ^agent_id, _other}, @no_reappearance_window_ms
+      # The `:DOWN` FIRST (the proof that nothing can be delivered again), then
+      # ONE absence window for BOTH duplicate notices — see `(c)`.
       assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, @async_wait_budget_ms
+      refute_duplicate_notices(agent_id, pid)
 
       # ONE git note on the base commit (git notes is keyed by object, so a
       # second write would OVERWRITE rather than add — its presence is the pin).
@@ -351,7 +358,24 @@ defmodule EvoGit.Agent.Session.InteractiveCloseTest do
     result
   end
 
-  defp await_phase(pid, phase, timeout \\ 5_000) do
+  # ONE bounded absence window for BOTH duplicate notices of a closed session.
+  # The session is already dead (its `:DOWN` was observed), so a second terminal
+  # `%Result{}` or a second `:agent_session_closed` could only come from a
+  # re-finalization regression; either one fails the test exactly as the two
+  # separate `refute_receive` windows did, over ONE shared window.
+  defp refute_duplicate_notices(agent_id, session_pid, timeout \\ @no_reappearance_window_ms) do
+    receive do
+      {:agent_session_result, ^agent_id, ^session_pid, other} ->
+        flunk("expected NO second terminal result, got #{inspect(other)}")
+
+      {:agent_session_closed, ^agent_id, other} ->
+        flunk("expected NO second :agent_session_closed, got #{inspect(other)}")
+    after
+      timeout -> :ok
+    end
+  end
+
+  defp await_phase(pid, phase, timeout \\ @async_wait_budget_ms) do
     wait_until(fn -> match?({:ok, %{phase: ^phase}}, Session.inspect(pid, 200)) end, timeout)
   end
 

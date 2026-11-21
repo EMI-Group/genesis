@@ -20,7 +20,7 @@ defmodule EvoGit.Agent.Session.StartRetryWaitTest do
     3. the wait RELEASES into the exchange — the LLM seam runs, and the very same
        consumer then sees `phase: :running`;
     4. the start-task log line proves the seam VALUE and its linear growth
-       (`1500 ms * retries`).
+       (`@retry_backoff_ms * retries`).
 
   ## Why `async: false` — the forcing BEAM-GLOBALS
 
@@ -28,9 +28,10 @@ defmodule EvoGit.Agent.Session.StartRetryWaitTest do
     session's start task (`EvoGit.Agent.Session.Setup.retry_wait/3`) in ANOTHER
     process, so a concurrently running module would observe this module's value
     and have its own setup timing changed. It also needs a value of its own
-    (1500 ms — short enough to be cheap, long enough to make the `:starting`
-    window reachable by construction) rather than one hoistable into the
-    suite-wide constant block, so it stays a local `on_exit`-restored write.
+    (300 ms — short enough to be cheap, still ~30 poll intervals of `:starting`
+    window, so the observation below is reachable by construction) rather than
+    one hoistable into the suite-wide constant block, so it stays a local
+    `on_exit`-restored write.
   * the GLOBAL `Logger` level: `config/test.exs` pins it to `:warning`, so the
     start task's `:info` retry line is invisible unless a capture lowers the
     primary level (`capture_info_logs/1`, the `completion_logging_test` idiom)
@@ -48,9 +49,11 @@ defmodule EvoGit.Agent.Session.StartRetryWaitTest do
 
   # The retry wait this module arms. `retries: 1` makes the start task sleep
   # `@retry_backoff_ms * 1` ms, which is exactly what the log assertion pins.
-  @retry_backoff_ms 1_500
+  # Short enough to keep the test cheap, long enough that the `:starting` window
+  # spans many `@poll_ms` polls of the snapshot below.
+  @retry_backoff_ms 300
 
-  # Every awaited event is reachable by construction (a 1500 ms wait, then a
+  # Every awaited event is reachable by construction (a 300 ms wait, then a
   # parked exchange worker), so this budget only absorbs the shared host's
   # scheduling latency: an expiry is a real failure and flunks.
   @wait_budget_ms 15_000
@@ -161,7 +164,7 @@ defmodule EvoGit.Agent.Session.StartRetryWaitTest do
       end)
 
     # `delay_ms = retry_backoff_ms() * retries` — pins BOTH the seam value and the
-    # linear per-attempt growth (1500 ms x 1 attempt).
+    # linear per-attempt growth (`@retry_backoff_ms` x 1 attempt).
     assert log =~
              "AgentScheduler: Retrying agent #{agent_id}, attempt 1; " <>
                "waiting #{@retry_backoff_ms}ms before the next attempt"

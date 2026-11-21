@@ -77,6 +77,25 @@ Application.put_env(:evo_dash, :node_aware_reload_debounce_ms, 10)
 
 ExUnit.start(capture_log: true)
 
+# Warm the LLMDB model catalog ONCE, before the parallel phase starts.
+#
+# `LLMDB.Catalog.ensure_loaded!/0` guards its one-time packaged-catalog load
+# with a BEAM-GLOBAL `:global.trans({LLMDB.Catalog, :load}, ...)` lock, and the
+# load itself (deserialize + Zoi-parse of every provider/model entry) takes
+# hundreds of milliseconds to seconds on a loaded host. Whichever process first
+# resolves a catalog model pays that load WHILE HOLDING the lock, so every other
+# model-resolving process in the parallel cohort — a Settings/Welcome render, a
+# Projects model reconciliation, and the app-global `EvoGit.AgentScheduler`,
+# whose `handle_call` computes generation params from the catalog — blocks in
+# `:global.random_sleep` retries for the whole duration. That contention lands
+# as arbitrary multi-second latency in unrelated tests (and, measured, as
+# multi-second `EvoDash.Test.ConfigDir` `on_exit` drains, because a page child
+# left in flight is stuck in a 5 s `GenServer.call` to the wedged scheduler).
+#
+# Loading it here serializes that ONE-TIME cost before any test runs, so the
+# parallel phase only ever reads the already-loaded snapshot.
+LLMDB.Catalog.ensure_loaded!()
+
 ExUnit.after_suite(fn _ ->
   # Remove ONLY this run's unique data dir (from the app env). Never remove the
   # shared parent `System.tmp_dir!()/evogit_test_data`: a concurrently running

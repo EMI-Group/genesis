@@ -343,6 +343,13 @@ defmodule EvoGit.Sandbox.ForegroundTrackingTest do
   describe "foreground execution control (POSIX)" do
     @tag skip: @posix_skip
     test "pause, resume and kill reach the real long-running child" do
+      # Per-PROCESS shrink of the TERM→KILL grace
+      # (`EvoGit.ProcessManager.Control.kill_grace_ms/0`): every kill below runs
+      # in THIS process, and the production 1 500 ms flush window would dominate
+      # the pause/resume/kill proof. A process-dictionary entry is invisible to
+      # concurrently running modules and dies with the test process, so the
+      # escalation itself (TERM, grace, KILL, verdict) stays exactly as shipped.
+      Process.put(:process_kill_grace_ms, 0)
       manager = isolated_manager!()
 
       {:ok, id} =

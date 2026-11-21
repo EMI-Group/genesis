@@ -116,6 +116,12 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
   alias EvoGit.AgentScheduler.Store, as: SchedStore
 
   @agent_id_base 9_940_000
+  # The shared host's scheduling swings several-fold under parallel load, so the
+  # wait that covers REAL session work (a start plus an exchange) shares this
+  # ONE budget. It only absorbs that latency: the poll returns as soon as the
+  # phase is observed, so the happy path never pays it and a phase that never
+  # arrives still fails.
+  @await_budget_ms 30_000
   @objective "persist session objective"
   @report "session persist report"
 
@@ -582,7 +588,7 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
 
   # The phase transition is synchronous with the yield/outcome handling; the poll
   # only absorbs scheduling latency.
-  defp await_phase(pid, phase, timeout \\ 2_000) do
+  defp await_phase(pid, phase, timeout \\ @await_budget_ms) do
     do_await_phase(pid, phase, deadline(timeout))
   end
 

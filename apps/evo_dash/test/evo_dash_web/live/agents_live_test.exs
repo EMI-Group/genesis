@@ -3696,9 +3696,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
     render(view)
   end
 
-  # Drains every EvoDash.TaskSupervisor child spawned by THIS LiveView process
-  # (Task.Supervisor records the spawning process in the child's `$callers`
-  # dictionary entry) and applies its queued result message with one
+  # Drains every one-shot EvoDash.TaskSupervisor LOAD spawned by THIS LiveView
+  # process (Task.Supervisor records the spawning process in the child's
+  # `$callers` dictionary entry) and applies its queued result message with one
   # synchronous round-trip. NodeAware CLEARS `:tasks_reload_pending` when a
   # sidebar-load result is applied, so a result still in flight can land
   # between a fresh broadcast and the `assigns/1` read that expects the flag
@@ -3706,9 +3706,20 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # independent of that timing. A task that already exited delivers its
   # `:DOWN` immediately, and its result message was sent BEFORE it exited, so
   # the following `render/1` always applies it.
+  #
+  # The page's LONG-LIVED children are NOT loads and are excluded: the
+  # selected-agent stream worker (`:inspector_stream_worker`) is a
+  # `EvoDash.TaskSupervisor` child too (spawned from the LiveView process, so
+  # the view pid is in its `$callers`), and it lives as long as the watch. A
+  # `:DOWN` await on it could only ever resolve through the `after` fallback
+  # below, i.e. it made every called drain pay the full 5 s — the one test in
+  # this file that selects an agent and then drains paid exactly that (5.2 s).
   defp await_view_async_loads(view) do
+    long_lived = long_lived_task_pids(view)
+
     view.pid
     |> view_async_task_pids()
+    |> Enum.reject(&(&1 in long_lived))
     |> Enum.map(&Process.monitor/1)
     |> Enum.each(fn ref ->
       receive do
@@ -3720,6 +3731,16 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
     _ = render(view)
     :ok
+  end
+
+  # The pids this page declares as LONG-LIVED `EvoDash.TaskSupervisor` children
+  # (they are monitored for death, never awaited): only the inspector's serial
+  # stream worker is one today.
+  defp long_lived_task_pids(view) do
+    case assigns(view)[:inspector_stream_worker] do
+      pid when is_pid(pid) -> [pid]
+      _ -> []
+    end
   end
 
   defp view_async_task_pids(view_pid) do

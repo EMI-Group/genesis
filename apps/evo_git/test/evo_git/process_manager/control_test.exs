@@ -69,6 +69,31 @@ defmodule EvoGit.ProcessManager.ControlTest do
     end
   end
 
+  describe "kill_grace_ms/0" do
+    test "the per-process override wins, is read at CALL time and falls through when invalid" do
+      Process.delete(:process_kill_grace_ms)
+      ambient = Control.kill_grace_ms()
+      assert is_integer(ambient) and ambient >= 0
+
+      # A process-dictionary entry is the async-safe shrink: it belongs to THIS
+      # process only and dies with it, so no BEAM-global state is touched.
+      Process.put(:process_kill_grace_ms, 0)
+      assert Control.kill_grace_ms() == 0
+
+      Process.put(:process_kill_grace_ms, 25)
+      assert Control.kill_grace_ms() == 25
+
+      # An unusable value is not "no grace": it falls through to the ambient
+      # (app env, else the production default), never to a fabricated 0.
+      Process.put(:process_kill_grace_ms, :bogus)
+      assert Control.kill_grace_ms() == ambient
+      Process.put(:process_kill_grace_ms, -5)
+      assert Control.kill_grace_ms() == ambient
+      Process.delete(:process_kill_grace_ms)
+      assert Control.kill_grace_ms() == ambient
+    end
+  end
+
   describe "POSIX backend signal names are authoritative" do
     test "an unnormalized atom is refused instead of being re-normalized" do
       # Normalization belongs to `Control.signal/2`; the backend must never see

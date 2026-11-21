@@ -1,8 +1,10 @@
 defmodule EvoGit.TaskControl.MessagingTest do
-  # `async: false`: drives the app-global `EvoGit.AgentScheduler` (the
-  # `:send_user_message` GenServer call) and writes the app-owned
-  # `:evogit_sched_meta` / `:evogit_agent_summary` ETS tables.
-  use EvoGit.TaskRegistryCase, async: false
+  # `async: true`: every test drives only per-test-unique rows — its own isolated
+  # store/registry (from `EvoGit.TaskRegistryCase`), its own `task-*-<unique>` task
+  # ids and its own `10_000_000+` agent ids — so the app-global
+  # `EvoGit.AgentScheduler` inbox append and the `:evogit_sched_meta` /
+  # `:evogit_agent_summary` rows it writes are read back by KEY only.
+  use EvoGit.TaskRegistryCase, async: true
 
   alias EvoGit.AgentScheduler.{AgentState, ControlPlane, SchedMeta, Store}
   alias EvoGit.AgentSpec

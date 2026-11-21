@@ -194,6 +194,108 @@ defmodule EvoDash.Test.ConfigDirTest do
       assert :ok = ConfigDir.await_supervised_writers(test_pid)
       assert Process.alive?(foreign_writer)
     end
+
+    test "the DESTINATION drain waits for a writer whose chain never names the registrar" do
+      test_pid = self()
+      # `dir` is about to be removed by `on_exit`, whose REGISTRAR is this test
+      # pid — the shape a per-test `isolate!/1` produces.
+      dir = ConfigDir.isolate!("config_dir_dest_drain")
+      writer_file = Path.join(Path.join(dir, "genesis"), "remote_connections.toml")
+
+      # The module-level (`setup_all`) shape: the child's `:"$callers"` chain is
+      # `[helper_pid]` — the registrar appears NOWHERE in it. The helper ACTIVATES
+      # the directory (as a `setup` block does for a `setup_all`-created one) and
+      # then EXITS, so by drain time its pid is dead and its dictionary (which
+      # held the override) is gone. Only the on-disk owner marker can still tie
+      # this writer to `dir` — exactly the case that used to make a module-level
+      # directory merely "backstopped".
+      helper =
+        spawn(fn ->
+          ConfigDir.activate(dir)
+
+          {:ok, pid} =
+            Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+              Process.sleep(@writer_delay_ms)
+              File.mkdir_p!(Path.dirname(writer_file))
+              File.write!(writer_file, "")
+              send(test_pid, {:dest_late_write, self()})
+            end)
+
+          send(test_pid, {:dest_writer, pid})
+        end)
+
+      ref = Process.monitor(helper)
+      assert_receive {:dest_writer, dest_writer}, 5_000
+      on_exit(fn -> Task.Supervisor.terminate_child(EvoDash.TaskSupervisor, dest_writer) end)
+
+      # Prove the dead-owner case before draining: the activator is DOWN, so
+      # neither `registrar in callers` nor a dictionary read of a caller can
+      # match.
+      assert_receive {:DOWN, ^ref, :process, ^helper, _reason}, 5_000
+      assert Process.alive?(dest_writer)
+
+      # The registrar-based predicate alone does NOT see it.
+      assert :ok = ConfigDir.await_supervised_writers(test_pid)
+      assert Process.alive?(dest_writer)
+
+      # The destination predicate (owner marker) does, and it is a WAIT, not a
+      # pass.
+      started = System.monotonic_time(:millisecond)
+      assert :ok = ConfigDir.await_dir_writers(test_pid, dir)
+      assert System.monotonic_time(:millisecond) - started >= @writer_delay_ms - 10
+      assert_received {:dest_late_write, ^dest_writer}
+      refute Process.alive?(dest_writer)
+      assert File.exists?(writer_file)
+
+      # With every writer drained, the removal succeeds and STAYS removed (the
+      # owner markers live inside `dir`, so they go with it).
+      assert {:ok, _removed} = File.rm_rf(dir)
+      refute File.exists?(dir)
+    end
+  end
+
+  describe "owner registry (what makes a module-level directory drainable)" do
+    test "activate/1 records the pid on disk; isolate!/1 stays file-I/O free" do
+      # Module-level shape: the directory is created for `setup_all`, so its
+      # cleanup registrar appears in no child's `:"$callers"` chain.
+      module_dir = ConfigDir.isolate_module!("config_dir_owner_module")
+      owners_dir = Path.join(module_dir, ".evodash-owners")
+
+      assert ConfigDir.activate(module_dir) == module_dir
+      assert ConfigDir.resolve() == module_dir, "activate/1 must keep the override"
+      assert [owner] = File.ls!(owners_dir)
+
+      # The marker names the ACTIVATING pid in a form that survives the process
+      # (`:erlang.list_to_pid/1` never needs it to be alive) — a dead pid's
+      # dictionary, by contrast, cannot be read any more.
+      assert owner =~ ~r/\A\d+\.\d+\.\d+\z/
+      assert :erlang.list_to_pid(String.to_charlist("<#{owner}>")) == self()
+
+      # The per-test path is the HOT path: it must stay free of file I/O, and it
+      # needs no marker because its registrar is the test pid itself.
+      per_test_dir = ConfigDir.isolate!("config_dir_owner_per_test")
+      assert ConfigDir.resolve() == per_test_dir
+      refute File.exists?(Path.join(per_test_dir, ".evodash-owners"))
+    end
+  end
+
+  describe "directory naming (unique across BEAMs, not merely within one)" do
+    test "the name carries the OS pid and a random component" do
+      dir = ConfigDir.isolate!("config_dir_unique")
+      basename = Path.basename(dir)
+
+      # `System.unique_integer/1` alone restarts at the same offset in EVERY VM,
+      # so a `<prefix>-<int>` name is reproduced by a second `mix test` run that
+      # shares this host's TMPDIR — and that run's cleanup would delete THIS
+      # run's live directory (`File.Error` on config.toml). The OS pid separates
+      # concurrent VMs and the random suffix also covers OS-pid reuse and a stale
+      # directory from an interrupted run.
+      assert basename =~ ~r/\Aconfig_dir_unique-#{System.pid()}-\d+-[0-9a-f]+\z/
+
+      # Two directories created back to back never share a name (asserted on the
+      # full path, so a lost pid/random component fails this too).
+      assert ConfigDir.isolate!("config_dir_unique") != dir
+    end
   end
 end
 

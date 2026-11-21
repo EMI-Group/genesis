@@ -116,6 +116,7 @@ Result messages: `{:review_archive_loaded, task_id, node, seq, offset, result}` 
 - Module templates (PER module, never shared): each suite module's `setup_all` pre-builds ONE repo per required `{primary, secondary}` shape via `build_templates!/1` → `build_repo_with_task_branch!/3` and passes it into each test through `Process.put(:review_templates, templates)` in a `setup` block.
 - Why the process dictionary: the helpers live on a module shared by eight suites, so they must not key fixtures on `__MODULE__`; `review_template!/2` reads `Process.get(:review_templates)` and every `on_exit` closure captures the map instead of reading it.
 - Per-test copy: `create_review_task_with_repo!/3` and `create_multi_repo_review_task!/2` call `copy_review_template!/3`, which `File.cp_r!/2`s the template into a unique `System.tmp_dir!()` dir; the copy is a plain recursive BYTE copy — never `cp -l`/hard links, never `git clone --shared` — so a test may freely mutate its copy.
+- Template shape: `build_repo_with_task_branch!/3` runs `git init --template=` (an EMPTY template dir), so a template is 2 files instead of the 34 `git init` seeds (sample hooks, `description`, `info/`) — a byte copy pays per FILE, and this halved the per-test copy; nothing in the suite reads a hook, `info/exclude` or `description`.
 - `review_template!/2` RAISES when asked for a pair this module's `setup_all` did not pre-build — add the pair to that module's `build_templates!/1` list.
 
 ## Notes for Agents — async mount loads & exit-safety seams
@@ -229,6 +230,7 @@ Live-page deltas:
   The mounted-only config-dir proof runs sync because async Projects tests own the global `:projects_async_load_runner`.
 - **`agents_live_test.exs` is `async: true`**: it seeds the global `:evogit_sched_meta` / `:evogit_agent_summary` rows under a UNIQUE per-test agent id (`System.unique_integer([:positive]) + 10_000_000`, via `agent_id/0` reading the process dictionary), so no two concurrent modules collide.
 - **`agents_live_test.exs` fixed waits (by design, seam-less)**: THREE `Process.sleep(250)` sites, each followed by `flush_agent_events(view)` to keep a real core write's THROTTLED `{:agents_updated, node}` bulk signal (core `@throttle_ms` ≈ 200 ms) on THIS socket; plus one sampled negative poll with a 40 ms deadline (4× the 10 ms debounce seam) asserting `tasks_reload_pending` never becomes true. The duplicated page load is freed with a shared `:atomics` release latch (`await_latch/2`, 5 s non-raising fallback).
+`await_view_async_loads/1` awaits only ONE-SHOT `EvoDash.TaskSupervisor` loads and skips the pid the page declares long-lived (`:inspector_stream_worker`), because that serial watch worker never exits while a watch is attached and a `:DOWN` await on it could only resolve through the helper's 5 s fallback.
 
 ## Mounted Assistant lifecycle and recovery
 

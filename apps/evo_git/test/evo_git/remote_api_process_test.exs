@@ -130,6 +130,13 @@ defmodule EvoGit.RemoteAPIProcessTest do
 
     @tag skip: @posix_skip
     test "list/get/stats/pause/resume read and mutate one tracked execution" do
+      # Per-PROCESS shrink of the TERM→KILL grace
+      # (`EvoGit.ProcessManager.Control.kill_grace_ms/0`): the RPC delegates to
+      # the manager, which does its OS work in THIS calling process, so the
+      # production 1 500 ms flush window would dominate the round trip. A
+      # process-dictionary entry touches no BEAM-global state and dies with the
+      # test process; the escalation itself is unchanged.
+      Process.put(:process_kill_grace_ms, 0)
       isolated_manager!()
       {port, os_pid} = spawn_sleep!()
       on_exit(fn -> kill_child(os_pid) end)

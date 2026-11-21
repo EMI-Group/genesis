@@ -496,6 +496,48 @@ defmodule EvoDashWeb.SystemLiveTest.Helpers do
     live(conn, "/system?node=" <> id)
   end
 
+  # --- Check-watchdog leak guard --------------------------------------------
+  # `EvoDashWeb.SystemLive.UpdateCard.spawn_check_watchdog/1` starts the
+  # never-wedge check watchdog (plus, when a runner seam is injected, the
+  # parallel timeout watchdog) as children of the SHARED
+  # `EvoDash.TaskSupervisor`, which never stops children per test. A watchdog
+  # therefore outlived the test that spawned it and, when it woke, cast
+  # `check_failed("timeout")` into the PROCESS-GLOBAL `EvoDash.UpdateStatus`
+  # hub: a LATER test that parks the hub at `:checking` (the mount-triggered
+  # check) could have its card flipped to "Check failed" between its own
+  # `await_update_phase(view, :checking)` and its `render/1` — the intermittent
+  # `assert html =~ "Checking for updates…"` failure. The seed-186 order makes
+  # the window explicit: "mounting the page with an idle hub triggers a check
+  # automatically" leaks a 500 ms watchdog, "Check now flow" runs, then "every
+  # update state renders in the card" parks `:checking` ~50 ms in — safely
+  # inside 500 ms unloaded, still parked past it on a loaded host.
+  # `terminate_owned_tasks!/1` stops every child THIS test owns, owner-aware
+  # through the OTP `:"$callers"` chain LiveViewTest threads from the test pid
+  # into the view and on into the tasks the view spawns (the same rule the
+  # mount funnels use). `Task.Supervisor.terminate_child/2` is synchronous, so
+  # nothing from one test can mutate the hub during the next.
+  def owned_task_pids(owner) do
+    for pid <- Task.Supervisor.children(EvoDash.TaskSupervisor),
+        owned_task?(pid, owner),
+        do: pid
+  end
+
+  defp owned_task?(pid, owner) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dict} -> owner in List.wrap(:proplists.get_value(:"$callers", dict, []))
+      # The child exited between `children/1` and this read: nothing to own.
+      nil -> false
+    end
+  end
+
+  # Terminates every `EvoDash.TaskSupervisor` child owned by `owner` and returns
+  # the pids it found (a child that had already finished is simply absent).
+  def terminate_owned_tasks!(owner) do
+    pids = owned_task_pids(owner)
+    for pid <- pids, do: Task.Supervisor.terminate_child(EvoDash.TaskSupervisor, pid)
+    pids
+  end
+
   # Resets the shared hub and synchronizes: the reset is a cast, so the
   # following `phase()` call (same process) is guaranteed to observe it.
   def reset_hub_to_idle do
@@ -1624,6 +1666,16 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       Enum.each(originals, fn {key, original} -> restore_env_value(key, original) end)
     end)
 
+    # Nothing this test spawned on the SHARED `EvoDash.TaskSupervisor` may
+    # outlive it: a leftover check watchdog would cast a stale
+    # `check_failed("timeout")` into the process-global `EvoDash.UpdateStatus`
+    # hub during a LATER test (see `terminate_owned_tasks!/1`). Registered
+    # AFTER the env restore, so it runs FIRST (ExUnit runs `on_exit` callbacks
+    # LIFO) and the strays are gone before the seams are restored. `on_exit`
+    # runs in another process, so the test pid is captured here.
+    spawned_by = self()
+    on_exit(fn -> terminate_owned_tasks!(spawned_by) end)
+
     :ok
   end
 
@@ -2084,6 +2136,45 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
     #     (the hub broadcast is assigned via the `{:update_status, state}`
     #     handle_info).
     #   * `await_view_assign/3` — polls any socket assign (modal flags).
+
+    # Regression pin for the intermittent `assert html =~ "Checking for
+    # updates…"` failure in the next test. The mount-triggered check's
+    # never-wedge watchdog lives on the SHARED `EvoDash.TaskSupervisor`, so
+    # before the `setup` teardown above it outlived its test and, when it woke,
+    # failed whichever check was in flight on the process-global hub — the next
+    # test's parked `:checking` state, whose card then rendered "Check failed".
+    # Nothing in the assertions below is relaxed: the check is still parked at
+    # `:checking` and the card still has to render it, exactly as before.
+    test "a check watchdog cannot outlive the test that spawned it", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+      # Same seams as the "every update state renders in the card" mount: a
+      # no-op runner parks the hub at `:checking`, and the huge timeout keeps
+      # THIS test's own watchdog asleep.
+      Application.put_env(:evo_dash, :update_check_runner, fn _ -> :ok end)
+      Application.put_env(:evo_dash, :update_check_timeout, 2_000_000)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_update_phase(view, :checking)
+
+      # Non-vacuous: the mount-triggered check really did spawn hub-mutating
+      # children that THIS test owns on the shared supervisor …
+      owned = owned_task_pids(self())
+      assert owned != []
+
+      # … and the teardown `setup` registers for every test (the identical
+      # call) leaves none of them alive, so no stray can fail a LATER test's
+      # in-flight check.
+      terminate_owned_tasks!(self())
+      assert owned_task_pids(self()) == []
+      refute Enum.any?(owned, &Process.alive?/1)
+
+      # The hub and the card are untouched: the check is still running, and the
+      # card still has to say so.
+      assert EvoDash.UpdateStatus.phase() == :checking
+      assert assigns(view).update_status.phase == :checking
+      assert render(view) =~ "Checking for updates…"
+    end
 
     test "every update state renders in the card", %{conn: conn} do
       reset_hub_to_idle()
