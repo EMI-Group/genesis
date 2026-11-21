@@ -98,6 +98,11 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
   # `EvoDashWeb.NodeAwareTest` module below.
   use ExUnit.Case, async: true
 
+  # Deadline for `await_sidebar_result/0`'s structural witness (see below). It
+  # is a best-effort bound on an abnormal stall, never a race window: the
+  # assertion that follows reads the mailbox with a 0 ms window.
+  @sidebar_await_budget_ms 30_000
+
   alias EvoDashWeb.LiveHooks.NodeAware
   alias EvoGit.TaskInfo
 
@@ -162,6 +167,59 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
   # exact for the rows this test owns while the run-wide store also carries
   # other async suites' rows.
   defp mine(summaries, ids) when is_list(ids), do: Enum.filter(summaries, &(&1.id in ids))
+
+  # ── async sidebar-load barrier ─────────────────────────────────────────────
+  # Every sidebar result (`{:node_aware_active_tasks, ...}` /
+  # `{:node_aware_remote_context, ...}`) is sent by the supervised loader that
+  # `NodeAware.request_tasks_load/1` starts on `EvoDash.TaskSupervisor`,
+  # immediately BEFORE that child exits. The child's EXIT is therefore the
+  # structural witness that the result is already in this process' mailbox
+  # (per-sender ordering guarantees the send precedes the death), so a result
+  # assertion can read it with a 0 ms window instead of racing a fixed budget:
+  # the process tree is the fact, not a timing assumption about a shared host
+  # (the same idiom `tasks_live_test`'s `await_view_async_loads/2` uses).
+  #
+  # The child is identified the way `Task.Supervisor.start_child/2` records it:
+  # the spawning process' whole caller chain lives in the CHILD's `:"$callers"`
+  # dictionary entry, so only loads spawned through THIS test process are
+  # awaited — a leftover task from another test is never waited on. A child
+  # that already exited leaves nothing to match (its message is already in the
+  # mailbox) and `Process.monitor/1` of a dead pid still delivers `:DOWN`
+  # (:noproc), so the fast path costs one `Task.Supervisor.children/1` call.
+  #
+  # Bounded and SILENT on expiry: on a host stalled past the budget the
+  # caller's own `assert_receive ..., 0` fails loudly with the real mailbox,
+  # exactly as the previous fixed window did — but the stall is then attributed
+  # to the assertion that observed it instead of masquerading as a lost
+  # message.
+  def await_sidebar_result(budget_ms \\ @sidebar_await_budget_ms) do
+    deadline = System.monotonic_time(:millisecond) + budget_ms
+    test_pid = self()
+
+    monitors =
+      EvoDash.TaskSupervisor
+      |> Task.Supervisor.children()
+      |> Enum.filter(fn pid -> is_pid(pid) and test_pid in task_callers(pid) end)
+      |> Enum.map(&Process.monitor/1)
+
+    Enum.each(monitors, fn ref ->
+      receive do
+        {:DOWN, ^ref, :process, _pid, _reason} -> :ok
+      after
+        max(deadline - System.monotonic_time(:millisecond), 0) -> :ok
+      end
+    end)
+
+    :ok
+  end
+
+  # A spawned task's `:"$callers"` chain (empty for a dead or foreign process).
+  defp task_callers(pid) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dict} -> Keyword.get(dict, :"$callers", [])
+      _unavailable -> []
+    end
+  end
 
   describe "handle_connection_status/2 — recomputes :remote_status" do
     # A fake connection manager is registered in the shared
@@ -260,8 +318,10 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
       assert result.assigns[:pending_tasks] == []
       assert result.assigns[:tasks_load_seq] == 1
 
+      await_sidebar_result()
+
       assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
-                     1000
+                     0
 
       # Each fixture lands in exactly ONE bucket — the correct one.
       assert [%{status: :running}] = mine(running, [running_task.id])
@@ -282,8 +342,10 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
 
       NodeAware.load_running_and_pending_tasks(sock)
 
+      await_sidebar_result()
+
       assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
-                     1000
+                     0
 
       ids_in_running = running |> mine(ids) |> Enum.map(& &1.id) |> Enum.sort()
       assert ids_in_running == Enum.sort(ids)
@@ -301,8 +363,10 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
 
       NodeAware.load_running_and_pending_tasks(sock)
 
+      await_sidebar_result()
+
       assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
-                     1000
+                     0
 
       assert [%{status: :cancelling}] = mine(running, [c1.id])
       assert mine(pending, [c1.id]) == []
@@ -323,8 +387,10 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
 
       NodeAware.load_running_and_pending_tasks(sock)
 
+      await_sidebar_result()
+
       assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
-                     1000
+                     0
 
       assert [%{status: :pausing}] = mine(running, [pa.id])
       assert mine(pending, [pa.id]) == []
@@ -341,8 +407,10 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
 
       NodeAware.load_running_and_pending_tasks(sock)
 
+      await_sidebar_result()
+
       assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
-                     1000
+                     0
 
       assert [%{status: :paused}] = mine(running, [pz.id])
       assert mine(pending, [pz.id]) == []
@@ -395,9 +463,11 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
 
       NodeAware.load_running_and_pending_tasks(sock)
 
+      await_sidebar_result()
+
       assert_receive {:node_aware_active_tasks, 1, "gpu-server", ^remote_node,
                       {:ok, {running, pending}}},
-                     1000
+                     0
 
       # No tasks from the local registry should leak through to the remote view.
       assert running == []
@@ -413,9 +483,11 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
 
       NodeAware.load_running_and_pending_tasks(sock)
 
+      await_sidebar_result()
+
       assert_receive {:node_aware_active_tasks, 1, nil, ^current_node,
                       {:ok, {running, _pending}}},
-                     1000
+                     0
 
       assert [%{status: :running}] = mine(running, [should_show.id])
     end
@@ -434,9 +506,11 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
 
       NodeAware.load_running_and_pending_tasks(sock)
 
+      await_sidebar_result()
+
       assert_receive {:node_aware_active_tasks, 1, "gpu-server", ^current_node,
                       {:ok, {running, pending}}},
-                     1000
+                     0
 
       assert running == []
       assert pending == []
@@ -464,8 +538,10 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
       assert result.assigns[:tasks_node_loaded] == {nil, current_node}
 
       # ...and the sidebar load arrives asynchronously.
+      await_sidebar_result()
+
       assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
-                     1000
+                     0
 
       assert [%{status: :running}] = mine(running, [running_1.id])
       assert mine(pending, [running_1.id]) == []
@@ -479,9 +555,11 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
 
       NodeAware.assign_node(sock, %{"node" => "local"})
 
+      await_sidebar_result()
+
       assert_receive {:node_aware_active_tasks, 1, nil, ^current_node,
                       {:ok, {running, _pending}}},
-                     1000
+                     0
 
       assert [%{status: :running}] = mine(running, [running_2.id])
     end
@@ -496,9 +574,11 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
 
       # An unknown node param resolves to :local (target not found), so the
       # local task shows up.
+      await_sidebar_result()
+
       assert_receive {:node_aware_active_tasks, 1, nil, ^current_node,
                       {:ok, {running, _pending}}},
-                     1000
+                     0
 
       assert [%{status: :running}] = mine(running, [local_only.id])
     end
@@ -526,8 +606,10 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
       assert result.assigns[:running_tasks] == []
       assert result.assigns[:pending_tasks] == []
 
+      await_sidebar_result()
+
       assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
-                     1000
+                     0
 
       assert [%{status: :running}] = mine(running, [running_task.id])
       assert [%{status: :completed}] = mine(pending, [reviewable.id])
@@ -599,9 +681,11 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
       result = NodeAware.assign_node(sock, %{})
       assert result.assigns[:tasks_node_loaded] == {nil, current_node}
 
+      await_sidebar_result()
+
       assert_receive {:node_aware_active_tasks, 1, nil, ^current_node,
                       {:ok, {running, _pending}}},
-                     1000
+                     0
 
       assert [%{status: :running}] = mine(running, [running_1.id])
 
@@ -718,6 +802,14 @@ defmodule EvoDashWeb.NodeAwareTest do
   # `assert_receive`.
   use ExUnit.Case, async: false
 
+  # Same structural witness as the `async: true` module above (ONE
+  # implementation, so the two suites cannot drift): await the supervised
+  # sidebar loader's EXIT, then read the mailbox with a 0 ms window.
+  @sidebar_await_budget_ms 30_000
+
+  defp await_sidebar_result(budget_ms \\ @sidebar_await_budget_ms),
+    do: EvoDashWeb.NodeAwareRunWideTest.await_sidebar_result(budget_ms)
+
   alias EvoDashWeb.LiveHooks.NodeAware
 
   setup do
@@ -789,7 +881,8 @@ defmodule EvoDashWeb.NodeAwareTest do
   # result. Tests that only care about the sidebar still call this so the
   # message never lingers in the test process's mailbox.
   defp assert_remote_context_loaded do
-    assert_receive {:node_aware_remote_context, 1, _node_id, _node, result}, 1000
+    await_sidebar_result()
+    assert_receive {:node_aware_remote_context, 1, _node_id, _node, result}, 0
     result
   end
 
@@ -1155,8 +1248,10 @@ defmodule EvoDashWeb.NodeAwareTest do
 
       local_node = node()
 
+      await_sidebar_result()
+
       assert_receive {:node_aware_active_tasks, 1, nil, ^local_node, {:ok, {running, pending}}},
-                     1000
+                     0
 
       assert running == []
       assert pending == []
@@ -1186,8 +1281,10 @@ defmodule EvoDashWeb.NodeAwareTest do
 
       local_node = node()
 
+      await_sidebar_result()
+
       assert_receive {:node_aware_active_tasks, 1, nil, ^local_node, {:ok, {running, pending}}},
-                     1000
+                     0
 
       assert running == []
       assert pending == []
@@ -1218,7 +1315,8 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert {:ok, {_targets, _statuses}} = assert_remote_context_loaded()
 
       local_node = node()
-      assert_receive {:node_aware_active_tasks, 1, nil, ^local_node, {:ok, _}}, 1000
+      await_sidebar_result()
+      assert_receive {:node_aware_active_tasks, 1, nil, ^local_node, {:ok, _}}, 0
     end
 
     test "WARM REMOTE hub on a connected REMOTE mount does NOT fetch (assign_node owns remote fetches)" do
@@ -1535,7 +1633,8 @@ defmodule EvoDashWeb.NodeAwareTest do
       loaded = NodeAware.load_running_and_pending_tasks(sock)
       assert loaded.assigns[:tasks_load_seq] == 1
 
-      assert_receive {:node_aware_active_tasks, 1, nil, _node, {:error, {:exit, _reason}}}, 1000
+      await_sidebar_result()
+      assert_receive {:node_aware_active_tasks, 1, nil, _node, {:error, {:exit, _reason}}}, 0
 
       # Restore the singleton name immediately — nothing else needs it gone.
       restore_registry.()
@@ -1647,9 +1746,11 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert result.assigns[:tasks_node_loaded] == {"target-2", remote_node}
 
       # ...and the cold-context fetch arrives for the REMOTE context.
+      await_sidebar_result()
+
       assert_receive {:node_aware_active_tasks, 1, "target-2", ^remote_node,
                       {:ok, {running, pending}}},
-                     1000
+                     0
 
       # The RPC to the (nonexistent) remote node fails fast → empty lists.
       assert running == []
