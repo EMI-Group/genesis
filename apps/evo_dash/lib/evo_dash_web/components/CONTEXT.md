@@ -91,10 +91,10 @@ Below `lg` main content uses `pt-16` (desktop `lg:pt-4`); the fixed configuratio
 
 ### Shell motion (disclosures, transitions, palette, flash)
 
-Motion composes the shared `assets/css/motion.css` foundation (`--motion-*` tokens, `motion-fade-*`/`motion-exit-*` keyframes, global reduced-motion backstop) — no new durations/easings locally.
-- The Tools/Conversations disclosures are `details.motion-disclosure` + `phx-hook="DisclosureMotion"` (open AND close animate) with stable ids (`workbench-tools`, `workbench-conversations`) because LiveView refuses a `phx-hook` without one; their `<summary>`s keep `.workbench-row` + a rotating `hero-chevron-right` caret and stay visible in the collapsed `w-16` rail (`SidebarCollapse` hides only `.sidebar-label`).
-- Page-to-page navigation is a cross-document view transition (`<meta name="view-transition" content="same-origin">` in `layouts/root.html.heex`); theme switching goes through `root.html.heex`'s feature-detected `transitionTheme/1` (`document.startViewTransition(() => setTheme(theme))`, skipped under `prefers-reduced-motion`); `#main-content` keeps `phx-hook="NodeSwitchFade"` (per-patch transitions → Known Issues).
-- The project palette fades out: `#project-palette` and its backdrop carry `phx-remove={JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})}`; flash toasts carry `animate-toast-enter` and `CoreComponents.show/2`/`hide/2` transition `opacity,transform` — never `transition-all`.
+Motion composes the shared `assets/css/motion.css` foundation (`--motion-*` tokens, `motion-fade-*`/`motion-exit-*` keyframes, reduced-motion backstop) — no new durations/easings locally.
+- The Tools/Conversations disclosures are `details.motion-disclosure` + `phx-hook="DisclosureMotion"` with stable ids (`workbench-tools`, `workbench-conversations`; LiveView refuses a hook without one), `.workbench-row` summaries with a rotating `hero-chevron-right` caret, visible in the collapsed `w-16` rail (`SidebarCollapse` hides only `.sidebar-label`).
+- Page-to-page navigation is a cross-document view transition (`<meta name="view-transition" content="same-origin">`); theme switching uses `root.html.heex`'s feature-detected `transitionTheme/1` (skipped under `prefers-reduced-motion`); `#main-content` keeps `phx-hook="NodeSwitchFade"` (per-patch transitions → Known Issues).
+- The project palette fades out via `phx-remove={JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})}` on `#project-palette` + backdrop; flash toasts carry `animate-toast-enter`, and `CoreComponents.show/2`/`hide/2` transition `opacity,transform` — never `transition-all`.
 
 ### Task Form — Single-Card Two-Layout Design (`task_form_components.ex`)
 
