@@ -95,27 +95,39 @@ details.motion-disclosure[data-disclosure-state="closing"] > :not(summary) {
   overflow: hidden;
 }
 
-/* 6. LiveView :if-removal helpers for JS.hide(transition: {...}) — the palette
-   recipe. Exact markup (one attribute, no JS of our own):
+/* 6. LiveView :if-removal helpers for JS.hide(transition: {...}) — ONE
+   attribute, no JS of our own:
    phx-remove={JS.hide(transition: {"motion-exit-lift", "motion-exit-visible", "motion-exit-hidden"})}
-   Use motion-exit-fade (plus the same visible/hidden pair) for a pure fade. */
+   The tuple IS the contract: {transition-class, start-class, end-class}.
+   LiveView applies the start classes, then (next frame) the transition class,
+   then (the frame after) the end class while removing the start class, and
+   settles on the node's transitionend. Consequences:
+   * motion-exit-fade / motion-exit-lift declare the transitioned properties.
+   * motion-exit-visible is the explicit start frame (opacity 1, transform
+     none) and MUST be passed — the end frame is read only after it.
+   * motion-exit-hidden is the shared end frame: opacity 0 PLUS a -4px lift,
+     so the "fade" pair is fade + lift, never a pure fade.
+   A caller that must NOT transform (a zero-height wrapper whose position:
+   fixed children would re-base onto it) passes its OWN end class in that
+   slot — e.g. opacity-0 — which must set every property the transition class
+   lists (motion-exit-fade only lists opacity, so `opacity-0` is complete
+   there). The phx-remove must sit on the node the patch actually REMOVES: a
+   descendant never fires it when an ancestor `:if` unmounts. */
 .motion-exit-fade { transition: opacity var(--motion-fast) var(--motion-ease-in); }
 .motion-exit-lift { transition: opacity var(--motion-fast) var(--motion-ease-in), transform var(--motion-fast) var(--motion-ease-in); }
 .motion-exit-visible { opacity: 1; transform: none; }
 .motion-exit-hidden { opacity: 0; transform: translateY(-4px); }
 
-/* 7. Project palette exit. Today project_components.ex mounts the backdrop and
-   overlay behind `if @palette_open`, so they vanish with no exit frame.
-   Preferred fix: recipe (a) in section 6 (phx-remove). A hook-driven path may
-   instead set data-palette-state="closing" on #project-omnibox for one frame:
-   the keyframe lives in app.css next to palette-fade-in. */
-[data-palette-state="closing"] .project-palette-backdrop {
-  animation: palette-fade-out var(--motion-fast) var(--motion-ease-in) both;
-}
-[data-palette-state="closing"] .project-palette-overlay {
-  animation: palette-fade-out var(--motion-fast) var(--motion-ease-in) both;
-}
-
+/* 7. Project palette exit. Entry stays in app.css (palette-fade-in on
+   .project-palette-backdrop, palette-slide-down on .project-palette-overlay).
+   The exit rides the section-6 recipe on #project-omnibox — the node
+   projects_live.ex's `:if` actually removes — so backdrop and overlay leave as
+   ONE unit: JS.hide(transition: {"motion-exit-fade", "motion-exit-visible",
+   "opacity-0"}). The end class is deliberately opacity-0, NOT
+   motion-exit-hidden: motion-exit-hidden sets a transform, and ANY transform
+   on that zero-height wrapper re-bases its two position: fixed children onto
+   the wrapper box (the palette would teleport/clip instead of fading). See the
+   "Overlay paint" contract in lib/evo_dash_web/components/CONTEXT.md. */
 /* 8. Workbench windows (dialog.workbench-window, styled in workbench.css).
    The [open] rule fires on showModal(); the state rule only applies while the
    dialog is still open — workbench.js defers close() for the exit. */

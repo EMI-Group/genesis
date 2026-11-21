@@ -772,7 +772,7 @@ button, a, input, textarea, select, summary,
   text-align: center;
   pointer-events: none;
   opacity: 0;
-  transition: opacity 0.15s ease-in;
+  transition: opacity var(--motion-fast) var(--motion-ease-in);
 }
 
 .agents-legend-tip.is-visible {
@@ -1959,19 +1959,14 @@ button, a, input, textarea, select, summary,
   color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
 }
 
-/* Animations */
+/* Animations — ENTRY half only. The exit is deliberately not a keyframe: it
+   rides phx-remove on #project-omnibox through the shared motion-exit-fade
+   recipe (motion.css section 7) — opacity-only, because any transform there
+   would re-base the two position: fixed palette layers onto the wrapper. */
 @keyframes palette-fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
-
-/* Exit half of the palette motion; [data-palette-state="closing"] rules in
-   motion.css apply it (see that file's section 7). */
-@keyframes palette-fade-out {
-  from { opacity: 1; }
-  to { opacity: 0; }
-}
-
 @keyframes palette-slide-down {
   from {
     opacity: 0;
@@ -2504,7 +2499,7 @@ details[data-capsule-view="provider"] .capsule-view[data-view="provider"] {
 }
 
 details.capsule-sub[open] > .capsule-list {
-  animation: capsule-sub-in 120ms ease-out;
+  animation: capsule-sub-in var(--motion-fast) var(--motion-ease-out);
 }
 
 details.capsule-sub[data-capsule-sub-state="closing"] > .capsule-list {

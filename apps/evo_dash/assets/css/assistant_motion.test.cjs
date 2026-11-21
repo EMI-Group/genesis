@@ -209,12 +209,25 @@ test("window and dialog closing states fade out before the node is dropped", () 
   ]) {
     assert.ok(blocks(header, motionCss).length >= 1);
   }
-  const [paletteBackdrop] = blocks('[data-palette-state="closing"] .project-palette-backdrop', motionCss);
-  assert.equal(Object.fromEntries(declarations(paletteBackdrop)).animation,
-    "palette-fade-out var(--motion-fast) var(--motion-ease-in) both");
-  const [paletteOverlay] = blocks('[data-palette-state="closing"] .project-palette-overlay', motionCss);
-  assert.equal(Object.fromEntries(declarations(paletteOverlay)).animation,
-    "palette-fade-out var(--motion-fast) var(--motion-ease-in) both");
+  // The palette exit is phx-remove-driven on the removed #project-omnibox root
+  // (never a hook-written state attribute): motion.css must carry NO
+  // [data-palette-state] vocabulary, and the exit reuses the shared fade-only
+  // helper so no transform re-bases the two position: fixed layers.
+  assert.doesNotMatch(motionCss, /\[data-palette-state/,
+    "the dead palette-state vocabulary is back; the exit rides phx-remove");
+  assert.doesNotMatch(motionCss, /palette-fade-out/,
+    "no palette exit keyframe: the exit is the motion-exit-fade transition");
+  const [fade] = blocks(".motion-exit-fade", motionCss);
+  assert.equal(Object.fromEntries(declarations(fade)).transition,
+    "opacity var(--motion-fast) var(--motion-ease-in)",
+    "the palette's end class (opacity-0) only completes an opacity transition");
+  // Source contract: the exit sits on the node projects_live.ex's :if removes.
+  const omniboxSource = readFileSync(
+    join(__dirname, "../../lib/evo_dash_web/components/project_components.ex"), "utf8");
+  const omnibox = omniboxSource.slice(omniboxSource.indexOf('id="project-omnibox"'));
+  assert.match(omnibox.slice(0, 400),
+    /phx-remove=\{JS\.hide\(transition: \{"motion-exit-fade", "motion-exit-visible", "opacity-0"\}\)\}/,
+    "#project-omnibox must carry an opacity-only phx-remove exit");
 });
 
 test("reduced-motion backstop is global, !important and the last block in motion.css", () => {
@@ -255,7 +268,11 @@ test("app.css has no transition: all and enumerates the input transitions", () =
   }
 });
 
-test("palette-fade-out keyframe accompanies palette-fade-in in app.css", () => {
-  const [frames] = blocks("@keyframes palette-fade-out", css);
-  assert.deepEqual([...frames.matchAll(/opacity:\s*(\d)/g)].map(match => match[1]), ["1", "0"]);
+test("the palette keeps its entry keyframes and defines no exit keyframe", () => {
+  const [fadeIn] = blocks("@keyframes palette-fade-in", css);
+  assert.deepEqual([...fadeIn.matchAll(/opacity:\s*(\d)/g)].map(match => match[1]), ["0", "1"]);
+  const [slideDown] = blocks("@keyframes palette-slide-down", css);
+  assert.match(slideDown, /opacity/);
+  assert.doesNotMatch(css, /@keyframes palette-fade-out/,
+    "the exit is the shared motion-exit-fade transition, not a palette keyframe");
 });

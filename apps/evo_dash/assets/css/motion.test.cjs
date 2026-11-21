@@ -76,7 +76,11 @@ test("the native modal animates the .modal-box in BOTH directions and only fades
 
 test("the Layer-2 submenu has an exit rule beside its entrance", () => {
   const [entry] = blocks("details.capsule-sub[open] > .capsule-list", appCss);
-  assert.equal(values(entry).animation, "capsule-sub-in 120ms ease-out");
+  // Both directions use the shared tokens: no bare duration/easing literal.
+  assert.equal(values(entry).animation,
+    "capsule-sub-in var(--motion-fast) var(--motion-ease-out)");
+  assert.doesNotMatch(values(entry).animation.replace(/var\(--[a-z-]+\)/g, ""),
+    /\d+(\.\d+)?m?s\b|ease-(?:out|in)\b/);
 
   // The reduced-motion guard later repeats the same selector (with
   // `animation: none`), so the exit rule is the token-bearing block.
@@ -116,4 +120,8 @@ test("the file-picker manual panel animates opacity/transform only, in both dire
   }
   const properties = new Set([...keyframes.matchAll(/([a-z-]+)\s*:/g)].map(match => match[1]));
   assert.deepEqual([...properties].sort(), ["opacity", "transform"]);
+});
+test("the legend tooltip fade uses the shared tokens, never a literal", () => {
+  const [tip] = blocks(".agents-legend-tip", appCss);
+  assert.equal(values(tip).transition, "opacity var(--motion-fast) var(--motion-ease-in)");
 });
