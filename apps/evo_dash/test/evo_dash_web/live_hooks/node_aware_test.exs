@@ -937,12 +937,13 @@ defmodule EvoDashWeb.NodeAwareTest do
     end)
   end
 
-  # Polls `fun` every 1ms until it returns truthy or the timeout (default
-  # 2000ms) elapses. Used to observe the fake ConnectionManager's recorded
-  # calls without fixed sleeps — the spawned connect Task's timing is
-  # nondeterministic. The 1 ms tick only bounds how long a satisfied predicate
-  # takes to be noticed (the deadline, not the tick, is the safety margin).
-  defp await_until(fun, timeout \\ 2000) do
+  # Polls `fun` every 1ms until it returns truthy or the budget (the module's
+  # documented @sidebar_await_budget_ms) elapses. Used to observe the fake
+  # ConnectionManager's recorded calls without fixed sleeps — the spawned
+  # connect Task's timing is nondeterministic. The 1 ms tick only bounds how
+  # long a satisfied predicate takes to be noticed (the deadline, not the tick,
+  # is the safety margin).
+  defp await_until(fun, timeout \\ @sidebar_await_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
     await_until_loop(fun, deadline, timeout)
   end
@@ -1859,7 +1860,8 @@ defmodule EvoDashWeb.NodeAwareTest do
 
       # The spawned Task resolves the connect to {:error, :fake_connect} and
       # sends the view (the test process) the sync-error self-message.
-      assert_receive {:remote_connect_result, ^id, {:error, :fake_connect}}, 1000
+      assert_receive {:remote_connect_result, ^id, {:error, :fake_connect}},
+                     @sidebar_await_budget_ms
     end
 
     test "nil target_id → no spawn, socket unchanged, no :connect reaches any fake" do
@@ -1974,7 +1976,9 @@ defmodule EvoDashWeb.NodeAwareTest do
       # would bump it to 2); the 0-window refute only backstops a duplicate
       # message for that single load.
       assert {:ok, {_targets, _statuses}} = assert_remote_context_loaded()
-      assert_receive {{:session_list_loaded, 1, ^local_node}, {:ok, {:ok, rows}}}, 5_000
+
+      assert_receive {{:session_list_loaded, 1, ^local_node}, {:ok, {:ok, rows}}},
+                     @sidebar_await_budget_ms
 
       assert Enum.any?(rows, &(&1.id == row_id and &1.marker == :awaiting_input))
 
@@ -2072,7 +2076,8 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert result.assigns.session_list == previous
       assert result.assigns.tasks_node_loaded == {nil, local_node}
 
-      assert_receive {{:session_list_loaded, 5, ^local_node}, {:ok, {:ok, rows}}}, 5_000
+      assert_receive {{:session_list_loaded, 5, ^local_node}, {:ok, {:ok, rows}}},
+                     @sidebar_await_budget_ms
 
       assert Enum.any?(rows, &(&1.id == new_id and &1.marker == :running))
 
@@ -2109,7 +2114,8 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert cont.assigns.session_list_seq == 3
       assert cont.assigns.session_list_loading == true
 
-      assert_receive {{:session_list_loaded, 3, ^local_node}, {:ok, {:ok, _rows}}}, 5_000
+      assert_receive {{:session_list_loaded, 3, ^local_node}, {:ok, {:ok, _rows}}},
+                     @sidebar_await_budget_ms
 
       # The LiveView's own clause (what `{:cont, ...}` let through) still runs
       # its sidebar task reload: seq bump, debounce flag cleared, fetch result.
@@ -2118,7 +2124,8 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert reloaded.assigns.tasks_load_seq == 1
       assert reloaded.assigns.tasks_reload_pending == false
 
-      assert_receive {:node_aware_active_tasks, 1, nil, ^local_node, _result}, 5_000
+      assert_receive {:node_aware_active_tasks, 1, nil, ^local_node, _result},
+                     @sidebar_await_budget_ms
     end
 
     test "an error result records :session_list_error and keeps the rows already shown" do
@@ -2144,7 +2151,8 @@ defmodule EvoDashWeb.NodeAwareTest do
 
       assert {:ok, {_targets, _statuses}} = assert_remote_context_loaded()
 
-      assert_receive {{:session_list_loaded, 1, ^local_node}, {:ok, {:error, :boom}}}, 5_000
+      assert_receive {{:session_list_loaded, 1, ^local_node}, {:ok, {:error, :boom}}},
+                     @sidebar_await_budget_ms
 
       assert {:halt, applied} =
                NodeAware.handle_info(

@@ -714,6 +714,13 @@ defmodule EvoDashWeb.SystemLiveTest do
   import Phoenix.LiveViewTest
   import EvoDashWeb.SystemLiveTest.Helpers
 
+  # Load-tolerant budget for this module's own `assert_receive`s on messages
+  # produced by supervised runners (the helper module's budget attribute is not
+  # importable): the shared host's scheduling swings 10-30x (test/CONTEXT.md),
+  # so a 1-5 s literal is a latency assumption. Bounded, so real breakage still
+  # fails loudly.
+  @async_wait_budget_ms 30_000
+
   setup do
     # Hermetic + fast mounts: every page mount spawns the system self-check and
     # the chart seed. Both seams are injected here (re-resolved AT
@@ -918,7 +925,8 @@ defmodule EvoDashWeb.SystemLiveTest do
       # {{:system_action_result, node, action}, result} message.
       assert pending_socket.assigns.system_action == :stopping
 
-      assert_receive {{:system_action_result, :nonexistent_remote@host, :stopping}, _result}, 5000
+      assert_receive {{:system_action_result, :nonexistent_remote@host, :stopping}, _result},
+                     @async_wait_budget_ms
 
       assert {:noreply, result_socket} =
                SystemLive.handle_info(
@@ -2407,7 +2415,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       click_tasks = Task.Supervisor.children(EvoDash.TaskSupervisor) -- pre_click_tasks
       assert length(click_tasks) >= 2
 
-      assert_receive {:update_check_runner_started, runner_pid}, 1_000
+      assert_receive {:update_check_runner_started, runner_pid}, @async_wait_budget_ms
       await_update_phase(view, :checking)
       send(runner_pid, :release_update_check)
 
@@ -3110,7 +3118,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
 
       # The runner signals it started, then blocks — the loading spinner is
       # observable for a deterministic window.
-      assert_receive {:source_status_task_started, runner_pid}, 1_000
+      assert_receive {:source_status_task_started, runner_pid}, @async_wait_budget_ms
       await_checks_done(view)
       html = render(view)
       assert html =~ "Loading…"

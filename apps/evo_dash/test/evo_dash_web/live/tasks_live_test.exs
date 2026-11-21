@@ -332,7 +332,7 @@ defmodule EvoDashWeb.TasksLiveTest do
   # detail has landed, so every expanded-content assertion must go through
   # here — `render_hook(view, "toggle_task_details", ...)` alone returns with
   # the detail still `:loading`.
-  defp expand_card(view, task_id, timeout \\ 5000) do
+  defp expand_card(view, task_id, timeout \\ @async_wait_budget_ms) do
     _loading_html = render_hook(view, "toggle_task_details", %{"task_id" => task_id})
 
     wait_until(
@@ -400,7 +400,7 @@ defmodule EvoDashWeb.TasksLiveTest do
   # render is a synchronous round-trip that drains the mailbox) until `needle`
   # shows up. Scoped to #tasks-list on purpose — the sidebar lists completed
   # tasks too, so it can show a row before the page reload lands.
-  defp wait_for_list(view, needle, timeout \\ 5000) do
+  defp wait_for_list(view, needle, timeout \\ @async_wait_budget_ms) do
     wait_until(fn -> render_tasks_list(view) =~ needle end, timeout)
     render_tasks_list(view)
   end
@@ -1312,7 +1312,10 @@ defmodule EvoDashWeb.TasksLiveTest do
         state.socket.assigns[:tasks_reload_pending] == false
       end)
 
-      wait_until(fn -> not (render_tasks_list(view) =~ "delete me task") end, 5000)
+      wait_until(
+        fn -> not (render_tasks_list(view) =~ "delete me task") end,
+        @async_wait_budget_ms
+      )
 
       list = render_tasks_list(view)
       assert list =~ "delete visible task"
@@ -2265,7 +2268,7 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       send(child, :release_detail)
       wait_until(fn -> match?(%{state: :ok}, detail_entry(view, id)) end)
-      drain_async_loads(view, 5000)
+      drain_async_loads(view, @async_wait_budget_ms)
 
       # Re-expanding renders from the landed cache — still exactly ONE fetch
       # for the whole lifecycle of this card.
@@ -2292,7 +2295,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       install_task_detail_runner(fn _node, _task_id -> nil end)
       render_hook(view, "toggle_task_details", %{"task_id" => id})
       wait_until(fn -> match?(%{state: :error}, detail_entry(view, id)) end)
-      drain_async_loads(view, 5000)
+      drain_async_loads(view, @async_wait_budget_ms)
 
       html = render(view)
       assert html =~ ~s(id="task-#{id}-detail-error")
@@ -2305,7 +2308,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       install_task_detail_runner(fn _node, _task_id -> exit(:boom) end)
       render_click(view, "retry_task_detail", %{"task_id" => id})
       wait_until(fn -> match?(%{state: :error}, detail_entry(view, id)) end)
-      drain_async_loads(view, 5000)
+      drain_async_loads(view, @async_wait_budget_ms)
 
       assert Process.alive?(view.pid)
       html = render(view)
@@ -2317,7 +2320,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       install_task_detail_runner(&EvoDash.NodeContext.get_task_lite/2)
       render_click(view, "retry_task_detail", %{"task_id" => id})
       wait_until(fn -> match?(%{state: :ok}, detail_entry(view, id)) end)
-      drain_async_loads(view, 5000)
+      drain_async_loads(view, @async_wait_budget_ms)
 
       html = render(view)
       assert html =~ "Agent Message"
@@ -2355,7 +2358,7 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       assert_receive {:detail_fetch, ^id}, @async_wait_budget_ms
       wait_until(fn -> match?(%{state: :ok}, detail_entry(view, id)) end)
-      drain_async_loads(view, 5000)
+      drain_async_loads(view, @async_wait_budget_ms)
       flush_detail_fetches(id)
       assert match?(%{state: :ok}, detail_entry(view, id))
       refute_receive {:detail_fetch, ^id}, 0
@@ -2369,7 +2372,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       wait_until(fn -> detail_entry(view, id) == nil end)
       # Drain FIRST (the delete also arms NodeAware's trailing-edge reload), so
       # the zero-timeout flush/refute below are exact — see flush_detail_fetches/1.
-      drain_async_loads(view, 5000)
+      drain_async_loads(view, @async_wait_budget_ms)
       flush_detail_fetches(id)
       refute_receive {:detail_fetch, ^id}, 0
 
@@ -2445,7 +2448,7 @@ defmodule EvoDashWeb.TasksLiveTest do
 
   # Waits for the archive envelope to satisfy `predicate`, then drains the async
   # work and re-renders.
-  defp wait_for_archive(view, task_id, predicate, timeout \\ 5000) do
+  defp wait_for_archive(view, task_id, predicate, timeout \\ @async_wait_budget_ms) do
     wait_until(fn -> predicate.(archive_entry(view, task_id)) end, timeout)
     drain_async_loads(view, timeout)
   end
@@ -2877,7 +2880,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       click_agent_result(view, id, "agent-1")
 
       wait_until(fn -> agent_result_state(view, id, "agent-1") == :ok end)
-      drain_async_loads(view, 5000)
+      drain_async_loads(view, @async_wait_budget_ms)
 
       assert_receive {:agent_fetch, node, ^id, "agent-1"}, @async_wait_budget_ms
       assert node == node()
@@ -2906,14 +2909,14 @@ defmodule EvoDashWeb.TasksLiveTest do
         "agent_id" => "agent-1"
       })
 
-      drain_async_loads(view, 5000)
+      drain_async_loads(view, @async_wait_budget_ms)
       refute_receive {:agent_fetch, _, _, "agent-1"}, 0
 
       # A task broadcast invalidates the WHOLE entry — the archive and its
       # cached agent results go with it.
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, id, :running, node()})
       wait_until(fn -> archive_entry(view, id) == nil end)
-      drain_async_loads(view, 5000)
+      drain_async_loads(view, @async_wait_budget_ms)
 
       refute render(view) =~ "lazy-agent-result-line"
 
@@ -2925,7 +2928,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       click_agent_result(view, id, "agent-1")
 
       wait_until(fn -> agent_result_state(view, id, "agent-1") == :ok end)
-      drain_async_loads(view, 5000)
+      drain_async_loads(view, @async_wait_budget_ms)
 
       assert_receive {:agent_fetch, _node, ^id, "agent-1"}, @async_wait_budget_ms
       assert render(view) =~ "lazy-agent-result-line"
@@ -2961,7 +2964,7 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       assert_receive {:agent_fetch_node, ^remote, ^id, "agent-1"}, @async_wait_budget_ms
       wait_until(fn -> agent_result_state(view, id, "agent-1") == :ok end)
-      drain_async_loads(view, 5000)
+      drain_async_loads(view, @async_wait_budget_ms)
 
       assert render(view) =~ "remote node result"
     end
@@ -3460,7 +3463,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert resumed.pause_kind == nil
       assert resumed.finished_at == nil
 
-      assert_receive {:wrapper_spawned, :genesis, spawn_opts, ^id}, 5_000
+      assert_receive {:wrapper_spawned, :genesis, spawn_opts, ^id}, @async_wait_budget_ms
       assert Keyword.get(spawn_opts, :resume_kind) == :clean_pause
 
       flush_tasks_load(view)
