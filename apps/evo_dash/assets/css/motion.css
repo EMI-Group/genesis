@@ -55,7 +55,11 @@
    The [open] rule smooths the OPEN with zero JS; the state rule lets the
    DisclosureMotion hook defer `open` removal for the exit (it sets
    data-disclosure-state="closing", then removes `open` when the animation
-   ends). Without it a native <details> snaps open AND shut instantly. */
+   ends), because without it a native <details> snaps open AND shut instantly.
+   The same hook reconciles a disclosure whose markup renders `open` from SERVER
+   state, re-asserting the previous frame in the same task (or playing the exit
+   when the server closed it) so `open` may be re-added mid-exit while
+   data-disclosure-state="closing" stays the ONE gate that picks the keyframe. */
 details.motion-disclosure[open] > :not(summary) {
   animation: motion-slide-in var(--motion-fast) var(--motion-ease-out) both;
 }
