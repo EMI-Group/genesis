@@ -77,6 +77,11 @@ defmodule EvoGit.Agent.Session.InteractiveTest do
   alias EvoGit.AgentScheduler.Store, as: SchedStore
 
   @agent_id_base 9_940_000
+  # The shared host's scheduling swings several-fold under parallel load, so
+  # every awaited event in this module shares this ONE budget. It only absorbs
+  # that latency: each helper returns as soon as it observes the event, so the
+  # happy path never pays it, and an event that never arrives still FAILS.
+  @await_budget_ms 30_000
 
   setup do
     agent_id = @agent_id_base + System.unique_integer([:positive])
@@ -649,7 +654,7 @@ defmodule EvoGit.Agent.Session.InteractiveTest do
   # Observation helpers — every session message (yield, resumed, result,
   # closed) lands in THIS process' mailbox via the test-owned scheduler sink.
   # ---------------------------------------------------------------------------
-  defp await_terminal(agent_id, session_pid, timeout \\ 5_000) do
+  defp await_terminal(agent_id, session_pid, timeout \\ @await_budget_ms) do
     assert_receive {:agent_session_result, ^agent_id, ^session_pid, result}, timeout
     result
   end
@@ -666,7 +671,7 @@ defmodule EvoGit.Agent.Session.InteractiveTest do
                    "expected NO {:agent_session_closed, ...}, got #{inspect(result)}"
   end
 
-  defp await_phase(pid, phase, timeout \\ 2_000) do
+  defp await_phase(pid, phase, timeout \\ @await_budget_ms) do
     do_await_phase(pid, phase, deadline(timeout))
   end
 
@@ -685,7 +690,7 @@ defmodule EvoGit.Agent.Session.InteractiveTest do
     end
   end
 
-  defp await_yield(pid, text, timeout \\ 2_000) do
+  defp await_yield(pid, text, timeout \\ @await_budget_ms) do
     do_await_yield(pid, text, deadline(timeout))
   end
 

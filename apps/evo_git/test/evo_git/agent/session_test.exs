@@ -117,6 +117,12 @@ defmodule EvoGit.Agent.SessionTest do
 
   use ExUnit.Case, async: true
 
+  # The shared host's scheduling swings several-fold under parallel load, so
+  # every awaited event in this module shares this ONE budget. It only absorbs
+  # that latency: each helper returns as soon as it observes the event, so the
+  # happy path never pays it, and an event that never arrives still FAILS.
+  @await_budget_ms 30_000
+
   alias EvoGit.Agent.Session
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.RemoteAPI
@@ -631,20 +637,27 @@ defmodule EvoGit.Agent.SessionTest do
     end)
   end
 
-  defp wait_phase(pid, target, attempts \\ 100)
+  # Bounded poll of a phase the exchange worker produces (a yield re-parks the
+  # session in `:awaiting_input`); the budget only absorbs scheduling latency,
+  # and a phase that never arrives still fails the caller's own assertion.
+  defp wait_phase(pid, target, timeout \\ @await_budget_ms) do
+    wait_phase_until(pid, target, deadline(timeout))
+  end
 
-  defp wait_phase(pid, target, attempts) when attempts > 0 do
+  defp wait_phase_until(pid, target, deadline) do
     case Session.inspect(pid) do
       {:ok, %{phase: ^target}} = result ->
         result
 
       _ ->
-        Process.sleep(10)
-        wait_phase(pid, target, attempts - 1)
+        if remaining(deadline) > 0 do
+          Process.sleep(10)
+          wait_phase_until(pid, target, deadline)
+        else
+          Session.inspect(pid)
+        end
     end
   end
-
-  defp wait_phase(pid, _, _), do: Session.inspect(pid)
 
   # ---------------------------------------------------------------------------
   # dispatch context / session lifecycle
@@ -807,7 +820,7 @@ defmodule EvoGit.Agent.SessionTest do
 
   defp stop_trace(scheduler), do: :erlang.trace(scheduler, false, [:receive])
 
-  defp await_terminal(scheduler, agent_id, session_pid, timeout \\ 5_000) do
+  defp await_terminal(scheduler, agent_id, session_pid, timeout \\ @await_budget_ms) do
     do_await_terminal(scheduler, agent_id, session_pid, deadline(timeout))
   end
 
@@ -851,7 +864,7 @@ defmodule EvoGit.Agent.SessionTest do
 
   # Bounded poll (never a fixed sleep as the assertion): the phase transition is
   # synchronous with the cancel reply, the poll only absorbs scheduling latency.
-  defp await_phase(pid, phase, timeout \\ 2_000) do
+  defp await_phase(pid, phase, timeout \\ @await_budget_ms) do
     do_await_phase(pid, phase, deadline(timeout))
   end
 

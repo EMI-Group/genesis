@@ -375,7 +375,7 @@ defmodule EvoGit.Agent.Session.InteractiveCloseTest do
     end
   end
 
-  defp await_phase(pid, phase, timeout \\ 5_000) do
+  defp await_phase(pid, phase, timeout \\ @async_wait_budget_ms) do
     wait_until(fn -> match?({:ok, %{phase: ^phase}}, Session.inspect(pid, 200)) end, timeout)
   end
 
