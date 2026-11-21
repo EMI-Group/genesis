@@ -46,7 +46,7 @@ Workspaces: `workspaces/0`, `create_workspace/3` (idempotent slug-keyed upsert),
 
 ### Push-only streaming watch surface (cross-node)
 
-`RemoteAPI.register_watcher/2`, `unregister_watcher/2` and `watch_snapshot/1` are LOCAL-node passthroughs to `EvoGit.Agent.Stream` (the session, watcher set and transcript live where the agent is owned): the snapshot is heavy full-transcript while deltas are PUBLISHED, so a disconnected cluster delivers no deltas yet the attach still succeeds. Shapes and gating: `../agent/stream/CONTEXT.md`.
+`register_watcher/2`, `unregister_watcher/2` and `watch_snapshot/1` are LOCAL-node passthroughs to `EvoGit.Agent.Stream` (the session, watcher set and transcript live where the agent is owned); the snapshot is heavy full-transcript while deltas are PUBLISHED, so a disconnected cluster delivers no deltas yet the attach still succeeds (`../agent/stream/CONTEXT.md`).
 
 ## Direct-Eval / Assistant API Safety
 
