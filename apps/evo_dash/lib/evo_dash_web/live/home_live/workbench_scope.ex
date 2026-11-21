@@ -8,7 +8,9 @@ defmodule EvoDashWeb.HomeLive.WorkbenchScope do
   rules, which stay in `EvoDashWeb.HomeLive.ModelSelection` /
   `ModelSelection.update_model_selection/3`:
     * the workspace picker events, all thin delegations to
-      `EvoDashWeb.HomeLive.Workspace` (its scope IS the draft identity);
+      `EvoDashWeb.HomeLive.Workspace` (its scope IS the draft identity) — the
+      toggle, the idempotent `workspace_close` behind click-away/Escape, and
+      the selection/clear/expand events;
     * `select_provider/2`, `select_model/2`, `select_reasoning_effort/2` — the
       shared capsule's selection events, forwarded verbatim;
     * the model-snapshot result (`{:model_select_loaded, …}`) with its node +
@@ -29,6 +31,7 @@ defmodule EvoDashWeb.HomeLive.WorkbenchScope do
   ## Workspace / model selection -----------------------------------------
 
   def workspace_toggle(socket), do: {:noreply, Workspace.toggle(socket)}
+  def workspace_close(socket), do: {:noreply, Workspace.close(socket)}
   def workspace_clear(socket), do: {:noreply, Workspace.clear(socket)}
 
   def workspace_path(socket, %{"workspace" => %{"path" => path}}),

@@ -212,6 +212,19 @@ defmodule EvoDashWeb.HomeLive.Workspace do
     if socket.assigns.workspace_open, do: load(socket, :list), else: socket
   end
 
+  @doc """
+  Closes the picker — the idempotent close of a click-away or an Escape.
+
+  The panel now stays MOUNTED (so the `MotionPanel` hook can fade it out), so
+  `phx-window-keydown` still fires while it is closed. An Escape or a click-away
+  therefore pushes THIS event instead of `workspace_toggle`: closing an already
+  closed panel does nothing, while a toggle would open it from anywhere on the
+  page.
+  """
+  def close(socket) do
+    if socket.assigns.workspace_open, do: assign(socket, workspace_open: false), else: socket
+  end
+
   def select(socket, path) do
     if locked?(socket.assigns) or socket.assigns.workspace_loading do
       socket
