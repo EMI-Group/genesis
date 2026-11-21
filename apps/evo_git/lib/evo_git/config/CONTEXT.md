@@ -40,20 +40,10 @@ No facade operation changes credentials, reloads the scheduler or applies runtim
 `normalization.ex` owns the shared default merge, safe existing-atom conversion, enum/model normalization and legacy migration for BOTH snapshot loading and candidate validation; serialization and credential handling stay in `config.ex`.
 
 ### `EvoGit.Config.LLMCatalog` (provider/model shortcuts)
-| Function | Description |
-|----------|-------------|
-| `providers/0` | Predefined providers with models (Anthropic, OpenAI, ChatGPT Subscription/Codex, Google, DeepSeek, Alibaba, Z.ai, MiniMax, Moonshot AI, xAI, OpenRouter, OpenAI-Compatible) |
-| `provider_models/1` | Model shortcuts for a provider atom |
-| `resolve_model/2` | `{provider_atom, model_input}` → `"provider:model"` string (backward-compat) |
-| `resolve_runtime_spec/3` | CANONICAL map analog: `%{provider: atom, id: string}` (+ optional `base_url`/`extra`) — a ReqLLM `runtime_spec()`, NOT a task `model_spec`; opts `:base_url`, `:variant`, `:extra`; `resolve_model_spec/3` is the documented compatibility alias. |
-| `requires_base_url?/1` | `true` for `:openai_compatible` (default `false`) |
-| `find_provider/1` | Provider entry by atom (checks `provider_atoms`) |
-| `auth_modes/1` | `[:api_key] \| [:api_key, :oauth] \| [:oauth]`; default `[:api_key]` for an unknown/API-key-only provider |
-| `oauth_source/1` | Subscription login source (`:chatgpt` for `:openai_codex`, `:claude_code` for `:anthropic`), else `nil` |
-| `oauth_only?/1` | `true` when `:api_key` is NOT in `auth_modes/1` |
-| `supports_oauth?/1` | `true` when `:oauth` is in `auth_modes/1` |
-| `unknown_provider_help/0` | Guidance text (llmdb.xyz + ReqLLM docs links) |
-| `known_credential_keys/0` | All unique credential key names — an entry's `credential_key` is contributed ONLY when `:api_key` is in its `auth_modes` (so OAuth-only `:openai_codex` never makes `api_key_present?/1` report a key); VARIANT keys are unconditional. |
+- Discovery: `providers/0` (Anthropic, OpenAI, ChatGPT Subscription/Codex, Google, DeepSeek, Alibaba, Z.ai, MiniMax, Moonshot AI, xAI, OpenRouter, OpenAI-Compatible), `provider_models/1`, `find_provider/1` (matches `provider_atoms`), `unknown_provider_help/0` (llmdb.xyz + ReqLLM docs links).
+- Resolution: `resolve_model/2` → `"provider:model"` (backward-compat); `resolve_runtime_spec/3` (`:base_url`/`:variant`/`:extra`) → the CANONICAL `%{provider: atom, id: string}` ReqLLM `runtime_spec()` (+ optional `base_url`/`extra`), NOT a task `model_spec` — `resolve_model_spec/3` is its documented compatibility alias; `requires_base_url?/1` is `true` for `:openai_compatible` (default `false`).
+- Auth: `auth_modes/1` (`[:api_key] | [:api_key, :oauth] | [:oauth]`, default `[:api_key]` for an unknown/API-key-only provider), `oauth_source/1` (`:chatgpt` for `:openai_codex`, `:claude_code` for `:anthropic`, else `nil`), `oauth_only?/1` (`:api_key` NOT in `auth_modes/1`), `supports_oauth?/1`.
+- `known_credential_keys/0`: all unique credential key names — an entry contributes its `credential_key` ONLY when `:api_key` is in its `auth_modes` (so OAuth-only `:openai_codex` never makes `api_key_present?/1` report a key); VARIANT keys are unconditional.
 **Model lists are derived data**: ChatGPT registrations supply the available model IDs/display names; other providers use shortcuts derived from the vendored LLMDB snapshot (`deps/llm_db/priv/llm_db/snapshot.json`).
 
 ### `EvoGit.Config.ProviderPresets` (built-in schedule presets)
