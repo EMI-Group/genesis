@@ -92,7 +92,18 @@ defmodule EvoDashWeb.ProjectComponents do
 
   def project_omnibox(assigns) do
     ~H"""
-    <div id="project-omnibox">
+    <%!-- `projects_live.ex` gates this WHOLE component behind `:if`, so the node
+         a patch removes is this wrapper — the backdrop/overlay `phx-remove`
+         attributes below can never fire on their own. The wrapper therefore
+         carries the exit itself, which fades backdrop + overlay as ONE unit.
+         End class is `opacity-0`, deliberately NOT `motion-exit-hidden`: that
+         one sets a transform, and ANY transform here would re-base the two
+         `position: fixed` children onto this zero-height box (see
+         components/CONTEXT.md "Overlay paint"). Fade only, no transform. --%>
+    <div
+      id="project-omnibox"
+      phx-remove={JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "opacity-0"})}
+    >
       <button
         :if={@show_trigger}
         type="button"

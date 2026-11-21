@@ -185,9 +185,16 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
             <% end %>
           <% end %>
           <%= if @thought_process != [] do %>
+            <%!-- `DisclosureMotion` is what makes the CLOSE animated too: the
+                 exit keyframe in motion.css is gated on the
+                 `data-disclosure-state="closing"` attribute this hook writes
+                 before it removes `open`, so without it the panel would open
+                 smoothly and snap shut. `open` stays browser-owned, hence
+                 `ignore_attributes`. --%>
             <details
               id={"assistant-thought-" <> entry_id(@entry)}
               class="motion-disclosure group mt-3 min-w-0"
+              phx-hook="DisclosureMotion"
               phx-mounted={JS.ignore_attributes("open")}
             >
               <summary class="flex w-fit cursor-pointer select-none items-center gap-1.5 rounded-md py-2 text-xs font-medium text-base-content/60 transition-colors hover:text-base-content focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone">

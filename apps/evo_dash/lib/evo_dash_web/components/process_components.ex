@@ -251,11 +251,19 @@ defmodule EvoDashWeb.ProcessComponents do
         </div>
       </td>
     </tr>
+    <%!-- `:if` is ON this row, so the patch removes THIS node and its
+         `phx-remove` is the one LiveView actually runs. `motion-panel-open`
+         (fill: both) must go first: it pins opacity at 1 forever and an
+         animation value outranks the exit class. Opacity-only fade. --%>
     <tr
       :if={@expanded}
       id={"process-details-#{@id || "unknown"}"}
       role="row"
       class="motion-panel motion-panel-open block border-b border-base-300/60 bg-base-200/30 xl:table-row"
+      phx-remove={
+        JS.remove_class("motion-panel-open")
+        |> JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})
+      }
     >
       <td colspan="12" role="cell" class="block px-4 py-3 xl:table-cell">
         <.execution_details

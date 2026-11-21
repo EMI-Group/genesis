@@ -296,9 +296,22 @@ defmodule EvoDashWeb.TaskFormComponents do
                    normalized via Map.get before reading. --%>
               <% staged_attachments = Map.get(assigns, :staged_attachments) || [] %>
               <%= if staged_attachments != [] do %>
+                <%!-- The `:if` sits ON this node, so it is the node the patch
+                     removes — which is exactly where LiveView runs `phx-remove`
+                     (a descendant's attribute never fires). The entrance class
+                     `motion-panel-open` (fill: both) keeps the row at its final
+                     frame forever, and an animation value outranks a class
+                     change, so it is removed first; otherwise the exit fade
+                     below would have nothing to animate. --%>
                 <div
                   id="staged-attachments"
                   class="motion-panel motion-panel-slide motion-panel-open flex flex-wrap items-center gap-1.5 px-4 pt-1 pb-0 shrink-0"
+                  phx-remove={
+                    JS.remove_class("motion-panel-open motion-panel-slide")
+                    |> JS.hide(
+                      transition: {"motion-exit-lift", "motion-exit-visible", "motion-exit-hidden"}
+                    )
+                  }
                 >
                   <%= for {att, index} <- Enum.with_index(staged_attachments) do %>
                     <div

@@ -57,10 +57,23 @@ defmodule EvoDashWeb.CoreComponents do
     assigns = assign_new(assigns, :id, fn -> "flash-#{assigns.kind}" end)
 
     ~H"""
+    <%!-- Manual close is symmetric with the AutoClearFlash timer path: the
+         toast leaves through the shared motion-exit recipe instead of vanishing
+         in one frame. `animate-toast-enter` (fill: both) keeps the element at
+         opacity 1 for good after its entry animation, and an animation value
+         outranks any class-driven change, so it is REMOVED first — otherwise
+         the fade below would be invisible and only the delay would apply. --%>
     <div
       :if={msg = render_slot(@inner_block) || Phoenix.Flash.get(@flash, @kind)}
       id={@id}
-      phx-click={JS.push("lv:clear-flash", value: %{key: @kind}) |> hide("##{@id}")}
+      phx-click={
+        JS.push("lv:clear-flash", value: %{key: @kind})
+        |> JS.remove_class("animate-toast-enter")
+        |> JS.hide(
+          to: "##{@id}",
+          transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"}
+        )
+      }
       phx-hook="AutoClearFlash"
       role="alert"
       class="w-full pointer-events-auto animate-toast-enter"
