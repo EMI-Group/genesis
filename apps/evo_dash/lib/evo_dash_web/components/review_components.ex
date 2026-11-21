@@ -399,7 +399,7 @@ defmodule EvoDashWeb.ReviewComponents do
               <button
                 type="button"
                 phx-click="load_archive_agent_result"
-                phx-value-agent-id={@agent_id}
+                phx-value-agent_id={@agent_id}
                 class="btn btn-ghost btn-xs mt-1 gap-1"
               >
                 <.icon name="hero-arrow-path" class="size-3.5" /> {gettext("Retry")}
@@ -410,7 +410,7 @@ defmodule EvoDashWeb.ReviewComponents do
               <button
                 type="button"
                 phx-click="load_archive_agent_result"
-                phx-value-agent-id={@agent_id}
+                phx-value-agent_id={@agent_id}
                 class="btn btn-ghost btn-xs gap-1"
               >
                 <.icon name="hero-eye" class="size-3.5" />

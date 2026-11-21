@@ -1810,11 +1810,11 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
 
       assert has_element?(
                view,
-               "button[phx-click='load_archive_agent_result'][phx-value-agent-id='agent-2']"
+               "button[phx-click='load_archive_agent_result'][phx-value-agent_id='agent-2']"
              )
 
       view
-      |> element("button[phx-click='load_archive_agent_result'][phx-value-agent-id='agent-2']")
+      |> element("button[phx-click='load_archive_agent_result'][phx-value-agent_id='agent-2']")
       |> render_click()
 
       # NOTE: literal U+2026 ellipsis (gettext("Loading result…")).
@@ -1855,6 +1855,57 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
       refute_receive {:archive_agent_fetch, _, _, _, _}, 50
     end
 
+    test "a REAL click on the rendered Show result button fetches that agent's result", %{
+      conn: conn
+    } do
+      # REGRESSION (kebab-case `phx-value-*`): LiveView strips ONLY the
+      # `phx-value-` prefix, so a kebab attribute (`phx-value-agent-id`) arrives
+      # as the params key `"agent-id"` while the handler reads `"agent_id"` —
+      # a silently dead button. The selector below IS the assertion: it matches
+      # only the snake_case attribute, and `render_click/1` on that element
+      # derives the event value from the SAME rendered markup, so the click path
+      # is exercised end to end (markup → params key → handler).
+      task_id = seed_archive_task!()
+      me = self()
+
+      Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid, _opts ->
+        %{entries: archive_page_entries(1..2), total: 2}
+      end)
+
+      Application.put_env(:evo_dash, :review_archive_agent_runner, fn node, tid, agent_id ->
+        send(me, {:archive_agent_fetch, self(), node, tid, agent_id})
+
+        %{
+          "agent_id" => agent_id,
+          "parent_id" => nil,
+          "objective" => "Objective 2",
+          "depth" => 0,
+          "result" => "Fetched by the rendered button"
+        }
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      view |> element(archive_tab_selector()) |> render_click()
+      wait_until(fn -> render(view) =~ "agent-2" end)
+      # No kebab-case value attribute is rendered at all.
+      refute has_element?(view, "button[phx-value-agent-id]")
+
+      button =
+        element(
+          view,
+          "button[phx-click='load_archive_agent_result'][phx-value-agent_id='agent-2']"
+        )
+
+      render_click(button)
+      # The fetch path ran for THAT agent (a dead button would leave no request).
+      assert_receive {:archive_agent_fetch, _pid, _node, ^task_id, "agent-2"},
+                     async_wait_budget()
+
+      wait_until(fn -> render(view) =~ "Fetched by the rendered button" end)
+      assert assigns(view).archive_agent_results["agent-2"].state == :ok
+    end
+
     test "a task broadcast invalidates cached agent results but keeps the loaded page", %{
       conn: conn
     } do
@@ -1876,7 +1927,7 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
       wait_until(fn -> render(view) =~ "agent-2" end)
 
       view
-      |> element("button[phx-click='load_archive_agent_result'][phx-value-agent-id='agent-2']")
+      |> element("button[phx-click='load_archive_agent_result'][phx-value-agent_id='agent-2']")
       |> render_click()
 
       wait_until(fn -> render(view) =~ "Fetched" end)
@@ -1897,11 +1948,11 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
       # The agent is fetchable again: the button came back and refetches.
       assert has_element?(
                view,
-               "button[phx-click='load_archive_agent_result'][phx-value-agent-id='agent-2']"
+               "button[phx-click='load_archive_agent_result'][phx-value-agent_id='agent-2']"
              )
 
       view
-      |> element("button[phx-click='load_archive_agent_result'][phx-value-agent-id='agent-2']")
+      |> element("button[phx-click='load_archive_agent_result'][phx-value-agent_id='agent-2']")
       |> render_click()
 
       current_node = node()

@@ -151,8 +151,10 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphState do
   # @commit_graph_raw, so a fold change only re-runs the pure view-model
   # assembly in this process — no git RPC, no fetch spawn, no throttle/tick and
   # no fingerprint consultation. The fold key is whitelisted by shape only (a
-  # binary straight from the rendered gap row — never atomized).
-  def toggle_fold(socket, %{"fold-key" => key}) when is_binary(key) do
+  # binary straight from the rendered gap row — never atomized), and the params
+  # key is the `phx-value-fold_key` attribute SUFFIX, which LiveView passes
+  # verbatim (so a kebab attribute would arrive as "fold-key" and match nothing).
+  def toggle_fold(socket, %{"fold_key" => key}) when is_binary(key) do
     if commit_folds_active?(socket) do
       expanded = socket.assigns.commit_fold_expanded
 
