@@ -1,6 +1,6 @@
 // The pure decision half of the workbench right panel (project history and
-// project Git share the shape). The DOM half lives in workbench.js; everything
-// between the markers below is total and side-effect free, so
+// project Git share the shape). The DOM half lives in workbench_panel_dom.js;
+// everything between the markers below is total and side-effect free, so
 // `workbench_panel.test.cjs` can run THIS source through node:vm with no
 // browser and no build step (the agent_history_scroll.test.cjs convention).
 
@@ -57,8 +57,23 @@ function isPanelCloseTransition(state, propertyName) {
 function panelCloseWaitsForTransition(animate, reducedMotion) {
   return Boolean(animate) && !reducedMotion
 }
+
+// The OPEN transition needs a RESOLVED starting frame. The panel arrives
+// `display: none` (the server renders the aside `hidden`), so its last computed
+// style is "not rendered": a style change applied together with the un-hide
+// would be the element's FIRST style, and CSS starts no transition from no
+// previous style. The DOM half therefore forces one style+layout pass at the
+// collapsed geometry while the panel is displayed, then flips it to open.
+// Reduced motion removes the CSS transition, so there is nothing to start: such
+// an open is applied in this same task and nothing collapsed ever paints.
+// `animate` is false for the mount/resize seed, and for a re-entrant open while
+// the panel is still closing (it is displayed at a live interpolated style,
+// which is its own start value).
+function panelOpenNeedsStartFrame(animate, reducedMotion) {
+  return Boolean(animate) && !reducedMotion
+}
 // WorkbenchPanel hook:
 
 export {PANEL_CLOSED, PANEL_OPEN, PANEL_CLOSING, PANEL_CLOSE_FALLBACK_MS,
   PANEL_TRANSITION_PROPERTY, initialPanelState, planPanelRequest, completePanelClose,
-  isPanelCloseTransition, panelCloseWaitsForTransition}
+  isPanelCloseTransition, panelCloseWaitsForTransition, panelOpenNeedsStartFrame}
