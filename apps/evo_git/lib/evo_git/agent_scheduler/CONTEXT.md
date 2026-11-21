@@ -139,8 +139,7 @@ Scripts still override the fallback (nil/error results use it; invalid canonical
 
 ## Peak/Off-Peak Concurrency Engine (`EvoGit.PeakHourEngine`)
 
-The engine threads a 4-tuple `{windows, off_peak_days, off_peak_holidays, tz}` (3- and 2-tuple shapes still accepted, calendar nil) through its wakeup math and re-derives EVERY peak/day/holiday decision, including holiday-block midnight edges, from `EvoGit.PeakHours.in_peak?/4`/`next_transition/4`/`effective_concurrency/2` with no second code path; an unknown/blank calendar id degrades to "no calendar" in both the reader and `PeakHours`, never raising.
-Window math, the holiday calendar and the clock seams (`:peak_hours_now_fun`, `:peak_hours_utc_now_fun`) belong to `../peak_hours/`; the 6 h safety-net cap and the `"scheduler_config"` re-derivation do not depend on the calendar.
+`EvoGit.PeakHourEngine` lives in `../peak_hour_engine.ex` (outside this node) and re-derives EVERY peak/day/holiday decision from `EvoGit.PeakHours` (`in_peak?/4`, `next_transition/4`, `effective_concurrency/2`) with no second code path; the scheduler only carries the per-account schedule keys (`off_peak_days`, `off_peak_holidays`, `windows`, `tz`) through `State` and re-derives them on a `"scheduler_config"` event. Detail: `../CONTEXT.md`.
 
 ## Blocking Surface (ONE GenServer serves every agent)
 
