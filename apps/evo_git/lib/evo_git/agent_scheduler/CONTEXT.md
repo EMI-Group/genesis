@@ -52,7 +52,7 @@ Workspaces: `workspaces/0`, `create_workspace/3` (idempotent slug-keyed upsert),
 
 `RemoteAPI` is a mixed read/write RPC facade, not an authorization boundary: admission registry, tier rules and per-admitted-API shape caveats belong to `../agent/tools/elixir_eval/CONTEXT.md`.
 Admitted in BOTH tiers: `RemoteAPI.list_agents/0`, `AgentScheduler.get_config/1`, `paused?/0`, `get_llm_slot_status/0`; the write tier adds `AgentScheduler.update_config/1`, `pause/0`, `resume/0` and `RemoteAPI.reload_config/0`.
-Unlisted MFAs and wrong arities stay denied and refusal never escalates a tier; admitted calls run the real API with unchanged arguments and return its ACTUAL value — truncation is not redaction (`get_agent_state/1` returns the native `%AgentState{}` summary with no conversation; `get_agent_history/1` proxies `Session.history/1`, TOTAL `[]` within 5 s for a gone session).
+Unlisted MFAs and wrong arities stay denied and refusal never escalates a tier; admitted calls run the real API unchanged and return its ACTUAL value — truncation is not redaction (`get_agent_state/1` = the native `%AgentState{}` summary, no conversation; `get_agent_history/1` proxies `Session.history/1`, TOTAL `[]` within 5 s for a gone session).
 
 ## Reload and runtime-update contracts
 
