@@ -133,7 +133,7 @@ Audited asymmetries — each surface animates in ONE direction only; delete the 
 - `data-motion-state` / `.motion-panel-close` / `.motion-panel[data-motion-state="closing"]` (motion.css §4) have NO writer anywhere, so every `motion-panel-open` in markup is entry-only; an exit for an `:if`-mounted panel is `phx-remove={JS.hide(transition: …)}` on the element the patch itself removes (descendants never fire `phx-remove`).
 - `[data-palette-state="closing"]` (motion.css §7) has no writer: the palette's `phx-remove` sits on `.project-palette-backdrop`/`.project-palette-overlay` under an `:if`-mounted `#project-omnibox`, so it never runs (ancestor removal).
 - `details.capsule-sub[open] > .capsule-list` (app.css) animates the Layer-2 submenu in; the close is native (no hook, no `[data-capsule-sub-state]` rule).
-- `.file-manual-input-wrap` carries only the `file-manual-expand` keyframe and its `max-width` (not opacity/transform) — an invariant violation; `file_picker.js` `closeManual()` sets `hidden` in the same task, so there is no exit, and `hidden` also suppresses the keyframe on the next open unless it is re-armed.
+- `.file-manual-input-wrap` carries only the `file-manual-expand` keyframe and its `max-width` (not opacity/transform) — an invariant violation; `file_picker.js` `closeManual()` sets `hidden` in the same task, so there is no exit frame at all.
 
 ## Known Issues — Custom CSS Variables (`css/app.css`)
 
