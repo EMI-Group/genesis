@@ -2,9 +2,10 @@
 //
 // Exercises the PURE right-panel state machine behind the workbench history /
 // Git aside — "may this panel be shown, and what does a user request do to it?"
-// — without a browser bundle. The DOM half (the rAF starting frame, the
-// transitionend listener, the bounded fallback timer) lives in workbench.js and
-// has no decision of its own; it only executes the plans pinned here.
+// — without a browser bundle. The DOM half (the forced starting frame, the
+// transitionend listener, the bounded fallback timer) lives in
+// workbench_panel_dom.js and is pinned by workbench_panel_dom.test.cjs; it only
+// executes the decisions pinned here.
 //
 // Matching the state_persistence.test.cjs / agent_history_scroll.test.cjs
 // convention: the block between the source's markers is sliced out and run
@@ -21,11 +22,12 @@ const source = src.slice(start, end);
 const {
   PANEL_CLOSED, PANEL_OPEN, PANEL_CLOSING, PANEL_CLOSE_FALLBACK_MS,
   initialPanelState, planPanelRequest, completePanelClose,
-  isPanelCloseTransition, panelCloseWaitsForTransition,
+  isPanelCloseTransition, panelCloseWaitsForTransition, panelOpenNeedsStartFrame,
 } = vm.runInContext(`${source}
   ({PANEL_CLOSED, PANEL_OPEN, PANEL_CLOSING, PANEL_CLOSE_FALLBACK_MS,
     initialPanelState, planPanelRequest, completePanelClose,
-    isPanelCloseTransition, panelCloseWaitsForTransition});`, vm.createContext({}));
+    isPanelCloseTransition, panelCloseWaitsForTransition,
+    panelOpenNeedsStartFrame});`, vm.createContext({}));
 
 test('a fresh tab starts CLOSED — the panel is hidden by default', () => {
   assert.equal(initialPanelState(null), PANEL_CLOSED);
@@ -124,4 +126,19 @@ test('the fallback timer is bounded and short enough to stay invisible', () => {
   assert.ok(Number.isFinite(PANEL_CLOSE_FALLBACK_MS));
   assert.ok(PANEL_CLOSE_FALLBACK_MS > 0 && PANEL_CLOSE_FALLBACK_MS <= 500,
     `expected a bounded fallback, got ${PANEL_CLOSE_FALLBACK_MS}`);
+});
+
+test('a closed panel is only opened after a forced start frame', () => {
+  // The panel arrives `display: none`, so the open needs one resolved style pass
+  // at the collapsed geometry before the state flips (the DOM half does it).
+  assert.equal(panelOpenNeedsStartFrame(planPanelRequest(PANEL_CLOSED, true).animate, false), true);
+  // `prefers-reduced-motion: reduce` removes the transition: nothing to start.
+  assert.equal(panelOpenNeedsStartFrame(true, true), false);
+  // A seed (mount / resize) and a re-entrant open while closing start from a
+  // style that is already resolved (or from the live interpolated style).
+  assert.equal(panelOpenNeedsStartFrame(false, false), false);
+  assert.equal(panelOpenNeedsStartFrame(planPanelRequest(PANEL_CLOSING, true).animate, false), false);
+  // A missing/absent animate flag never asks for a frame.
+  assert.equal(panelOpenNeedsStartFrame(undefined, false), false);
+  assert.equal(panelOpenNeedsStartFrame(false, true), false);
 });
