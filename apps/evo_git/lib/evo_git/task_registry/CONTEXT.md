@@ -195,7 +195,7 @@ Ordering is **persist-then-broadcast**: `handle_update_status/6` writes via `Sto
 | `{:task_updated, id, nil, node()}` | `set_review_status` / `set_review_metadata` casts, only after a SUCCESSFUL write |
 | `{:task_deleted, id, node()}` | `clear_finished_tasks` (one per id), `delete_task`, only on the successful write |
 
-- **Terminal sequences**: completed = wrapper sends `{ref, result}` → handler maps to `:completed`/`:failed`/`:exit` → cast `update_task_status_with_caller` → `handle_update_status/6` force-maps `:cancelling`+terminal → `:cancelled` (result preserved) → persist, then broadcast. Abnormal wrapper death = `{:DOWN, ...}`: `:normal` → `update_task_status(:completed)`; other reasons → `:failed` ONLY when `Lease.sched_meta_has_active_agents?/1` is false, else the row stays `:running` with no broadcast.
+- **`{:DOWN}` semantics**: abnormal wrapper death with reason `:normal` → `update_task_status(:completed)`; any other reason → `:failed` ONLY when `Lease.sched_meta_has_active_agents?/1` is false, else the row stays `:running` with no broadcast.
 - **The ONLY broadcast preceding its persist is `:finalizing`**: `Runtime.Helpers.notify_finalizing/1` fires it from INSIDE the wrapper and the local handler persists afterward; a disk-full `put_task` leaves subscribers told `:finalizing` while the row stays `:running`. Reflect tasks never emit `:finalizing`.
 - **`Cleanup.cleanup_expired_tasks/1` deletes rows with NO broadcast.**
 
