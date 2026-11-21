@@ -192,7 +192,7 @@ Ordering is **persist-then-broadcast**: `handle_update_status/6` writes via `Sto
 | `{:task_deleted, id, node()}` | `clear_finished_tasks` (one per id), `delete_task`, only on the successful write |
 
 - **`{:DOWN}` semantics**: abnormal wrapper death with reason `:normal` → `update_task_status(:completed)`; any other reason → `:failed` ONLY when `Lease.sched_meta_has_active_agents?/1` is false, else the row stays `:running` with no broadcast.
-- **The ONLY broadcast preceding its persist is `:finalizing`**: `Runtime.Helpers.notify_finalizing/1` fires it from INSIDE the wrapper and the local handler persists afterward; a disk-full `put_task` leaves subscribers told `:finalizing` while the row stays `:running`. Reflect tasks never emit `:finalizing`.
+- **`:finalizing` is the ONLY pre-persist broadcast** (`Runtime.Helpers.notify_finalizing/1`, fired INSIDE the wrapper), so a disk-full `put_task` leaves subscribers told `:finalizing` while the row stays `:running`; reflect never emits it.
 - **`Cleanup.cleanup_expired_tasks/1` deletes rows with NO broadcast.**
 
 ## Task Lifecycle & Terminal-Write Sites
