@@ -39,7 +39,7 @@ The repo open and the migration run are SYNCHRONOUS inside `init/1` (boot repo �
 Only versions absent from `schema_migrations` run, so a release shipping no new migration is a pure no-op, and `Ecto.Migrator` runs each migration AND its version stamp in ONE transaction (atomic under a SIGKILL).
 A DB locked by another process can stall a boot connection up to `busy_timeout: 30_000`, in the CALLING process (no VM thread parked) — no sleeps exist on the store/application boot path.
 Nothing is rehydrated into a long-lived process at boot (`init/1` keeps only its state map); the ONE boot read is `TaskRegistry.init/1`'s `select_running_lease_info` (`id`/`status`/`lease_expires_at` for `WHERE status IN ('running','awaiting_input','finalizing','cancelling')`, reduced to `{id, status}` pairs), empty with no tasks running.
-`@cache_size -8_000` (8 MiB) is PER-CONNECTION SQLite NATIVE memory, so 6 × 8 MiB ≈ 47 MiB is a lazily-filled CAP visible only in OS RSS — never in `Process.info(pid, :memory)`; nothing else here is environment-gated beyond `:data_dir` and the two call-time seams (`:store_boot_optimize_fun`, `:store_boot_lock_fun`).
+`@cache_size -8_000` (8 MiB) is PER-CONNECTION SQLite NATIVE memory, so 6 × 8 MiB ≈ 47 MiB is a lazily-filled CAP visible only in OS RSS — never in `Process.info(pid, :memory)`; the only environment inputs are `:data_dir` and the two call-time seams (`:store_boot_optimize_fun`, `:store_boot_lock_fun`).
 
 ### Migration ledger (versions 1–9 and 11)
 
