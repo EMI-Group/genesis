@@ -236,13 +236,7 @@ Token counts are provider-reported (usually accurate) but cost is BEST-EFFORT (p
 
 ## Design Conventions — Adwaita token grammar (markup)
 
-Rules for writing NEW markup in this subtree (repo-wide catalog: parent `lib/evo_dash_web/CONTEXT.md`):
-- **Alpha floor** (base-content on light is binding): user-relevant text never below `/50`; labels/meta ≥ `/60`; small/primary content ≥ `/70`; fold `text-[10px]`/`text-[11px]` → `text-xs` where feasible; decorative large icons and "·" separators may keep `/30`–`/40`.
-- **Hairlines/dividers on flat `bg-base-100`** use `border-base-300` (never `border-base-200` — ≈1.06:1 invisible); tinted wells may keep `border-base-200/80`.
-- **Corners**: cards/panels `rounded-xl` max (prefer `rounded-lg`); normal action buttons `rounded-lg`/`rounded-md`; only genuine pill/badge elements keep `rounded-full`.
-- **`*-content` tokens are tuned for solid fills** — never `text-*-content` on translucent tints; on `/10`–`/30` tints use `text-error`/`text-warning`/`text-success`, and `-content` only on solid fills.
-- **No raw color literals** (`text-red-500`, `bg-white/10`, `bg-black/10`, `bg-neutral text-neutral-content`, `bg-base-50` — the last compiles to no fill) → theme tokens (`text-error`, `bg-error/10`, `bg-base-200`, `bg-base-content/5`, …).
-- **Empty/loading states**: exactly ONE dim layer (icon and copy should not both sit at floor alpha).
+Repo-wide Adwaita token grammar (alpha floor, hairlines on flat `bg-base-100`, corner radii, `*-content` only on solid fills, no raw color literals, exactly ONE dim layer for empty/loading states) lives in the parent `lib/evo_dash_web/CONTEXT.md` → "Design Conventions"; apply it to NEW markup here.
 - **Locked contracts — never restyle helper OUTPUTS**: the `EvoDashWeb.Helpers.task_status_*` / `agent_status_*` / `connection_status_*` class helpers, the task-form bottom-toolbar DOM order (attach-kind dropdown | mode+speed capsule | right cluster: custom-agent select? | model capsule | send) + `data-layout`, the `phx-hook`/`phx-click` bindings, and the chart CSS-var strings. Markup class LITERALS may be polished; helper outputs are the single source of truth.
 
 ## Workbench chrome (sidebar sections, recent projects, right panels, history search)
