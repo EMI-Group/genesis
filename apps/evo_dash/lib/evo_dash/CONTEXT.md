@@ -207,13 +207,10 @@ Discriminator: `<data_dir>/logs/shell.log` records `backend exited cleanly (code
 
 ### `EvoDash.ConnectionDiagnostics` (`connection_diagnostics.ex`)
 
-Attaches a `:telemetry` handler to `[:thousand_island, :connection, :start]` so each HTTP connection's peer address lands on the connection PROCESS's `Logger.metadata` — making Bandit's `Read timeout` ERROR lines (a client that opens a connection and sends nothing) attributable to `::1` vs `127.0.0.1`.
-`attach/0` is idempotent (`{:error, :already_exists}` is treated as `:ok`; handler id = the module name) and never raises — it returns `:ok | {:error, reason}`.
-It is called non-fatally from `EvoDash.Application.start/2` (`_ = attach()`) and is NOT a supervised child (the children list is unchanged).
-The public handler `handle_connection_start/4` reads `metadata[:remote_address]` (an `:inet.ip_address()` tuple) and `metadata[:remote_port]` and sets them on the connection's Logger metadata as `:remote_ip` (human-readable, via `:inet.ntoa/1`) and `:remote_port` — total, so a missing/invalid value only omits its own key.
-Because `:telemetry.execute/3` runs handlers INLINE in the calling (connection) process, the metadata rides every later log line of that connection; it deliberately does NOT suppress or downgrade Bandit's protocol-error logging.
-Homed here (rather than extending `EvoDashWeb.Telemetry`) because it is a small, self-contained runtime-diagnostics concern wired from `EvoDash.Application.start/2`, not a metrics poller.
-Note: the default logger formatter only prints metadata keys listed in `config/config.exs`'s `config :logger, :default_formatter, metadata:` — the `remote_ip` / `remote_port` keys must be added there to actually appear in log output.
+Attaches a `:telemetry` handler on `[:thousand_island, :connection, :start]` so each HTTP connection's peer lands on that connection PROCESS's `Logger.metadata` — making Bandit's `Read timeout` ERROR lines attributable to `::1` vs `127.0.0.1`.
+`attach/0` is idempotent (`{:error, :already_exists}` → `:ok`; handler id = the module name), never raises, is called non-fatally from `EvoDash.Application.start/2` (`_ = attach()`) and is NOT a supervised child.
+`handle_connection_start/4` copies `metadata[:remote_address]` (an `:inet.ip_address()` tuple, rendered via `:inet.ntoa/1`) and `metadata[:remote_port]` onto that connection's metadata as `:remote_ip`/`:remote_port` — total, so a missing or invalid value only omits its own key; `:telemetry.execute/3` runs handlers INLINE in the calling process, so the metadata rides every later log line of that connection and Bandit's protocol-error logging is deliberately not suppressed.
+Homed here (not in `EvoDashWeb.Telemetry`) as a small runtime-diagnostics concern; the keys appear in output only when `config/config.exs`'s `:logger, :default_formatter, metadata:` list includes `:remote_ip`/`:remote_port`.
 
 ### MCP endpoint (`mcp/`)
 
