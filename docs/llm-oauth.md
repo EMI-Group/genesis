@@ -7,6 +7,8 @@ Genesis supports OpenAI API keys and ChatGPT subscriptions as separate OpenAI pr
 In **Welcome** or **Settings → LLM → Provider accounts**, choose **ChatGPT Subscription** and select **Sign in with ChatGPT** on the account you are creating or editing (the wizard auth step, an expanded account, and an account's auth row all offer it). Genesis starts a loopback listener on the execution host, shows an authorization link that opens in a new browser tab, and waits for you to grant permission. When the tab reports success the account turns connected: pick your registration, select from its available models, and finish.
 The waiting panel can be cancelled; closing the panel, the wizard or the settings window cancels it too, and an attempt expires after ten minutes.
 
+The redirect goes to `http://127.0.0.1:<port>/auth/callback` on the execution host, so a browser on another machine lands on its own loopback and reports a connection error. The grant has still been made, and the failed tab's address bar holds the full redirected URL. Paste that URL, or just the authorization `code`, into the waiting panel's **Can't reach this page?** disclosure (the **Redirect URL** field, then **Submit**) to complete the sign-in exactly as the loopback callback would. `state` is validated; a wrong or foreign value leaves the attempt pending so it can be retried. The same field works for a purely local setup and when no loopback listener could be opened.
+
 The same sign-in is available from the command line, which prints the URL to open and can list the models for an account:
 
 ```sh
@@ -15,11 +17,11 @@ genesis chatgpt status
 genesis chatgpt models
 ```
 
-From a source checkout, run `mix genesis.chatgpt login`. A release without the `genesis` CLI can run its launcher with `eval 'EvoDash.ChatGPTCLI.main(System.argv())' login`.
+While it waits for the result, `genesis chatgpt login` invites you to paste the redirected address (or the code) and press Enter, so the same manual route works there. With no interactive stdin it prints the URL and waits as before. From a source checkout, run `mix genesis.chatgpt login`. A release without the `genesis` CLI can run its launcher with `eval 'EvoDash.ChatGPTCLI.main(System.argv())' login`.
 
 In Settings, save the account before running **Connection Test**. In Welcome, test the selected model before finishing setup. Both the dashboard button and the CLI drive the same loopback flow and the same credential store, so either can be used for reauthorization.
 
-The dashboard button signs in on the node the dashboard is connected to, and it binds a loopback address on that host — so it is offered only in a local node context. For a remote execution host, run the CLI there (forwarding the port if you are on SSH, see below) and then press **Check connection**.
+The dashboard button signs in on the node the dashboard is connected to, and it binds a loopback address on that host — so it is offered only in a local node context. For a remote execution host, run the CLI there (then either forward the port or paste the redirected address, see below) and press **Check connection**.
 
 ```toml
 [[llm.providers]]
@@ -33,11 +35,13 @@ models = ["MODEL_ID_FROM_GENESIS_CHATGPT_MODELS"]
 
 The provider identifier `openai_codex` is retained so existing profiles and task references can be loaded. On upgrade, sign in through Genesis and select an available model if the previously configured model is missing. Credentials imported from Codex in older versions are not used by this connection. The subscription uses [OpenAI's public Responses endpoint](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference).
 
-For a separate account or workspace, use `genesis chatgpt login --account work` and set `siwc_account = "work"` on its provider profile. Run `genesis chatgpt logout --account work` to disconnect it. The default alias is `default`.
+For a separate account or workspace, use `genesis chatgpt login --account work` and set `siwc_account = "work"` on its provider profile. Run `genesis chatgpt logout --account work` to disconnect it. The default alias is `default`. The pasted-address route works the same way for a named account.
 
 ### Self-hosted Genesis
 
-Use the browser on a computer that can reach the loopback sign-in listener. For SSH access, forward the same port on both sides, then start login under the account and configuration directory that run Genesis:
+The sign-in redirects to a loopback address on the execution host, so a browser running elsewhere must hand the result back to Genesis. Two options:
+
+**Option A — SSH port forwarding.** Forward the same port on both sides, then start login under the account and configuration directory that run Genesis:
 
 ```sh
 ssh -t -L 1455:127.0.0.1:1455 user@genesis-host 'genesis chatgpt login'
@@ -45,9 +49,13 @@ ssh -t -L 1455:127.0.0.1:1455 user@genesis-host 'genesis chatgpt login'
 
 Open the displayed URL on the computer running SSH. You can select another port with `--port` if both ends use the same number. Use the normal dashboard address for setup.
 
+**Option B — paste the redirected address.** No forwarding is needed. Approve in the browser on your own machine; the tab then fails to reach `http://127.0.0.1:<port>/auth/callback`, which is expected. Copy that address from the tab's address bar and paste it into the dashboard waiting panel's **Redirect URL** field (**Submit**) or at the `genesis chatgpt login` prompt, or pass just the `code`. `state` is validated and a wrong or foreign value leaves the attempt pending, so you can retry. This is the option for hosts without forwarding, containers, jump hosts, and tunnels. A bare code is accepted because the authorization code is bound to the flow's PKCE verifier, which never leaves the Genesis host.
+
+If the login command reports that no local listener could be bound, only the pasted address or code can complete the attempt.
+
 If the execution host requires an HTTP CONNECT proxy, set `GENESIS_SIWC_HTTPS_PROXY=http://HOST:PORT` for both the Genesis service and the login command. Authorization, model discovery, and subscription inference use that proxy.
 
-For a protected credential transfer, complete Genesis login on the browser machine and transfer the selected file from `<config_dir>/chatgpt/account-<alias>.json` using SSH. Keep the staging file private, then run `genesis chatgpt import /path/to/file --account <alias>` on the destination. The destination keeps its own host ID and takes over refresh. Clear the staging copy when the import finishes and use the transferred session only on the destination. [OpenAI self-hosted VM guide](https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms)
+As an offline alternative, for a protected credential transfer, complete Genesis login on the browser machine and transfer the selected file from `<config_dir>/chatgpt/account-<alias>.json` using SSH. Keep the staging file private, then run `genesis chatgpt import /path/to/file --account <alias>` on the destination. The destination keeps its own host ID and takes over refresh. Clear the staging copy when the import finishes and use the transferred session only on the destination. [OpenAI self-hosted VM guide](https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms)
 
 ## Claude Pro/Max
 
