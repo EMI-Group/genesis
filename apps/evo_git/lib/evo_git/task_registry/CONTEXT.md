@@ -267,4 +267,5 @@ Call sites pick the CONSERVATIVE direction: `handle_update_status/6` and the rev
 
 ## API Conventions
 
-- `list_*` returns: `list_tasks/0` → plain list (bounded 100), `list_tasks_paginated/1` → `{tasks, total}`, `list_tasks_page/1` → `%{rows:, total:}`, `list_task_archives/2` → `%{entries:, total:}`; each `@doc` names its own.
+- `list_*` returns: `list_tasks/0` → plain list (bounded 100), `list_tasks_paginated/1` → `{tasks, total}`, `list_tasks_page/1` → `%{rows:, total:}`, `list_task_archives/2` → `%{entries:, total:}`.
+- `{:DOWN}` semantics: wrapper death with reason `:normal` → `update_task_status(:completed)`.
