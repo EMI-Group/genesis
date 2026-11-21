@@ -126,7 +126,7 @@ Dashboard combined-mode strings map to `{task_type, core_mode_string}` in `Proje
 
 ## i18n / Gettext Backend
 
-`EvoDashWeb.Gettext` (`gettext.ex`) is the umbrella's only Gettext backend and is deliberately declared with `split_module_by: [:locale, :domain]` — Gettext emits one small `EvoDashWeb.Gettext.T_<locale>_<domain>` module per locale (compiled in parallel) instead of a single ~16k-clause module, keeping the compile fast. Keep this option; the public API (`gettext`/`lgettext`/`put_locale`/`known_locales` and every `use Gettext, backend: EvoDashWeb.Gettext` site) is unchanged.
+`EvoDashWeb.Gettext` (`gettext.ex`) is the umbrella's only Gettext backend and is deliberately declared with `split_module_by: [:locale, :domain]` — Gettext then emits one small `EvoDashWeb.Gettext.T_<locale>_<domain>` module per locale (parallel compile) instead of a single ~16k-clause module. Keep this option; the public API (`gettext`/`lgettext`/`put_locale`/`known_locales`, `use Gettext, backend: EvoDashWeb.Gettext`) is unchanged.
 
 ## Constraints
 - All web modules use `use EvoDashWeb, <role>` as their entrypoint — do not bypass the shared `__using__` macro.
