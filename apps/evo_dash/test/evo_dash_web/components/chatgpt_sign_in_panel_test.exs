@@ -15,7 +15,16 @@ defmodule EvoDashWeb.SettingsComponents.ChatGPTSignInPanelTest do
 
   alias EvoDashWeb.SettingsComponents.ChatGPTSignInPanel
 
-  @idle %{flow_id: nil, url: nil, phase: :idle, reason: nil}
+  @idle %{
+    flow_id: nil,
+    url: nil,
+    phase: :idle,
+    reason: nil,
+    port: nil,
+    mode: nil,
+    paste: "",
+    paste_error: nil
+  }
 
   describe "sign_in_panel/1 — idle" do
     test "an empty/nil/unknown-phase map renders ONE sign-in button and nothing else" do
@@ -167,6 +176,8 @@ defmodule EvoDashWeb.SettingsComponents.ChatGPTSignInPanelTest do
       assert text(hint) =~ "run this command on the execution node."
       assert text(hint) =~ "genesis chatgpt login"
       assert text(hint) =~ "same machine as the execution node"
+      # The CLI route also accepts a pasted redirect URL.
+      assert text(hint) =~ "accepts a pasted redirect URL"
 
       assert nodes(tree, "#acct-sign-in") == []
       assert nodes(tree, "#acct-waiting") == []
@@ -203,7 +214,11 @@ defmodule EvoDashWeb.SettingsComponents.ChatGPTSignInPanelTest do
                flow_id: "f1",
                url: "https://example.test/a",
                phase: :waiting,
-               reason: nil
+               reason: nil,
+               port: nil,
+               mode: nil,
+               paste: "",
+               paste_error: nil
              }
 
       detail = %{surface: {:detail, "acct-1"}, phase: :error, reason: :cancelled}
@@ -270,12 +285,143 @@ defmodule EvoDashWeb.SettingsComponents.ChatGPTSignInPanelTest do
                flow_id: nil,
                url: "https://example.test/a",
                phase: :waiting,
-               reason: nil
+               reason: nil,
+               port: nil,
+               mode: nil,
+               paste: "",
+               paste_error: nil
              }
 
       # A malformed stored surface is simply nobody's state.
       assert ChatGPTSignInPanel.surface_state(%{"surface" => %{}, "phase" => "waiting"}, :wizard) ==
                %{}
+    end
+
+    test "the manual redirect identity and paste fields are normalized" do
+      state = %{
+        surface: :wizard,
+        phase: :waiting,
+        port: 48_123,
+        mode: "manual",
+        paste: "code=abc",
+        paste_error: "no_code"
+      }
+
+      resolved = ChatGPTSignInPanel.surface_state(state, :wizard)
+      assert resolved.port == 48_123
+      assert resolved.mode == :manual
+      assert resolved.paste == "code=abc"
+      # String-keyed paste errors are not atoms: dropped, never rendered raw.
+      assert resolved.paste_error == nil
+
+      assert ChatGPTSignInPanel.surface_state(%{surface: :wizard, port: 0}, :wizard).port == nil
+
+      assert ChatGPTSignInPanel.surface_state(%{surface: :wizard, port: "80"}, :wizard).port ==
+               nil
+
+      assert ChatGPTSignInPanel.surface_state(%{surface: :wizard, mode: :nope}, :wizard).mode ==
+               nil
+
+      assert ChatGPTSignInPanel.surface_state(%{surface: :wizard, paste: 42}, :wizard).paste == ""
+    end
+  end
+
+  describe "sign_in_panel/1 — the pasted redirect fallback" do
+    test "the waiting panel always renders the paste disclosure, input and submit" do
+      tree =
+        panel(
+          profile_id: "acct-42",
+          sign_in: %{flow_id: "f1", url: "https://example.test/a", phase: :waiting, port: 48_123}
+        )
+
+      hint = one(tree, "#acct-sign-in-paste-hint")
+      assert elem(hint, 0) == "details"
+      assert text(hint) =~ "Can't reach this page?"
+      assert text(hint) =~ "connection error"
+      assert text(hint) =~ "remote host"
+      assert text(hint) =~ "paste it below"
+
+      # The user is told exactly which address they are copying.
+      assert text(hint) =~ "Expected redirect address:"
+      assert text(hint) =~ "http://127.0.0.1:48123/auth/callback"
+
+      input = one(tree, "#acct-sign-in-paste-input")
+      assert elem(input, 0) == "input"
+      assert attr(input, "type") == "text"
+      assert attr(input, "name") == "paste"
+      assert attr(input, "phx-change") == "chatgpt_sign_in_paste"
+      assert attr(input, "phx-value-surface") == "detail"
+      assert attr(input, "phx-value-profile_id") == "acct-42"
+
+      submit = one(tree, "#acct-sign-in-paste-submit")
+      assert attr(submit, "type") == "button"
+      assert attr(submit, "phx-click") == "chatgpt_sign_in_submit"
+      assert attr(submit, "phx-value-surface") == "detail"
+      assert attr(submit, "phx-value-profile_id") == "acct-42"
+      assert text(submit) == "Submit pasted link"
+
+      # Rendered inside the provider detail <form>: the panel itself adds none.
+      assert nodes(tree, "form") == []
+      assert nodes(hint, "form") == []
+    end
+
+    test "a nil port omits the expected address instead of rendering a broken one" do
+      for sign_in <- [
+            %{phase: :waiting},
+            %{phase: :waiting, port: nil},
+            %{phase: :waiting, port: 0}
+          ] do
+        tree = panel(sign_in: sign_in)
+
+        hint = one(tree, "#acct-sign-in-paste-hint")
+        refute text(hint) =~ "127.0.0.1"
+        refute text(hint) =~ "Expected redirect address:"
+        assert nodes(tree, "#acct-sign-in-paste-input") != []
+      end
+    end
+
+    test "the typed paste is echoed back into the input" do
+      tree =
+        panel(sign_in: %{phase: :waiting, port: 48_123, paste: "http://127.0.0.1:48123/x?code=c"})
+
+      assert attr(one(tree, "#acct-sign-in-paste-input"), "value") ==
+               "http://127.0.0.1:48123/x?code=c"
+    end
+
+    test "a paste_error renders inline, retryable wording and never the raw atom" do
+      for {reason, expected} <- [
+            {:invalid_callback, "does not belong to this sign-in"},
+            {:no_code, "carries no authorization code"},
+            {:already_finished, "already finishing"}
+          ] do
+        tree = panel(sign_in: %{phase: :waiting, port: 48_123, paste_error: reason})
+
+        error = one(tree, "#acct-sign-in-paste-error")
+        assert attr(error, "role") == "alert"
+        assert attr(error, "class") =~ "text-error"
+        assert text(error) =~ expected
+        refute html(tree) =~ inspect(reason)
+
+        # A rejected paste keeps the attempt on screen: the waiting block stays.
+        assert nodes(tree, "#acct-waiting") != []
+        assert nodes(tree, "#acct-sign-in") == []
+      end
+    end
+
+    test "paste_error does not render without one" do
+      assert nodes(panel(sign_in: %{phase: :waiting}), "#acct-sign-in-paste-error") == []
+    end
+
+    test "the paste/submit events are overridable per surface" do
+      tree =
+        panel(
+          paste_event: "my_paste",
+          submit_event: "my_submit",
+          sign_in: %{phase: :waiting}
+        )
+
+      assert attr(one(tree, "#acct-sign-in-paste-input"), "phx-change") == "my_paste"
+      assert attr(one(tree, "#acct-sign-in-paste-submit"), "phx-click") == "my_submit"
     end
   end
 

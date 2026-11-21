@@ -87,13 +87,47 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignIn do
 
   @doc """
   Starts ONE sign-in for `account` (`nil` = the default registration) and
-  answers `{:ok, %{id: flow_id, url: sign_in_url}}` or `{:error, reason}`.
+  answers `{:ok, %{id: flow_id, url: sign_in_url, port: port, mode: mode}}` or
+  `{:error, reason}`.
+
+  `port` is the flow's redirect-URI port (`nil` when the flow module did not
+  report one — a page then renders no address) and `mode` is `:loopback` while
+  the attempt owns its callback listener, `:manual` when no local listener could
+  be bound and only a pasted redirect can finish it (`nil` when absent). Atom-
+  and string-keyed flow replies both work.
   """
-  @spec begin(term()) :: {:ok, %{id: String.t(), url: String.t()}} | {:error, term()}
+  @spec begin(term()) ::
+          {:ok,
+           %{
+             id: String.t(),
+             url: String.t(),
+             port: nil | pos_integer(),
+             mode: nil | :loopback | :manual
+           }}
+          | {:error, term()}
   def begin(account) do
     case call(login_module(), :begin, [account, []]) do
-      {:ok, {:ok, %{id: id, url: url}}} -> started(id, url)
-      {:ok, {:ok, %{"id" => id, "url" => url}}} -> started(id, url)
+      {:ok, {:ok, %{} = flow}} -> started(flow)
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:ok, _unexpected} -> {:error, :sign_in_unavailable}
+      {:error, _failure} -> {:error, :sign_in_unavailable}
+    end
+  end
+
+  @doc """
+  Hands a pasted redirect back to the pending flow `flow_id` and answers
+  `:ok | {:error, reason}`.
+
+  The flow acknowledges the paste only: its terminal outcome still arrives
+  through the poll (`start_poll/2` → `{:chatgpt_signin_result, flow_id,
+  result}`). A rejected paste (`:invalid_callback`, `:no_code`) leaves the
+  attempt PENDING, so a surface can keep its waiting panel and let the user
+  paste again.
+  """
+  @spec submit(term(), term()) :: :ok | {:error, term()}
+  def submit(flow_id, input) do
+    case call(login_module(), :submit_callback, [flow_id, input]) do
+      {:ok, {:ok, _ack}} -> :ok
       {:ok, {:error, reason}} -> {:error, reason}
       {:ok, _unexpected} -> {:error, :sign_in_unavailable}
       {:error, _failure} -> {:error, :sign_in_unavailable}
@@ -247,6 +281,29 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignIn do
   def message(:superseded),
     do: %{kind: :info, text: gettext("A newer sign-in request replaced this one.")}
 
+  # zh_CN: 粘贴回来的链接带着另一次登录（或已过期页面）的 state，属于“贴错内容”，可以再贴一次。
+  def message(:invalid_callback),
+    do: %{
+      kind: :error,
+      text:
+        gettext(
+          "That pasted link does not belong to this sign-in. Paste the address you were redirected to again."
+        )
+    }
+
+  # zh_CN: 粘贴的文本里找不到授权码（例如只复制了域名或说明文字），需要浏览器地址栏里的完整链接。
+  def message(:no_code),
+    do: %{
+      kind: :error,
+      text:
+        gettext(
+          "That text carries no authorization code. Paste the full address from your browser."
+        )
+    }
+
+  def message(:already_finished),
+    do: %{kind: :error, text: gettext("This sign-in is already finishing.")}
+
   def message(:loopback_listener_unavailable), do: unavailable_message()
   def message(:sign_in_unavailable), do: unavailable_message()
   def message(:unreachable), do: unavailable_message()
@@ -282,10 +339,35 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignIn do
 
   # ── Internals ──────────────────────────────────────────────────────────────
 
-  defp started(id, url) when is_binary(id) and id != "" and is_binary(url) and url != "",
-    do: {:ok, %{id: id, url: url}}
+  # A flow reply is TOTAL: atom- and string-keyed maps both work, a blank id or
+  # url (or anything that is not a map) is unavailable, and an absent/odd port
+  # or mode degrades to nil instead of leaking a malformed value into the page.
+  defp started(%{} = flow) do
+    id = fetch(flow, :id)
+    url = fetch(flow, :url)
 
-  defp started(_id, _url), do: {:error, :sign_in_unavailable}
+    if is_binary(id) and id != "" and is_binary(url) and url != "" do
+      {:ok, %{id: id, url: url, port: port(fetch(flow, :port)), mode: mode(fetch(flow, :mode))}}
+    else
+      {:error, :sign_in_unavailable}
+    end
+  end
+
+  defp fetch(map, key) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> value
+      :error -> Map.get(map, Atom.to_string(key))
+    end
+  end
+
+  defp port(value) when is_integer(value) and value > 0, do: value
+  defp port(_value), do: nil
+
+  defp mode(:loopback), do: :loopback
+  defp mode(:manual), do: :manual
+  defp mode("loopback"), do: :loopback
+  defp mode("manual"), do: :manual
+  defp mode(_value), do: nil
 
   # ONE guarded + bounded call into the flow module. `{:ok, raw_return}` carries
   # the module's own answer; `{:error, _}` means the call failed as a whole.

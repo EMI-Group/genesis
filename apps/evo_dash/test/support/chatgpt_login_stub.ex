@@ -26,19 +26,25 @@ defmodule EvoDash.Test.ChatGPTLoginStub do
 
   `install!/1` options:
 
-    * `begin:` — `{:ok, %{id:, url:, port:}}` or `{:error, reason}`
+    * `begin:` — `{:ok, %{id:, url:, port:, mode:}}` or `{:error, reason}`
       (required). A LIST of such answers is a per-call queue, so one test can
       run several distinct flows without re-installing;
     * `statuses:` — the answer queue; each entry is a value or a zero-arity
       fun (an exhausted queue keeps answering `:pending`). A MAP keyed by flow
       id scopes each queue to its own flow, so a superseded flow's still-running
       poll can never consume the current flow's answer (a plain list keeps the
-      first-come-first-served behaviour).
+      first-come-first-served behaviour);
+    * `submit:` — the answer `submit_callback/2` gives (default
+      `{:ok, %{id: flow_id}}`, i.e. an acknowledged paste). A LIST is a
+      per-call queue (each entry a value or a zero-arity fun; an exhausted
+      queue falls back to the default ack), and a single value repeats.
 
-  A cancelled flow always answers `:pending`, like a facade that already
-  retired it. Every call also notifies the test pid:
-  `{:chatgpt_stub, :begin, account}`, `{:chatgpt_stub, :status, flow_id}` and
-  `{:chatgpt_stub, :cancel, flow_id}`.
+  A cancelled flow always answers `:pending` for `status/1` and
+  `{:error, :already_finished}` for `submit_callback/2`, like a facade that
+  already retired it. Every call also notifies the test pid:
+  `{:chatgpt_stub, :begin, account}`, `{:chatgpt_stub, :status, flow_id}`,
+  `{:chatgpt_stub, :cancel, flow_id}` and
+  `{:chatgpt_stub, :submit, flow_id, input}`.
 
   The poll interval is shrunk to 5 ms and the cap lifted far beyond any test's
   lifetime, so no test here waits on a wall-clock timer. The per-call budget is
@@ -64,6 +70,7 @@ defmodule EvoDash.Test.ChatGPTLoginStub do
         %{
           begin: Keyword.fetch!(opts, :begin),
           statuses: Keyword.get(opts, :statuses, []),
+          submit: Keyword.get(opts, :submit, :default),
           cancelled: [],
           test_pid: test_pid
         }
@@ -114,6 +121,22 @@ defmodule EvoDash.Test.ChatGPTLoginStub do
     end)
   end
 
+  # A pasted redirect handed back to the attempt: acknowledged from the queue
+  # (default `{:ok, %{id: flow_id}}`) while a cancelled/retired flow is already
+  # finished.
+  def submit_callback(flow_id, input) do
+    Agent.get_and_update(pid!(), fn state ->
+      send(state.test_pid, {:chatgpt_stub, :submit, flow_id, input})
+
+      if flow_id in state.cancelled do
+        {{:error, :already_finished}, state}
+      else
+        {reply, submits} = pop_submit(state.submit, flow_id)
+        {reply, %{state | submit: submits}}
+      end
+    end)
+  end
+
   defp resolve(next) when is_function(next, 0), do: next.()
   defp resolve(next), do: next
 
@@ -132,6 +155,15 @@ defmodule EvoDash.Test.ChatGPTLoginStub do
     do: Map.put(statuses, flow_id, rest)
 
   defp put_queue(_statuses, _flow_id, rest), do: rest
+
+  # A submit answer is the default ack unless the test queued one; an exhausted
+  # queue keeps acknowledging like an install with no `submit:` option.
+  defp pop_submit(:default, flow_id), do: {ack(flow_id), :default}
+  defp pop_submit([], flow_id), do: {ack(flow_id), []}
+  defp pop_submit([next | rest], _flow_id), do: {resolve(next), rest}
+  defp pop_submit(answer, _flow_id), do: {resolve(answer), answer}
+
+  defp ack(flow_id), do: {:ok, %{id: flow_id}}
 
   # ── Caller-chain resolution ────────────────────────────────────────────────
   #
