@@ -1,20 +1,140 @@
 defmodule EvoGit.RemoteConnectionsTest do
-  # `async: true` — every test works on its own per-process config directory
-  # (`EvoGit.TestSupport.ConfigDir`) so `remote_connections.toml` never touches
-  # the real `~/.config/genesis/`, and `EvoGit.RemoteConnections` is a
-  # collection of pure TOML file functions evaluated in the calling process.
-  use ExUnit.Case, async: true
+  # `async: false` — forced by TWO BEAM-global observables these cases assert on:
+  #
+  #   1. the once-per-failure memo in `:persistent_term`, keyed
+  #      `{EvoGit.RemoteConnections, :ensure_file_failure}` — the module writes
+  #      it (every failing `ensure_file/0`) and observes it through log output,
+  #      so a concurrently running module failing the same way would perturb the
+  #      "exactly once" count; and
+  #   2. `ExUnit.CaptureLog`'s `:logger` handler, which captures events from ALL
+  #      concurrently running processes (no per-test log isolation), so an exact
+  #      occurrence count is only sound while no other module logs at the same
+  #      time.
+  #
+  # Everything else uses a per-process config directory
+  # (`EvoGit.TestSupport.ConfigDir`), so the real `~/.config/genesis/` is never
+  # touched.
+  use ExUnit.Case, async: false
+
+  import ExUnit.CaptureLog
 
   alias EvoGit.TestSupport.ConfigDir
 
+  # Mirrors the production memo key (see `EvoGit.RemoteConnections`): it is
+  # BEAM-global, so it is cleared before AND after every case.
+  @failure_memo_key {EvoGit.RemoteConnections, :ensure_file_failure}
+
   setup do
     ConfigDir.isolate!("evogit-remote-connections")
+    clear_failure_memo()
+    on_exit(fn -> clear_failure_memo() end)
     :ok
   end
 
   describe "list/0" do
     test "returns [] when no file exists" do
       assert EvoGit.RemoteConnections.list() == []
+    end
+  end
+
+  describe "ensure_file/0" do
+    test "creates the skeleton file on a clean config dir and logs nothing" do
+      toml_path = Path.join(EvoGit.Config.config_dir(), "remote_connections.toml")
+
+      log = capture_log(fn -> assert :ok = EvoGit.RemoteConnections.ensure_file() end)
+
+      assert log == ""
+      assert File.exists?(toml_path)
+      assert File.read!(toml_path) =~ "Genesis Remote Connections"
+    end
+
+    test "is idempotent — an existing file is neither rewritten nor clobbered" do
+      config_dir = EvoGit.Config.config_dir()
+      toml_path = Path.join(config_dir, "remote_connections.toml")
+      File.mkdir_p!(config_dir)
+
+      existing = """
+      [[connections]]
+      id = "keep-me"
+      ssh_target = "keep.example.com"
+      """
+
+      File.write!(toml_path, existing)
+
+      log = capture_log(fn -> assert :ok = EvoGit.RemoteConnections.ensure_file() end)
+
+      assert log == ""
+      assert File.read!(toml_path) == existing
+      assert [%{id: "keep-me"}] = EvoGit.RemoteConnections.list()
+    end
+
+    test "returns the primitive error reason (total, non-raising) when the config dir is unusable" do
+      config_dir = block_config_dir!()
+      toml_path = Path.join(config_dir, "remote_connections.toml")
+
+      log =
+        capture_log(fn ->
+          # `File.mkdir_p/1` normalizes "path exists but is not a directory" to
+          # `:enotdir`; the caller must see that reason, not a collapsed atom.
+          assert {:error, :enotdir} = EvoGit.RemoteConnections.ensure_file()
+        end)
+
+      assert log =~ "Failed to create remote connections file at #{toml_path}"
+      assert log =~ ":enotdir"
+      refute File.exists?(toml_path)
+    end
+
+    test "list/0 still returns [] when the file cannot be created" do
+      block_config_dir!()
+
+      log = capture_log(fn -> assert EvoGit.RemoteConnections.list() == [] end)
+
+      assert log =~ "Failed to create remote connections file at"
+    end
+  end
+
+  describe "ensure_file/0 failure logging" do
+    test "warns exactly once per failure identity across repeated calls" do
+      config_dir = block_config_dir!()
+
+      message =
+        "Failed to create remote connections file at #{config_dir}/remote_connections.toml"
+
+      log =
+        capture_log(fn ->
+          assert {:error, :enotdir} = EvoGit.RemoteConnections.ensure_file()
+          assert {:error, :enotdir} = EvoGit.RemoteConnections.ensure_file()
+          # The dashboard's `list/0` caller hits the same identity — still silent.
+          assert EvoGit.RemoteConnections.list() == []
+        end)
+
+      assert count_occurrences(log, message) == 1
+    end
+
+    test "a changed failure identity logs a fresh warning" do
+      first_config_dir = block_config_dir!()
+      first_path = Path.join(first_config_dir, "remote_connections.toml")
+
+      first_log =
+        capture_log(fn -> assert {:error, :enotdir} = EvoGit.RemoteConnections.ensure_file() end)
+
+      assert count_occurrences(first_log, "at #{first_path}:") == 1
+
+      # Identical repeat: the memo suppresses it.
+      assert capture_log(fn ->
+               assert {:error, :enotdir} = EvoGit.RemoteConnections.ensure_file()
+             end) == ""
+
+      # A different config dir means a different PATH — a new failure identity.
+      second_override = ConfigDir.isolate!("evogit-remote-connections-second")
+      second_config_dir = Path.join(second_override, "genesis")
+      File.write!(second_config_dir, "not a directory")
+      second_path = Path.join(second_config_dir, "remote_connections.toml")
+
+      second_log =
+        capture_log(fn -> assert {:error, :enotdir} = EvoGit.RemoteConnections.ensure_file() end)
+
+      assert count_occurrences(second_log, "at #{second_path}:") == 1
     end
   end
 
@@ -260,5 +380,30 @@ defmodule EvoGit.RemoteConnectionsTest do
       assert conn.name == "Manual Box"
       assert conn.remote_path == "/opt/genesis"
     end
+  end
+
+  # --- Helpers ---
+
+  # Clears the BEAM-global once-per-failure memo (a `:persistent_term` key), so
+  # no case inherits suppression and no other module inherits ours.
+  defp clear_failure_memo do
+    case :persistent_term.get(@failure_memo_key, nil) do
+      nil -> :ok
+      _ -> :persistent_term.erase(@failure_memo_key)
+    end
+  end
+
+  # Occupies `<config_dir>` with a REGULAR FILE, so `File.mkdir_p/1` must fail:
+  # Elixir normalizes "path exists but is not a directory" to `{:error, :enotdir}`
+  # (deterministic on every OS). Returns the config dir path.
+  defp block_config_dir! do
+    config_dir = EvoGit.Config.config_dir()
+    File.mkdir_p!(Path.dirname(config_dir))
+    File.write!(config_dir, "not a directory")
+    config_dir
+  end
+
+  defp count_occurrences(haystack, needle) do
+    haystack |> String.split(needle) |> length() |> Kernel.-(1)
   end
 end

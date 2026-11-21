@@ -34,6 +34,14 @@ defmodule EvoGit.RemoteConnections do
   @default_dist_port 9000
   @default_remote_path "/tmp/genesis_server"
 
+  # Content of the skeleton file created on first access (never overwrites an
+  # existing one — see `ensure_file/0`).
+  @skeleton_toml """
+  # Genesis Remote Connections
+  # Add SSH targets below as [[connections]] entries.
+  # See documentation for field descriptions.
+  """
+
   # Maps TOML string keys to atoms for the known connection schema. Unknown
   # keys are left as strings so we never raise on unexpected data.
   @key_map %{
@@ -59,10 +67,17 @@ defmodule EvoGit.RemoteConnections do
 
   If the remote connections file does not exist yet, a skeleton file is
   created silently (no warning is logged for the normal "no file yet" case).
+  If that creation fails, `[]` is still returned — the failure never propagates
+  and is logged at most once per distinct failure identity (see
+  `ensure_file/0`), so an unusable config directory cannot spam the log on
+  every render.
   """
   @spec list() :: [map()]
   def list do
     unless File.exists?(path()) do
+      # Deliberately discard the result: no file is the normal initial state and
+      # `list/0` documents `[]` for it. `ensure_file/0` owns the (deduped)
+      # warning, so this stays a non-raising, non-propagating call.
       ensure_file()
       []
     else
@@ -182,36 +197,67 @@ defmodule EvoGit.RemoteConnections do
     end
   end
 
+  @doc false
+  # Creates a skeleton remote connections TOML file if it doesn't exist.
+  # This prevents a misleading "Failed to read remote connections" warning
+  # on first access — no file is the normal/expected initial state.
+  #
+  # Total: returns `:ok` when the file already exists (it is never clobbered) or
+  # was created, and `{:error, reason}` with the PRIMITIVE reason from
+  # `File.mkdir_p/1` / `File.write/3` (`:enotdir`, `:eacces`, …) when creation
+  # failed. Public (but hidden) so that contract is directly testable.
+  @spec ensure_file() :: :ok | {:error, term()}
+  def ensure_file do
+    dir = EvoGit.Config.config_dir()
+    file_path = path()
+
+    if File.exists?(file_path) do
+      :ok
+    else
+      with :ok <- File.mkdir_p(dir),
+           :ok <- File.write(file_path, @skeleton_toml, [:write]) do
+        :ok
+      else
+        {:error, reason} ->
+          warn_creation_failure_once(file_path, reason)
+          {:error, reason}
+      end
+    end
+  end
+
   # --- Private Helpers ---
 
   defp path do
     Path.join(EvoGit.Config.config_dir(), @config_filename)
   end
 
-  @skeleton_toml """
-  # Genesis Remote Connections
-  # Add SSH targets below as [[connections]] entries.
-  # See documentation for field descriptions.
-  """
+  # BEAM-global memo of the LAST logged skeleton-creation failure.
+  #
+  # `list/0` runs on every dashboard render (often from async page loads), so an
+  # unwritable/unavailable config directory would otherwise emit one warning per
+  # render. Exactly one warning is emitted per failure IDENTITY
+  # (`{file_path, reason}`): an identical repeat is silent, while a changed path
+  # or a changed reason is a new identity and logs again.
+  #
+  # `:persistent_term` is the documented once-only home (the app has no other
+  # BEAM-wide store); the value is a small tuple and is written at most once per
+  # distinct failure, so the (expensive) `put` is never on a hot path. Tests may
+  # clear it with `:persistent_term.erase({EvoGit.RemoteConnections,
+  # :ensure_file_failure})`.
+  @failure_memo_key {__MODULE__, :ensure_file_failure}
 
-  # Creates a skeleton remote connections TOML file if it doesn't exist.
-  # This prevents a misleading "Failed to read remote connections" warning
-  # on first access — no file is the normal/expected initial state.
-  defp ensure_file do
-    dir = EvoGit.Config.config_dir()
-    file_path = path()
+  defp warn_creation_failure_once(file_path, reason) do
+    identity = {file_path, reason}
 
-    with :ok <- File.mkdir_p(dir),
-         :ok <- File.write(file_path, @skeleton_toml, [:write]) do
-      :ok
-    else
-      {:error, reason} ->
-        Logger.warning(
-          "Failed to create remote connections file at #{file_path}: #{inspect(reason)}"
-        )
+    if :persistent_term.get(@failure_memo_key, nil) != identity do
+      :persistent_term.put(@failure_memo_key, identity)
 
-        :error
+      Logger.warning(
+        "Failed to create remote connections file at #{file_path}: #{inspect(reason)}"
+      )
     end
+
+    :ok
   end
 
   # Normalizes a raw connection map into a fully-populated target with all
