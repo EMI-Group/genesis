@@ -416,4 +416,72 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInStateTest do
       assert ChatGPTSignInState.flow_id(nil) == nil
     end
   end
+
+  # The stub's Agent pid is per-test process-dictionary state, and the sign-in
+  # boundary calls it from tasks several hops BELOW the test. Resolution must
+  # therefore follow the `:"$callers"` chain transitively — and must fail
+  # loudly, never call an Agent that does not exist.
+  describe "stub pid resolution through the caller chain" do
+    test "resolves the Agent through a MULTI-HOP chain, not just the direct callers" do
+      install!({:ok, %{id: @flow_id, url: @flow_url, port: 48_123}})
+      test_pid = self()
+
+      # A TRUNCATED chain: each hop names ONLY the hop above it, so the Agent
+      # pid sits two hops up and the innermost process' direct `$callers` entry
+      # cannot resolve it. That is the shape of a boundary/poll task whose
+      # starter's chain was not flattened into one list.
+      {_outer, outer_ref} =
+        spawn_monitor(fn ->
+          Process.put(:"$callers", [test_pid])
+          outer_pid = self()
+
+          spawn_monitor(fn ->
+            Process.put(:"$callers", [outer_pid])
+
+            send(
+              test_pid,
+              {:stub_call, ChatGPTLoginStub.begin("work", []), ChatGPTLoginStub.status(@flow_id)}
+            )
+
+            send(outer_pid, :inner_done)
+          end)
+
+          receive do
+            :inner_done -> :ok
+          end
+        end)
+
+      assert_receive {:stub_call, {:ok, %{id: @flow_id}}, :pending}, @receive_timeout_ms
+      # The notification still reaches the TEST pid, not the intermediate hop.
+      assert_receive {:chatgpt_stub, :begin, "work"}, @receive_timeout_ms
+      assert_receive {:chatgpt_stub, :status, @flow_id}, @receive_timeout_ms
+      assert_receive {:DOWN, ^outer_ref, :process, _pid, :normal}, @receive_timeout_ms
+    end
+
+    test "fails loudly when no install!/1 is in the caller chain" do
+      test_pid = self()
+
+      # No stub was installed here or above, so this used to reach
+      # `GenServer.call(nil, …)` and exit `{:noproc, _}` with no diagnosis.
+      {:ok, _pid} =
+        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+          try do
+            ChatGPTLoginStub.begin("work", [])
+            send(test_pid, :stub_call_returned)
+          rescue
+            error -> send(test_pid, {:stub_call_raised, error})
+          end
+        end)
+
+      assert_receive {:stub_call_raised, %ExUnit.AssertionError{} = error}, @receive_timeout_ms
+      message = Exception.message(error)
+
+      assert message =~ "EvoDash.Test.ChatGPTLoginStub"
+      assert message =~ "no Agent pid"
+      assert message =~ "install!/1"
+      # The test pid is named so the failure points at the suite that forgot it.
+      assert message =~ inspect(test_pid)
+      refute_receive :stub_call_returned, 0
+    end
+  end
 end
