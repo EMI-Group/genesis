@@ -132,10 +132,22 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
 
     ~H"""
     <%= if @request do %>
+      <%!-- The page wraps this component in `:if={@approval_dialog_open}`, so a
+           patch discards THIS `<dialog>` — the node whose `phx-remove` runs.
+           Two paths converge on the same bounded ~120 ms opacity fade: the
+           hook's own `_hide()` (which flips `data-dialog-state="closing"` and
+           keeps working even when the server never replies) and this deferred
+           removal (which covers every SERVER-initiated removal — the pending
+           list emptying on an arrival or a resolution, a session switch).
+           `DialogModal.destroyed()` still runs its synchronous teardown after
+           the deferred removal, restoring focus and leaving the top layer. --%>
       <dialog
         id="approval-dialog"
         class="modal"
         phx-hook="DialogModal"
+        phx-remove={
+          JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})
+        }
         aria-labelledby="approval-dialog-title"
         aria-describedby="approval-dialog-summary approval-dialog-permission"
         aria-modal="true"

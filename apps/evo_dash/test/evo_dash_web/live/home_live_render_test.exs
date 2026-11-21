@@ -495,6 +495,27 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     assert Floki.find(dom, "#chat-messages [id^='chat-queued-echo-']") == []
   end
 
+  test "queued echoes exit in both removal shapes: the row and the emptied wrapper" do
+    dom = page(queued_echoes: [%{id: "1", text: "first"}, %{id: "2", text: "second"}])
+
+    # (2) ONE echo leaving the queue discards only its ROW, so each row owns its
+    # own exit — and drops the `fill: both` entrance classes first, which would
+    # otherwise outrank the exit classes.
+    for id <- ["1", "2"] do
+      assert [row_js] = attr(dom, "#chat-queued-echo-#{id}", "phx-remove")
+      assert row_js =~ "remove_class"
+      assert row_js =~ "motion-panel-open"
+      assert row_js =~ "motion-panel-slide"
+      assert row_js =~ "motion-exit-lift"
+    end
+
+    # (1) The queue emptying discards the WRAPPER (the `:if` sits on it), which
+    # carries no entrance class — a plain fade.
+    assert [wrapper_js] = attr(dom, "#chat-queued-echoes", "phx-remove")
+    assert wrapper_js =~ "motion-exit-fade"
+    refute wrapper_js =~ "motion-panel-open"
+  end
+
   test "the interrupt affordance exists only while a turn runs" do
     for status <- [:idle, :awaiting_input, :ended, :cancelling] do
       assert Floki.find(page(chat_status: status), "#chat-interrupt-button") == []

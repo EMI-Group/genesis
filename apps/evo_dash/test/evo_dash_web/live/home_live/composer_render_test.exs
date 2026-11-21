@@ -105,4 +105,31 @@ defmodule EvoDashWeb.HomeLive.ComposerRenderTest do
     assert attributes["phx-click-away"] =~ "workspace-toggle"
     assert Enum.count(LazyHTML.query(html, "#workspace-error[role=alert]")) == 1
   end
+
+  test "the upload progress and error chips own a deferred removal fade" do
+    # Each chip's `:if` sits ON the chip, so the patch discards that node and
+    # LiveView runs its own `phx-remove`: the last upload finishing (or the user
+    # dismissing the error) fades the overlay out instead of popping it.
+    entry = %Phoenix.LiveView.UploadEntry{ref: "0", client_name: "a.png", progress: 42}
+
+    upload = %Phoenix.LiveView.UploadConfig{
+      name: :chat_files,
+      ref: "0",
+      accept: :any,
+      entries: [entry]
+    }
+
+    dom =
+      render_component(&Composer.attach_menu/1,
+        uploads: %{chat_files: upload},
+        upload_error: "boom"
+      )
+      |> Floki.parse_document!()
+
+    for id <- ["#chat-upload-progress", "#chat-upload-error"] do
+      assert [js] = dom |> Floki.find(id) |> Floki.attribute("phx-remove")
+      assert js =~ "motion-exit-fade"
+      assert js =~ "motion-exit-visible"
+    end
+  end
 end

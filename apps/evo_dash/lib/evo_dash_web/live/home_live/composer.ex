@@ -354,10 +354,16 @@ defmodule EvoDashWeb.HomeLive.Composer do
           </details>
         </div>
       </details>
+      <%!-- `:if` sits on each chip wrapper, so the patch removes exactly this
+           node and its own `phx-remove` runs: the last upload finishing (or the
+           user dismissing the error) fades the overlay instead of popping it. --%>
       <div
         :if={@attach_upload_entries != []}
         id="chat-upload-progress"
         class="absolute bottom-full left-0 z-[70] mb-2 w-64 rounded-xl border border-base-300 bg-base-100 p-2 shadow-lg"
+        phx-remove={
+          JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})
+        }
       >
         <div :for={entry <- @attach_upload_entries} class="flex items-center gap-2 py-1 text-xs">
           <span class="min-w-0 flex-1 truncate" role="status">{gettext(
@@ -381,6 +387,9 @@ defmodule EvoDashWeb.HomeLive.Composer do
         id="chat-upload-error"
         role="alert"
         class="absolute bottom-full left-0 z-[70] mb-2 flex w-72 items-start gap-2 rounded-xl border border-error/30 bg-base-100 p-3 text-xs text-error shadow-lg"
+        phx-remove={
+          JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})
+        }
       >
         <span class="flex-1">{@attach_upload_error}</span>
         <button
@@ -408,15 +417,32 @@ defmodule EvoDashWeb.HomeLive.Composer do
     assigns = assign(assigns, queued_echo_entries: echo_list(assigns[:queued_echoes]))
 
     ~H"""
+    <%!-- TWO exits, because two different patches discard nodes here. When the
+         queue becomes EMPTY the patch removes this wrapper (the `:if` sits on
+         it) and the wrapper's fade carries the rows out — they stay in the DOM
+         while the removal is deferred. When ONE echo leaves the queue while
+         others remain (it was delivered at the turn boundary) only that ROW is
+         discarded, so the row owns its own fade + lift. A descendant's
+         `phx-remove` never fires when an ancestor unmounts, which is why the
+         wrapper needs its own binding. --%>
     <div
       :if={@queued_echo_entries != []}
       id="chat-queued-echoes"
       class="flex flex-col gap-1 px-1 pb-1"
+      phx-remove={
+        JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})
+      }
     >
+      <%!-- The entrance classes use `fill: both`, so their retained animation
+           value outranks any exit class; they are removed first. --%>
       <div
         :for={echo <- @queued_echo_entries}
         id={"chat-queued-echo-#{echo.id}"}
         class="motion-panel motion-panel-slide motion-panel-open ml-auto max-w-[85%] rounded-lg border border-dashed border-base-300 bg-base-200/40 px-3 py-1.5 text-sm text-base-content/70"
+        phx-remove={
+          JS.remove_class("motion-panel-open motion-panel-slide")
+          |> JS.hide(transition: {"motion-exit-lift", "motion-exit-visible", "motion-exit-hidden"})
+        }
       >
         <p class="whitespace-pre-wrap break-words">{echo.text}</p>
         <p class="mt-0.5 text-[11px] text-base-content/50">

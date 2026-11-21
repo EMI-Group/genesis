@@ -72,6 +72,18 @@ defmodule EvoDashWeb.ProjectComponentsTest do
                "close_project_palette"
              ]
     end
+
+    test "only the #project-omnibox wrapper owns a removal binding" do
+      # `projects_live.ex` gates the WHOLE component behind `:if`, so a patch
+      # discards the wrapper and nothing inside it: a `phx-remove` on the
+      # backdrop or the overlay could never run, and carrying one there
+      # misstates which node LiveView animates out.
+      html = render_component(&ProjectComponents.project_omnibox/1, palette_open: true)
+
+      assert attribute(html, ".project-palette-backdrop", "phx-remove") == []
+      assert attribute(html, "#project-palette", "phx-remove") == []
+      assert [_js] = attribute(html, "#project-omnibox", "phx-remove")
+    end
   end
 
   # Directory picker browse buttons (Tauri desktop only).
