@@ -293,7 +293,7 @@ const CommitGraph = {
   // TWO kinds, sharing the `.cg-row` shell but NOT the key contract:
   //   * a FOLDED RUN row (`.cg-gap-row`, or any row carrying a fold key) is a
   //     fold affordance — Enter / Space toggle its fold with the SAME
-  //     `toggle_commit_fold` event (and `fold-key` payload) a click sends;
+  //     `toggle_commit_fold` event (and `fold_key` payload) a click sends;
   //   * every other row (owned commit row, :base / :noop stub) selects its
   //     owner from `data-cg-agent-id` with `select_agent`, stringified exactly
   //     like `phx-value-id`, and is a no-op without one.
@@ -323,7 +323,7 @@ const CommitGraph = {
         if (foldKey == null || foldKey === "") return;
 
         event.preventDefault();
-        this.pushEvent("toggle_commit_fold", {"fold-key": foldKey});
+        this.pushEvent("toggle_commit_fold", {fold_key: foldKey});
         return;
       }
 

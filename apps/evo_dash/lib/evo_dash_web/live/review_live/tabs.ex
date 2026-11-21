@@ -67,13 +67,10 @@ defmodule EvoDashWeb.ReviewLive.Tabs do
 
   # Per-agent lazy result: fetches ONE agent's heavy "result" on demand (also
   # the Retry path for a failed fetch). Never triggered by a render.
-  # `phx-value-agent-id` arrives as the hyphenated key "agent-id" (LiveView
-  # keeps the attribute suffix verbatim), so accept both spellings.
+  # LiveView passes the `phx-value-*` attribute SUFFIX verbatim as the params
+  # key, so the attribute (`phx-value-agent_id`) and this match must both be
+  # snake_case — a kebab attribute would arrive as "agent-id" and never match.
   def load_archive_agent_result(socket, %{"agent_id" => agent_id}) do
-    {:noreply, ArchiveLoad.load_agent_result(socket, agent_id)}
-  end
-
-  def load_archive_agent_result(socket, %{"agent-id" => agent_id}) do
     {:noreply, ArchiveLoad.load_agent_result(socket, agent_id)}
   end
 

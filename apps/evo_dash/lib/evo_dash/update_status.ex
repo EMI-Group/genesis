@@ -32,19 +32,34 @@ defmodule EvoDash.UpdateStatus do
   ## Never-wedge invariants
 
   1. Every check-result path (`"available"`, `"up_to_date"`, `"not_configured"`,
-     `"not_available"`, `"error"`, malformed) and `check_failed/1` terminates
+     `"not_available"`, `"error"`, malformed) and `check_failed/2` terminates
      `:checking` — the UI can never stick on a spinner.
-  2. `:error` is always retryable: `check_started/0` and `handle_check_result/1`
+  2. `:error` is always retryable: `check_started/0` and `handle_check_result/2`
      work from `:error`.
   3. `:applying` is reversible via `apply_failed/1` — if the Rust
      `begin_update` invoke fails, the hub returns to `:error` instead of
      wedging.
   4. Malformed payloads (`nil`, non-map, unknown status) never raise; they
      normalize to `:error` with the error `"check_failed"`.
+  5. A result or timeout carrying the generation of a check that a newer
+     `check_started/0` has SUPERSEDED is dropped, never applied.
 
-  All mutating API functions are casts whose transition broadcasts inside
-  `handle_cast`, so callers are never blocked on the broadcast; `get/0`,
-  `phase/0`, and `request_download?/0` are calls.
+  ## Check generations
+
+  Every `check_started/0` increments a monotonic `check_generation` and returns
+  it. `handle_check_result/2` and `check_failed/2` take that generation back:
+  an integer that differs from the current one is a leftover from a superseded
+  check and is dropped (`Logger.debug`, no state change, no broadcast), so the
+  never-wedge check watchdog of an older check can never fail the newer, healthy
+  check that replaced it. `nil` carries no generation and applies to the current
+  check (e.g. a JS-hook payload for a check started by an earlier socket).
+
+  `check_started/0`, `handle_check_result/2` and `check_failed/2` are calls (the
+  first returns the new generation, the other two `:applied | :stale`) whose
+  transition broadcasts inside `handle_call`; every other mutating function is a
+  cast whose transition broadcasts inside `handle_cast`, so callers are never
+  blocked on the broadcast. `get/0`, `phase/0`, and `request_download?/0` are
+  calls.
 
   ## Platform gating
 
@@ -60,6 +75,8 @@ defmodule EvoDash.UpdateStatus do
   """
 
   use GenServer
+
+  require Logger
 
   @doc """
   Starts the hub, registered as `EvoDash.UpdateStatus`.
@@ -79,11 +96,17 @@ defmodule EvoDash.UpdateStatus do
   end
 
   @doc """
-  Marks a check as started: transitions to `:checking` from ANY phase and
-  broadcasts. (Used by SystemLive when it triggers a check.)
+  Marks a check as started: transitions to `:checking` from ANY phase,
+  increments the monotonic `check_generation`, broadcasts, and returns the new
+  generation.
+
+  Callers thread that generation back through `handle_check_result/2`,
+  `check_failed/2` and the never-wedge check watchdog, so a result or timeout
+  belonging to a superseded check can never overwrite a newer check. (Used by
+  SystemLive when it triggers a check.)
   """
   def check_started do
-    GenServer.cast(__MODULE__, :check_started)
+    GenServer.call(__MODULE__, :check_started)
   end
 
   @doc """
@@ -92,9 +115,13 @@ defmodule EvoDash.UpdateStatus do
   The payload is a map with STRING keys: `"status"`, `"current_version"`,
   `"version"`, `"body"`, `"date"`, `"error"`. Missing keys, unknown statuses,
   and non-map payloads are tolerated and normalize to `:error` (never raise).
+
+  `generation` is the check generation the result belongs to (as returned by
+  `check_started/0`); a result from a superseded check is dropped. `nil` means
+  "applies to the current check". Returns `:applied` or `:stale`.
   """
-  def handle_check_result(payload) do
-    GenServer.cast(__MODULE__, {:check_result, payload})
+  def handle_check_result(payload, generation \\ nil) do
+    GenServer.call(__MODULE__, {:check_result, payload, generation})
   end
 
   @doc """
@@ -136,14 +163,18 @@ defmodule EvoDash.UpdateStatus do
   Transitions to `:error` with the given message (or `"check_failed"`);
   broadcasts. Never-wedge watchdog path: callable from `:checking` or any
   other phase.
+
+  `generation` is the check generation the failure belongs to (as returned by
+  `check_started/0`); a timeout from a superseded check is dropped. `nil` means
+  "applies to the current check". Returns `:applied` or `:stale`.
   """
-  def check_failed(message) do
-    GenServer.cast(__MODULE__, {:check_failed, message})
+  def check_failed(message, generation \\ nil) do
+    GenServer.call(__MODULE__, {:check_failed, message, generation})
   end
 
   @doc """
-  Resets to the initial `:idle` state (recomputing `notify_only`); broadcasts.
-  Test support + defensive.
+  Resets to the initial `:idle` state (recomputing `notify_only`, and restarting
+  the check generation at 0); broadcasts. Test support + defensive.
   """
   def reset do
     GenServer.cast(__MODULE__, :reset)
@@ -202,15 +233,29 @@ defmodule EvoDash.UpdateStatus do
     end
   end
 
+  def handle_call(:check_started, _from, state) do
+    state = %{state | phase: :checking, check_generation: state.check_generation + 1}
+
+    {:reply, state.check_generation, transition(state)}
+  end
+
+  def handle_call({:check_result, payload, generation}, _from, state) do
+    if stale?(state, generation) do
+      {:reply, drop_stale(state, generation, "check result"), state}
+    else
+      {:reply, :applied, transition(apply_check_result(state, payload))}
+    end
+  end
+
+  def handle_call({:check_failed, message, generation}, _from, state) do
+    if stale?(state, generation) do
+      {:reply, drop_stale(state, generation, "check timeout"), state}
+    else
+      {:reply, :applied, transition(%{state | phase: :error, error: message || "check_failed"})}
+    end
+  end
+
   @impl true
-  def handle_cast(:check_started, state) do
-    {:noreply, transition(%{state | phase: :checking})}
-  end
-
-  def handle_cast({:check_result, payload}, state) do
-    {:noreply, transition(apply_check_result(state, payload))}
-  end
-
   def handle_cast({:download_result, payload}, state) do
     {:noreply, transition(apply_download_result(state, payload))}
   end
@@ -223,16 +268,32 @@ defmodule EvoDash.UpdateStatus do
     {:noreply, transition(%{state | phase: :error, error: message || "apply_failed"})}
   end
 
-  def handle_cast({:check_failed, message}, state) do
-    {:noreply, transition(%{state | phase: :error, error: message || "check_failed"})}
-  end
-
   def handle_cast(:reset, _state) do
     {:noreply, transition(initial_state())}
   end
 
+  # A generation-bearing update is STALE when it belongs to a check that a newer
+  # `check_started/0` has since superseded. `nil` carries no generation (e.g. a
+  # JS-hook payload for a check started by an earlier socket) and applies to the
+  # current check.
+  defp stale?(state, generation) when is_integer(generation),
+    do: generation != state.check_generation
+
+  defp stale?(_state, _generation), do: false
+
+  # Drops a stale update without touching state or broadcasting it.
+  defp drop_stale(state, generation, what) do
+    Logger.debug(
+      "EvoDash.UpdateStatus: dropped #{what} from superseded check generation " <>
+        "#{generation} (current generation #{state.check_generation})"
+    )
+
+    :stale
+  end
+
   # Broadcasts the new state on the "updates" topic and returns it. Runs inside
-  # handle_cast, so the caller of a cast is never blocked on the broadcast.
+  # the hub's handle_call/handle_cast, so a caller is never blocked on the
+  # broadcast itself.
   defp transition(state) do
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "updates", {:update_status, state})
     state
@@ -248,7 +309,8 @@ defmodule EvoDash.UpdateStatus do
       error: nil,
       last_checked_at: nil,
       notify_only: notify_only?(),
-      download_requested_version: nil
+      download_requested_version: nil,
+      check_generation: 0
     }
   end
 

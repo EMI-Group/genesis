@@ -117,7 +117,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
 
     * a compact dashed GAP ROW (`#commit-gap-row-<dom>-<fold_key>`,
       `div.cg-row.cg-gap-row`) with a chevron and a muted "… N commits" label;
-      it fires `toggle_commit_fold` with `phx-value-fold-key`, and is
+      it fires `toggle_commit_fold` with `phx-value-fold_key`, and is
       keyboard-reachable (`role="button"` + `tabindex="0"` — the `CommitGraph`
       hook's Enter / Space activation then applies);
     * a GAP GUTTER MARKER (`g.cg-gap-node#commit-node-<dom>-<gap sha>`) — a

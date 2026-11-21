@@ -840,6 +840,10 @@ defmodule EvoDashWeb.SystemLive do
         # handle_params/3 after assign_node; modal ids are nil-guarded no-ops).
         update_card_visible: false,
         update_status: EvoDash.UpdateStatus.get(),
+        # Generation of the check THIS socket triggered (nil until it triggers
+        # one): threaded into the watchdog and into `{:update_check_result, _}`
+        # handling so a superseded check's result/timeout is dropped.
+        update_check_generation: nil,
         update_apply_busy_count: nil,
         # Ids seen by the async apply gate — the graceful wind-down cancels them
         # first, before its own poll loop takes over.
@@ -958,9 +962,14 @@ defmodule EvoDashWeb.SystemLive do
     socket =
       if socket.assigns.update_card_visible and connected?(socket) and
            EvoDash.UpdateStatus.phase() == :idle do
-        EvoDash.UpdateStatus.check_started()
-        socket = Phoenix.LiveView.push_event(socket, "update_check_requested", %{})
-        EvoDashWeb.SystemLive.UpdateCard.spawn_check_watchdog(self())
+        generation = EvoDash.UpdateStatus.check_started()
+
+        socket =
+          socket
+          |> assign(:update_check_generation, generation)
+          |> Phoenix.LiveView.push_event("update_check_requested", %{})
+
+        EvoDashWeb.SystemLive.UpdateCard.spawn_check_watchdog(self(), generation)
         socket
       else
         socket
@@ -1137,9 +1146,14 @@ defmodule EvoDashWeb.SystemLive do
   @impl true
   def handle_event("check_for_updates", _params, socket) do
     if update_card_visible?(socket) do
-      EvoDash.UpdateStatus.check_started()
-      socket = Phoenix.LiveView.push_event(socket, "update_check_requested", %{})
-      EvoDashWeb.SystemLive.UpdateCard.spawn_check_watchdog(self())
+      generation = EvoDash.UpdateStatus.check_started()
+
+      socket =
+        socket
+        |> assign(:update_check_generation, generation)
+        |> Phoenix.LiveView.push_event("update_check_requested", %{})
+
+      EvoDashWeb.SystemLive.UpdateCard.spawn_check_watchdog(self(), generation)
       {:noreply, socket}
     else
       {:noreply, socket}
@@ -1335,8 +1349,10 @@ defmodule EvoDashWeb.SystemLive do
   @impl true
   def handle_info({:update_check_result, payload}, socket) do
     # The check-runner seam's send-pattern: feeds the hub, which broadcasts
-    # the resulting state back to this view.
-    EvoDash.UpdateStatus.handle_check_result(payload)
+    # the resulting state back to this view. The socket's check generation
+    # makes the hub drop a result belonging to a check that a newer trigger has
+    # superseded.
+    EvoDash.UpdateStatus.handle_check_result(payload, socket.assigns.update_check_generation)
     {:noreply, socket}
   end
 

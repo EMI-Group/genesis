@@ -47,6 +47,7 @@ defmodule EvoDash.UpdateStatusTest do
       assert state.error == nil
       assert state.last_checked_at == nil
       assert state.download_requested_version == nil
+      assert state.check_generation == 0
 
       Application.put_env(:evo_dash, :update_notify_only_override, false)
       UpdateStatus.reset()
@@ -381,6 +382,69 @@ defmodule EvoDash.UpdateStatusTest do
       UpdateStatus.check_failed(nil)
       assert UpdateStatus.get().phase == :error
       assert UpdateStatus.get().error == "check_failed"
+    end
+  end
+
+  describe "check generations (superseded checks)" do
+    test "check_started/0 returns a monotonic generation; reset restarts it at 0" do
+      assert UpdateStatus.get().check_generation == 0
+      assert UpdateStatus.check_started() == 1
+      assert UpdateStatus.check_started() == 2
+
+      UpdateStatus.reset()
+      assert UpdateStatus.get().check_generation == 0
+      assert UpdateStatus.check_started() == 1
+    end
+
+    test "a superseded check's timeout or result is dropped, the current one still applies" do
+      gen1 = UpdateStatus.check_started()
+      gen2 = UpdateStatus.check_started()
+      assert gen2 > gen1
+
+      # The FIRST check's watchdog fires while the second check is running: the
+      # timeout belongs to a superseded check and must not fail it.
+      assert UpdateStatus.check_failed("timeout", gen1) == :stale
+      state = UpdateStatus.get()
+      assert state.phase == :checking
+      assert state.error == nil
+
+      # The second check reports a healthy result.
+      assert UpdateStatus.handle_check_result(
+               %{"status" => "up_to_date", "current_version" => "1.0.0"},
+               gen2
+             ) == :applied
+
+      assert UpdateStatus.get().phase == :up_to_date
+
+      # Late arrivals from the superseded check must not resurrect an error.
+      assert UpdateStatus.check_failed("timeout", gen1) == :stale
+
+      assert UpdateStatus.handle_check_result(
+               %{"status" => "error", "error" => "stale"},
+               gen1
+             ) == :stale
+
+      state = UpdateStatus.get()
+      assert state.phase == :up_to_date
+      assert state.error == nil
+
+      # The CURRENT generation's timeout still fails the check — dropping stale
+      # updates never disarms the never-wedge guarantee.
+      assert UpdateStatus.check_failed("timeout", gen2) == :applied
+      state = UpdateStatus.get()
+      assert state.phase == :error
+      assert state.error == "timeout"
+    end
+
+    test "a nil generation applies to the current check (no-generation callers)" do
+      UpdateStatus.check_started()
+      assert UpdateStatus.check_failed("timeout", nil) == :applied
+      assert UpdateStatus.get().error == "timeout"
+
+      UpdateStatus.check_started()
+
+      assert UpdateStatus.handle_check_result(%{"status" => "up_to_date"}, nil) == :applied
+      assert UpdateStatus.get().phase == :up_to_date
     end
   end
 

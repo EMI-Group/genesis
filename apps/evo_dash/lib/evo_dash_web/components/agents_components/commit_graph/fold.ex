@@ -23,7 +23,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Fold do
       normal rows/nodes, and the same gap row becomes that run's collapse
       control (chevron-up).
 
-  A gap row fires `toggle_commit_fold` with `phx-value-fold-key`; while the
+  A gap row fires `toggle_commit_fold` with `phx-value-fold_key`; while the
   repo has any fold its header offers `expand_all_commit_folds` /
   `collapse_all_commit_folds`. The row also publishes its RAW run key as
   `data-cg-fold-key` (omitted when the model has no such binary), so the
@@ -78,7 +78,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Fold do
 
   def hidden_count(_node), do: 0
 
-  # The run's own identity, used for `phx-value-fold-key` and the row id slice.
+  # The run's own identity, used for `phx-value-fold_key` and the row id slice.
   def fold_key(node) when is_map(node), do: safe_string(Map.get(node, :fold_key))
   def fold_key(_node), do: ""
 
@@ -119,7 +119,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Fold do
       role="button"
       tabindex="0"
       phx-click="toggle_commit_fold"
-      phx-value-fold-key={fold_key(@node)}
+      phx-value-fold_key={fold_key(@node)}
     >
       <.icon name={fold_icon(@node)} class="size-3.5 shrink-0" />
       <span class="cg-gap-label inline-flex items-center gap-1 rounded border border-dashed border-base-300 px-1.5 py-0.5 text-[10px] font-mono whitespace-nowrap">

@@ -29,7 +29,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
 
   Folded runs (the builder's synthetic `kind: :gap` node) are pinned too:
   `#commit-gap-row-<dom>-<fold_key>` (`div.cg-row.cg-gap-row`, chevron,
-  `toggle_commit_fold` + `phx-value-fold-key`, the restored rows beside an
+  `toggle_commit_fold` + `phx-value-fold_key`, the restored rows beside an
   `expanded: true` marker), the row's `data-cg-fold-key` (the RAW run key the
   client hook toggles, omitted entirely when the model carries none) beside the
   DOM-SANITIZED id slice, the `g.cg-gap-node` hollow gutter marker (no ring,
@@ -981,7 +981,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
         "data-cg-agent-id" => ["a1"],
         "style" => ["height: 44px"],
         "phx-click" => ["toggle_commit_fold"],
-        "phx-value-fold-key" => ["f1-a1"],
+        "phx-value-fold_key" => ["f1-a1"],
         "role" => ["button"],
         "tabindex" => ["0"],
         "title" => ["12 commits"]
@@ -1023,7 +1023,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       assert Floki.find(gap_row, "span.hero-chevron-up") != []
       assert Floki.find(gap_row, "span.hero-chevron-down") == []
       assert attr(gap_row, "phx-click") == ["toggle_commit_fold"]
-      assert attr(gap_row, "phx-value-fold-key") == ["f1-a1"]
+      assert attr(gap_row, "phx-value-fold_key") == ["f1-a1"]
 
       # ... and the run's commits are restored as NORMAL rows in the same repo.
       [rows] = Floki.find(tree, ".cg-rows")
@@ -1139,7 +1139,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       assert_attrs(gap_row, %{
         "id" => ["commit-gap-row-#{dom}-#{sanitized}"],
         "data-cg-fold-key" => [raw],
-        "phx-value-fold-key" => [raw],
+        "phx-value-fold_key" => [raw],
         "phx-click" => ["toggle_commit_fold"]
       })
 
