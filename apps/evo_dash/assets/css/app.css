@@ -718,11 +718,43 @@ button, a, input, textarea, select, summary,
 }
 
 
+/* === In-shell height contract === */
+/* The SHELL owns the viewport height; a page never measures itself against it.
+     * `body` + `#app-layout` are `h-dvh overflow-hidden` and `#sidebar` is a
+       child of that flex row; the mobile keyboard override
+       `@media (max-width: 640px) #app-layout { height: var(--app-vh, 100dvh) }`
+       (see "Mobile keyboard-aware overrides") is the ONLY other rule that may
+       take a height from the viewport inside the shell.
+     * `#main-content` is the one page content box and already has a DEFINITE
+       flex-derived height: viewport − workbench top bar (`--shell-topbar-h`,
+       defined once in `workbench.css`) − its own `py-4` padding. So `100%` of it
+       is the correct "fill the page" height, today and after any chrome change.
+     * A page that must FILL that box takes `.shell-fill`; its children then
+       bound themselves with `flex: 1 1 0; min-height: 0`.
+     * `height`/`min-height` derived from `100vh`/`100dvh` is FORBIDDEN inside
+       the shell — it ignores the top bar and overflows/clips at the bottom by
+       exactly the chrome it skipped.
+     * `max-height` caps ARE allowed (a cap can only under-fill, never overflow),
+       but a cap that must account for shell chrome uses `--shell-topbar-h`
+       instead of a fresh magic number.
+     * Viewport-anchored TOP-LAYER surfaces (native `<dialog>`/`.modal`/
+       `.modal-box`, `position: fixed` popovers, the settings-window iframe
+       document, `.workbench-window*`) legitimately keep `100dvh`: they are
+       positioned against the viewport, not against `#main-content`. */
+.shell-fill {
+  height: 100%;
+  min-height: 0;
+}
+
 /* === Agents Page Fixed Layout === */
 
-/* Mobile-first: normal flow (single column, page scrolls) */
+/* Mobile-first: normal flow (single column, page scrolls). `height: auto` keeps
+   the `.shell-fill` utility (height: 100%) inert on these widths — below xl the
+   page grows with its content inside the `#main-scroll` scroller, and only the
+   xl+ block below pins it to the shell content box. */
 .agents-page-layout {
   @apply flex flex-col gap-4;
+  height: auto;
 }
 
 .agents-left-col {
@@ -783,13 +815,17 @@ button, a, input, textarea, select, summary,
   /* normal flow on mobile */
 }
 
-/* Desktop (xl+): fixed viewport layout with no page scroll */
+/* Desktop (xl+): the page fills the shell content box and never scrolls. The
+   height comes from `#main-content` (`height: 100%`, with `.shell-fill` in the
+   markup), so it is already net of the workbench top bar and the main padding —
+   no viewport subtraction anywhere. */
 @media (min-width: 1280px) {
   .agents-page-layout {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 1rem;
-    height: calc(100vh - 2rem); /* main padding (py-4) */
+    height: 100%; /* of #main-content's content box */
+    min-height: 0;
     overflow: hidden;
   }
 
@@ -903,9 +939,11 @@ button, a, input, textarea, select, summary,
    vertical scrolling on THIS box is load-bearing: never move it to an outer
    box and never put a utility `overflow-*` override on it.
    Below xl (the panel flows under the page scroller) the list keeps a bounded
-   `max-height`; xl+ in COMMITS mode (`.agents-tree-body-commits`) the box
+   `max-height` cap; xl+ in COMMITS mode (`.agents-tree-body-commits`) the box
    instead FILLS the panel through the flex chain documented below, and its
-   `max-height` cap is dropped. */
+   `max-height` cap is dropped. Every height in that chain descends from
+   `#main-content`'s content box (`.agents-page-layout` is `height: 100%`), so
+   the shell's top bar and padding are already accounted for. */
 .cg-scroll {
   overflow: auto;
   max-height: min(26rem, 60vh);
@@ -913,6 +951,10 @@ button, a, input, textarea, select, summary,
   scrollbar-color: oklch(0.7 0 0 / 0.3) transparent;
 }
 
+/* Pre-override default only: at xl+ in COMMITS mode the rule below sets
+   `max-height: none`, so this 70vh cap never applies to the fill chain — it
+   bounds the tree/commits lists everywhere else. Caps may use viewport units;
+   only `height`/`min-height` may not (see "In-shell height contract"). */
 @media (min-width: 1280px) {
   .cg-scroll {
     max-height: min(38rem, 70vh);
@@ -920,10 +962,11 @@ button, a, input, textarea, select, summary,
 }
 
 /* === Commit Graph — commits-mode fill chain (xl +) === */
-/* The xl+ agents layout already gives `.agents-tree-panel` a fixed height
-   (`.agents-page-layout` = calc(100vh - 2rem); the panel is `flex: 1 1 0`), but
-   the panel's card body was a SECOND, nested scroller (`overflow-y: auto`), so
-   the commit list capped itself at ~70vh and left dead space below.
+/* At xl+ `.agents-page-layout` fills `#main-content` (`.shell-fill` +
+   `height: 100%`, so it is already net of the workbench top bar and the page
+   padding) and `.agents-tree-panel` takes `flex: 1 1 0` of it. The panel's card
+   body, however, was a SECOND, nested scroller (`overflow-y: auto`), so the
+   commit list capped itself at ~70vh and left dead space below.
    In COMMITS mode the LiveView template adds `.agents-tree-body-commits` to the
    tree panel's `.card-body` (and only then). The chain below hands the panel's
    whole height down to the ONE vertical scroller: card body → `#commit-graph` →
@@ -2105,13 +2148,22 @@ button, a, input, textarea, select, summary,
    clipping the card's box-shadow glow into a rectangle. The TEXTAREA fills
    the card minus the controls row (flex: 1) and scrolls INTERNALLY
    (overflow-y: auto), so the in-flow launch panel (.input-controls) always
-   stays at the bottom of the viewport — no fragile viewport-derived offset.
+   stays at the bottom of the CARD — no fragile viewport-derived offset.
+
+   `container-type: size` makes this card the size-query container the
+   textarea's floor measures against (`100cqh`), which is why the floor needs
+   no viewport math and no top-bar constant: the card's height already is
+   "#main-content − the shell chrome". Size containment is only legitimate
+   here because the EXPANDED card's height is flex-allocated (definite, never
+   content-derived); do NOT hoist it onto the base `.input-card` rule — the
+   compact card's height comes from its content and would collapse to zero.
    (Compact mode's vertical-centering auto margins on .input-card above are
    untouched.) */
 .input-layout[data-layout="expanded"] .input-card {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  container-type: size;
 }
 
 /* --- The textarea prompt --- */
@@ -2168,12 +2220,21 @@ button, a, input, textarea, select, summary,
    .input-controls on tall viewports, floating the launch panel mid-card.)
 
    Height notes:
-     * min-height: min(calc(1.6em * 10), calc(100dvh - 12rem)) — 10-line
-       floor capped by the viewport-derived budget so the box never exceeds
-       the available space on short viewports. On viewports < ~448px the
-       floor shrinks with the budget (at 400px: min(256px, 208px) = 208px ≈ 8
-       lines) and the controls stay visible. Re-derive the 12rem if any of
-       the topbar/controls measurements change.
+     * min-height: min(calc(1.6em * 10), calc(100cqh - var(--input-toolbar-budget,
+       4.5rem))) — a 10-line floor capped by what is actually left in the card.
+       `cqh` resolves against the expanded `.input-card`'s CONTENT BOX (the card
+       is a size container), so this floor automatically tracks the workbench
+       top bar, the sidebar width, the page padding and the mobile
+       `--app-vh` keyboard override. There is NO viewport subtraction and no
+       constant to re-derive when the chrome changes: only the toolbar budget
+       below, and only if the toolbar's own size changes.
+     * --input-toolbar-budget is the room `.input-controls` occupies below the
+       textarea: its 0.625rem padding × 2 (= 1.25rem) plus the ~1.75rem control
+       row (btn-sm / select-sm = 8 × --size-field 0.21875rem), i.e. ~3rem,
+       rounded up to 4.5rem so the floor can only ever UNDER-fill — a floor that
+       is too large merely leaves a slightly shorter textarea, while one that is
+       too small would push the send button out of the card's overflow: hidden.
+       It is the single tuning point for this geometry.
      * The AdaptiveInput hook neutralizes max-height (sets it to "none")
        while measuring, then writes the FULL natural content height inline;
        in compact mode the CSS max-height wins over the inline height (the
@@ -2190,7 +2251,10 @@ button, a, input, textarea, select, summary,
    ignore it. */
 .input-layout[data-layout="expanded"] .input-prompt {
   flex: 1;
-  min-height: min(calc(1.6em * 10), calc(100dvh - 12rem));
+  min-height: min(
+    calc(1.6em * 10),
+    calc(100cqh - var(--input-toolbar-budget, 4.5rem))
+  );
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
@@ -2289,17 +2353,23 @@ button, a, input, textarea, select, summary,
    the AdaptiveInput hook (mobile; falls back to 100dvh when visualViewport is
    absent or the var is unset); the #app-layout id selector beats the h-dvh
    utility class, shrinking the whole chain to the keyboard-visible area. The
-   expanded textarea's min-height floor drops to 6 lines (and stays within the
-   keyboard-aware budget) so textarea + controls always fit the card's flex
-   allocation — no overflow:hidden clip. Desktop is untouched (this media
-   query does not match normal desktop windows). */
+   expanded textarea's min-height floor drops to 6 lines and is measured against
+   the CARD (`100cqh`, which descends from this very `--app-vh` height) minus
+   the same toolbar budget, so textarea + controls always fit the card's flex
+   allocation — no overflow:hidden clip, and no viewport subtraction here.
+   Desktop is untouched (this media query does not match normal desktop
+   windows). */
 @media (max-width: 640px) {
   #app-layout {
+    /* The shell root legitimately owns the viewport height. */
     height: var(--app-vh, 100dvh);
   }
 
   .input-layout[data-layout="expanded"] .input-prompt {
-    min-height: min(calc(1.6em * 6), calc(var(--app-vh, 100dvh) - 12rem));
+    min-height: min(
+      calc(1.6em * 6),
+      calc(100cqh - var(--input-toolbar-budget, 4.5rem))
+    );
   }
 }
 
