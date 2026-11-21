@@ -101,6 +101,45 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignInTest do
     module
   end
 
+  # ── Deterministic barrier for the ASYNC poll task ──────────────────────────
+  #
+  # `start_poll/2` runs the poll as a `EvoDash.TaskSupervisor` child, so "the
+  # poll has stopped" is a SET QUERY — a `:"$callers"` match against the process
+  # that started it — never a wall-clock window. Once no poll child started by
+  # `owner` is alive, the poll's ONE result message has already been delivered
+  # and no second one can ever be produced, which is what makes the following
+  # `refute_receive …, 0` conclusive (the suite's 0 ms rule: a zero window is
+  # sound only after a completed fence).
+  defp await_poll_stopped(owner) do
+    await_poll_stopped(owner, System.monotonic_time(:millisecond) + 30_000)
+  end
+
+  defp await_poll_stopped(owner, deadline) do
+    if poll_children(owner) == [] do
+      :ok
+    else
+      if System.monotonic_time(:millisecond) >= deadline do
+        flunk("the sign-in poll started by #{inspect(owner)} never stopped")
+      end
+
+      Process.sleep(1)
+      await_poll_stopped(owner, deadline)
+    end
+  end
+
+  defp poll_children(owner) do
+    EvoDash.TaskSupervisor
+    |> Task.Supervisor.children()
+    |> Enum.filter(&(owner in callers(&1)))
+  end
+
+  defp callers(pid) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dictionary} -> Keyword.get(dictionary, :"$callers", [])
+      _ -> []
+    end
+  end
+
   # ═══════════════════════════════════════════════════════════════════════════
   # Resolver seam
   # ═══════════════════════════════════════════════════════════════════════════
@@ -228,7 +267,10 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignInTest do
                       {:ok, %{account_id: "work@example.test"}}},
                      1_000
 
-      refute_receive {:chatgpt_signin_result, _, _}, 150
+      # The poll sends ONE result and exits; the supervisor fence proves it
+      # stopped, so a 0 ms scan cannot miss a second (impossible) send.
+      await_poll_stopped(self())
+      refute_receive {:chatgpt_signin_result, _, _}, 0
     end
 
     test "a raising status/1 degrades to an error result instead of crashing" do
@@ -237,7 +279,8 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignInTest do
       assert :ok = ChatGPTSignIn.start_poll("flow", self())
 
       assert_receive {:chatgpt_signin_result, "flow", {:error, :sign_in_unavailable}}, 1_000
-      refute_receive {:chatgpt_signin_result, _, _}, 100
+      await_poll_stopped(self())
+      refute_receive {:chatgpt_signin_result, _, _}, 0
     end
 
     test "the hard cap answers {:error, :authorization_timeout} exactly once" do
@@ -249,7 +292,8 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignInTest do
       assert_receive {:chatgpt_signin_result, "flow-pending", {:error, :authorization_timeout}},
                      1_000
 
-      refute_receive {:chatgpt_signin_result, _, _}, 100
+      await_poll_stopped(self())
+      refute_receive {:chatgpt_signin_result, _, _}, 0
     end
 
     test "a poll never messages a dead owner" do
@@ -267,8 +311,10 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignInTest do
       Process.monitor(owner)
       assert_receive {:DOWN, _, :process, ^owner, _reason}, 1_000
 
-      # Nothing was delivered anywhere: the box is still empty for us.
-      refute_receive {:chatgpt_signin_result, _, _}, 100
+      # Nothing was delivered anywhere: the poll (started BY the dead owner)
+      # has stopped, and its only send target was that dead pid.
+      await_poll_stopped(owner)
+      refute_receive {:chatgpt_signin_result, _, _}, 0
     end
 
     test "a non-pid owner is refused without crashing" do

@@ -1191,7 +1191,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       view = next(view)
       render_click(view, "test_connection")
 
-      assert_receive {:welcome_test_started, _pid, model, opts}, @runner_start_timeout
+      assert_receive {:welcome_test_started, pid, model, opts}, @runner_start_timeout
       # An OpenAI-compatible custom model resolves to its own struct, not a
       # catalog spec string, so the id is read off its representation.
       assert {:ok, %LLMDB.Model{id: "my-model-x"} = model} = ReqLLM.model(model)
@@ -1202,6 +1202,14 @@ defmodule EvoDashWeb.WelcomeLiveTest do
                ReqLLM.RequestPlan.openai_surface(model)
 
       assert opts[:reasoning_effort] == :medium
+
+      # RELEASE the blocked stub. The answer is not under test here (the
+      # REQUEST is), but an unreleased stub sits in the runner's own 5 s
+      # `after` clause, and the per-test config-directory teardown drain —
+      # which waits for THIS test's supervised writers — then burns those 5 s
+      # serially before the next test starts.
+      send(pid, {:finish, {:error, "released"}})
+      await_status(view, {:error, "released"})
     end
   end
 

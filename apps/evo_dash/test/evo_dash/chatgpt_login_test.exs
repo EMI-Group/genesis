@@ -143,7 +143,11 @@ defmodule EvoDash.ChatGPTLoginTest do
   test "an attempt that is never authorized times out and closes its listener", %{
     account: account
   } do
-    flow = start_flow(account, caller: self(), timeout_ms: 150)
+    # 50 ms, not 150: the value is THIS attempt's own injected sign-in window
+    # (a real timer the test then waits out), never a window used to detect
+    # someone else's behaviour, so shrinking it keeps the claim intact and
+    # saves ~100 ms per run.
+    flow = start_flow(account, caller: self(), timeout_ms: 50)
 
     wait_until(fn -> ChatGPTLogin.status(flow.id) == {:error, :authorization_timeout} end)
     assert_receive {:chatgpt_login, id, {:error, :authorization_timeout}}, 5_000
@@ -180,7 +184,9 @@ defmodule EvoDash.ChatGPTLoginTest do
     assert ChatGPTLogin.status("no-such-flow") == {:error, :unknown_flow}
     assert ChatGPTLogin.active_for("no-such-account") == nil
 
-    flow = start_flow(account, retention_ms: 80)
+    # The retention window is this attempt's OWN injected timer (the test then
+    # waits it out), not a window that detects anyone else's behaviour.
+    flow = start_flow(account, retention_ms: 40)
     assert :ok = ChatGPTLogin.cancel(flow.id)
     assert ChatGPTLogin.status(flow.id) == {:error, :cancelled}
     wait_until(fn -> ChatGPTLogin.status(flow.id) == {:error, :unknown_flow} end)
@@ -267,7 +273,10 @@ defmodule EvoDash.ChatGPTLoginTest do
       true ->
         receive do
         after
-          10 -> do_wait_until(fun, deadline)
+          # 2 ms cadence (the suite's poll standard): this wait re-checks an
+          # ALREADY-ARRIVED condition, so a coarse 10 ms step was pure dead
+          # wall clock on every cancel / supersede / expiry / timeout path.
+          2 -> do_wait_until(fun, deadline)
         end
     end
   end
