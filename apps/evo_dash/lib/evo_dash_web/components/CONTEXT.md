@@ -40,8 +40,7 @@ Reusable Phoenix function components and layout templates for the EvoDash web in
 
 ### Templates, usage, flashes, theme
 
-`layouts/root.html.heex` is the only template (base shell: meta tags, CSRF, LiveView title, asset links, the client-side theme script).
-All component modules `use EvoDashWeb, :html` and are pure function components (`<.button phx-click="save">`, `<.task_card task={@task} />`, `<.agent_tree agents={@agents} />`, `<.flash kind={:warning} flash={@flash} />`).
+`layouts/root.html.heex` is the only template (meta tags, CSRF, LiveView title, asset links, client-side theme script); all component modules `use EvoDashWeb, :html` and are pure function components (`<.task_card task={@task} />`, `<.flash kind={:warning} flash={@flash} />`).
 
 | Flash kind | CSS Class | Icon | Use Case |
 |------|-----------|------|----------|
@@ -49,9 +48,9 @@ All component modules `use EvoDashWeb, :html` and are pure function components (
 | `:error` | `alert-error` | `hero-exclamation-circle` | Error messages, validation failures |
 | `:warning` | `alert-warning` | `hero-exclamation-triangle` | Warnings, missing configuration alerts |
 
-Theme state is 100% client-side: `localStorage["phx:theme"]` (default `"system"`) resolves via `matchMedia("(prefers-color-scheme: dark)")` into `data-theme`/`data-theme-mode` and swaps the favicon/`theme-color` meta; toggles only fire `phx-click={JS.dispatch("phx:set-theme")}` + `data-phx-theme`, Tailwind `dark:` binds to `@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *))`, and DaisyUI's `themes: false` means custom CSS uses `--color-base-*` + `color-mix`.
-The global accent IS server-driven: `LiveHooks.Appearance` resolves `EvoGit.Config.resolve([:appearance, :accent_color])` node-aware through `EvoDash.AccentCache` into `@accent_color`, which `Layouts.app` (`attr(:accent_color, :string, default: "blue")`) sets as `data-accent-color` on `#app-layout`, activating the ten `[data-accent-color="<name>"]` rules in `app.css` — distinct from ProjectsLive's per-project `--project-accent`/`--project-ring-accent` on `#dashboard-root`.
-Shell chrome is token-based (Adwaita): `#app-layout` + sidebar `bg-base-200`, `#main-scroll`/`main#main-content` `bg-base-100`, body `bg-base-200` — no slate/white literals.
+Theme is 100% client-side (`localStorage["phx:theme"]`, default `"system"`, resolved via `matchMedia` into `data-theme`/`data-theme-mode`; toggles only fire `phx-click={JS.dispatch("phx:set-theme")}` + `data-phx-theme`).
+The global accent IS server-driven: `Layouts.app`'s `attr(:accent_color, :string, default: "blue")` sets `data-accent-color` on `#app-layout` from `LiveHooks.Appearance`'s node-aware `EvoGit.Config.resolve([:appearance, :accent_color])` via `EvoDash.AccentCache` — distinct from ProjectsLive's per-project `--project-accent`/`--project-ring-accent` on `#dashboard-root`.
+Shell chrome is Adwaita token-based (`#app-layout` + sidebar `bg-base-200`, `#main-scroll`/`main#main-content` `bg-base-100`); the full engine (Tailwind `@custom-variant dark`, `themes: false` → `--color-base-*` + `color-mix`, the ten accent rules) is the parent `lib/evo_dash_web/CONTEXT.md` "Theming & Color System".
 
 ## Constraints
 
