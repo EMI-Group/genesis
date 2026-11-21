@@ -79,8 +79,8 @@ MODEL-FACING names differ from the INTERNAL dispatch keys `execute_tool/5` match
 - Pure, I/O-free adapters live in `EvoGit.Agent.Tools.WebSearchProviders`: `build_request/5` → `{:ok, %{method:, url:, headers:, body:}}`; `parse_response/2` → `{:ok, %{kind: :results, entries: [%{title, url, content}]}}` (Tavily/Exa/Bing/Brave/Keenable) or `{:ok, %{kind: :answer, text:, citations:}}` (Perplexity).
 - Keenable is OPT-IN and the only keyless-capable provider: `KEENABLE_API_KEY` present → keyed POST (`X-API-Key`); absent/empty → the public `POST <base_url>/public` with `X-Keenable-Title: Genesis` and no key, so the missing-key failure is gated on `Definitions.search_provider_keyless?/1`.
 - `WebSearch` owns schema/validation/API keys and the `Req` call through the call-time `:web_search_http_runner` seam; `do_web_search/4` is `@doc false` public for execute-level tests.
-- `timeout` is coerced like the shell's and clamped to `[:scheduler, :max_tool_timeout]`; an absent/unusable argument falls back to the provider-config `:timeout`, then `@default_timeout` 30_000, so `receive_timeout` is always an integer.
-
+- `timeout` is coerced like the shell's and clamped to `[:scheduler, :max_tool_timeout]`; an absent/unusable argument falls back to the provider-config `:timeout`, then `@default_timeout` 30_000.
+- `search_depth` is Tavily/Exa-only (Exa maps advanced→`type: "neural"`, basic→`"keyword"`); Perplexity ignores `max_results`/`search_depth`; Bing/Brave/Keenable ignore `search_depth` and honour `max_results`.
 ### Web Fetch (`web_fetch`)
 - READ-ONLY page reader (ONE GET → Markdown) in both schema lists, never a write tool, not serial, and NOT schema-gated.
 - Params: `url` (required, absolute, http/https), `max_chars` (default 200_000, 100..2_000_000), `timeout` (default 30_000 ms, 50..600_000 — a WHOLE-request budget spanning every hop); retries disabled. The streamed body halts at `raw_cap = clamp(max_chars * 8, 512 KiB, 16 MiB)`.
