@@ -32,7 +32,7 @@ defmodule EvoDashWeb.WelcomeCompleteLive do
       guide={@guide}
       accent_color={assigns[:accent_color] || "blue"}
     >
-      <div class="min-h-screen lg:h-screen lg:overflow-hidden max-w-3xl mx-auto px-4 lg:px-6 py-3 lg:py-6 flex flex-col">
+      <div class="min-h-full lg:h-full lg:min-h-0 lg:overflow-hidden max-w-3xl mx-auto px-4 lg:px-6 py-3 lg:py-6 flex flex-col">
         <!-- Header (non-scrolling) -->
         <div class="flex items-center gap-3 mb-4 shrink-0">
           <div class="text-3xl shrink-0">✨</div>

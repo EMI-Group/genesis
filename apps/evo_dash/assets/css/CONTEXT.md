@@ -41,13 +41,28 @@ The provider-setup wizard step transitions (Settings + Welcome) are three flat c
 A dedicated `@media (prefers-reduced-motion: reduce)` block disables both the wizard animations and the progress transition, so reduced motion shows each step instantly.
 Component authors opt in with the class only: no JS, no layout/height animation, and the step wrapper must be the re-keyed element or the entrance never replays.
 
+## In-shell height contract
+The SHELL owns the viewport height and no page may measure itself against the viewport: `body` + `#app-layout` are `h-dvh overflow-hidden`, `#sidebar` is a child of that flex row, and `@media (max-width: 640px) #app-layout { height: var(--app-vh, 100dvh) }` is the only other shell rule that may take a viewport height.
+`#main-content` is the one page content box and its height is already definite (viewport − workbench top bar − its own `py-4` padding), so `100%` of it is the correct "fill the page" height.
+A page that must fill it takes the `.shell-fill` utility (`height: 100%; min-height: 0` in `app.css`) and its children bound themselves with `flex: 1 1 0; min-height: 0`.
+A `height`/`min-height` derived from `100vh`/`100dvh` is forbidden inside the shell, because it ignores the chrome it skipped and overflows or clips at the bottom by exactly that much.
+`max-height` caps stay allowed (a cap can only under-fill); a cap that must account for shell chrome uses `--shell-topbar-h` rather than a fresh magic number.
+`--shell-topbar-h` (3.5rem, declared once on `#app-layout` in `./workbench.css`) is the top bar's only definition and drives `.workbench-top { flex: 0 0 var(--shell-topbar-h) }`; a `simple_nav` page renders no bar and simply gets the extra content height.
+Viewport-anchored top-layer surfaces keep viewport units: the `dialog.modal .modal-box` caps, `.project-palette-overlay` (`position: fixed`), `.workbench-window`, `#workbench-settings-frame` and `.workbench-window-page` (the settings window's own iframe document) size themselves against the viewport, never against the content box.
+`.agents-page-layout` fills `#main-content` at xl+ (`height: 100%`, `.shell-fill` in the markup) instead of subtracting the chrome from a viewport unit.
+The expanded `.input-card` is a size container (`container-type: size`, expanded layout only — the compact card's height is content-derived and would collapse), so the textarea floor is `min(10 lines, 100cqh - var(--input-toolbar-budget, 4.5rem))` and 6 lines on mobile.
+`100cqh` measures the card's content box, so that floor tracks the top bar, the sidebar, the page padding and the `--app-vh` keyboard override automatically, and `--input-toolbar-budget` (4.5rem ≈ the 3rem toolbar row plus slack, so the floor can only under-fill) is its single tuning point.
+
 ## Motion foundation (`motion.css`)
 `./motion.css` is the ONE shared motion vocabulary every dashboard package consumes with a single attribute or class; `app.css` imports it from its `@import` block immediately after `./workbench.css` (an `@import` must precede every other rule, so "last import" is "loaded last"), and its `!important` reduced-motion backstop makes cascade position moot.
 Timing and easing come only from `--motion-fast` (120ms), `--motion-base` (170ms), `--motion-slow` (220ms), `--motion-ease-out` and `--motion-ease-in` on `:root`.
 Motion is opacity/transform only (`motion-fade-in`, `motion-fade-out`, `motion-slide-in` — a 6px lift; `motion-collapse` is deliberately opacity-only), the one bounded layout exception being `grid-template-rows: 0fr → 1fr` on a single wrapper.
 Never animate `height`/`width` on the transcript scrollers, the composer or the sidebar, and never add `scroll-behavior: smooth` to `#chat-messages`, `.agent-history-scroll`, `.cg-scroll` or `#workbench-history`.
 `<details>` disclosure — add `class="motion-disclosure"`: `[open] > :not(summary)` slides in with no JS, and the `DisclosureMotion` hook sets `data-disclosure-state="closing"` then removes `open` for the exit.
-State-driven panel — `class="motion-panel"` plus `data-motion-state="opening" | "closing"` (or the class-only `motion-panel-open` / `motion-panel-close`, and `motion-panel-slide` to slide instead of fade); the `both` fill holds the closing frame until the hook removes the node.
+State-driven panel — `class="motion-panel"` plus `data-motion-state="opening" | "closing"` (or the class-only `motion-panel-open` / `motion-panel-close`, and `motion-panel-slide` to slide instead of fade); the `both` fill holds the closing frame until the hook writes `hidden`.
+That recipe has TWO writers, and the split is load-bearing: the `MotionPanel` hook for a panel the server KEEPS MOUNTED (server owns `data-motion-want`, hook owns `data-motion-state` + `hidden`, focused by an opt-in `data-motion-focus` target), and §6 `phx-remove` for a node the server REMOVES.
+A mounted panel is required whenever the exit must fade real content: `:if` unmounting tears the content out of the layout in the same frame, so only LiveView's deferred removal (which keeps the children alive) can show an exit.
+`.motion-panel[data-motion-state="closed"], .motion-panel[hidden]` is the hooked closed frame (`display: none`, specificity ahead of a utility display class, no `!important`).
 Mounted-section collapse — `class="motion-collapse-grid"` + `data-motion-open="true"` on one wrapper, for a panel that stays mounted and cannot use `:if`.
 LiveView `:if` removal — `phx-remove={JS.hide(transition: {"motion-exit-lift", "motion-exit-visible", "motion-exit-hidden"})}`: one attribute, no JS of our own.
 The tuple is `{transition-class, start-class, end-class}`, applied in that order by LiveView, so the start class is mandatory and the end class must set every property the transition class lists.
@@ -94,6 +109,7 @@ Those state rules must NEVER declare `display`: `hidden` stays owned by `#workbe
 Keep Assistant adjustments scoped, normal-flow message actions untouched, and reduced-motion overrides after the caret animation rule.
 Never use `transition: all` in `app.css`: the `.input-*` rules enumerate their properties (`min-height`, `padding`, `gap`, `box-shadow`, `border-color`) so `AdaptiveInput`'s inline height writes are not animated.
 Do not edit generated static assets or translations.
+Inside the shell never add a `height`/`min-height` from a viewport unit: use `.shell-fill` or a `max-height` cap (full contract: § In-shell height contract).
 Never add an unlayered `.capsule-stops { flex-wrap: … }` rule (or any other layout override on that class): unlayered CSS beats Tailwind's layered utilities and would override both capsules at once.
 The one-line quality-stops contract lives ONLY in the task form's markup (`#mode-speed-capsule .capsule-stops` carries `flex-nowrap`).
 The shared model+reasoning capsule's `#<id>-reasoning` group carries `flex-wrap`, so 4-5 advertised efforts wrap inside its fixed `w-72` panel instead of overflowing.

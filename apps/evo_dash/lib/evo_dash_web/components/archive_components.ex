@@ -279,7 +279,17 @@ defmodule EvoDashWeb.ArchiveComponents do
       )
 
     ~H"""
-    <div class="motion-panel motion-panel-slide motion-panel-open border border-base-200 rounded-xl bg-base-100/60 overflow-hidden">
+    <%!-- A `:for` row of the archive tree: the retention window dropping the
+         oldest agents when a new page lands (and an archive reload) discards
+         THIS node, so its own `phx-remove` is what LiveView runs. The entrance
+         classes are `fill: both` and must go before the exit classes. --%>
+    <div
+      class="motion-panel motion-panel-slide motion-panel-open border border-base-200 rounded-xl bg-base-100/60 overflow-hidden"
+      phx-remove={
+        JS.remove_class("motion-panel-open motion-panel-slide")
+        |> JS.hide(transition: {"motion-exit-lift", "motion-exit-visible", "motion-exit-hidden"})
+      }
+    >
       <div class="p-4 space-y-3">
         <!-- Agent ID + depth badge -->
         <div class="flex items-center gap-2 flex-wrap">
@@ -315,7 +325,19 @@ defmodule EvoDashWeb.ArchiveComponents do
         <%= case @result_view do %>
           <% {:loaded, preview} -> %>
             <%= if preview.text != "" do %>
-              <div class="motion-panel motion-panel-open">
+              <%!-- Lives in a `case @result_view` branch, so switching branches
+                   (a reload, a paged read clearing the cache) discards this
+                   node — the branch's exit is the node's own `phx-remove`.
+                   Entrance was opacity-only, so the exit is a fade. --%>
+              <div
+                class="motion-panel motion-panel-open"
+                phx-remove={
+                  JS.remove_class("motion-panel-open")
+                  |> JS.hide(
+                    transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"}
+                  )
+                }
+              >
                 <div class="text-xs text-base-content/60 mb-0.5">{gettext("Result")}</div>
                 <div class="text-sm text-base-content/90 whitespace-pre-wrap break-words">
                   {preview.text}

@@ -1,5 +1,13 @@
 /* Shared project navigation. The views inside #main-content keep their styling. */
 #app-layout {
+  /* The workbench top bar's height lives HERE and nowhere else. #main-content's
+     height is (viewport − this bar − its own padding), so every rule that has to
+     account for the shell chrome reads this variable instead of re-deriving the
+     3.5rem (or subtracting it from a viewport unit — never do that). The bar is
+     only rendered for chrome pages (`:if={!@simple_nav}` in layouts.ex); a
+     `simple_nav` page has no bar and simply gets 3.5rem more content box, so no
+     second constant is ever needed. */
+  --shell-topbar-h: 3.5rem;
   --workbench-text-muted: color-mix(in srgb, var(--color-base-content) 65%, transparent);
   --workbench-hover: color-mix(in srgb, var(--color-base-content) 6%, transparent);
   --workbench-selected: color-mix(in srgb, var(--color-primary) 12%, var(--color-base-200));
@@ -79,7 +87,7 @@
 .workbench-top {
   display: flex;
   align-items: center;
-  flex: 0 0 3.5rem;
+  flex: 0 0 var(--shell-topbar-h);
   gap: .65rem;
   min-width: 0;
   padding: 0 .7rem;

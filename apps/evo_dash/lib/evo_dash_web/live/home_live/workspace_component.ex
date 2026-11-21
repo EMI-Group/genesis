@@ -46,15 +46,16 @@ defmodule EvoDashWeb.HomeLive.WorkspaceComponent do
         <.icon name="hero-chevron-down" class="size-3" />
       </button>
       <div
-        :if={@workspace_open}
         id="workspace-panel"
         role="dialog"
         aria-label={gettext("Select project")}
-        phx-mounted={JS.focus(to: "#workspace-path")}
-        phx-click-away={JS.push("workspace_toggle") |> JS.focus(to: "#workspace-toggle")}
-        phx-window-keydown={JS.push("workspace_toggle") |> JS.focus(to: "#workspace-toggle")}
+        phx-hook="MotionPanel"
+        data-motion-want={to_string(@workspace_open)}
+        hidden={!@workspace_open}
+        phx-click-away={JS.push("workspace_close") |> JS.focus(to: "#workspace-toggle")}
+        phx-window-keydown={JS.push("workspace_close") |> JS.focus(to: "#workspace-toggle")}
         phx-key="Escape"
-        class="assistant-menu-panel assistant-project-panel"
+        class="motion-panel assistant-menu-panel assistant-project-panel"
       >
         <div :if={@workspace} id="workspace-current" class="assistant-project-current">
           <p class="assistant-menu-label">{current_label(@workspace)}</p>
@@ -177,6 +178,7 @@ defmodule EvoDashWeb.HomeLive.WorkspaceComponent do
             field={@workspace_form[:path]}
             id="workspace-path"
             type="text"
+            data-motion-focus="true"
             placeholder={gettext("Full directory path")}
             aria-label={gettext("Project directory")}
             disabled={@workspace_locked or @workspace_loading}

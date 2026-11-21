@@ -133,18 +133,8 @@ defmodule EvoDashWeb.ProjectComponents do
       </button>
 
       <%= if @palette_open do %>
-        <%!-- Both palette layers fade out through the shared motion-exit
-             helpers: LiveView runs the JS command BEFORE detaching the
-             element, so `if @palette_open` removal is smooth with no hook. --%>
         <!-- Backdrop (click-outside to close) -->
-        <div
-          class="project-palette-backdrop"
-          phx-click="close_project_palette"
-          phx-remove={
-            JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})
-          }
-        >
-        </div>
+        <div class="project-palette-backdrop" phx-click="close_project_palette"></div>
 
         <!-- Palette overlay -->
         <div
@@ -152,9 +142,6 @@ defmodule EvoDashWeb.ProjectComponents do
           class="project-palette-overlay"
           phx-keydown="palette_keydown"
           phx-click-away="close_project_palette"
-          phx-remove={
-            JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})
-          }
         >
           <%!-- Re-keyed per mode: switching modes mounts a fresh element, which
                replays the shared entrance animation. The wrapper keeps the

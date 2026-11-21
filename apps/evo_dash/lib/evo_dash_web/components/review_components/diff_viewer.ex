@@ -35,7 +35,12 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
       |> assign(:sidebar_limit, @max_sidebar_files)
 
     ~H"""
-    <div class="w-full xl:w-60 2xl:w-72 shrink-0 xl:sticky xl:top-0 max-h-[min(25rem,55dvh)] xl:max-h-[calc(100dvh-5rem)] overflow-y-auto rounded-xl border border-base-300 bg-base-100">
+    <%!-- `xl:sticky` sidebar cap: the sticky box lives inside `#main-scroll`,
+    which the shell sizes UNDER the persistent top bar (`--shell-topbar-h`,
+    defined once on `#app-layout`), so a plain `100dvh` budget overshoots and
+    clips the sidebar bottom. The 5rem local chrome is the main padding
+    (`pt-4 pb-4`) plus the sticky row offset. --%>
+    <div class="w-full xl:w-60 2xl:w-72 shrink-0 xl:sticky xl:top-0 max-h-[min(25rem,55dvh)] xl:max-h-[calc(100dvh-var(--shell-topbar-h)-5rem)] overflow-y-auto rounded-xl border border-base-300 bg-base-100">
       <div class="p-3 border-b border-base-300 bg-base-100 sticky top-0 z-10">
         <div class="flex items-center gap-2">
           <%!-- zh_CN: "Files changed" → 变更文件（评审文件树侧栏标题） --%>

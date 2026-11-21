@@ -123,6 +123,21 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialogRenderTest do
       assert Floki.find(dom, "button[phx-click='next_approval']") == []
     end
 
+    test "the dialog itself owns the deferred removal fade" do
+      # The page wraps this component in `:if={@approval_dialog_open}`, so a
+      # patch discards the `<dialog>` — that is where LiveView runs the deferred
+      # removal. It covers every SERVER-initiated removal (the pending list
+      # emptying, a session switch) beside the hook's own `_hide()` fade.
+      dom = dialog(request())
+      assert [js] = attr(dom, "dialog", "phx-remove")
+      assert js =~ "motion-exit-fade"
+      assert js =~ "motion-exit-visible"
+      assert js =~ "motion-exit-hidden"
+      # No entrance animation is removed first: the modal's appearance is the
+      # native `showModal()`, not a `fill: both` motion class.
+      refute js =~ "remove_class"
+    end
+
     test "an empty queue renders no dialog or decision controls" do
       dom = dialog([])
 

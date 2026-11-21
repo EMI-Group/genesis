@@ -19,6 +19,9 @@ defmodule EvoDashWeb.HomeLive.TaskCard do
       id="assistant-task-tracking"
       class="assistant-tracked-tasks"
       aria-label={gettext("Followed tasks")}
+      phx-remove={
+        JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})
+      }
     >
       <details id="assistant-tracked-panel" phx-hook="AssistantDisclosure">
         <summary class="assistant-tasks-summary">

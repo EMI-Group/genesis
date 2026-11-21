@@ -392,6 +392,44 @@ defmodule EvoDashWeb.ArchiveTreeTest do
     end
   end
 
+  # Both archive `motion-panel` nodes own a deferred-removal exit, because both
+  # sit on a node a patch actually discards: the per-agent card is a `:for` row
+  # (the retention window drops older agents when a new page lands, and an
+  # archive reload replaces them), and the loaded result block is one branch of
+  # `case @result_view`.
+  describe "ArchiveComponents.archive_tree — deferred removal exits" do
+    test "the agent card and its loaded result block each carry their own exit" do
+      dom =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
+          archive_metadata: [
+            %{"agent_id" => "with-result", "parent_id" => nil, "result" => "inline result body"}
+          ],
+          total: 1,
+          task_id: "task-42"
+        )
+        |> Floki.parse_document!()
+
+      nodes = Floki.find(dom, "[phx-remove]")
+      assert length(nodes) == 2
+
+      # The card's entrance SLIDES, so it also drops those `fill: both` classes
+      # before lifting out.
+      [card] = Enum.filter(nodes, &(class_of(&1) =~ "motion-panel-slide"))
+      card_js = card |> Floki.attribute("phx-remove") |> List.first()
+      assert card_js =~ "remove_class"
+      assert card_js =~ "motion-panel-open"
+      assert card_js =~ "motion-exit-lift"
+
+      # The result block's entrance was opacity-only, so its exit is a fade.
+      [result] = Enum.reject(nodes, &(&1 == card))
+      result_js = result |> Floki.attribute("phx-remove") |> List.first()
+      assert result_js =~ "remove_class"
+      assert result_js =~ "motion-panel-open"
+      assert result_js =~ "motion-exit-fade"
+      refute result_js =~ "motion-exit-lift"
+    end
+  end
+
   # The archive "Export JSON" link is node-aware: callers hand in an
   # `export_url` that already carries `?node=<target_id>` on a remote node, and
   # a nil `export_url` keeps the bare task export path (local node).
@@ -429,6 +467,10 @@ defmodule EvoDashWeb.ArchiveTreeTest do
   # HTML string, so no `rendered_to_string/1` is needed here.
   defp rendered_text(html) when is_binary(html),
     do: html |> Floki.parse_document!() |> Floki.text()
+
+  defp class_of(node) do
+    node |> Floki.attribute("class") |> List.first() |> to_string()
+  end
 
   # Every archive export anchor of a rendered component.
   defp export_links(html) do

@@ -332,6 +332,8 @@ defmodule EvoDashWeb.HomeLive do
   def handle_event("workspace_toggle", _params, socket),
     do: WorkbenchScope.workspace_toggle(socket)
 
+  def handle_event("workspace_close", _params, socket), do: WorkbenchScope.workspace_close(socket)
+
   def handle_event("workspace_clear", _params, socket), do: WorkbenchScope.workspace_clear(socket)
 
   def handle_event("workspace_path", params, socket),

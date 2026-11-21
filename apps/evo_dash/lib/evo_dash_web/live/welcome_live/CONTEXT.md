@@ -76,6 +76,11 @@ Scoped test messages use the nested `{{:welcome_llm_test_result, seq}, guarded_r
 The page answers a guarded result by unwrapping exactly one level before assigning `llm_test_status`, so a provider answer of `{:error, message}` reaches the error state and only a genuine provider `{:ok, detail}` renders success.
 `apply_schedule_preset` applies a preset only when `Presentation.preset_allowed?/3` admits that id for the draft's current provider and variant, and otherwise leaves the draft untouched.
 All new UI strings are gettext-wrapped, and translation catalogs remain release-time-only work.
+## Shell height (welcome pages are content-box pages)
+Both `/welcome` and `/welcome/complete` render inside `Layouts.app`, so the persistent top bar is present and the pages size against `main#main-content`'s definite content box, never the viewport.
+`welcome_live.ex`'s page root is `min-h-full max-w-5xl mx-auto px-4 lg:px-6 py-4 space-y-5` (normal page flow, scrolls in `#main-scroll`).
+`welcome_complete_live.ex`'s page root is `min-h-full lg:h-full lg:min-h-0 lg:overflow-hidden max-w-3xl mx-auto … flex flex-col`, a fixed non-scrolling desktop layout bounded by the content box whose inner body owns the scroll.
+Neither page may take `height`/`min-height` from `100vh`/`100dvh` (`min-h-screen`/`h-screen` would be exactly one top bar too tall and clip the bottom); mobile keeps normal page flow.
 
 ## Parent Wiring and Tests
 The parent uses entry-aware `reasoning_efforts/1`, retains full inventories separately from defaults, guards remote mutation events, and runs `test_request/3` inside a supervised worker.
