@@ -32,6 +32,9 @@ defmodule EvoGit.AgentScheduler.SessionLifecycleIntegrationTest do
       EVERY session's exchange worker, so a concurrently running module's agent
       would observe this module's scripted replies (scenario 2 additionally sets
       `:agent_exchange_tool_batch`, the same kind of global);
+    * the app-env seam `:agent_retry_backoff_ms` — read at CALL time by the
+      session's crash-retry settle wait (`Session.Setup.bind_worktree/2`), so the
+      module pins it small instead of paying the 30 s production default;
     * the app-global `EvoGit.AgentScheduler` GenServer, whose `:agent_max_retries`
       value this module changes and restores;
     * its global ETS rows (`:evogit_sched_meta` / `:evogit_agent_summary`) and
@@ -77,12 +80,6 @@ defmodule EvoGit.AgentScheduler.SessionLifecycleIntegrationTest do
   # event is not reachable.
   @async_wait_budget_ms 30_000
 
-  # The crash-retry's second attempt additionally pays the PRODUCTION settle
-  # sleep (`Session.Setup.bind_worktree/2` sleeps 30_000 × retries) before the
-  # retried session starts, so its budget must cover that real wait on top of
-  # host latency — it is deliberately larger than `@async_wait_budget_ms`.
-  @retry_attempt_budget_ms 60_000
-
   setup do
     # The app-global scheduler's crash-retry budget: scenario 1 sets it to ONE
     # retry so the bound is pinned instead of the production default of 3.
@@ -92,6 +89,17 @@ defmodule EvoGit.AgentScheduler.SessionLifecycleIntegrationTest do
 
     old_llm = Application.get_env(:evo_git, :agent_exchange_llm_call)
     old_batch = Application.get_env(:evo_git, :agent_exchange_tool_batch)
+
+    old_retry_backoff =
+      case Application.fetch_env(:evo_git, :agent_retry_backoff_ms) do
+        {:ok, value} -> value
+        :error -> nil
+      end
+
+    # The crash-retry settle sleep (`Session.Setup.bind_worktree/2`) defaults to
+    # 30_000 ms per attempt. The seam is a positive-integer call-time override,
+    # so a small value keeps the retry observation honest without the sleep.
+    Application.put_env(:evo_git, :agent_retry_backoff_ms, 10)
 
     # A resolvable model profile: registration resolves a concrete selection
     # before the session can start (same shape as agent_scheduler_test.exs).
@@ -108,6 +116,7 @@ defmodule EvoGit.AgentScheduler.SessionLifecycleIntegrationTest do
     on_exit(fn ->
       restore_env(:agent_exchange_llm_call, old_llm)
       restore_env(:agent_exchange_tool_batch, old_batch)
+      restore_env(:agent_retry_backoff_ms, old_retry_backoff)
 
       GenServer.call(
         EvoGit.AgentScheduler,
@@ -178,11 +187,10 @@ defmodule EvoGit.AgentScheduler.SessionLifecycleIntegrationTest do
     agent_id = new_agent_id(before_ids)
 
     # The crash-retry advanced `SchedMeta.retries` to exactly ONE, observed in
-    # the seam before the run could finish and recycle the row.
-    # The retry's session start pays the production crash-retry settle sleep
-    # (`Session.Setup.bind_worktree/2` sleeps 30_000 × retries), so this budget
-    # covers a real, slow-but-correct retry rather than shrinking it.
-    assert_receive {:attempt, 2, pid2, true, 1}, @retry_attempt_budget_ms
+    # the seam before the run could finish and recycle the row. The retry's
+    # settle sleep is pinned small by `:agent_retry_backoff_ms` (see `setup`), so
+    # this budget only absorbs host scheduling latency.
+    assert_receive {:attempt, 2, pid2, true, 1}, @async_wait_budget_ms
 
     # A NEW session process — never a reused one — serves the retry.
     assert is_pid(pid1) and is_pid(pid2)
