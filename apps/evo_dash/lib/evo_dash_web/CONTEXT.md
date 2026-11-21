@@ -48,17 +48,16 @@ A paused card has no Review button (`show_review_button?/1` stays an allowlist);
 
 ### Task-status admission inventory (where any new task status must be wired)
 
-Every dashboard status list is an independent literal — there is no shared status enum on the dashboard side, and the store filter is a pure SQL string comparison, so an unwired status still round-trips from the core. Sites:
-- `helpers.ex` `task_status_badge/1`, `task_status_dot_class/1`, `task_status_tint/1` — each ends in a catch-all, so a missing status silently renders neutral gray.
-- `components/task_card_components.ex` — the pulse set `[:running, :cancelling, :awaiting_input, :pausing]` (`:paused` never pulses), the label `cond` (whose `true ->` arm prints the raw atom), Pause `[:running, :pausing]`, Resume `[:paused]`, Cancel `[:pending, :running, :awaiting_input]`, Force kill `[:running, :awaiting_input, :cancelling, :pausing, :paused]`.
-- `components/layouts.ex` — the sidebar live/active partition includes `[:running, :pending, :finalizing, :cancelling, :pausing, :paused]` (a paused task stays findable) while only the busy subset pulses; the session sub-line keys on `:awaiting_input`.
-- `live_hooks/node_aware.ex` — `@active_statuses` (the SQL `WHERE status IN (...)`) includes the pause pair plus `:awaiting_input`, and `partition_active_tasks/1` decides the sidebar groups.
+Every dashboard status list is an independent literal — no shared status enum exists dashboard-side, and the store filter is a pure SQL string comparison, so an unwired status still round-trips from the core. Sites:
+- `helpers.ex` `task_status_badge/1`, `task_status_dot_class/1`, `task_status_tint/1` — each ends in a catch-all (a missing status renders neutral gray).
+- `components/task_card_components.ex` — pulse set `[:running, :cancelling, :awaiting_input, :pausing]` (`:paused` never pulses), the label `cond` (`true ->` prints the raw atom), Pause `[:running, :pausing]`, Resume `[:paused]`, Cancel `[:pending, :running, :awaiting_input]`, Force kill `[:running, :awaiting_input, :cancelling, :pausing, :paused]`.
+- `components/layouts.ex` — sidebar live/active partition `[:running, :pending, :finalizing, :cancelling, :pausing, :paused]` (a paused task stays findable) with only the busy subset pulsing; the session sub-line keys on `:awaiting_input`.
+- `live_hooks/node_aware.ex` — `@active_statuses` (the SQL `WHERE status IN (...)`) includes the pause pair plus `:awaiting_input`; `partition_active_tasks/1` decides the sidebar groups.
 - `live/tasks_live.ex` — the status-filter `<option>` list (string values passed through as exact stored TEXT).
 - Terminal sets `[:completed, :cancelled, :failed]` in `live/home_live/stream_fold.ex`, `task_events.ex` and `send_path.ex`; Assistant persistence in `live/home_live/chat_state.ex` (`@task_statuses` whitelist, unknown atom → nil) and `SessionList` `@live_statuses`.
-- Update gate `live/system_live/update_card.ex` `@active_statuses = [:running, :pending, :cancelling, :finalizing, :pausing]` — `:pausing` holds a wrapper and lease mid-drain so an update waits; `:paused` is deliberately excluded (nothing an upgrade could destroy).
-- Headless CLI gate `controllers/server_status_controller.ex` — the same five-status busy set (`:awaiting_input` and `:paused` excluded).
-- Review page needs no status list: the raw status passes through and renders as `String.capitalize(to_string(status))`, reloading only when the value changes.
-- MCP: the `genesis_list_tasks` status enum now lives in the core (`EvoGit.TaskControl.Tools`, with `EvoGit.TaskControl.status_filters/0`); `lib/evo_dash/mcp/tools.ex` is only a `defdelegate` to it.
+- Update gate `live/system_live/update_card.ex` and the headless CLI gate `controllers/server_status_controller.ex` both use the five-status busy set `[:running, :pending, :cancelling, :finalizing, :pausing]` — `:pausing` holds a wrapper and lease mid-drain so an update waits; `:awaiting_input`/`:paused` are excluded (nothing holds a worker or lease).
+- Review page needs none: the raw status passes through as `String.capitalize(to_string(status))`, reloading only when the value changes.
+- MCP: the `genesis_list_tasks` status enum lives in the core (`EvoGit.TaskControl.Tools`, `EvoGit.TaskControl.status_filters/0`); `lib/evo_dash/mcp/tools.ex` is only a `defdelegate` to it.
 
 ### Agent Status Display (frontend merges `:blocked` into `:pending`)
 
