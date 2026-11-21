@@ -1,4 +1,7 @@
 defmodule EvoGit.Auth.ChatGPTTest do
+  # async: false is FORCED by `Req.default_options/1`: two tests replace the
+  # BEAM-global Req defaults (and restore them in `on_exit`), which every
+  # concurrently running HTTP-calling module would observe.
   use ExUnit.Case, async: false
 
   alias EvoGit.Auth.{ChatGPT, OAuthImport}

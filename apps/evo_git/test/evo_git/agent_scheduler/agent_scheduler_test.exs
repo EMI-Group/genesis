@@ -240,9 +240,16 @@ defmodule EvoGit.AgentSchedulerTest do
     assert result.result == "scheduled run report"
 
     # After the session completes normally, the scheduler recycles the agent's
-    # ETS entries (worktree reclamation is monitor-driven elsewhere).
+    # ETS entries (worktree reclamation is monitor-driven elsewhere). The
+    # scheduler's `handle_agent_down` cleanup and the session's `Registry`
+    # unregistration are INDEPENDENT: the ETS rows can be gone while the
+    # registry entry is still visible, so both conditions belong in the SAME
+    # wait (a bare post-wait `Registry.lookup/2` raced the unregistration).
     wait_until(
-      fn -> MapSet.new(Store.list_sched_meta(), fn {id, _} -> id end) == before_ids end,
+      fn ->
+        MapSet.new(Store.list_sched_meta(), fn {id, _} -> id end) == before_ids and
+          Registry.lookup(EvoGit.Agent.Session.Registry, agent_id) == []
+      end,
       5_000
     )
 
