@@ -243,10 +243,6 @@ Ordering is **persist-then-broadcast**: `handle_update_status/6` writes via `Sto
 - **`persist_paused/3` drops the honesty flag**: the wrapper reports `{:paused, %{durable: boolean()}}` (`agent/session/pause.ex`), but `persist_paused/3` binds `_info` and writes `pause_kind: :clean` unconditionally — a `durable: false` pause is recorded as if durable, so a resume skips the crash repair it needs.
 - **`pause_settled?/2` reads through the DEGRADED `safe_store_read`**: on a store outage the read answers `nil`, which falls through to `false`, so the straggler guard is OFF for that window.
 
-## Project Mounts Are Not Registry State
-
-The registry owns task state only: `EvoGit.VCT` owns the project mount list, its `"vct"` broadcast and every mount read, and no registry handler, seam or state key references it (mounts live in the store's `vct_mounts` table).
-
 ## Store Access, Fault Isolation & Three-State Reads
 
 `StoreGuard`: `read/3` (degraded answer on fault), `write/2` (`{:error, :store_unavailable}`), `fetch/2` (`{:ok, value} | :unavailable`), where `fetch/2` is MANDATORY wherever a degraded `nil`/`[]` would read as a DOMAIN fact.
