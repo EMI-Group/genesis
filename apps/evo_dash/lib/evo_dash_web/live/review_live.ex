@@ -464,26 +464,32 @@ defmodule EvoDashWeb.ReviewLive do
 
     socket = assign(socket, loading: true, error: nil, load_generation: gen)
 
-    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      result =
-        case EvoDash.SafeCall.run(fn ->
-               EvoDashWeb.ReviewLive.LoadData.load(node, task_id,
-                 live_action: live_action,
-                 inspect_commit_sha: inspect_commit_sha,
-                 repo_id: repo_id
-               )
-             end) do
-          # LoadData's own outcome: an assigns map, or an already
-          # gettext-wrapped error string.
-          {:ok, {:ok, assigns_map}} -> {:ok, assigns_map}
-          {:ok, {:error, reason}} -> {:error, reason}
-          # Exit/exception/throw around the call, or an unexpected shape: the
-          # page stays retry-able instead of hanging.
-          _ -> {:error, gettext("Failed to load review data.")}
-        end
+    # Only the CONNECTED mount spawns the load: a disconnected render has no
+    # LiveView process to receive `{:review_data_loaded, ...}`, so the task's
+    # store/git reads would always be discarded. The static render only shows
+    # the loading shell, which the assigns above already establish.
+    if connected?(socket) do
+      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+        result =
+          case EvoDash.SafeCall.run(fn ->
+                 EvoDashWeb.ReviewLive.LoadData.load(node, task_id,
+                   live_action: live_action,
+                   inspect_commit_sha: inspect_commit_sha,
+                   repo_id: repo_id
+                 )
+               end) do
+            # LoadData's own outcome: an assigns map, or an already
+            # gettext-wrapped error string.
+            {:ok, {:ok, assigns_map}} -> {:ok, assigns_map}
+            {:ok, {:error, reason}} -> {:error, reason}
+            # Exit/exception/throw around the call, or an unexpected shape: the
+            # page stays retry-able instead of hanging.
+            _ -> {:error, gettext("Failed to load review data.")}
+          end
 
-      send(parent, {:review_data_loaded, task_id, node, gen, result})
-    end)
+        send(parent, {:review_data_loaded, task_id, node, gen, result})
+      end)
+    end
 
     socket
   end

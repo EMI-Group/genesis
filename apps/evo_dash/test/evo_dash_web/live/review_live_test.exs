@@ -696,7 +696,13 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
   # primary branch. Returns {change_sha, primary_branch, base_sha}.
   def build_repo_with_task_branch!(tmp_dir, primary, secondary) do
     File.mkdir_p!(tmp_dir)
-    git!(tmp_dir, ["init"])
+    # `--template=` (EMPTY template dir) skips the sample hooks / description /
+    # info files `git init` otherwise seeds: the template repo is COPIED once per
+    # test (`copy_review_template!/3`), and a byte copy pays per FILE, not per
+    # byte — 34 files → 18 (and with no hooks at all). The repo is fully
+    # functional: git creates `objects/` and `refs/` on demand. Nothing in this
+    # suite reads a hook, `info/exclude` or `description`.
+    git!(tmp_dir, ["init", "--template="])
     git!(tmp_dir, ["config", "user.email", "test@example.com"])
     git!(tmp_dir, ["config", "user.name", "Test User"])
 
