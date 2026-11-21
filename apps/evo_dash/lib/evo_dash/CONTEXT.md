@@ -136,13 +136,10 @@ The only config-dir filesystem access in this directory is `EvoDash.MCP.Auth` re
 
 #### Approval routing and control-result caveats
 
-`approval_response/3` accepts only `"approve"`, `"deny"`, `:approve` and `:deny`, rejecting other values before dispatch, but adds no request-id, task, agent, user or session ownership validation of its own.
-The approval response transports only the BEAM node, request id and decision, never the displayed command or its arguments, so exact invocation binding must be enforced by the core's pending-request/execution association rather than by this wrapper or the chat cache.
-Approval routing compares the supplied BEAM node atom with `node()`; local dispatch dynamically calls `EvoGit.CommandApproval.respond/2` through the lifecycle guard, while remote dispatch calls `EvoGit.AgentScheduler.RemoteAPI.respond_approval/2` directly with a hardcoded 15,000 ms `:erpc` timeout rather than using `RemoteNode`'s generic RPC timeout.
-The local guard catches exits and missing modules only, so a local responder exception or missing function can still raise despite the approval function's totality documentation; the remote approval branch catches every exception/exit/throw into an error tuple.
-`restart_remote/1` and `stop_remote/1` discard the generic RPC result and return `:ok`, so their success value alone cannot prove that an unreachable target received the command.
-Runtime wrappers are synchronous forwards rather than asynchronous operations or authorization boundaries, and data wrappers such as `list_agents/1`, `get_agent_history/2`, `paused?/1` and task lists document empty/false fallbacks that can conflate unavailable with genuinely empty state.
-`get_resolved_config/1` and `get_recent_system_samples/1` preserve explicit success/error envelopes and are preferable when a diagnostic consumer must distinguish unavailable from empty.
+`approval_response/3` accepts only `"approve"`, `"deny"`, `:approve` and `:deny` (anything else is rejected before dispatch) and adds no request-id/task/agent/session ownership validation; it transports only the BEAM node, request id and decision — never the displayed command — so exact invocation binding must be enforced by the core's pending-request/execution association.
+Routing compares the supplied node atom with `node()`: local → guarded `EvoGit.CommandApproval.respond/2` (`Code.ensure_loaded?` + `apply/3`, `{:error, :command_approval_unavailable}` when absent), remote → `EvoGit.AgentScheduler.RemoteAPI.respond_approval/2` with a HARDCODED 15 000 ms `:erpc` timeout instead of `RemoteNode`'s generic budget.
+The local guard catches exits and missing modules only, so a local responder exception can still raise; the remote branch catches every exception/exit/throw into an error tuple. `restart_remote/1` and `stop_remote/1` discard the RPC result and return `:ok`, so their success value cannot prove delivery.
+Data wrappers (`list_agents/1`, `get_agent_history/2`, `paused?/1`, task lists) document empty/false fallbacks that conflate unavailable with genuinely empty; `get_resolved_config/1` and `get_recent_system_samples/1` preserve explicit envelopes and are preferable when a consumer must tell the two apart.
 
 ### `EvoDash.ProjectDirectories` (`project_directories.ex`)
 
