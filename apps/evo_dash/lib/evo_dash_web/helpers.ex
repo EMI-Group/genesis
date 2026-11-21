@@ -1044,7 +1044,9 @@ defmodule EvoDashWeb.Helpers do
   timing renders nothing instead of a placeholder.
   """
   @spec format_duration(term()) :: String.t()
-  def format_duration(ms) when is_integer(ms), do: "#{Float.round(ms / 1000, 1)}s"
+  def format_duration(ms) when is_integer(ms),
+    do: "#{:erlang.float_to_binary(ms / 1000, decimals: 1)}s"
+
   def format_duration(_ms), do: ""
 
   @doc """
