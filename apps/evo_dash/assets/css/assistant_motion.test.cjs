@@ -190,13 +190,19 @@ test("JS.hide exit helpers use opacity/transform transitions", () => {
 test("window and dialog closing states fade out before the node is dropped", () => {
   for (const header of [
     'dialog.workbench-window[data-window-state="closing"]',
-    'dialog.modal[data-dialog-state="closing"]'
+    // The native modal animates the .modal-box the DialogModal hook watches,
+    // never the <dialog> itself (motion.css section 9).
+    'dialog.modal[data-dialog-state="closing"] .modal-box'
   ]) {
     for (const body of blocks(header, motionCss)) {
       assert.equal(Object.fromEntries(declarations(body)).animation,
         "motion-fade-out var(--motion-fast) var(--motion-ease-in) both");
     }
   }
+  // The <dialog> element itself must never carry a closing animation: _hide()
+  // only ever listens for an animationend on `.modal-box`.
+  assert.doesNotMatch(motionCss, /dialog\.modal\[data-dialog-state="(?:opening|closing)"\]\s*\{/,
+    "the dialog element is not the watched node");
   for (const header of [
     "dialog.workbench-window[open]",
     "dialog.modal[data-dialog-state=\"closing\"]::backdrop"

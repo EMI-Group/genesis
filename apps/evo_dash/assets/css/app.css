@@ -2485,10 +2485,12 @@ details[data-capsule-view="provider"] .capsule-view[data-view="provider"] {
   animation: capsule-view-in 120ms ease-out;
 }
 
-/* --- Nested Layer-2 submenu entrance (mode+speed capsule) ---
-   The inner <details class="capsule-sub"> keeps its NATIVE toggle (the
-   CapsulePanel hook deliberately never intercepts its summary), so the only
-   polish is a short fade/slide on the submenu list itself. */
+/* --- Nested Layer-2 submenu entrance + exit (mode+speed capsule) ---
+   A native <details class="capsule-sub"> snaps shut, so BOTH directions are
+   authored here: the [open] rule animates the submenu list in with no JS, and
+   the state rule lets the CapsulePanel hook defer `open` removal for the exit
+   (it writes data-capsule-sub-state="closing" through the shared closeAnimated
+   primitive and removes `open` only once the list's own animation ended). */
 @keyframes capsule-sub-in {
   from {
     opacity: 0;
@@ -2505,14 +2507,19 @@ details.capsule-sub[open] > .capsule-list {
   animation: capsule-sub-in 120ms ease-out;
 }
 
+details.capsule-sub[data-capsule-sub-state="closing"] > .capsule-list {
+  animation: motion-fade-out var(--motion-fast) var(--motion-ease-in) both;
+}
+
 /* Reduced motion disables BOTH directions of the panel animation, the view
-   switching transitions and the submenu entrance (the hook also short-circuits
-   its animated close, so the panel simply closes on the spot). */
+   switching transitions and the submenu animations (the hook also
+   short-circuits its animated close, so the panel simply closes on the spot). */
 @media (prefers-reduced-motion: reduce) {
   details.capsule[open] > .capsule-panel,
   details.capsule[data-capsule-state="closing"] > .capsule-panel,
   details.capsule .capsule-view,
-  details.capsule-sub[open] > .capsule-list {
+  details.capsule-sub[open] > .capsule-list,
+  details.capsule-sub[data-capsule-sub-state="closing"] > .capsule-list {
     animation: none !important;
   }
 }
@@ -2557,8 +2564,12 @@ details.capsule-sub[open] > .capsule-list {
    flush with the box) reads as extending upward from the "+" button over
    the textarea. The widget is `phx-update="ignore"` (task_form_components.ex)
    — visibility / typed value / inline error are client-owned. The inner wrap
-   expands rightward with a subtle pop/slide on open (@keyframes
-   file-manual-expand restarts whenever the widget becomes visible again).
+   fades/slides in on open (@keyframes file-manual-expand restarts whenever the
+   widget becomes visible again) and fades out on close through the hook's
+   data-file-manual-state="closing" (the shared `closeAnimated` primitive in
+   js/hooks/disclosure_motion.js removes `hidden` only after it).
+   Both directions are OPACITY + TRANSFORM only — motion.css's hard invariant:
+   no width/max-width tween, the wrap's `max-width` is static.
    Uses only the --color-base-* / --color-warning / --color-success /
    --color-error theme variables via color-mix (never oklch(var(--x) / a) —
    Known Issue (i)). */
@@ -2578,16 +2589,21 @@ details.capsule-sub[open] > .capsule-list {
   animation: file-manual-expand 0.2s ease-out;
 }
 
+/* Exit counterpart — the FilePicker hook writes this attribute and removes
+   `hidden` only once the animation ended (shared closeAnimated primitive).
+   Opacity/transform only, matching the entry keyframe. */
+.file-manual[data-file-manual-state="closing"] .file-manual-input-wrap {
+  animation: motion-fade-out var(--motion-fast) var(--motion-ease-in) both;
+}
+
 @keyframes file-manual-expand {
   from {
     opacity: 0;
-    max-width: 0;
     transform: translateX(0.75rem);
   }
 
   to {
     opacity: 1;
-    max-width: 16.5rem;
     transform: translateX(0);
   }
 }

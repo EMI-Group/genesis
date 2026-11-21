@@ -132,11 +132,21 @@ dialog.workbench-window[data-window-state="closing"]::backdrop {
   animation: motion-fade-out var(--motion-fast) var(--motion-ease-in) both;
 }
 
-/* 9. Native modal (DaisyUI dialog.modal) exit only — its ENTER is owned by
-   daisyUI/markup. dialog_modal.js sets data-dialog-state="opening|open|closing"
-   and defers close(); a raw native close() would drop the top-layer element
-   instantly, which is why no modal could animate out before this. */
-dialog.modal[data-dialog-state="closing"] {
+/* 9. Native modal (DaisyUI dialog.modal) — BOTH directions animate the visible
+   .modal-box panel, because that is the node dialog_modal.js watches: _enter()
+   and _hide() settle on a target-verified animationend whose target IS the
+   `.modal-box` (a ::backdrop animation is dispatched at the <dialog>, a child
+   animation bubbles from the child). The <dialog> itself contributes only the
+   ::backdrop fade. The hook sets data-dialog-state="opening|open|closing" and
+   defers close(); a raw native close() would drop the top-layer element
+   instantly, which is why no modal could animate before this. */
+dialog.modal[data-dialog-state="opening"] .modal-box {
+  animation: motion-slide-in var(--motion-base) var(--motion-ease-out) both;
+}
+dialog.modal[data-dialog-state="opening"]::backdrop {
+  animation: motion-fade-in var(--motion-base) var(--motion-ease-out) both;
+}
+dialog.modal[data-dialog-state="closing"] .modal-box {
   animation: motion-fade-out var(--motion-fast) var(--motion-ease-in) both;
 }
 dialog.modal[data-dialog-state="closing"]::backdrop {
