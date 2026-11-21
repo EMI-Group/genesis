@@ -1339,12 +1339,14 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def handle_call(:get_config, _from, %State{} = state) do
-    {:reply, config_map(state), state}
+    {config, state} = config_map(state)
+    {:reply, config, state}
   end
 
   @impl true
   def handle_call({:get_config, key}, _from, %State{} = state) do
-    {:reply, config_value(state, key), state}
+    {value, state} = config_value(state, key)
+    {:reply, value, state}
   end
 
   @impl true
@@ -1562,27 +1564,72 @@ defmodule EvoGit.AgentScheduler do
   ]
 
   # Builds the full resolved config map for the map-form :get_config reply.
+  # Returns `{config, state}` so memoized keys (see `config_value/2`) persist
+  # the values they probed: ONE map-form read costs at most ONE probe, no
+  # matter how many memoized keys it carries.
   defp config_map(%State{} = state) do
-    Map.new(@config_keys, fn key -> {key, config_value(state, key)} end)
+    {pairs, state} =
+      Enum.map_reduce(@config_keys, state, fn key, acc ->
+        {value, acc} = config_value(acc, key)
+        {{key, value}, acc}
+      end)
+
+    {Map.new(pairs), state}
   end
 
   # Lazy per-key accessor shared by the map-form builder and the single-key
-  # :get_config handler. Each call evaluates ONLY the requested key (a direct
-  # %State{} field read for field-backed keys, or the platform/sandbox probe
-  # for the two computed keys) — never the whole map, so single-key hot paths
-  # (e.g. PeakHourEngine's per-broadcast reads) do not pay for unrelated
-  # values. Unknown keys resolve to nil.
-  defp config_value(%State{} = _state, :sandbox_backend), do: EvoGit.Platform.sandbox_backend()
-  defp config_value(%State{} = _state, :sandbox_capabilities), do: EvoGit.Sandbox.capabilities()
-  defp config_value(%State{} = state, :max_agent_depth), do: state.max_depth
+  # :get_config handler. Returns `{value, state}` so the two memoized keys can
+  # store what they probed. Each call evaluates ONLY the requested key (a
+  # direct %State{} field read for field-backed keys) — never the whole map,
+  # so single-key hot paths (e.g. PeakHourEngine's per-broadcast reads) do not
+  # pay for unrelated values. Unknown keys resolve to nil.
+  defp config_value(%State{} = state, :sandbox_backend) do
+    case state.sandbox_backend do
+      nil ->
+        value = probe_sandbox_backend()
+        {value, %State{state | sandbox_backend: value}}
+
+      value ->
+        {value, state}
+    end
+  end
+
+  # `EvoGit.Sandbox.capabilities/0` resolves the same backend through the same
+  # `Platform.sandbox_backend/0` PATH cascade in the default `:auto` mode, so
+  # it shares the memo (and its invalidation) rather than re-probing.
+  defp config_value(%State{} = state, :sandbox_capabilities) do
+    case state.sandbox_capabilities do
+      nil ->
+        value = EvoGit.Sandbox.capabilities()
+        {value, %State{state | sandbox_capabilities: value}}
+
+      value ->
+        {value, state}
+    end
+  end
+
+  defp config_value(%State{} = state, :max_agent_depth), do: {state.max_depth, state}
 
   defp config_value(%State{} = state, key)
        when key in @config_keys or key == :model_concurrency do
     # For every other config key the config key IS the %State{} field name.
-    Map.get(state, key)
+    {Map.get(state, key), state}
   end
 
-  defp config_value(_state, _key), do: nil
+  # Unknown keys resolve to nil without touching the memo.
+  defp config_value(%State{} = state, _key), do: {nil, state}
+
+  # Default-inert CALL-TIME seam: production NEVER sets
+  # `:evo_git, :sandbox_backend_probe_fun`, so the platform probe runs
+  # unchanged (`&EvoGit.Platform.sandbox_backend/0`). Tests pin an arity-0 fun
+  # to observe/count the probe. Read at the probe site, never at compile time —
+  # same contract as the other `:evo_git` app-env seams.
+  defp probe_sandbox_backend do
+    case Application.get_env(:evo_git, :sandbox_backend_probe_fun) do
+      fun when is_function(fun, 0) -> fun.()
+      _ -> EvoGit.Platform.sandbox_backend()
+    end
+  end
 
   @impl true
   def handle_cast({:release_llm_slot, agent_id}, %State{} = state) do

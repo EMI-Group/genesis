@@ -42,6 +42,11 @@ defmodule EvoGit.AgentScheduler.State do
   - `max_retries` — maximum total retries across the scheduler
   - `max_turns` — maximum turns per agent loop
   - `max_turns_root` — maximum turns for the root (top-level) agent only
+  - `sandbox_backend` / `sandbox_capabilities` — LAZY MEMO of the host sandbox
+    probe (`nil` = not probed for the current config identity); the backend
+    resolution is a `System.find_executable/1` PATH cascade that serializes
+    through the VM's single `:file` server, so it is computed at most once per
+    config application and cleared by `do_update_config/2`
 
   ### Agent Lifecycle
   - `next_agent_id` — monotonically increasing agent ID counter
@@ -117,7 +122,9 @@ defmodule EvoGit.AgentScheduler.State do
             paused: false,
             sandbox_mode: nil,
             sandbox_resources: nil,
-            sandbox_process_resources: nil
+            sandbox_process_resources: nil,
+            sandbox_backend: nil,
+            sandbox_capabilities: nil
 
   @type t :: %__MODULE__{
           default_llm_max_concurrency: pos_integer(),
@@ -152,7 +159,9 @@ defmodule EvoGit.AgentScheduler.State do
           paused: boolean(),
           sandbox_mode: :auto | :enabled | :disabled | nil,
           sandbox_resources: map() | nil,
-          sandbox_process_resources: map() | nil
+          sandbox_process_resources: map() | nil,
+          sandbox_backend: EvoGit.Platform.sandbox_backend() | nil,
+          sandbox_capabilities: EvoGit.Sandbox.capabilities() | nil
         }
 
   @doc """
@@ -500,6 +509,17 @@ defmodule EvoGit.AgentScheduler.State do
       else
         state
       end
+
+    # A config application IS the memo's identity boundary. The sandbox
+    # backend/capabilities are host PATH probes (`System.find_executable/1`
+    # serializes through the VM's single :file server), so they are memoized
+    # per config generation and re-probed lazily after EVERY refresh route
+    # (`RemoteAPI.reload_config/0`, `save_user_config/1`, dashboard config
+    # pushes, PeakHourEngine patches) — all of which funnel through here.
+    # Clearing is two field writes; a probe happens only if someone reads
+    # `:sandbox_backend`/`:sandbox_capabilities` again (see
+    # `AgentScheduler.config_value/2`).
+    state = %__MODULE__{state | sandbox_backend: nil, sandbox_capabilities: nil}
 
     # Apply all field updates. `:model_concurrency` replaces the per-model map
     # and re-applies the active default floor (dynamic engine updates — e.g.
