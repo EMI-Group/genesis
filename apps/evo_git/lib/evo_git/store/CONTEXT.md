@@ -146,7 +146,7 @@ The shared filter builder `Operations.Filters` (`where_filters/2` + the clamps) 
 | no compression | every JSON column is plain UTF-8 JSON TEXT — no prefix-tagged payload, no zlib, no `try/rescue` |
 
 ## Storage Model — plain JSON text columns
-`result`, `logs`, `opts`, `usage` and `error` are plain UTF-8 JSON TEXT — exactly what the encoder produced (no compression layer, no prefix-tagged payload), so a stored value is uniformly readable by plain SQL (`json_valid`, `json_extract`, `LIKE`); `opts` being a plain object lets search `LIKE` its raw text and SQL paths use `json_extract(opts, '$.path')`.
+`result`, `logs`, `opts`, `usage` and `error` are plain UTF-8 JSON TEXT — exactly what the encoder produced, no compression layer and no prefix tag — so a stored value is uniformly readable by plain SQL (`json_valid`, `json_extract`, `LIKE`); `opts` being a plain object lets search `LIKE` its raw text and SQL paths use `json_extract(opts, '$.path')`.
 Decode strictness: `decode_result/1` raises `ArgumentError` on anything but the 4 tagged forms, while lenient `decode_logs/1` → `[]` and `decode_error/1` → `nil` keep callers safe.
 
 ## Task repo/commit identity — where each field lives
