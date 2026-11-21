@@ -57,6 +57,12 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
     # local context (a whole-table reset would delete a concurrent module's
     # per-test snapshot).
     EvoDash.ActiveTasks.invalidate(nil, node())
+    # The stub notifies from INSIDE the boundary's `Task.async` call, so the
+    # product's call budget also bounds a stub notification: on a starved host
+    # the task can be killed before it runs and the notification is lost
+    # forever. Inject the suite's load-tolerant budget so the product can never
+    # kill a stub call (production keeps its own 15 s default).
+    Process.put(:chatgpt_signin_call_timeout_ms, @async_wait_budget_ms)
     :ok
   end
 
