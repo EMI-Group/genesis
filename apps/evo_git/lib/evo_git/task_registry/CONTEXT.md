@@ -102,10 +102,6 @@ Each task owns ONE managed scratch directory shared by all its agents (`EvoGit.T
 - **Reclaim is event-driven ONLY**: `EvoGit.TaskTmpdir.reclaim/2` removes `task_<id>` on a terminal status — from `handle_update_status/6` plus the direct terminal writes that bypass it (`force_kill_task/1`, `cancel_task/1`'s `:pending` arm, `:lease_sweep`, `resolve_recheck_task/3`); no boot reaper, no periodic sweep. It never deletes outside the managed root nor the root itself; `handle_update_status/6` reads the FINAL (post force-map) status, so `:cancelling`/`:finalizing` never reclaim.
 - **Gotchas**: `cleanup_expired_tasks/1` deletes ROWS, never directories; a dir orphaned by a full-runtime CRASH is NEVER reaped automatically; `[tmp] mode` is re-resolved at RECLAIM time (never stored per task), so changing it mid-flight can orphan the dir created under the old mode.
 
-## OS Surface & Portability
-
-The only OS API is `System.system_time(:second)` (lease arithmetic) — no `System.cmd`, `Port.open`, `:os.*` or file I/O beyond `TaskExecutor`'s `TaskTmpdir` call, so no Windows-only crash can ORIGINATE here; the tmpdir BINARY later reaches the Windows sandbox's `Port.open`, whose env pairs MUST be charlists (OTP-29) — convert at that call site (`../sandbox/CONTEXT.md`).
-
 ## Failed-Task Error Persistence (`TaskInfo.error`)
 
 Every transition to `:failed` records a 4-key map (ATOM keys after decode) in the dedicated `error` column (JSON TEXT): `%{kind: atom, source: atom, message: String.t(), stacktrace: [String.t()] | nil}`, available in the full-decode paths (`Store.get_task/1`, `list_tasks_paginated/1`) and the 16-key summary projection (lenient `Codec.decode_error/1`; nil for non-failed rows).
