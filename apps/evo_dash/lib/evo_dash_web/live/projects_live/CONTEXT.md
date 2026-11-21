@@ -193,7 +193,7 @@ The page owns the `:persist_agent_state?` assign, defaulted `true` by `Assigns.a
 
 ## Memory
 
-The page keeps summary maps only — `projects` (`%EvoGit.VCT.Mount{}` rows, display-only), `notified_task_ids` (a `MapSet` of ids), plus the sidebar lists owned by `NodeAware`. No full `%TaskInfo{}` row is retained; notification titles are computed in the spawned scan and discarded after `push_event`.
+The page keeps summary maps only: `projects` (`%EvoGit.VCT.Mount{}` rows, display-only), `notified_task_ids` (a `MapSet` of ids), plus the sidebar lists owned by `NodeAware`. No full `%TaskInfo{}` row is retained; notification titles are computed in the spawned scan and discarded after `push_event`.
 
 ## Open-project / selection state persistence (where the "current project" lives)
 
