@@ -194,7 +194,7 @@ Reads NEVER raise/exit/return `{:error, _}` — they return the empty value of t
 **What dominates reads**: the per-row `opts` JSON decode of a summary row, the legacy full-row page's `Codec.decode_task/1` of every blob column, and `select_tasks_summary` with `[]` (all statuses — a full table scan).
 **Index inventory (6 `idx_tasks_*` + 1 archive index)**: `idx_tasks_updated_at`, `idx_tasks_started_at`, `idx_tasks_status_started_at` `(status, started_at)`, `idx_tasks_project_path_started_at` `(project_path, started_at)`, `idx_tasks_status_updated_at_id` `(status, updated_at, id)` and `idx_tasks_finished_at_id` `(finished_at, id)`, plus `task_agent_archives_task_depth_idx` on `(task_id, depth, agent_id)`.
 Four redundant index shapes are never created and are DROPPED by migration 6 on an adopted legacy DB (see the ledger row); the prune is a WAL/page-churn win, not a space win.
-**Maintenance**: `PRAGMA optimize` once per boot after the migrations (boot connection, best-effort, seam `:store_boot_optimize_fun`) and hourly via `EvoGit.Store.Maintenance` (best-effort, never raises when the store is restarting/absent), so `sqlite_stat1` tracks schema and data; `VACUUM` is never automatic.
+**Maintenance**: `PRAGMA optimize` once per boot after the migrations (best-effort, seam `:store_boot_optimize_fun`) and hourly via `EvoGit.Store.Maintenance` (best-effort, never raises when the store is restarting/absent), so `sqlite_stat1` tracks schema and data; `VACUUM` is never automatic.
 
 ## Summary Projection Contract (18 keys)
 
