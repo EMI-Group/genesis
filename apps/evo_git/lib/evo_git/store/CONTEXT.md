@@ -44,7 +44,7 @@ Nothing is rehydrated into a long-lived process at boot (`init/1` keeps only its
 ### Migration ledger (versions 1–9 and 11)
 
 Every migration is `up/0` only, self-contained (a shipped migration must keep working after application modules are refactored), and runs every statement through `repo().query!/3`, never `Ecto.Migration.execute/1` (whose string commands queue until `flush/0`, so an in-body probe would see pre-migration state); frozen shipped source files are never rewritten.
-Each post-condition asserts the migration's own physical shape through `PRAGMA table_info`/`PRAGMA index_info`/`EXPLAIN QUERY PLAN`, so an `IF NOT EXISTS` can never silently keep a same-named object of a different shape; each `.exs` moduledoc carries that migration's own rationale and exclusions.
+Each post-condition asserts the migration's own physical shape through `PRAGMA table_info`/`PRAGMA index_info`/`EXPLAIN QUERY PLAN`, so an `IF NOT EXISTS` can never silently keep a same-named object of a different shape.
 
 | Ver | File | Does (post-condition gist) |
 |---|---|---|
