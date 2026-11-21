@@ -35,7 +35,7 @@ The lock FUNCTION is a default-inert call-time seam — `Application.get_env(:ev
 
 ### Boot blocking profile and memory footprint
 
-The repo open and the migration run are SYNCHRONOUS inside `init/1` (boot repo → migrator → `PRAGMA optimize` → reopen the pool → start the writer), so the supervisor's child start BLOCKS until it returns — which blocks `EvoGit.Application.start/2` and `EvoDashWeb.Endpoint`'s Bandit bind: **Store boot precedes the HTTP listener**, so a slow first-boot migration delays HTTP readiness (desktop budget: `desktop/src-tauri/CONTEXT.md` → "Backend Readiness Budgets & Launch Diagnostics").
+The repo open and the migration run are SYNCHRONOUS inside `init/1` (boot repo → migrator → `PRAGMA optimize` → reopen the pool → start the writer), so the supervisor's child start BLOCKS until it returns — and so does `EvoDashWeb.Endpoint`'s Bandit bind: **Store boot precedes the HTTP listener** (desktop budget: `desktop/src-tauri/CONTEXT.md` → "Backend Readiness Budgets & Launch Diagnostics").
 Only versions absent from `schema_migrations` run, so a release shipping no new migration is a pure no-op, and `Ecto.Migrator` runs each migration AND its version stamp in ONE transaction (atomic under a SIGKILL).
 A DB locked by another process can stall a boot connection up to `busy_timeout: 30_000`, in the CALLING process (no VM thread parked) — no sleeps exist on the store/application boot path.
 Nothing is rehydrated into a long-lived process at boot (`init/1` keeps only its state map); the ONE boot read is `TaskRegistry.init/1`'s `select_running_lease_info` (`id`/`status`/`lease_expires_at` for `WHERE status IN ('running','awaiting_input','finalizing','cancelling')`, reduced to `{id, status}` pairs), empty with no tasks running.
