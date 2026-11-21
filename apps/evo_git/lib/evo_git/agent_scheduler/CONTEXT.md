@@ -40,14 +40,13 @@ Surface: `get_file_content/3`, `list_commits/2`, `load_review_data/2`, `load_rev
 
 ### Project-mount and workspace RPC surface (VCT)
 
-`RemoteAPI.projects/0` returns PROJECT mounts only, newest first, `[]` when none exist or the VCT is down; `mount_project/2` → `{:ok, mount} | {:error, :relative_path | :store_unavailable | :vct_unavailable}`; `forget_project/1` → `:ok | {:error, :not_found | :invalid_point | :reserved_point}`, accepting a point, OS path or bare workspace name.
-Workspaces: `workspaces/0` (no OS path, newest first), `create_workspace/3` (idempotent slug-keyed upsert, `{:error, :vct_unavailable}` when down), `workspace_members/1` → `{:ok, %{workspace:, members:, missing:, nested:}} | {:error, :not_found | :not_a_workspace | :invalid_point | :vct_unavailable}` (`:not_found` only for a genuinely absent workspace), `workspace_entries/1,2` (every workspace's members resolved in ONE round trip), `workspaces_for/1`.
-`RemoteNode` mirrors each with a leading `node` (local-direct else `call_remote/4`), degrading to `[]` for list reads and `{:error, {kind, reason}}` otherwise; every mutation emits its ONE `{:vct_updated, node}` on the target node (`../vct/CONTEXT.md`).
+`RemoteAPI.projects/0` → PROJECT mounts only, newest first (`[]` when none or the VCT is down); `mount_project/2` → `{:ok, mount} | {:error, :relative_path | :store_unavailable | :vct_unavailable}`; `forget_project/1` → `:ok | {:error, :not_found | :invalid_point | :reserved_point}` over a point, OS path or bare workspace name.
+Workspaces: `workspaces/0`, `create_workspace/3` (idempotent slug-keyed upsert), `workspace_members/1` → `{:ok, %{workspace:, members:, missing:, nested:}} | {:error, :not_found | :not_a_workspace | :invalid_point | :vct_unavailable}`, `workspace_entries/1,2` (all members resolved in ONE round trip) and `workspaces_for/1`.
+`RemoteNode` mirrors each with a leading `node`, degrading to `[]` for list reads and `{:error, {kind, reason}}` otherwise; every mutation still emits its ONE `{:vct_updated, node}` (`../vct/CONTEXT.md`).
 
 ### Push-only streaming watch surface (cross-node)
 
-`RemoteAPI.register_watcher/2`, `unregister_watcher/2` and `watch_snapshot/1` are thin passthroughs to `EvoGit.Agent.Stream` under `Stream`'s own 5 s session deadline — ONE implementation.
-They are LOCAL-node session calls (session, watcher set and transcript live where the agent is owned): the snapshot is heavy full-transcript while deltas are PUBLISHED, so a disconnected cluster delivers no deltas while the attach still succeeds. Shapes and gating: `../agent/stream/CONTEXT.md`.
+`RemoteAPI.register_watcher/2`, `unregister_watcher/2` and `watch_snapshot/1` are LOCAL-node passthroughs to `EvoGit.Agent.Stream` (the session, watcher set and transcript live where the agent is owned): the snapshot is heavy full-transcript while deltas are PUBLISHED, so a disconnected cluster delivers no deltas yet the attach still succeeds. Shapes and gating: `../agent/stream/CONTEXT.md`.
 
 ## Direct-Eval / Assistant API Safety
 
