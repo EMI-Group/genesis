@@ -232,10 +232,10 @@ Cancel WINS over a pause, a pause during `:cancelling` is IGNORED (`cancel_reque
 
 ## Worktree Safety, Multi-Repo Identity & Windows
 
-`ensure_linked_worktree/2` accepts a worktree only when `wt/.git` is a FILE whose `"gitdir: <path>"` resolves INSIDE `<repo_root>/.git/worktrees/`, and `main_copy_mutation_error/3` + `@mutating_git_regex` block any command that cd-escapes into the repo root and mutates the MAIN copy.
-The scheduler process performs no blocking FS I/O and no worktree call itself (creation, reclaim and salvage run in `WorktreeManager`), and `Salvage.commit_exists?/2` is the only git call it makes inline.
-Multi-repo identity is `spec.repo_id` (`"primary"` or a foreign id) plus an already-absolute root — never a path prefix — and `SchedMeta.foreign_repo_commits` (STRING ids) is the only tracked cross-repo commit map, advanced only by a writable `:read_write` agent running in that repo.
-`run_init_script/3` is NOT sandbox-wrapped and spawns a bare `"powershell"` name on Windows (PATH-resolved, not `Executable.resolve/1`), so a host without PowerShell fails at worktree-create time; Windows path normalization (`Path.join/2` output rewritten to `/` before git calls) is LOAD-BEARING — do not "fix" it.
+`ensure_linked_worktree/2` accepts a worktree only when `wt/.git` is a FILE whose `"gitdir: <path>"` resolves INSIDE `<repo_root>/.git/worktrees/`; `main_copy_mutation_error/3` + `@mutating_git_regex` block any command that cd-escapes into the repo root and mutates the MAIN copy.
+The scheduler process performs no blocking FS I/O and no worktree call (creation, reclaim and salvage run in `WorktreeManager`); `Salvage.commit_exists?/2` is the only git call it makes inline.
+Multi-repo identity is `spec.repo_id` (`"primary"` or a foreign id) plus an already-absolute root — never a path prefix — and `SchedMeta.foreign_repo_commits` (STRING ids) is the only tracked cross-repo commit map.
+`run_init_script/3` is NOT sandbox-wrapped and spawns a bare `"powershell"` on Windows (PATH-resolved, not `Executable.resolve/1`), so a PowerShell-less host fails at worktree-create; Windows path normalization (`Path.join/2` → `/` before git calls) is LOAD-BEARING — do not "fix" it.
 
 ## GenServer Hub & Inventory
 
