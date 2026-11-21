@@ -147,7 +147,6 @@ The shared filter builder `Operations.Filters` (`where_filters/2` + the clamps) 
 
 ## Storage Model — plain JSON text columns
 `result`, `logs`, `opts`, `usage` and `error` are plain UTF-8 JSON TEXT — exactly what the encoder produced, no compression layer and no prefix tag — so a stored value is uniformly readable by plain SQL (`json_valid`, `json_extract`, `LIKE`); `opts` being a plain object lets search `LIKE` its raw text and SQL paths use `json_extract(opts, '$.path')`.
-Decode strictness is unchanged: `decode_result/1` is strictly canonical while `decode_logs/1` → `[]` and `decode_error/1` → `nil` keep callers safe.
 
 ## Task repo/commit identity — where each field lives
 
