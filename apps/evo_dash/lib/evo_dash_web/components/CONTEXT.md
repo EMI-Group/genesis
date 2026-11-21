@@ -40,8 +40,8 @@ Reusable Phoenix function components and layout templates for the EvoDash web in
 
 ### Templates, usage, flashes, theme
 
-`layouts/root.html.heex` is the only template: base HTML shell with meta tags, CSRF token, LiveView title, asset links and the client-side theme script (`phx:theme` localStorage).
-All component modules use `use EvoDashWeb, :html`; components are function components (`<.button phx-click="save">`, `<.task_card task={@task} />`, `<.agent_tree agents={@agents} />`, `<.flash kind={:warning} flash={@flash} />`).
+`layouts/root.html.heex` is the only template (base shell: meta tags, CSRF, LiveView title, asset links, the client-side theme script).
+All component modules `use EvoDashWeb, :html` and are pure function components (`<.button phx-click="save">`, `<.task_card task={@task} />`, `<.agent_tree agents={@agents} />`, `<.flash kind={:warning} flash={@flash} />`).
 
 | Flash kind | CSS Class | Icon | Use Case |
 |------|-----------|------|----------|
@@ -49,9 +49,8 @@ All component modules use `use EvoDashWeb, :html`; components are function compo
 | `:error` | `alert-error` | `hero-exclamation-circle` | Error messages, validation failures |
 | `:warning` | `alert-warning` | `hero-exclamation-triangle` | Warnings, missing configuration alerts |
 
-Theme state is 100% client-side: `root.html.heex`'s inline script resolves `localStorage["phx:theme"]` (default `"system"`) via `matchMedia("(prefers-color-scheme: dark)")` into `data-theme`/`data-theme-mode` and swaps the favicon/`theme-color` meta.
-Toggles never touch the server: `theme_toggle_compact/1` and `theme_toggle/1` fire `phx-click={JS.dispatch("phx:set-theme")}` with `data-phx-theme`; Tailwind's `dark:` binds to `@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *))` and DaisyUI's `themes: false` means custom CSS uses `--color-base-*` + `color-mix`.
-The global accent IS server-driven: `LiveHooks.Appearance` resolves `EvoGit.Config.resolve([:appearance, :accent_color])` node-aware through `EvoDash.AccentCache` and seeds `@accent_color`, which `Layouts.app` (`attr(:accent_color, :string, default: "blue")`) sets as `data-accent-color` on `#app-layout`, activating the ten `[data-accent-color="<name>"]` rules in `app.css` — distinct from ProjectsLive's per-project `--project-accent`/`--project-ring-accent` on `#dashboard-root`.
+Theme state is 100% client-side: `localStorage["phx:theme"]` (default `"system"`) resolves via `matchMedia("(prefers-color-scheme: dark)")` into `data-theme`/`data-theme-mode` and swaps the favicon/`theme-color` meta; toggles only fire `phx-click={JS.dispatch("phx:set-theme")}` + `data-phx-theme`, Tailwind `dark:` binds to `@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *))`, and DaisyUI's `themes: false` means custom CSS uses `--color-base-*` + `color-mix`.
+The global accent IS server-driven: `LiveHooks.Appearance` resolves `EvoGit.Config.resolve([:appearance, :accent_color])` node-aware through `EvoDash.AccentCache` into `@accent_color`, which `Layouts.app` (`attr(:accent_color, :string, default: "blue")`) sets as `data-accent-color` on `#app-layout`, activating the ten `[data-accent-color="<name>"]` rules in `app.css` — distinct from ProjectsLive's per-project `--project-accent`/`--project-ring-accent` on `#dashboard-root`.
 Shell chrome is token-based (Adwaita): `#app-layout` + sidebar `bg-base-200`, `#main-scroll`/`main#main-content` `bg-base-100`, body `bg-base-200` — no slate/white literals.
 
 ## Constraints
