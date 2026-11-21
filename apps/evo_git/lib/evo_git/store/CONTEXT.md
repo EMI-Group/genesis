@@ -102,7 +102,7 @@ The PER-AGENT ARCHIVE API (`task_agent_archives`, see "Per-Agent Archive"):
 - `get_agent_archive/3` → the FULL entry map (result included) or `nil` (READ offload); `delete_task_archives/2` → `:ok`, also for a task with no rows (WRITE offload).
 The shared filter builder `Operations.Filters` (`where_filters/2` + the clamps) backs BOTH `safe_select_paginated_tasks/2` and `Operations.Pages`, so the two paged reads can never match different rows; the clamps are ONE parameterized `clamp_limit/2` (`default:`, `max:`, `non_positive:`) behind `clamp_limit/1`, `clamp_page_limit/1` and `clamp_offset/1`, which `Operations.Archives.list/3` also uses.
 
-**Search contract**: the ONE runtime `fragment/1` LIKEs `id`, `opts`, `project_path`, `branch_name` only — `result` is deliberately NOT searched (a full-blob scan). A phrase that exists only in a task's final response text never matches; phrases in the objective (`opts`), the id, the project path and the branch name do.
+**Search contract**: the ONE runtime `fragment/1` LIKEs `id`, `opts`, `project_path`, `branch_name` only — `result` is deliberately NOT searched (a full-blob scan), so a phrase only in a task's final response text never matches and an `opts` hit needs its exact JSON text spelling.
 
 ### `EvoGit.Store.Operations.*` (`./operations/`) — per-function contracts in `./operations/CONTEXT.md`
 
