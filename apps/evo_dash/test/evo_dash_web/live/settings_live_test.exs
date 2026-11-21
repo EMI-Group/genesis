@@ -584,8 +584,7 @@ defmodule EvoDashWeb.SettingsLiveParentAdapterTest do
 
   @tag :requires_schema_facade
   test "connection selection resolves the persisted model's inherited generation and credential opts" do
-    dir = EvoDash.Test.ConfigDir.isolate!("settings-final-request")
-    on_exit(fn -> File.rm_rf!(dir) end)
+    EvoDash.Test.ConfigDir.isolate!("settings-final-request")
     File.mkdir_p!(EvoGit.Config.config_dir())
     # This custom name intentionally has no API_KEY suffix: credential loading
     # therefore does not write a process-global ReqLLM provider key.
@@ -692,8 +691,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     # `isolate!/1` writes the per-process override (`<dir>/genesis` is the
     # concrete config dir), so nothing is BEAM-global and no env restore is
     # needed.
-    dir = EvoDash.Test.ConfigDir.isolate!("evogit_settings_test_config")
-    on_exit(fn -> File.rm_rf!(dir) end)
+    EvoDash.Test.ConfigDir.isolate!("evogit_settings_test_config")
 
     # ActiveTasks is a process-less public ETS table shared by the whole run.
     # This module is `async: true`, so clear ONLY the local `{nil, node()}`
@@ -2647,8 +2645,8 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
   setup do
     # Same per-process config isolation as the async module: the
     # `:config_dir_fun` seam, never an `XDG_CONFIG_HOME` write.
-    dir = EvoDash.Test.ConfigDir.isolate!("evogit_settings_test_config")
-    on_exit(fn -> File.rm_rf!(dir) end)
+    # `isolate!/1` owns the directory's removal (drained, bounded).
+    EvoDash.Test.ConfigDir.isolate!("evogit_settings_test_config")
 
     # Force the nix category visible by default so ALL tests here are
     # deterministic regardless of whether the host has the `nix` binary (the
