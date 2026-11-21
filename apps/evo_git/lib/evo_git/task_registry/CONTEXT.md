@@ -268,4 +268,3 @@ Call sites pick the CONSERVATIVE direction: `handle_update_status/6` and the rev
 ## API Conventions
 
 - `list_*` returns: `list_tasks/0` → plain list (bounded 100), `list_tasks_paginated/1` → `{tasks, total}`, `list_tasks_page/1` → `%{rows:, total:}`, `list_task_archives/2` → `%{entries:, total:}`; each `@doc` names its own.
-- `safe_store_read/3`/`safe_store_write/2` are one-line aliases of `StoreGuard.read/write` used only inside the registry (`pause.ex`/`read_offload.ex` call `StoreGuard` directly).
