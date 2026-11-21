@@ -180,7 +180,7 @@ All LiveViews register `LiveHooks.NodeAware` on_mount (via the `evo_dash_web.ex`
 
 ### GitHub Issue Integration
 
-The Projects page surfaces the active project's GitHub issues (existing repos only) in the top bar: async upstream detection on project activation (`ProjectsLive.GitHub.maybe_check/1` → supervised `EvoGit.RemoteNode.github_upstream/2`, `gh` on the repo's node), the issues modal (`GitHubComponents.issues_modal/1`, `open`/`closed`/`all` + loading/empty/error states) and a per-row `github_fix_issue` flow starting an `:evolve` task like `task_submit`; env seams resolve AT SPAWN TIME (`:github_runner`, `:github_issues_runner`, `:github_issue_markdown_runner`) and evo_dash never calls gh/git directly → `live/projects_live/CONTEXT.md` + `components/CONTEXT.md`.
+The Projects page surfaces the active project's GitHub issues (existing repos only) in the top bar: async upstream detection on project activation (`ProjectsLive.GitHub.maybe_check/1` → supervised `EvoGit.RemoteNode.github_upstream/2`, `gh` on the repo's node), the issues modal (`GitHubComponents.issues_modal/1`, `open`/`closed`/`all` + loading/empty/error states) and a per-row `github_fix_issue` flow starting an `:evolve` task; env seams resolve AT SPAWN TIME (`:github_runner`, `:github_issues_runner`, `:github_issue_markdown_runner`) and evo_dash never calls gh/git directly → `live/projects_live/CONTEXT.md` + `components/CONTEXT.md`.
 
 ### UI Components (`./lib/evo_dash_web/components/`)
 
