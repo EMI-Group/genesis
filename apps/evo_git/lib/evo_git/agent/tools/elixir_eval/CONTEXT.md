@@ -80,8 +80,10 @@ WorkerTree uses an unlinked monitored guardian, monitors caller and optional own
 An independent unlinked Custodian owns inherited spawn tracing, installed on the waiting guardian before it may spawn the root, and monitors both guardian and caller.
 The custodian forwards spawn events to the guardian for resource accounting but retains its own monitored worker set, so abrupt guardian death cannot abandon unlinked root/child/grandchild processes.
 Tracing covers Dune's unlinked helper descendants before execution begins.
-The root worker has a 2,000,000-word killing heap limit including shared binaries; the guardian samples tree memory and cumulative observed reductions every five milliseconds.
+The root worker has a 2,000,000-word killing heap limit including shared binaries; the guardian samples tree memory and cumulative work reductions every five milliseconds.
 Tree budgets are 64 MiB of sampled process/binary memory, 20,000,000 sampled reductions and 64 total observed spawned processes including the root.
+Sampled reductions are charged only to the root worker and OTP-started (`proc_lib`) descendants, because Dune enforces its own budget from a bare-`spawn/1` busy-poll helper whose reductions grow with WALL time (~10M per 100ms) rather than with work, and charging it reported a legitimately blocked evaluation (an admitted broker call or `Process.sleep/1`) as a runaway.
+Bare-spawn helpers stay covered by the tree memory and process-count budgets, and a genuinely runaway interpreted evaluation is still stopped by Dune's own 5,000,000-reduction limit for read and write.
 These are best-effort BEAM limits rather than OS isolation; native BIFs can overshoot and full-authority sudo cannot be contained against deliberate interference.
 On normal completion, failure, timeout or owner loss, custody kills known descendants, drains further spawn events and waits for a trace-delivery barrier before acknowledging cleanup.
 Cleanup has its own 1,000 ms monotonic budget, independent of the execution deadline; budget checks run even under a continuously nonempty mailbox.
