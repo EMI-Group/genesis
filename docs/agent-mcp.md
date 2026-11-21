@@ -39,7 +39,7 @@ Create the credential before connecting if it is absent: generate at least 32 ra
 
 The command loads configuration without starting another runtime. It prints only the file path and preserves an existing credential. On Windows, create the same file in the instance's platform configuration directory with access restricted to your user. The token is read for each request, so creating it does not require restarting the server.
 
-Register the endpoint and authorization using the host's documented configuration format. MCP does not standardize where a host stores its configuration or how it expands environment variables; do not assume a Codex manifest, `mcpServers` wrapper or placeholder syntax is accepted everywhere. Reload the host connection, discover the nine tools, and call `genesis_check`. This is the point where a small host adapter differs; it does not need another copy of the complete Genesis tutorial.
+Register the endpoint and authorization using the host's documented configuration format. MCP does not standardize where a host stores its configuration or how it expands environment variables; do not assume a Codex manifest, `mcpServers` wrapper or placeholder syntax is accepted everywhere. Reload the host connection, discover the eleven tools, and call `genesis_check`. This is the point where a small host adapter differs; it does not need another copy of the complete Genesis tutorial.
 
 ## Delegate from a calling agent
 
@@ -72,7 +72,7 @@ For routine polling, pass `include_result=false`. The full task objective is opt
 
 `genesis_cancel_task` calls the existing registry cancellation API; `force=true` selects its existing force-kill operation. The result includes the saved task state and `cancel_requested`, indicating whether this call was accepted. Repeating cancellation on a terminal task returns its saved state with `cancel_requested=false`. It does not confirm that every process or cleanup action has ended and does not undo Git changes. Execution limits, worktree cleanup, persistence and configuration reload behavior remain those of the existing service.
 
-`genesis_pause_task` and `genesis_resume_task` call the same registry pause/resume API the dashboard uses. Acceptance returns the saved task state (`pausing`/`paused` for a pause, `running` for a resume), not proof that every agent has stopped. A pause is refused for an interactive session (`not_pausable`) and for a task whose durable agent state is disabled (`not_resumable`); a task resumed after a restart restores its root agent only, because subagent processes do not survive a restart. Resuming keeps the same task id and does not undo Git changes.
+`genesis_pause_task` and `genesis_resume_task` call the same registry pause/resume API the dashboard uses. Acceptance returns the saved task state (`pausing`/`paused` for a pause, `running` for a resume), not proof that every agent has stopped. A pause is refused for an interactive session (`not_pausable`) and for a task whose durable agent state is disabled (`not_resumable`); a task resumed after a restart rebuilds the whole dangling subagent batch from the durable roster — an already-finished child contributes its stored result without being re-spawned, a still-running child is re-spawned on its own commit and branch with its restored conversation, and a child with no rebuildable row is reported lost — so only subagent work that was never checkpointed is gone. Resuming keeps the same task id and does not undo Git changes.
 
 ## Protocol details
 
