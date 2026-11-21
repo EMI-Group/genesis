@@ -213,19 +213,44 @@ defmodule EvoDashWeb.TaskCardComponents do
     <%!-- The in-flight pause/resume marker for THIS task (`:pause` | `:resume`
          | nil) — read defensively so a nil/absent map never crashes the card. --%>
     <% busy_action = action_busy(@action_busy, @task.id) %>
+    <%!-- Per-card derived values, computed ONCE per render. These lists are
+         KEYED STREAMS, so this template runs per row and each value below used
+         to be recomputed inside the markup — the status dot twice, the review
+         status four times, and `relative_time/1` (which reads the clock) once
+         per finished card. `status` stays a direct access: it is a REQUIRED
+         summary key. Kept in ONE block so the emitted markup gains no blank
+         lines. --%>
+    <% status = @task.status
+    # Status family — badge class / dot colour / label (LOCKED table, Helpers).
+    status_badge = task_status_badge(status)
+    status_dot = task_status_dot_class(status)
+    status_label = task_status_label(status)
+    # Card tint + accent-bar colour (review-status dimension included).
+    accent = task_accent_color(@task)
+    tint = task_card_tint(@task)
+    # Review badge — nil (the common case) renders nothing at all.
+    review_status = Map.get(@task, :review_status)
+    review_badge = review_status && review_status_badge(review_status)
+    review_icon = review_status && review_status_icon(review_status)
+    review_label = review_status && review_status_label(review_status)
+    # Timestamps (each `relative_time/1` reads the clock exactly once).
+    started_label = relative_time(@task.started_at)
+    finished_at = Map.get(@task, :finished_at)
+    finished_label = if finished_at, do: relative_time(finished_at)
+    agent_count = Map.get(@task, :agent_count) %>
     <div class={[
       "min-w-0 bg-base-100 rounded-lg border relative z-10 group has-[[open]]:z-30",
       if(@focused,
         do: "border-base-300",
         else: [
           "border-base-200/60 shadow-sm hover:shadow-md transition-shadow",
-          task_card_tint(@task)
+          tint
         ]
       )
     ]}>
       <!-- Accent Top Border — clipped by inner wrapper so it respects rounded corners -->
       <div :if={!@focused} class="absolute inset-0 rounded-lg overflow-hidden pointer-events-none">
-        <div class={["absolute top-0 left-0 right-0 h-1 opacity-80", task_accent_color(@task)]}></div>
+        <div class={["absolute top-0 left-0 right-0 h-1 opacity-80", accent]}></div>
       </div>
 
       <div class="p-4 flex flex-col gap-5">
@@ -241,60 +266,57 @@ defmodule EvoDashWeb.TaskCardComponents do
           </div>
 
           <div class="flex items-center gap-2 shrink-0">
-            <%= if Map.get(@task, :review_status) do %>
+            <%= if review_status do %>
               <span class={[
                 "badge border-0 font-medium px-2.5 py-2 rounded-md",
-                review_status_badge(Map.get(@task, :review_status))
+                review_badge
               ]}>
-                <.icon
-                  name={review_status_icon(Map.get(@task, :review_status))}
-                  class="size-4 mr-1.5"
-                />
-                {review_status_label(Map.get(@task, :review_status))}
+                <.icon name={review_icon} class="size-4 mr-1.5" />
+                {review_label}
               </span>
             <% end %>
             <span class={[
               "badge",
-              task_status_badge(@task.status),
+              status_badge,
               "font-medium border-0 px-2.5 py-2 rounded-md"
             ]}>
               <%!-- `:awaiting_input` (an idle live session) pulses too, in violet.
                    `:pausing` is still work draining (agents stop at the next turn
                    boundary), so it pulses like `:running`; `:paused` is at rest
                    and must NOT pulse. --%>
-              <%= if @task.status in [:running, :cancelling, :awaiting_input, :pausing] do %>
+              <%= if status in [:running, :cancelling, :awaiting_input, :pausing] do %>
                 <span class="relative flex h-2.5 w-2.5 mr-2">
                   <span
                     class={[
                       "animate-ping absolute inline-flex h-full w-full rounded-full opacity-75",
-                      task_status_dot_class(@task.status)
+                      status_dot
                     ]}
                     style="animation-duration: 2s"
                   ></span>
                   <span class={[
                     "relative inline-flex rounded-full h-2.5 w-2.5",
-                    task_status_dot_class(@task.status)
+                    status_dot
                   ]}></span>
                 </span>
               <% end %>
-              <%= if @task.status == :finalizing do %>
+              <%= if status == :finalizing do %>
                 <span class="loading loading-spinner loading-xs mr-2"></span>
               <% end %>
               <%= cond do %>
-                <% @task.status == :cancelling -> %>
+                <% status == :cancelling -> %>
                   {gettext("Cancelling…")}
-                <% @task.status == :awaiting_input -> %>
+                <% status == :awaiting_input -> %>
                   <%!-- Never render the raw `awaiting_input` atom. --%>
                   {gettext("Awaiting input")}
                   <span class="ml-1 text-xs font-normal text-base-content/60">
                     <%!-- zh_CN: 等待你的输入 --%>{gettext("(waiting for you)")}
                   </span>
-                <% @task.status == :pausing -> %>
+                <% status == :pausing -> %>
                   <%!-- zh_CN: Pausing… = 暂停中(等待当前工具调用结束);
                        Paused = 已暂停(可恢复) --%>
                   {gettext("Pausing…")}
                 <% true -> %>
-                  {task_status_label(@task.status)}
+                  {status_label}
               <% end %>
             </span>
           </div>
@@ -326,7 +348,7 @@ defmodule EvoDashWeb.TaskCardComponents do
 
         <%!-- Session reply panel — ONLY for an `:awaiting_input` task that was
              handed a `session_agent_id`; no always-on wrapper element. --%>
-        <%= if Map.get(@task, :status) == :awaiting_input and @session_agent_id != nil do %>
+        <%= if status == :awaiting_input and @session_agent_id != nil do %>
           <.session_panel task={@task} />
         <% end %>
 
@@ -372,7 +394,7 @@ defmodule EvoDashWeb.TaskCardComponents do
              tool batch may be half-executed) → amber warning + the honest
              subagent-resume caveat; `:clean` or nil (a legacy row) → the neutral
              info strip. --%>
-        <%= if Map.get(@task, :status) == :paused do %>
+        <%= if status == :paused do %>
           <%= if Map.get(@task, :pause_kind) == :dirty do %>
             <%!-- zh_CN: dirty = 脏暂停（重启恢复，最后一次工具调用可能未完成）；
                  clean = 干净暂停（用户暂停，没有中断任何工具调用） --%>
@@ -408,19 +430,19 @@ defmodule EvoDashWeb.TaskCardComponents do
           <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs font-medium text-base-content/70">
             <span class="flex items-center gap-1.5">
               <.icon name="hero-play" class="size-4 opacity-60" />
-              {gettext("Started")} {relative_time(@task.started_at)}
+              {gettext("Started")} {started_label}
             </span>
-            <%= if Map.get(@task, :finished_at) do %>
+            <%= if finished_at do %>
               <span class="flex items-center gap-1.5">
                 <.icon name="hero-stop" class="size-4 opacity-60" />
-                {gettext("Finished")} {relative_time(@task.finished_at)}
+                {gettext("Finished")} {finished_label}
               </span>
             <% end %>
-            <%= if Map.get(@task, :agent_count) do %>
+            <%= if agent_count do %>
               <span class="flex items-center gap-1.5">
                 <.icon name="hero-user-group" class="size-4 opacity-60" />
                 <%!-- zh_CN: Agent → "智能体" --%>{gettext("%{count} Agents",
-                  count: @task.agent_count
+                  count: agent_count
                 )}
               </span>
             <% end %>
@@ -439,10 +461,10 @@ defmodule EvoDashWeb.TaskCardComponents do
                 class="btn btn-sm btn-outline border-base-300 hover:border-info hover:bg-info/10 hover:text-info rounded-md px-4"
                 phx-click="open_pause_modal"
                 phx-value-task_id={@task.id}
-                disabled={busy_action != nil or @task.status == :pausing}
+                disabled={busy_action != nil or status == :pausing}
                 title={gettext("The agent finishes its current tool call before stopping")}
               >
-                <%= if busy_action == :pause or @task.status == :pausing do %>
+                <%= if busy_action == :pause or status == :pausing do %>
                   <span class="loading loading-spinner loading-xs mr-1"></span>
                   {gettext("Pausing…")}
                 <% else %>
@@ -454,7 +476,7 @@ defmodule EvoDashWeb.TaskCardComponents do
             <%!-- Resume — DIRECT for a `:clean` pause; a `:dirty` pause (brought
                  back by a restart) asks for confirmation first, because the last
                  tool call may not have completed. --%>
-            <%= if @task.status == :paused do %>
+            <%= if status == :paused do %>
               <button
                 class="btn btn-sm btn-primary rounded-md px-4 shadow-sm"
                 phx-click="resume_task"
@@ -473,7 +495,7 @@ defmodule EvoDashWeb.TaskCardComponents do
             <% end %>
 
             <%!-- Graceful Cancel also covers an idle `:awaiting_input` session. --%>
-            <%= if @task.status in [:pending, :running, :awaiting_input] do %>
+            <%= if status in [:pending, :running, :awaiting_input] do %>
               <button
                 class="btn btn-sm btn-outline border-base-300 hover:border-info hover:bg-info/10 hover:text-info rounded-md px-4"
                 phx-click="open_cancel_modal"
@@ -524,7 +546,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                 <%!-- A paused or pausing task must ALWAYS be killable: `:pausing`
                      has a live wrapper draining agents, `:paused` has no live
                      wrapper but a stuck resume still needs an escalation. --%>
-                <%= if @task.status in [:running, :awaiting_input, :cancelling, :pausing, :paused] do %>
+                <%= if status in [:running, :awaiting_input, :cancelling, :pausing, :paused] do %>
                   <li>
                     <button
                       class="text-error hover:bg-error/10 hover:text-error rounded-md"
@@ -819,7 +841,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                     </div>
                   <% end %>
 
-                  <%= if Map.get(@task, :agent_count) do %>
+                  <%= if agent_count do %>
                     <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                       <h4 class="text-sm font-bold flex items-center justify-between gap-2 mb-4">
                         <span class="flex items-center gap-2">
@@ -834,7 +856,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                       </h4>
                       <div class="flex items-center gap-3">
                         <span class="text-2xl font-bold text-primary-standalone">{format_number(
-                          @task.agent_count
+                          agent_count
                         )}</span>
                         <span class="text-xs text-base-content/70"><%!-- zh_CN: agent → "智能体" --%>{gettext(
                           "total agents (incl. subagents)"

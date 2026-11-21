@@ -1044,21 +1044,19 @@ defmodule EvoDash.NodeContext do
   Lists the Virtual Context Tree WORKSPACE entries of the given node, newest
   first, with EVERY workspace's members ALREADY resolved — ONE node round trip
   for the whole roster.
-  Delegates to the node's `EvoGit.VCT.workspace_entries/1` (one
-  `GenServer.call` there; one `:erpc.call` here on a remote node), so a caller
-  that needs the members of every workspace never pays one call per entry.
-  Each entry is `%{workspace: mount, members: [%{point: point, name: name,
-  path: path}], missing: [ref], nested: [ref]}`: `members` are the resolved
-  mounts FLATTENED in STORED order, while `missing`/`nested` carry the STORED
-  refs unexpanded. A failed read (or an unusable answer) degrades to `[]`, so
-  the dashboard never crashes or blocks on the workspace roster.
+  Delegates to `EvoGit.RemoteNode.workspace_entries/1` (local → the node's own
+  `EvoGit.AgentScheduler.RemoteAPI.workspace_entries/0`; remote → one `:erpc`
+  call), so a caller that needs the members of every workspace never pays one
+  call per entry.
+  Each entry is `%{workspace: mount, members: [%{point: name: path:}], missing:
+  [ref], nested: [ref]}`: `members` are the resolved mounts FLATTENED in
+  STORED order, while `missing`/`nested` carry the STORED refs unexpanded. A
+  failed read (or an unusable answer) degrades to `[]`, so the dashboard never
+  crashes or blocks on the workspace roster.
   """
   @spec workspace_entries(node()) :: [EvoGit.VCT.workspace_entry()]
   def workspace_entries(node) do
-    case call_remote(node, EvoGit.VCT, :workspace_entries, [[]]) do
-      {:ok, entries} when is_list(entries) -> entries
-      _ -> []
-    end
+    EvoGit.RemoteNode.workspace_entries(node)
   end
 
   @doc """
@@ -1272,7 +1270,12 @@ defmodule EvoDash.NodeContext do
   @doc """
   Lists directory contents at `path` on the given node.
 
-  Delegates to `EvoGit.RemoteNode.ls/2`. Returns `{:ok, [String.t()]} | {:error, term()}`.
+  Delegates to `EvoGit.RemoteNode.ls/2`. Returns `{:ok, [String.t()]}` on
+  success. A node-side read failure is returned VERBATIM as `{:error, reason}`
+  — the node's own answer, e.g. a `File`/`Path` error reason — while a
+  transport failure on a remote node is the RPC envelope `{:error, {kind,
+  reason}}`, e.g. `{:error, {:erpc, reason}}` or a timeout/tag tuple from
+  `EvoGit.RemoteNode.call_remote/4`.
   """
   @spec ls(node(), String.t()) :: {:ok, [String.t()]} | {:error, term()}
   def ls(node, path) do
@@ -1643,10 +1646,12 @@ defmodule EvoDash.NodeContext do
   @doc """
   Checks whether a branch exists in a repository on the given node.
 
-  Delegates to `EvoGit.RemoteNode.branch_exists?/3`. Returns a boolean. On
-  RPC failure, returns `{:error, {kind, reason}}`.
+  Delegates to `EvoGit.RemoteNode.branch_exists?/3`. Returns `true` only when
+  the node answers `true`; ANY failure (a read failure, a transport `{:error,
+  {kind, reason}}`, a dead node) folds to `false`, so a dead node can never
+  read as an existing branch.
   """
-  @spec branch_exists?(node(), String.t(), String.t()) :: boolean() | {:error, term()}
+  @spec branch_exists?(node(), String.t(), String.t()) :: boolean()
   def branch_exists?(node, repo_path, branch_name) do
     EvoGit.RemoteNode.branch_exists?(node, repo_path, branch_name)
   end
