@@ -147,8 +147,24 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
   @budget 30_000
   @pool "real-stream-consumers"
 
+  # The core's call-time retry-backoff seam (same one `apps/evo_git`'s own retry
+  # suites pin): the two retry tests below exercise the REAL attempt loop, and its
+  # production base (1_000 ms +-10% jitter) is the single reason each of them sat
+  # at ~1 s. Restoring it in `on_exit` keeps this module's globals contained.
+  @retry_backoff_base_ms 25
+
   setup do
     EvoDash.Test.ConfigDir.isolate!()
+    original_backoff = Application.fetch_env(:evo_git, :llm_retry_backoff_base_ms)
+    Application.put_env(:evo_git, :llm_retry_backoff_base_ms, @retry_backoff_base_ms)
+
+    on_exit(fn ->
+      case original_backoff do
+        {:ok, value} -> Application.put_env(:evo_git, :llm_retry_backoff_base_ms, value)
+        :error -> Application.delete_env(:evo_git, :llm_retry_backoff_base_ms)
+      end
+    end)
+
     EvoGit.Config.VersionState.complete_onboarding()
     EvoDash.ChatHistory.reset()
     EvoDash.ActiveTasks.reset()
