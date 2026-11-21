@@ -13,9 +13,37 @@
 #     drains every async module before any sync one, so the flip can never
 #     overlap another test.
 #
-# A minimal connection manager (below the async module) stands in for a real
+# A minimal connection manager (ABOVE both test modules) stands in for a real
 # remote target in the one node-context test; same pattern as
 # `settings_live_test.exs` / `projects_live_test.exs`.
+#
+# Defined ABOVE the test modules on purpose: `mix test` starts the ExUnit async
+# runner BEFORE requiring the test files, so a helper defined after a test module
+# can still be unloaded when the first test runs — `Code.ensure_loaded/1` then
+# answers `{:error, :nofile}` for an in-memory module and the remote-target seam
+# would degrade into a bogus product error.
+
+defmodule EvoDashWeb.SettingsLive.NavigationLiveTest.ConnectionManager do
+  @moduledoc false
+  # Stands in for a real remote connection manager in
+  # `EvoGit.RemoteConnection.Registry` (same pattern as
+  # `EvoDashWeb.SettingsLiveTest.ConnectionManager`): answers `:status` with a
+  # `:connected` phase so `?node=<id>` resolves to the remote BEAM node atom.
+  # Defined above the test modules for the load-order reason in the file header.
+  use GenServer
+
+  def start_link(args), do: GenServer.start_link(__MODULE__, args)
+
+  @impl true
+  def init({target_id, status}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, status}
+  end
+
+  @impl true
+  def handle_call(:status, _from, status), do: {:reply, status, status}
+end
+
 defmodule EvoDashWeb.SettingsLive.NavigationTest do
   @moduledoc """
   Pure unit pins for the category-navigation helpers extracted out of
@@ -175,26 +203,6 @@ defmodule EvoDashWeb.SettingsLive.NavigationTest do
       assert Navigation.available_categories(nil) == []
     end
   end
-end
-
-defmodule EvoDashWeb.SettingsLive.NavigationLiveTest.ConnectionManager do
-  @moduledoc false
-  # Stands in for a real remote connection manager in
-  # `EvoGit.RemoteConnection.Registry` (same pattern as
-  # `EvoDashWeb.SettingsLiveTest.ConnectionManager`): answers `:status` with a
-  # `:connected` phase so `?node=<id>` resolves to the remote BEAM node atom.
-  use GenServer
-
-  def start_link(args), do: GenServer.start_link(__MODULE__, args)
-
-  @impl true
-  def init({target_id, status}) do
-    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
-    {:ok, status}
-  end
-
-  @impl true
-  def handle_call(:status, _from, status), do: {:reply, status, status}
 end
 
 defmodule EvoDashWeb.SettingsLive.NavigationLiveTest do

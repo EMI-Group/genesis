@@ -18,6 +18,34 @@
 # (see `flush_tasks_load/2`). No test here needs config isolation at the file
 # level — the one helper that does (`register_remote_target!/1`) isolates its
 # own dir through the per-process seam.
+
+# A minimal GenServer standing in for a real remote connection manager in
+# `EvoGit.RemoteConnection.Registry` (same pattern as
+# `EvoDashWeb.ReviewLiveTest.ConnectionManager`). The process dies (and its
+# Registry entry is auto-removed) at test end via `start_supervised!`.
+#
+# Defined ABOVE the test module on purpose: `mix test` starts the ExUnit async
+# runner BEFORE requiring the test files, so a helper defined after the test
+# module can still be unloaded when the first test runs — `Code.ensure_loaded/1`
+# then answers `{:error, :nofile}` for an in-memory module and the remote-target
+# seam would degrade into a bogus product error.
+defmodule EvoDashWeb.TasksLiveTest.ConnectionManager do
+  use GenServer
+
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args)
+  end
+
+  @impl true
+  def init({target_id, status}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, status}
+  end
+
+  @impl true
+  def handle_call(:status, _from, status), do: {:reply, status, status}
+end
+
 defmodule EvoDashWeb.TasksLiveTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
@@ -3613,25 +3641,4 @@ defmodule EvoDashWeb.TasksLiveTest do
     |> Floki.find("h4")
     |> Enum.map(fn el -> Floki.text(el) |> String.trim() end)
   end
-end
-
-# A minimal GenServer standing in for a real remote connection manager in
-# `EvoGit.RemoteConnection.Registry` (same pattern as
-# `EvoDashWeb.ReviewLiveTest.ConnectionManager`). The process dies (and its
-# Registry entry is auto-removed) at test end via `start_supervised!`.
-defmodule EvoDashWeb.TasksLiveTest.ConnectionManager do
-  use GenServer
-
-  def start_link(args) do
-    GenServer.start_link(__MODULE__, args)
-  end
-
-  @impl true
-  def init({target_id, status}) do
-    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
-    {:ok, status}
-  end
-
-  @impl true
-  def handle_call(:status, _from, status), do: {:reply, status, status}
 end

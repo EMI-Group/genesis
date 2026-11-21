@@ -40,6 +40,36 @@
 #      `:source_availability_runner`, `:source_clone_runner`, `:config_dir_fun`)
 #      are written and restored by the tests that use them; canonical launch
 #      fixtures must also reach TaskRegistry outside the test's caller chain.
+
+# A minimal GenServer that stands in for a real connection manager in
+# `EvoGit.RemoteConnection.Registry`, so `EvoGit.RemoteConnection.status/1`
+# resolves a configured status for a target id without starting any SSH
+# machinery (same pattern as `EvoDashWeb.NodeAwareTest.ConnectionManager`).
+# The process dies (and its Registry entry is auto-removed) at test end via
+# `start_supervised!`.
+#
+# Defined ABOVE the test modules on purpose: `mix test` starts the ExUnit async
+# runner BEFORE requiring the test files, so a helper defined after a test module
+# can still be unloaded when the first test runs — `Code.ensure_loaded/1` then
+# answers `{:error, :nofile}` for an in-memory module and the remote-target seam
+# would degrade into a bogus product error.
+defmodule EvoDashWeb.HomeLiveTest.ConnectionManager do
+  use GenServer
+
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args)
+  end
+
+  @impl true
+  def init({target_id, status}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, status}
+  end
+
+  @impl true
+  def handle_call(:status, _from, status), do: {:reply, status, status}
+end
+
 defmodule EvoDashWeb.HomeLiveTest.ScriptedAgent do
   @moduledoc """
   The role a scripted HomeLive fixture session runs AS.
@@ -7520,27 +7550,4 @@ defmodule EvoDashWeb.HomeLiveTest do
       _other -> false
     end
   end
-end
-
-# A minimal GenServer that stands in for a real connection manager in
-# `EvoGit.RemoteConnection.Registry`, so `EvoGit.RemoteConnection.status/1`
-# resolves a configured status for a target id without starting any SSH
-# machinery (same pattern as `EvoDashWeb.NodeAwareTest.ConnectionManager`).
-# The process dies (and its Registry entry is auto-removed) at test end via
-# `start_supervised!`.
-defmodule EvoDashWeb.HomeLiveTest.ConnectionManager do
-  use GenServer
-
-  def start_link(args) do
-    GenServer.start_link(__MODULE__, args)
-  end
-
-  @impl true
-  def init({target_id, status}) do
-    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
-    {:ok, status}
-  end
-
-  @impl true
-  def handle_call(:status, _from, status), do: {:reply, status, status}
 end

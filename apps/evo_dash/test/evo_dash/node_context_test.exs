@@ -19,6 +19,29 @@
 #
 # The split itself stays: ExUnit parallelises across MODULES, never within one,
 # so each async module runs on its own runner instead of one.
+
+# The tool-free role the interactive-session passthroughs start. `available_tools/0`
+# is EMPTY and `session_mode/0` is `:interactive` (the Assistant shape): the
+# scripted `:agent_exchange_llm_call` seam answers in plain text, so every
+# exchange yields and no tool schema and no real LLM is ever involved.
+# Defined at the TOP LEVEL of the file and ABOVE every test module on purpose:
+# `mix test` starts the ExUnit async runner BEFORE requiring the test files, so a
+# helper defined after a test module can still be unloaded when the first test
+# runs — `Code.ensure_loaded/1` then answers `{:error, :nofile}` for an in-memory
+# module and the session start would degrade into a bogus product error.
+defmodule EvoDash.NodeContextSessionTest.StubAgent do
+  use EvoGit.Agent
+
+  @doc "The role's fixed system prompt."
+  def system_prompt, do: "You are the NodeContext session test role."
+
+  @doc "No tools: the scripted seam serves every model call."
+  def available_tools, do: []
+
+  @doc "Opt into interactive semantics (a tool-free reply parks the session)."
+  def session_mode, do: :interactive
+end
+
 defmodule EvoDash.NodeContextTest do
   use EvoDashWeb.ConnCase, async: true
 
@@ -1404,25 +1427,6 @@ defmodule EvoDash.NodeContextVctTest do
       assert {:error, _reason} = members
     end
   end
-end
-
-# The tool-free role the interactive-session passthroughs start. `available_tools/0`
-# is EMPTY and `session_mode/0` is `:interactive` (the Assistant shape): the
-# scripted `:agent_exchange_llm_call` seam answers in plain text, so every
-# exchange yields and no tool schema and no real LLM is ever involved.
-# Defined at the TOP LEVEL of the file (not nested in the test module) so it is
-# loaded before the module that starts sessions with it.
-defmodule EvoDash.NodeContextSessionTest.StubAgent do
-  use EvoGit.Agent
-
-  @doc "The role's fixed system prompt."
-  def system_prompt, do: "You are the NodeContext session test role."
-
-  @doc "No tools: the scripted seam serves every model call."
-  def available_tools, do: []
-
-  @doc "Opt into interactive semantics (a tool-free reply parks the session)."
-  def session_mode, do: :interactive
 end
 
 # `async: false` — the forcing GLOBALS are the interactive-session runtime:

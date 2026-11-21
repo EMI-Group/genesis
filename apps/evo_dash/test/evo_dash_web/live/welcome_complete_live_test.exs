@@ -1,3 +1,49 @@
+defmodule EvoDashWeb.WelcomeCompleteLiveTest.TaskBroadcast do
+  # async: false — this test PUBLISHES `{:task_updated, …}` on the
+  # process-global "tasks" `EvoGit.PubSub` topic. Every mounted page in the BEAM
+  # subscribes to that topic through `NodeAware`, so the broadcast arms every
+  # other page's reload debounce and emits `:node_aware_reload_tasks`; running it
+  # concurrently with an async page-mounting peer (agents_live_test's negative
+  # `:tasks_reload_pending` poll is the documented victim) is unsafe. Sync
+  # modules run only after every async one drains, so nothing observes it.
+  #
+  # It stays a separate MODULE rather than making the whole file sync because the
+  # two rendering tests below mutate no global at all.
+  #
+  # Defined ABOVE the `async: true` module on purpose: `mix test` starts the
+  # ExUnit async runner BEFORE requiring the test files, so a module defined after
+  # another one can still be unloaded when that module's first test runs. Its own
+  # `async: false` role is unaffected — ExUnit drains every async module before it
+  # runs a sync one, whatever the definition order is.
+  use EvoDashWeb.ConnCase, async: false
+  import Phoenix.LiveViewTest
+
+  setup do
+    EvoDash.Test.ConfigDir.isolate!("evogit_welcome_complete_test_config")
+    File.mkdir_p!(EvoGit.Config.config_dir())
+    :ok
+  end
+
+  test "handle_info {:task_updated, _, :finalizing, node()} does not crash the LiveView", %{
+    conn: conn
+  } do
+    {:ok, view, _html} = live(conn, ~p"/welcome/complete")
+
+    # The broadcast shape observed crashing in production (the :finalizing
+    # status transition).
+    Phoenix.PubSub.broadcast(
+      EvoGit.PubSub,
+      "tasks",
+      {:task_updated, "test-finalizing", :finalizing, node()}
+    )
+
+    # render/1 flushes pending messages synchronously; a crash would propagate here.
+    html = render(view)
+    assert is_binary(html)
+    assert html =~ "Write high-level prompts, not code"
+  end
+end
+
 defmodule EvoDashWeb.WelcomeCompleteLiveTest do
   # async: true — this module mutates NO process-global state.
   #
@@ -16,9 +62,9 @@ defmodule EvoDashWeb.WelcomeCompleteLiveTest do
   # `EvoDashWeb.ConnCase`'s setup and again in its `on_exit`, and no test here
   # reads it, so no reset of its own is needed.
   #
-  # The "tasks" PubSub regression test lives in its own `async: false` module at
-  # the end of this file: broadcasting `{:task_updated, …}` reaches EVERY mounted
-  # page in the BEAM (it arms `NodeAware`'s reload debounce, which an async
+  # The "tasks" PubSub regression test lives in its own `async: false` module
+  # above this one: broadcasting `{:task_updated, …}` reaches EVERY mounted page
+  # in the BEAM (it arms `NodeAware`'s reload debounce, which an async
   # page-mounting peer such as agents_live_test observes negatively).
   use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
@@ -148,46 +194,6 @@ defmodule EvoDashWeb.WelcomeCompleteLiveTest do
   # `handle_info` clauses for `{:task_updated, …}` / `{:task_deleted, …}` and
   # crashed with FunctionClauseError) lives in
   # `EvoDashWeb.WelcomeCompleteLiveTest.TaskBroadcast` — its own `async: false`
-  # module at the end of this file, because it must PUBLISH on the
+  # module above this one, because it must PUBLISH on the
   # process-global "tasks" topic.
-end
-
-defmodule EvoDashWeb.WelcomeCompleteLiveTest.TaskBroadcast do
-  # async: false — this test PUBLISHES `{:task_updated, …}` on the
-  # process-global "tasks" `EvoGit.PubSub` topic. Every mounted page in the BEAM
-  # subscribes to that topic through `NodeAware`, so the broadcast arms every
-  # other page's reload debounce and emits `:node_aware_reload_tasks`; running it
-  # concurrently with an async page-mounting peer (agents_live_test's negative
-  # `:tasks_reload_pending` poll is the documented victim) is unsafe. Sync
-  # modules run only after every async one drains, so nothing observes it.
-  #
-  # It stays a separate MODULE rather than making the whole file sync because the
-  # two rendering tests above mutate no global at all.
-  use EvoDashWeb.ConnCase, async: false
-  import Phoenix.LiveViewTest
-
-  setup do
-    EvoDash.Test.ConfigDir.isolate!("evogit_welcome_complete_test_config")
-    File.mkdir_p!(EvoGit.Config.config_dir())
-    :ok
-  end
-
-  test "handle_info {:task_updated, _, :finalizing, node()} does not crash the LiveView", %{
-    conn: conn
-  } do
-    {:ok, view, _html} = live(conn, ~p"/welcome/complete")
-
-    # The broadcast shape observed crashing in production (the :finalizing
-    # status transition).
-    Phoenix.PubSub.broadcast(
-      EvoGit.PubSub,
-      "tasks",
-      {:task_updated, "test-finalizing", :finalizing, node()}
-    )
-
-    # render/1 flushes pending messages synchronously; a crash would propagate here.
-    html = render(view)
-    assert is_binary(html)
-    assert html =~ "Write high-level prompts, not code"
-  end
 end
