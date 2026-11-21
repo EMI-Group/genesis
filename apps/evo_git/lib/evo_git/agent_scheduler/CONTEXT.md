@@ -187,10 +187,10 @@ Detached-job permit acquisition, handoff and terminal release belong to `backgro
 ## Persistent Foreign-Repo Worktrees (ForeignWorktree)
 
 `ForeignWorktree` owns the PERSISTENT worktree of every WRITABLE non-primary foreign repo at `<root>/.genesis/foreign_repos/<id>` (`ForeignRepo.worktree_path/1`) — a stable READ view of the latest committed state, addressable by absolute path (`ForeignRepo.resolve/2`, `ContextBuilder.build_foreign_repos_section/1`).
-It lives OUTSIDE `.genesis/workers/`, so the primary-only wipe and `destroy_worktree/3`/`destroy_leftovers/3` never touch it, MAIN HEAD never moves, and it is NOT torn down at task end; a foreign agent's WRITE workspace remains its ephemeral worktree.
+It lives OUTSIDE `.genesis/workers/`, so the primary-only wipe and `destroy_worktree/3`/`destroy_leftovers/3` never touch it, MAIN HEAD never moves and it is NOT torn down at task end; a foreign agent's WRITE workspace stays its ephemeral worktree.
 API: `start_commit/1` (`base_sha` else repo HEAD), `ensure/2` (idempotent create-or-reset; non-writable → no-op; create = `mkdir_p_retry` → detached `Git.add_worktree` → prune + one retry; update = `Git.checkout(wt, sha)` with `Git.reset_hard/2` fallback), `ensure_all/1` (best-effort, never raises), `sync_from_agent/0`, `worktree_path/1`.
-**Hooks**: `Runtime.Helpers.load_foreign_repos/2` calls `ensure_all/1` after validating (before any spawn); `Session.Worker.run/3`'s `try/after` calls `sync_from_agent/0` right after `commit_pending_in_worktree/0` on EVERY exit path, advancing the agent's OWN repo worktree (id-matched via `Process.get(:evogit_repo_id)`) to `Process.get(:repo_path)`'s HEAD — no-op for primary/repo-less agents, last-writer-wins.
-`ensure_all/1` filters to `writable == true and not ForeignRepo.primary?(repo.id)`, so an entry whose id is literally `"primary"` is never provisioned, and `sync_from_agent/0` advances only `writable` entries.
+**Hooks**: `Runtime.Helpers.load_foreign_repos/2` calls `ensure_all/1` after validating (before any spawn); `Session.Worker.run/3`'s `try/after` calls `sync_from_agent/0` after `commit_pending_in_worktree/0` on EVERY exit path, advancing the agent's OWN repo worktree (id-matched via `Process.get(:evogit_repo_id)`) to `Process.get(:repo_path)`'s HEAD — no-op for primary/repo-less agents, last-writer-wins.
+`ensure_all/1` filters to `writable == true and not ForeignRepo.primary?(repo.id)` (an entry literally named `"primary"` is never provisioned), and `sync_from_agent/0` advances only `writable` entries.
 
 ## Subagent Management (Subagents module)
 
