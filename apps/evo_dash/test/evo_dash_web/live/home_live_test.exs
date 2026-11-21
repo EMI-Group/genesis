@@ -3579,11 +3579,14 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert Enum.sort(Enum.map(assigns(view)[:pending_approvals], & &1.request_id)) ==
                ["eval-1", "legacy-agent"]
 
-      # The snapshot populated the strip, and pushed NO browser notification
-      # (the recovery result is already applied, so this window cannot hide it).
+      # The snapshot populated the strip, and pushed NO browser notification.
+      # `ApprovalDialogState.pending_loaded/3` (the recovery path) has no push
+      # at all, and the apply is already proven above (`pending_approvals`,
+      # `approval_recovering`, plus the synchronous `render/1` that produced
+      # `html`), so nothing is in flight and the 0 ms probe is conclusive.
       assert approval_strip_count(html) == "2"
       assert present?(html, ~s(#approval-status-bar button[phx-click="open_approval_dialog"]))
-      refute_push_event(view, "task_notification", %{}, 50)
+      refute_push_event(view, "task_notification", %{}, 0)
 
       # A RECOVERY snapshot never opens the dialog on its own: Review does.
       assert assigns(view).approval_dialog_open == false
@@ -4113,7 +4116,13 @@ defmodule EvoDashWeb.HomeLiveTest do
           ] do
         send_and_render(view, {:approval_requested, request})
 
-        refute_push_event(view, "task_notification", %{}, 50)
+        # `send_and_render/2` ends with a synchronous `render/1`, i.e. the
+        # proxy has already processed the diff the notification push would
+        # ride: `ApprovalDialogState.requested/2` pushes INSIDE the same
+        # callback (only owned, novel requests do — the positive assertion at
+        # the end of this test proves that path is observable this way), so a
+        # 0 ms probe is conclusive rather than a settle window.
+        refute_push_event(view, "task_notification", %{}, 0)
       end
 
       assert assigns(view).pending_approvals == []
@@ -4225,7 +4234,10 @@ defmodule EvoDashWeb.HomeLiveTest do
         assert approval_strip_count(html) == ""
         refute dialog_open?(html)
         refute html =~ "Genesis is waiting for your approval"
-        refute_push_event(view, "task_notification", %{}, 50)
+        # Ownership is decided in the SAME callback that would push (see
+        # `ApprovalDialogState.requested/2`), and `send_and_render/2` already
+        # flushed that callback's diff through a synchronous `render/1`.
+        refute_push_event(view, "task_notification", %{}, 0)
       end
     end
 
@@ -4272,7 +4284,9 @@ defmodule EvoDashWeb.HomeLiveTest do
       # the exact code is there.
       assert assigns(view).approval_dialog_open == false
       refute dialog_open?(html)
-      refute_push_event(view, "task_notification", %{}, 50)
+      # Same rule as the recovery case below: the recovery path pushes nothing,
+      # and the apply is already proven, so no window is needed.
+      refute_push_event(view, "task_notification", %{}, 0)
       host = approval_notification_host(html)
       assert host.request_ids == [request.request_id]
       assert is_binary(host.scope) and host.scope != ""
@@ -6237,8 +6251,16 @@ defmodule EvoDashWeb.HomeLiveTest do
       seed_session_state(view, 7081, %{chat_status: :running, upload_in_progress: true})
       render_submit(view, "send_message", %{"message" => "must wait for upload"})
       render_click(view, "interrupt_turn", %{"message" => "must also wait"})
-      refute_receive :unexpected_upload_send
+      # Both forged events stop INSIDE `SendPath.do_send_chat/3`'s
+      # `upload_in_progress` gate, i.e. before the dispatch that sets
+      # `send_in_flight`/`send_pending` SYNCHRONOUSLY and only then calls the
+      # session-send runner from a spawned RPC. The `assigns/1` reads are
+      # `:sys.get_state` round-trips, so they observe the fully-returned
+      # callbacks and the 0 ms probe only has to confirm the drained mailbox.
       assert assigns(view).upload_in_progress
+      assert assigns(view).send_in_flight == false
+      assert assigns(view).send_pending == nil
+      refute_receive :unexpected_upload_send, 0
     end
 
     test "a browser image alone sends empty text with one base64 conversion", %{conn: conn} do
@@ -7459,10 +7481,21 @@ defmodule EvoDashWeb.HomeLiveTest do
       broadcast_delta(session_id, 9, [{:turn, %{turn: 1}}])
       wait_until(fn -> assigns(view).chat_stream.delta.seq == 9 end)
 
+      # `AttachPipeline.async_fetch_history/2` is the ONLY path that calls the
+      # history runner, and it bumps `chat_fetch_seq` synchronously INSIDE the
+      # callback, before it spawns (the same counter the agent lookup uses, so
+      # any spawn in the finished callback is visible). The `assigns/1` reads
+      # below are `:sys.get_state` round-trips, so the finished callback has
+      # FULLY returned once `chat_status` is `:ended` — an unchanged counter
+      # proves no fetch was spawned, and the drained mailbox makes the 0 ms
+      # probe conclusive instead of a settle window.
+      fetch_seq = assigns(view).chat_fetch_seq
+
       broadcast_delta(session_id, 10, [{:finished, :completed}])
       wait_until(fn -> assigns(view).chat_status == :ended end)
 
-      refute_receive :history_fetched, 300
+      assert assigns(view).chat_fetch_seq == fetch_seq
+      refute_receive :history_fetched, 0
 
       assert [%{role: :assistant, text: "streamed", streaming: false}] =
                Enum.filter(assigns(view).transcript, &(&1.role == :assistant))
