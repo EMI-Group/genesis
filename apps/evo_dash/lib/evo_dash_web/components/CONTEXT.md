@@ -156,7 +156,6 @@ The project-settings editor implements the multi-repo read-write UI on `%EvoGit.
 - `assets/css/view_transitions.css` exists and is `app.css`'s last `@import`: it fades the `root`/`page`/`project-swap` view-transition pseudo-elements from motion tokens, names `#main-content` as `page` and `#dashboard-root` as `project-swap`, and drops those animations under `prefers-reduced-motion`.
 - Per-patch cross-fades ride the `phx:page-loading-start(kind: "patch")`/`stop` pair + `document.startViewTransition` in `assets/js/app.js`; a SERVER-initiated `push_patch` dispatches no such events, so it gets no transition.
 - `WorkbenchActiveTasks.format_elapsed/1` (seconds) and `live/home_live/assistant_message.ex`'s private `format_duration/1` (milliseconds) are different units; a shared `EvoDashWeb.Helpers.format_duration/1` CANNOT be added while that private copy exists (`use EvoDashWeb, :html` imports ALL of `Helpers`). The switch-over is ONE atomic change owned by `live/`: contract `"#{Float.round(ms / 1000, 1)}s"` for an integer (`0` → `"0.0s"`), `""` for `nil`/binaries/floats.
-- `live/projects_live/async_load.ex` resolves workspace members per workspace instead of the batched `EvoGit.VCT.workspace_entries/1,2`; no markup change needed.
 
 ### Sidebar must stay `overflow-visible` — SSH node-selector dropdown clipping
 
