@@ -208,7 +208,7 @@ Four redundant index shapes are never created and are DROPPED by migration 6 on 
 `Operations.Archives.list/3`/`get/3` return `{:ok, …}` while every sibling Operation returns a bare value, so the facade unwraps them.
 The two paged reads return one shape under two verbs and two container keys (`list_task_archives/3` → `%{entries:, total:}` vs `select_tasks_page/2` → `%{rows:, total:}`); `get_task_lite/2` is a misnomer (full decode, 20 of the 21 physical columns).
 Adding ONE task column touches: `Codec` (columns/encode/decode), `Schemas.TaskRow` + `TaskRowRaw.columns/0`, `Tasks.row_for_task/1`/`to_task_info/1`/`encode_column_value/2`, `Pages.lite_query/1` and `Summaries.summary_query/0`.
-Renaming the public facade is an RPC-contract change (`TaskRegistry` + `RemoteAPI`/`RemoteNode` + the dashboard), so the internal Operations/Types layer is the cheap place to unify names first.
+Renaming the facade is an RPC-contract change (`TaskRegistry` + `RemoteAPI`/`RemoteNode` + the dashboard), so unify names in Operations/Types first.
 
 ## Constraints
 
