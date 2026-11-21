@@ -888,7 +888,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert pending_socket.assigns.system_action == :restarting
 
       assert_receive {{:system_action_result, :nonexistent_remote@host, :restarting}, _result},
-                     5000
+                     @async_wait_budget_ms
 
       assert {:noreply, result_socket} =
                SystemLive.handle_info(
