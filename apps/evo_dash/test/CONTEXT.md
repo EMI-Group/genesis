@@ -99,10 +99,12 @@ The trailing `render/1` of a funnel is load-bearing: LiveViewTest relays queued 
 `EvoDashWeb.TestHelpers.flush_loading/4` is a loading-marker poll bound, not a `$callers` monitor; only the page funnels monitor children.
 
 ### Definition order inside a test file is load-bearing
-An `async: true` module is handed to the ExUnit runner as soon as its `defmodule` is evaluated, i.e. while the rest of the file is still loading.
-Any module an async module references at runtime (`start_supervised!` target, fake `ConnectionManager`, helper module) must therefore sit ABOVE it; a module defined lower can still be `:non_existing` and raise "was given as a child to a supervisor but it does not exist".
-Only `async: false` modules may sit at the end of a file.
-Files that depend on this ordering: `projects_live_test.exs`, `settings_live_test.exs`, `settings_live_agents_test.exs`, `system_live_test.exs`, `welcome_live_test.exs`, `welcome_complete_live_test.exs`, `task_export_controller_test.exs`, `live_hooks/appearance_test.exs` (its fake `ConnectionManager` must stay above the async module), and `review_live_test.exs` (its fake `ConnectionManager` sits above every test module).
+`mix test` starts the ExUnit async runner BEFORE requiring the test files, and ExUnit registers a test module from its `@after_compile` hook, so the runner may start a module's first tests while the REST of the same file is still being compiled and loaded.
+Any module used at RUNTIME (a seam target, a stub connection/adapter, a helper or agent role) must therefore be defined ABOVE the first test module in its file, or live in a compiled `test/support/*.ex` module — never below an `async: true` test module.
+A helper still unloaded at that moment makes the seam degrade into a bogus product error: `Code.ensure_loaded/1` answers `{:error, :nofile}` for an in-memory module (`:sign_in_unavailable`, a "child does not exist" supervisor start, a missing remote-target status).
+Only an `async: false` TEST module may sit below another test module (ExUnit drains every async module before it runs a sync one), never a helper.
+A helper whose position is load-bearing this way states it in a short comment beside its `defmodule`.
+Files that depend on this ordering: `projects_live_test.exs`, `settings_live_test.exs`, `settings_live_agents_test.exs`, `system_live_test.exs`, `welcome_live_test.exs`, `welcome_complete_live_test.exs`, `tasks_live_test.exs`, `home_live_test.exs`, `node_context_test.exs`, `task_export_controller_test.exs`, `live_hooks/appearance_test.exs`, `live_hooks/node_aware_test.exs`, `live/settings_live/navigation_test.exs` and `review_live_test.exs` — all of their fake `ConnectionManager`/stub modules sit above every test module in the file.
 
 ### Flipping a module to async exposes run-wide-store hazards
 Every suite shares ONE `EvoGit.Store`; only the `IsolatedTaskStore` users swap it.
