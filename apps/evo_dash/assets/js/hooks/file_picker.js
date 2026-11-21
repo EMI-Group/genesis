@@ -51,6 +51,20 @@
 // instance and removed in destroyed(); otherwise a remount would stack a
 // second set of closures over the surviving nodes and Enter/confirm would push
 // "file_pick_manual" twice.
+//
+// The manual panel's EXIT is animated through the shared motion foundation
+// (./disclosure_motion.js) exactly like every other outbound surface: the
+// close writes `data-file-manual-state="closing"` (css/app.css gates the
+// fade-out keyframe off it), waits for the `.file-manual-input-wrap`'s own
+// target-verified animationend or the bounded fallback, and only then adds
+// `hidden` — completing in the same task under reduced motion.
+import {closeAnimated} from "./disclosure_motion.js";
+
+// The attribute css/app.css keys the manual panel's exit keyframe off. It is
+// never rendered by the server, and the hook removes it when the exit ends.
+const FILE_MANUAL_STATE_ATTR = "data-file-manual-state";
+const FILE_MANUAL_CLOSING = "closing";
+
 const FilePicker = {
   mounted() {
     this._basePrompt = null;
@@ -59,6 +73,7 @@ const FilePicker = {
     this._pendingPick = null;          // {picker_id, kind} of the in-flight pick
     this._manualEl =
       this.el.closest(".input-controls")?.querySelector("#objective-file-manual");
+    this._manualWrap = this._manualEl?.querySelector(".file-manual-input-wrap");
     this._manualInput = this._manualEl?.querySelector(".file-manual-input");
     this._manualError = this._manualEl?.querySelector(".file-manual-error");
     this._resultRefs = [];
@@ -197,6 +212,11 @@ const FilePicker = {
     this._onManualConfirm = null;
     this._onManualCancel = null;
 
+    // Release a close still in flight with the hook — the sibling panel may
+    // outlive a <details> teardown, and its timer would otherwise fire later
+    // and hide a panel a remounted instance has already reopened.
+    this.releaseManualClose();
+
     for (const ref of this._resultRefs || []) {
       this.removeHandleEvent(ref);
     }
@@ -223,6 +243,9 @@ const FilePicker = {
 
   openManual() {
     if (!this._manualEl) return;
+    // A close still in flight is finished NOW (same task), so its completion
+    // cannot hide the panel we are about to reveal.
+    this.releaseManualClose();
     this._manualEl.hidden = false;
     // Fresh open: no stale value, no stale error. The pop/slide expansion
     // animation (app.css @keyframes file-manual-expand) restarts whenever
@@ -258,10 +281,40 @@ const FilePicker = {
 
   closeManual() {
     if (!this._manualEl) return;
-    this._manualEl.hidden = true;
+    // Bookkeeping is immediate: the flow is over, so a retry can never reuse a
+    // stale pick and no stale error survives the panel.
     this.clearManualError();
     if (this._manualInput) this._manualInput.value = "";
     this._pendingPick = null;          // flow over — drop the pending pick
+    if (this._manualEl.hidden) return; // already closed — nothing to animate
+
+    // The exit is the shared motion recipe: an attribute-gated fade-out on the
+    // widget, released by closeAnimated on its own animationend or its bounded
+    // fallback, and completed in the SAME task under reduced motion.
+    closeAnimated(this._manualEl, {
+      panel: this._manualWrap,
+      attr: FILE_MANUAL_STATE_ATTR,
+      onComplete: () => {
+        if (this._manualEl) this._manualEl.hidden = true;
+      }
+    });
+  },
+
+  // Completes a manual-panel exit that is still running (or does nothing when
+  // the panel is not closing): fallbackMs 0 makes the shared helper settle it
+  // synchronously, running its completion callbacks — including the `hidden`
+  // write — before this returns.
+  releaseManualClose() {
+    if (!this._manualEl) return;
+    if (this._manualEl.getAttribute(FILE_MANUAL_STATE_ATTR) !== FILE_MANUAL_CLOSING) return;
+    closeAnimated(this._manualEl, {
+      panel: this._manualWrap,
+      attr: FILE_MANUAL_STATE_ATTR,
+      fallbackMs: 0,
+      onComplete: () => {
+        if (this._manualEl) this._manualEl.hidden = true;
+      }
+    });
   },
 
   showManualError(reason) {

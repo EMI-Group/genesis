@@ -12,21 +12,45 @@ const {readFileSync} = require('node:fs');
 const vm = require('node:vm');
 
 const moduleSource = readFileSync(`${__dirname}/file_picker.js`, 'utf8');
-const hookSource = moduleSource.slice(moduleSource.indexOf('const FilePicker = {'),
+// Start at the attribute constants (not the ES import, which a vm script
+// cannot parse) so the shipped attribute names are exercised, not copies.
+const hookSource = moduleSource.slice(moduleSource.indexOf('const FILE_MANUAL_STATE_ATTR'),
   moduleSource.indexOf('export default FilePicker;'));
-const context = vm.createContext({
-  console: {warn() {}},
-  document: {querySelector: () => null},
-  Event: class {constructor(type) { this.type = type; }}
-});
-const filePicker = vm.runInContext(`${hookSource}\nFilePicker;`, context);
+
+// The manual panel's exit is the shared motion primitive; run the SHIPPED
+// closeAnimated (sliced exactly like disclosure_motion.test.cjs does) so the
+// attribute, the target-verified animationend and the bounded fallback are
+// proven, not stubbed.
+const motionSrc = readFileSync(`${__dirname}/disclosure_motion.js`, 'utf8');
+const pureStart = motionSrc.indexOf('// --- DisclosureMotion: pure close decisions (unit-tested)');
+const domStart = motionSrc.indexOf('// DisclosureMotion: DOM orchestration + hook');
+const domEnd = motionSrc.indexOf('const DisclosureMotion = {');
+const motionSource = `${motionSrc.slice(pureStart, domStart)}\n${motionSrc.slice(domStart, domEnd)}`;
+
+const timers = [];
+function createPicker({reduced = false} = {}) {
+  const context = vm.createContext({
+    console: {warn() {}},
+    document: {querySelector: () => null},
+    Event: class {constructor(type) { this.type = type; }},
+    window: {matchMedia: () => ({matches: reduced})},
+    setTimeout: (fn, ms) => { const timer = {fn, ms, cleared: false}; timers.push(timer); return timer; },
+    clearTimeout: (timer) => { if (timer) timer.cleared = true; }
+  });
+  vm.runInContext(motionSource, context);
+  return vm.runInContext(`${hookSource}\nFilePicker;`, context);
+}
+const filePicker = createPicker();
 
 // A listener-recording DOM seam: every element keeps its own listener map, so
-// an added-then-removed listener leaves the element empty.
+// an added-then-removed listener leaves the element empty. Attributes matter
+// here: the exit is gated on data-file-manual-state="closing".
 function makeEl(querySelector = () => null) {
   const listeners = new Map();
+  const attributes = new Map();
   return {
     listeners,
+    attributes,
     hidden: true,
     value: '',
     dataset: {},
@@ -40,6 +64,9 @@ function makeEl(querySelector = () => null) {
     },
     count(type) { return (listeners.get(type) || []).length; },
     fire(type, event) { for (const fn of listeners.get(type) || []) fn(event); },
+    getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null; },
+    setAttribute(name, value) { attributes.set(name, value); },
+    removeAttribute(name) { attributes.delete(name); },
     querySelector,
     closest: () => null,
     focus() {},
@@ -53,14 +80,17 @@ function makeManualDom() {
   const manualInput = makeEl();
   const confirmBtn = makeEl();
   const cancelBtn = makeEl();
+  const wrap = makeEl();   // .file-manual-input-wrap — the animated panel
   const manualEl = makeEl((selector) => {
     if (selector === '.file-manual-input') return manualInput;
+    if (selector === '.file-manual-input-wrap') return wrap;
     if (selector === '.file-manual-error') return null;
     if (selector === '.file-manual-confirm') return confirmBtn;
     if (selector === '.file-manual-cancel') return cancelBtn;
     return null;
   });
-  return {manualEl, manualInput, confirmBtn, cancelBtn,
+  manualEl.hidden = true;
+  return {manualEl, manualInput, confirmBtn, cancelBtn, wrap,
     els: [manualEl, manualInput, confirmBtn, cancelBtn]};
 }
 
@@ -69,7 +99,7 @@ function manualListenerCount(manualDom) {
     sum + el.count('click') + el.count('keydown'), 0);
 }
 
-function makeInstance({pickerIds = ['objective_file'], manualDom = makeManualDom()} = {}) {
+function makeInstance({pickerIds = ['objective_file'], manualDom = makeManualDom(), impl = filePicker} = {}) {
   const textarea = makeEl(() => null);
   textarea.value = 'base prompt';
   textarea.dispatched = [];
@@ -87,7 +117,7 @@ function makeInstance({pickerIds = ['objective_file'], manualDom = makeManualDom
   const removedRefs = [];
   const registry = new Map();   // event name -> Set of live handlers
 
-  const hook = Object.assign(Object.create(filePicker), {
+  const hook = Object.assign(Object.create(impl), {
     pushEvent(name, payload) { pushed.push({name, payload}); },
     handleEvent(name, fn) {
       if (!registry.has(name)) registry.set(name, new Set());
@@ -186,4 +216,72 @@ test('the text result still uses append-not-clobber semantics', () => {
   typed.dispatchResult('picker_result:objective_file',
     {prompt: 'stale server prompt', block: ' block', attached: true});
   assert.equal(typed.textarea.value, 'base prompt + typed block');
+});
+
+// --- Manual panel exit (shared motion primitive) --------------------------
+
+test('closeManual fades the wrap out before hiding it, and never snaps', () => {
+  const page = makeInstance();
+  page.hook.mounted();
+  page.hook.openManual();
+  assert.equal(page.manualDom.manualEl.hidden, false);
+
+  const before = timers.length;
+  page.hook.closeManual();
+  assert.equal(page.manualDom.manualEl.hidden, false, 'the exit frame must be visible');
+  assert.equal(page.manualDom.manualEl.getAttribute('data-file-manual-state'), 'closing');
+  assert.equal(timers.length, before + 1, 'the bounded fallback is armed');
+
+  // A child element's animationend must not cut the exit short.
+  page.manualDom.wrap.fire('animationend', {target: page.manualDom.manualInput});
+  assert.equal(page.manualDom.manualEl.hidden, false);
+  page.manualDom.wrap.fire('animationend', {target: page.manualDom.wrap});
+  assert.equal(page.manualDom.manualEl.hidden, true, 'hidden only after the wrap finished');
+  assert.equal(page.manualDom.manualEl.getAttribute('data-file-manual-state'), null);
+  assert.equal(timers[before].cleared, true, 'the fallback is cancelled by the animationend');
+  assert.equal(page.manualDom.wrap.count('animationend'), 0, 'the listener is released');
+});
+
+test('closeManual is a no-op on an already hidden panel (no exit, no timer)', () => {
+  const page = makeInstance();
+  page.hook.mounted();
+  const before = timers.length;
+  page.hook.closeManual();
+  assert.equal(page.manualDom.manualEl.hidden, true);
+  assert.equal(page.manualDom.manualEl.getAttribute('data-file-manual-state'), null);
+  assert.equal(timers.length, before);
+});
+
+test('reduced motion hides the manual panel in the same task', () => {
+  const page = makeInstance({impl: createPicker({reduced: true})});
+  page.hook.mounted();
+  page.hook.openManual();
+  page.hook.closeManual();
+  assert.equal(page.manualDom.manualEl.hidden, true);
+  assert.equal(page.manualDom.manualEl.getAttribute('data-file-manual-state'), null);
+  assert.equal(page.manualDom.wrap.count('animationend'), 0, 'nothing to wait for');
+});
+
+test('reopening during the exit completes it first, then reveals the panel', () => {
+  const page = makeInstance();
+  page.hook.mounted();
+  page.hook.openManual();
+  page.hook.closeManual();
+  assert.equal(page.manualDom.manualEl.getAttribute('data-file-manual-state'), 'closing');
+
+  page.hook.openManual();
+  assert.equal(page.manualDom.manualEl.hidden, false, 'the new open wins');
+  assert.equal(page.manualDom.manualEl.getAttribute('data-file-manual-state'), null);
+  assert.equal(page.manualDom.wrap.count('animationend'), 0, 'the superseded exit released its listener');
+});
+
+test('destroyed releases a manual close still in flight', () => {
+  const page = makeInstance();
+  page.hook.mounted();
+  page.hook.openManual();
+  page.hook.closeManual();
+  page.hook.destroyed();
+  assert.equal(page.manualDom.manualEl.hidden, true, 'the exit completes with the hook');
+  assert.equal(page.manualDom.manualEl.getAttribute('data-file-manual-state'), null);
+  assert.equal(page.manualDom.wrap.count('animationend'), 0);
 });
