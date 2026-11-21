@@ -160,7 +160,7 @@ The project-settings editor implements the multi-repo read-write UI on `%EvoGit.
 
 ### Sidebar must stay `overflow-visible` — SSH node-selector dropdown clipping
 
-The sidebar (`layouts.ex`) is a `z-50` stacking context above `#main-scroll` (`z-0`), so its overflowing dropdowns paint above the content — and it must never clip them: `SidebarCollapse` adds `overflow-visible` in BOTH branches and `<aside id="sidebar">` also carries `overflow-visible!` (removing either clips the node-selector dropdown `w-72` at the sidebar edge `w-60`/`w-16`); the comment above the `<aside>` documents the invariant.
+The sidebar (`layouts.ex`) is a `z-50` stacking context above `#main-scroll` (`z-0`), so its dropdowns paint above the content and must never be clipped: `SidebarCollapse` adds `overflow-visible` in BOTH branches and `<aside id="sidebar">` still carries `overflow-visible!` (removing either clips the node-selector dropdown `w-72` at the `w-60`/`w-16` edge; the comment above the `<aside>` documents the invariant).
 
 ### Sidebar bottom-bar dropdowns never auto-close (native `<details>`)
 
