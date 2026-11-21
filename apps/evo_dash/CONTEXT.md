@@ -140,7 +140,7 @@ Opt-in per-agent archive (one `archive_records` row per successfully completed a
 ### Self-Reflective Task Mode & Guide Overlay
 
 - **`:reflect`** — repo-less conversational task type whose ONLY dashboard entry point is `HomeLive` at `GET /assistant`, as the FALLBACK driver; it carries NO `:path` (nil `project_path`; cards nil-path-safe), its result is the agent's final text, `:reflect` is in `Store.Codec` `@known_atoms`, and `execute_task(:reflect)` routes directly to `Runtime.SelfReflective.run`, bypassing `build_common_runtime_opts` → `apps/evo_git/CONTEXT.md` + `live/home_live/CONTEXT.md`.
-- **Guide overlay** — `"guides"` events consumed by `LiveHooks.Guide` (registered LAST in `live_view/0`), which node-filters, assigns `@guide`, persists per tab via `guide_client_id` and pushes `"guide_highlight"`; `Layouts.app` renders the panel and the `Guide` hook scrolls + applies `.guide-highlight` (~3 s) → `live_hooks/CONTEXT.md` + `assets/CONTEXT.md`.
+- **Guide overlay** — `"guides"` events consumed by `LiveHooks.Guide` (registered LAST in `live_view/0`): node-filter, `@guide` assign, per-tab `guide_client_id` persistence and a `"guide_highlight"` push; `Layouts.app` renders the panel and the `Guide` hook scrolls + applies `.guide-highlight` (~3 s) → `live_hooks/CONTEXT.md` + `assets/CONTEXT.md`.
 
 ### Genesis Assistant Page (`HomeLive` at `GET /assistant`)
 
