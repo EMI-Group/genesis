@@ -72,7 +72,7 @@ Each migration keeps its own transaction/version-stamp atomicity, but the whole 
 
 `Boot.migration_source/0` returns a PRE-LOADED, ASCENDING `[{version, module}]` source — never the migrations DIRECTORY: it enumerates `Ecto.Migrator.migrations_path(@repo)` + `Path.wildcard("*.exs")` (via `Application.app_dir/2`, so every per-store instance reads the same directory), parses each `"NNN_name.exs"` basename like `Ecto.Migrator.extract_migration_info/1`, compiles it with `Code.compile_file/1` and picks the module exporting `__migration__/0` (none → `Ecto.MigrationError`).
 The source is memoized in `:persistent_term`, so the `.exs` files compile at most ONCE per BEAM (a directory source would redefine the module and log `redefining module` on every run).
-`Boot.run_migrations/1` wraps the run and that compile in `:global.trans({{:evo_git_store_migrations, self()}, fun})` — a cluster-safe PRODUCTION lock (no test-side wrapper), since compiling the same module is not concurrency-safe and boots are not exclusive; the per-process pdict save/restore stays OUTSIDE the lock.
+`Boot.run_migrations/1` wraps the run and that compile in `:global.trans({{:evo_git_store_migrations, self()}, fun})` — a cluster-safe PRODUCTION lock (no test-side wrapper), because compiling the same module is not concurrency-safe; the per-process pdict save/restore stays OUTSIDE the lock.
 
 ### `mix migrate.store` / `mix store.maintenance`
 
