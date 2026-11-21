@@ -37,10 +37,9 @@ The lock FUNCTION is a default-inert call-time seam — `Application.get_env(:ev
 
 The repo open and the migration run are SYNCHRONOUS inside `init/1` (boot repo → migrator → `PRAGMA optimize` → reopen the pool → start the writer), so the supervisor's child start BLOCKS until it returns — which blocks `EvoGit.Application.start/2` and `EvoDashWeb.Endpoint`'s Bandit bind: **Store boot precedes the HTTP listener**, so a slow first-boot migration delays HTTP readiness (desktop budget: `desktop/src-tauri/CONTEXT.md` → "Backend Readiness Budgets & Launch Diagnostics").
 Only versions absent from `schema_migrations` run, so a release shipping no new migration is a pure no-op, and `Ecto.Migrator` runs each migration AND its version stamp in ONE transaction (atomic under a SIGKILL).
-A DB locked by another process can stall a boot connection up to `busy_timeout: 30_000`, and that wait happens in the CALLING process (no VM thread parked) — there are NO sleeps on the store/application boot path; the busy/locked error shapes are the xqlite 0.16 semantics documented in the root `CONTEXT.md` constraint block.
+A DB locked by another process can stall a boot connection up to `busy_timeout: 30_000`, in the CALLING process (no VM thread parked) — no sleeps exist on the store/application boot path.
 Nothing is rehydrated into a long-lived process at boot (`init/1` keeps only its state map); the ONE boot read is `TaskRegistry.init/1`'s `select_running_lease_info` (`id`/`status`/`lease_expires_at` for `WHERE status IN ('running','awaiting_input','finalizing','cancelling')`, reduced to `{id, status}` pairs), empty with no tasks running.
-`@cache_size -8_000` (8 MiB) is PER-CONNECTION SQLite NATIVE memory, so 6 × 8 MiB ≈ 47 MiB is a lazily-filled CAP visible only in OS RSS — never in `Process.info(pid, :memory)` or `:erlang.memory/1`.
-No environment gating lives in this directory beyond the `:data_dir` app env and the two call-time test seams (`:store_boot_optimize_fun`, `:store_boot_lock_fun`).
+`@cache_size -8_000` (8 MiB) is PER-CONNECTION SQLite NATIVE memory, so 6 × 8 MiB ≈ 47 MiB is a lazily-filled CAP visible only in OS RSS — never in `Process.info(pid, :memory)`; nothing else here is environment-gated beyond `:data_dir` and the two call-time seams (`:store_boot_optimize_fun`, `:store_boot_lock_fun`).
 
 ### Migration ledger (versions 1–9 and 11)
 
