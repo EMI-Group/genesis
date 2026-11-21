@@ -75,6 +75,14 @@ defmodule EvoDash.Test.ConfigDir do
   # retry re-drains first, so a writer that lands in between is awaited rather
   # than merely re-raced.
   @cleanup_attempts 3
+  # A drain that had to WAIT longer than this is a defect, not a slow machine:
+  # the test left a supervised child that only ended by TIMING OUT (a stub's own
+  # safety `after`, a `GenServer.call`'s timeout, a wedged app-global server), so
+  # its cost is paid serially in `on_exit` and is INVISIBLE to ExUnit's per-test
+  # times. The healthy suite's largest drain is a first-load `code_server` call
+  # of ~100 ms, so this stays silent unless something regressed; two monotonic
+  # clock reads per drain are the whole hot-path cost.
+  @drain_alarm_ms 1_000
 
   @doc """
   The seam function installed as `:config_dir_fun` by `test/test_helper.exs`.
@@ -259,6 +267,31 @@ defmodule EvoDash.Test.ConfigDir do
     end
   end
 
+  # Drains the test's supervised writers and, when the drain actually had to
+  # WAIT past `@drain_alarm_ms`, says so — a child that only finished by timing
+  # out is billed to the SERIAL `on_exit` phase, where ExUnit's per-test timing
+  # cannot see it. Silent on the healthy path (two clock reads).
+  defp drain_and_alarm(registrar) do
+    started = System.monotonic_time(:millisecond)
+    result = await_supervised_writers(registrar)
+    elapsed = System.monotonic_time(:millisecond) - started
+
+    if elapsed >= @drain_alarm_ms do
+      require Logger
+
+      Logger.warning(
+        "EvoDash.Test.ConfigDir: the teardown drain for #{inspect(registrar)} " <>
+          "blocked #{elapsed} ms waiting for EvoDash.TaskSupervisor children " <>
+          "spawned by that test (#{inspect(result)}). A child that only ends by " <>
+          "timing out is paid SERIALLY here, invisible to ExUnit's per-test " <>
+          "times — release the stub/worker the test started and await the " <>
+          "applied state instead of leaving it to time out."
+      )
+    end
+
+    :ok
+  end
+
   # The registered `on_exit` cleanup. Drain FIRST (the invariant the moduledoc
   # states), then remove; a racing re-creation that survives the drain
   # (`{:error, :eexist, _}`) is retried a bounded number of times, and every
@@ -267,7 +300,7 @@ defmodule EvoDash.Test.ConfigDir do
   defp remove_isolated_dir!(dir, registrar, attempts \\ @cleanup_attempts)
 
   defp remove_isolated_dir!(dir, registrar, attempts) do
-    _ = await_supervised_writers(registrar)
+    _ = drain_and_alarm(registrar)
 
     case File.rm_rf(dir) do
       {:ok, _removed} ->
