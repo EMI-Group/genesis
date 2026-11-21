@@ -144,7 +144,6 @@ The shared filter builder `Operations.Filters` (`where_filters/2` + the clamps) 
 | `pause_kinds/0` / `encode_pause_kind/1` / `decode_pause_kind/1` | the canonical `"clean"`/`"dirty"`/NULL set, TOTAL both ways (`:clean | :dirty | nil`, an unknown value → `nil` + warning) |
 | `task_session_mode/1` | The write-path resolver: an EXPLICIT non-default struct `session_mode` wins, else the `opts` value (`:session_mode` or the `"session_mode"` STRING key), else `"oneshot"` |
 | field-level | `encode_atom/1`/`decode_atom/1` (closed `@known_atoms` whitelist), `encode_datetime/1`/`decode_datetime/1`, `encode_result/1`/`decode_result/1`, `encode_usage/1`/`decode_usage/1`/`decode_usage_map/1`, `encode_logs/1`/`decode_logs/1`, `encode_error/1`/`decode_error/1` (lenient), `encode_opts/1`/`decode_opts/1` |
-| no compression | every JSON column is plain UTF-8 JSON TEXT — no prefix-tagged payload, no zlib, no `try/rescue` |
 
 ## Storage Model — plain JSON text columns
 `result`, `logs`, `opts`, `usage` and `error` are plain UTF-8 JSON TEXT — exactly what the encoder produced, no compression layer and no prefix tag — so a stored value is uniformly readable by plain SQL (`json_valid`, `json_extract`, `LIKE`); `opts` being a plain object lets search `LIKE` its raw text and SQL paths use `json_extract(opts, '$.path')`.
