@@ -37,6 +37,11 @@ import {closeAnimated as closeAnimatedShared} from "./disclosure_motion.js";
 // (details.capsule[data-capsule-state="closing"]), so the shared helper is
 // told to own exactly it.
 const CAPSULE_STATE_ATTR = "data-capsule-state";
+// The nested Layer-2 submenu <details class="capsule-sub"> needs its own
+// attribute: its exit is gated on css/app.css's
+// `details.capsule-sub[data-capsule-sub-state="closing"] > .capsule-list` rule,
+// and it must never be confused with the root panel's state.
+const CAPSULE_SUB_STATE_ATTR = "data-capsule-sub-state";
 
 const CapsulePanel = {
   mounted() {
@@ -134,6 +139,18 @@ const CapsulePanel = {
         fallbackMs: 0
       });
     }
+
+    // A Layer-2 submenu mid-exit is released the same way: it is inside the
+    // element that is leaving the DOM, so its listener and timer go with it.
+    for (const sub of this.el.querySelectorAll("details.capsule-sub")) {
+      if (sub.getAttribute(CAPSULE_SUB_STATE_ATTR) === "closing") {
+        closeAnimatedShared(sub, {
+          panel: sub.querySelector(":scope > .capsule-list"),
+          attr: CAPSULE_SUB_STATE_ATTR,
+          fallbackMs: 0
+        });
+      }
+    }
   },
 
   // The one close path: native <details> cannot animate its exit, so the exit
@@ -169,6 +186,20 @@ const CapsulePanel = {
     if (this.el.open) this.el.open = false;
   },
 
+  // The Layer-2 submenu close: the SAME shared primitive, pointed at the
+  // submenu's `.capsule-list` and its own state attribute. Nothing is
+  // re-implemented here — closeAnimated owns the attribute, the target-verified
+  // animationend, the bounded fallback, the same-task completion under reduced
+  // motion and the `open` release. A second click during the exit is harmless:
+  // the helper completes the ONE running close instead of arming another.
+  closeSubAnimated(sub) {
+    if (!sub || !sub.open) return;
+    closeAnimatedShared(sub, {
+      panel: sub.querySelector(":scope > .capsule-list"),
+      attr: CAPSULE_SUB_STATE_ATTR
+    });
+  },
+
   // Switches the panel's view. Roots without any .capsule-view children (the
   // mode+speed capsule) are simply left alone — they must not grow a
   // data-capsule-view attribute they never use.
@@ -189,16 +220,26 @@ const CapsulePanel = {
     const target = event.target;
     if (!(target instanceof Element)) return;
 
-    // 1) The collapsed trigger. A native summary click closes <details>
-    // INSTANTLY, skipping the exit animation — intercept it and run the
-    // animated close. Only the ROOT summary is intercepted: the mode+speed
-    // capsule's nested <details class="capsule-sub"> summary is a DIFFERENT
-    // element, so Layer 2 keeps its native toggle.
+    // 1) A <summary>. The collapsed root trigger is a native instant close, so
+    // it is intercepted and run through the animated path; the nested Layer-2
+    // `details.capsule-sub` summary gets the SAME treatment (its native toggle
+    // would snap the list shut) on the submenu's own `data-capsule-sub-state`.
     const summary = target.closest("summary");
     if (summary) {
-      if (summary === this._rootSummary() && this.el.open) {
+      if (summary === this._rootSummary()) {
+        if (this.el.open) {
+          event.preventDefault();
+          this.closeAnimated();
+        }
+        return;
+      }
+      const sub = summary.closest("details.capsule-sub");
+      // Only an OPEN submenu INSIDE this hook element: a closed one keeps its
+      // native open (the CSS [open] rule), and another instance's submenu is
+      // that instance's business.
+      if (sub && sub !== this.el && this.el.contains(sub) && sub.open) {
         event.preventDefault();
-        this.closeAnimated();
+        this.closeSubAnimated(sub);
       }
       return;
     }

@@ -2485,10 +2485,12 @@ details[data-capsule-view="provider"] .capsule-view[data-view="provider"] {
   animation: capsule-view-in 120ms ease-out;
 }
 
-/* --- Nested Layer-2 submenu entrance (mode+speed capsule) ---
-   The inner <details class="capsule-sub"> keeps its NATIVE toggle (the
-   CapsulePanel hook deliberately never intercepts its summary), so the only
-   polish is a short fade/slide on the submenu list itself. */
+/* --- Nested Layer-2 submenu entrance + exit (mode+speed capsule) ---
+   A native <details class="capsule-sub"> snaps shut, so BOTH directions are
+   authored here: the [open] rule animates the submenu list in with no JS, and
+   the state rule lets the CapsulePanel hook defer `open` removal for the exit
+   (it writes data-capsule-sub-state="closing" through the shared closeAnimated
+   primitive and removes `open` only once the list's own animation ended). */
 @keyframes capsule-sub-in {
   from {
     opacity: 0;
@@ -2505,14 +2507,19 @@ details.capsule-sub[open] > .capsule-list {
   animation: capsule-sub-in 120ms ease-out;
 }
 
+details.capsule-sub[data-capsule-sub-state="closing"] > .capsule-list {
+  animation: motion-fade-out var(--motion-fast) var(--motion-ease-in) both;
+}
+
 /* Reduced motion disables BOTH directions of the panel animation, the view
-   switching transitions and the submenu entrance (the hook also short-circuits
-   its animated close, so the panel simply closes on the spot). */
+   switching transitions and the submenu animations (the hook also
+   short-circuits its animated close, so the panel simply closes on the spot). */
 @media (prefers-reduced-motion: reduce) {
   details.capsule[open] > .capsule-panel,
   details.capsule[data-capsule-state="closing"] > .capsule-panel,
   details.capsule .capsule-view,
-  details.capsule-sub[open] > .capsule-list {
+  details.capsule-sub[open] > .capsule-list,
+  details.capsule-sub[data-capsule-sub-state="closing"] > .capsule-list {
     animation: none !important;
   }
 }
