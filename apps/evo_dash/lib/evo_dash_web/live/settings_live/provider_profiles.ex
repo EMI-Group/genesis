@@ -18,6 +18,12 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
   @json_fields ~w(extra provider_options)
   @generation_fields ~w(temperature max_tokens top_p top_k frequency_penalty presence_penalty)
 
+  # Form fields that belong to another surface but ride the provider `<form>`
+  # submit: the ChatGPT sign-in panel's `name="paste"` input renders INSIDE the
+  # provider-detail (and wizard) form, so LiveView serializes it with every
+  # profile change. Never a profile key — dropped at the draft boundary.
+  @ui_only_keys ~w(paste)
+
   def profiles(config), do: Schema.provider_profiles(config)
 
   @doc "Replaces providers, removes the legacy shadow, and keeps unrelated config."
@@ -133,6 +139,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
   def normalize_draft(params) do
     params
     |> stringify()
+    |> drop_ui_only()
     |> canonical_credentials()
     |> Map.update("models", [], &rows/1)
     |> Map.update("peak_hours", [], &Helpers.normalize_peak_hours_draft/1)
@@ -142,8 +149,16 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
 
   @doc "Overlays submitted fields on the detached draft; explicit blanks/lists always win."
   def submission(params, draft) do
-    draft = stringify(draft || %{}) |> canonical_credentials() |> Map.delete("_target")
-    params = stringify(params) |> canonical_credentials()
+    # UI-only keys (a sibling surface's input inside the same form) are dropped
+    # from BOTH sides, so neither this event nor an inherited draft carries them.
+    draft =
+      (draft || %{})
+      |> stringify()
+      |> drop_ui_only()
+      |> canonical_credentials()
+      |> Map.delete("_target")
+
+    params = params |> stringify() |> drop_ui_only() |> canonical_credentials()
     # Legacy single-model input replaces the old override/default rather than
     # inheriting them from a detached canonical draft, including UI-only state.
     draft =
@@ -508,6 +523,8 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
 
   defp stringify(list) when is_list(list), do: Enum.map(list, &stringify/1)
   defp stringify(value), do: value
+  defp drop_ui_only(map) when is_map(map), do: Map.drop(map, @ui_only_keys)
+  defp drop_ui_only(value), do: value
   defp put_optional(map, _key, nil), do: map
   defp put_optional(map, key, value), do: Map.put(map, key, value)
   defp required(true, _), do: :ok

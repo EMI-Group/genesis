@@ -1182,4 +1182,89 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
       refute has_element?(view, "#" <> detail <> "-sign-in-paste-error")
     end
   end
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 10. the paste input never leaks into a provider draft
+  # ═══════════════════════════════════════════════════════════════════════════
+  # The waiting panel's `name="paste"` input lives INSIDE the provider-detail
+  # form, so LiveView serializes the typed redirect with every provider-field
+  # change. The draft boundary (`ProviderProfiles.submission/2`) drops it, and
+  # these tests pin that end to end: the draft stays clean while the panel keeps
+  # the typed text. `provider_wizard_change` gets the same treatment because the
+  # same panel can sit inside a wizard-step form.
+  describe "the sign-in paste input never enters a provider draft" do
+    @paste "http://127.0.0.1:48123/auth/callback?code=abc&state=xyz"
+
+    test "a provider-field change keeps paste out of the expanded account's draft", %{
+      conn: conn
+    } do
+      ChatGPTStub.install!(begin: {:ok, %{id: @flow_id, url: @flow_url, port: 48_123}})
+      seed_openai_codex_profile()
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_account(view, @profile_id)
+      panel = detail_panel(@profile_id)
+
+      view |> element("#" <> panel <> "-sign-in") |> render_click()
+      assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, {:detail, @profile_id})
+
+      view
+      |> element("#" <> panel <> "-sign-in-paste-input")
+      |> render_change(%{"value" => @paste, "surface" => "detail", "profile_id" => @profile_id})
+
+      assert assigns(view).chatgpt_sign_in.paste == @paste
+
+      # The whole enclosing form is serialized, paste included — exactly what a
+      # keystroke in any provider field sends.
+      render_change(view, "provider_profile_form_change", %{
+        "paste" => @paste,
+        "profile_id" => @profile_id,
+        "name" => "Renamed account",
+        "provider" => "openai_codex",
+        "auth_mode" => "oauth"
+      })
+
+      draft = assigns(view).profile_form_draft
+      refute Map.has_key?(draft, "paste")
+      assert draft["name"] == "Renamed account"
+
+      # The sign-in fallback keeps its typed text on the SAME panel.
+      assert assigns(view).chatgpt_sign_in.paste == @paste
+      input = view |> element("#" <> panel <> "-sign-in-paste-input") |> render()
+      assert attr(input, "name") == "paste"
+      assert attr(input, "value") == @paste
+      assert has_element?(view, "#" <> panel <> "-waiting")
+    end
+
+    test "a provider_wizard_change keeps paste out of the wizard draft", %{conn: conn} do
+      ChatGPTStub.install!(begin: {:ok, %{id: @flow_id, url: @flow_url, port: 48_123}})
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_chatgpt_auth_step(view)
+      panel = "settings-chatgpt"
+
+      view |> element("#" <> panel <> "-sign-in") |> render_click()
+      assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, :wizard)
+
+      view
+      |> element("#" <> panel <> "-sign-in-paste-input")
+      |> render_change(%{"value" => @paste, "surface" => "wizard"})
+
+      assert assigns(view).chatgpt_sign_in.paste == @paste
+
+      render_hook(view, "provider_wizard_change", %{
+        "paste" => @paste,
+        "provider" => "openai_codex",
+        "siwc_account" => "default"
+      })
+
+      wizard = assigns(view).provider_wizard
+      refute Map.has_key?(wizard.draft, "paste")
+      assert wizard.draft["provider"] == "openai_codex"
+      assert assigns(view).chatgpt_sign_in.paste == @paste
+      input = view |> element("#" <> panel <> "-sign-in-paste-input") |> render()
+      assert attr(input, "value") == @paste
+      assert has_element?(view, "#" <> panel <> "-waiting")
+    end
+  end
 end

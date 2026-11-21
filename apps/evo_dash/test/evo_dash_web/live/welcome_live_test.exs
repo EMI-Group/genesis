@@ -840,6 +840,46 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       refute has_element?(view, "#welcome-chatgpt-sign-in-error")
     end
 
+    # The paste input renders INSIDE the auth step's account form, so LiveView
+    # serializes the typed redirect with that form's fields. The wizard draft is
+    # what `Setup` writes into config.toml, so it must never carry the key (the
+    # shared draft boundary drops it — `/welcome` itself merges explicit fields).
+    test "a form change never carries the pasted URL into the wizard draft", %{conn: conn} do
+      EvoGit.TestSupport.ChatGPTFixture.seed!("work")
+
+      Process.put(
+        :signin_stub_begin,
+        {:ok, %{id: "welcome-flow", url: @sign_in_url, port: 48_123}}
+      )
+
+      {:ok, view, _html} = start(conn)
+      pick(view, "openai_codex")
+      click_html = view |> element("#welcome-chatgpt-sign-in") |> render_click()
+      assert rendered?(click_html, "#welcome-chatgpt-waiting")
+      assert has_element?(view, "#welcome-chatgpt-form")
+
+      typed = "http://127.0.0.1:48123/auth/callback?code=abc&state=xyz"
+
+      view
+      |> element("#welcome-chatgpt-sign-in-paste-input")
+      |> render_change(%{"value" => typed})
+
+      assert assigns(view).chatgpt_sign_in.paste == typed
+
+      # The enclosing form's change event: the paste input's value rides along
+      # with the connection controls, exactly as a real keystroke would.
+      render_change(view, "select_chatgpt_account", %{"siwc_account" => "work", "paste" => typed})
+
+      draft = assigns(view).draft
+      refute Map.has_key?(draft, "paste")
+      assert draft["siwc_account"] == "work"
+
+      # … and the panel still shows what the user pasted.
+      assert assigns(view).chatgpt_sign_in.paste == typed
+      input = view |> element("#welcome-chatgpt-sign-in-paste-input") |> render()
+      assert Floki.attribute(Floki.parse_fragment!(input), "value") == [typed]
+    end
+
     test "a rejected paste keeps the waiting state with an inline error", %{conn: conn} do
       {:ok, view, _html} = start(conn)
       pick(view, "openai_codex")

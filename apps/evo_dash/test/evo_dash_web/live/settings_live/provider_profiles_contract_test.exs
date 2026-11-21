@@ -1352,6 +1352,52 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
     end
   end
 
+  describe "UI-only form keys" do
+    # The ChatGPT waiting panel renders a `name="paste"` input INSIDE the
+    # provider-detail (and wizard) `<form phx-change=...>`, so LiveView sends
+    # every keystroke of the sign-in fallback with the profile fields. The
+    # draft boundary must drop it instead of dirtying the editor or reaching
+    # config.toml as an unknown provider key.
+    @paste "http://127.0.0.1:1455/auth/callback?code=abc&state=xyz"
+
+    test "submission/2 drops the sign-in paste input from params and inherited drafts" do
+      submitted =
+        ProviderProfiles.submission(
+          %{"paste" => @paste, "provider" => "openai"},
+          %{"paste" => @paste, "default_model" => "example"}
+        )
+
+      refute Map.has_key?(submitted, "paste")
+      assert submitted["provider"] == "openai"
+      assert submitted["default_model"] == "example"
+
+      # A stale paste baked into the inherited draft cannot leak into a later
+      # submission that carries no `paste` field at all.
+      inherited = ProviderProfiles.submission(%{"provider" => "openai"}, %{"paste" => @paste})
+      refute Map.has_key?(inherited, "paste")
+    end
+
+    test "normalize_draft/1 drops the sign-in paste input" do
+      draft = ProviderProfiles.normalize_draft(%{"paste" => @paste, "name" => "Work"})
+      refute Map.has_key?(draft, "paste")
+      assert draft["name"] == "Work"
+    end
+
+    test "the save path never persists a UI-only key into the provider map" do
+      # `parse_editor/3` rebuilds the profile from its own field lists, so an
+      # unknown key is structurally absent — pinned here rather than filtered
+      # a second time on the persistence path.
+      input = Map.merge(params(), %{"paste" => @paste})
+
+      assert {:ok, profile} = ProviderProfiles.parse_editor(input, "test")
+      refute Map.has_key?(profile, "paste")
+
+      submitted = ProviderProfiles.submission(input, %{"id" => "test", "paste" => @paste})
+      assert {:ok, ^profile} = ProviderProfiles.parse_editor(submitted, "test")
+      refute Map.has_key?(profile, "paste")
+    end
+  end
+
   defp editor_socket(profile) do
     config = %{llm: %{providers: [Map.put(profile, "id", "saved")]}}
 
