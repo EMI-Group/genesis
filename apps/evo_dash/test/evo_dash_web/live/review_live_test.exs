@@ -331,6 +331,12 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
   # SAFETY VALVE: the wait loop also gives up after ~60 s of its own accord, and
   # the `on_exit` writes the release marker before removing the dir, so a failing
   # test can never leave a blocked `gh` (and the `sh` running it) looping forever.
+  #
+  # The `sleep` is spin relief, NOT a wait mechanism: the stub blocks until the
+  # test writes `release`, so the poll granularity only bounds how long the stub
+  # lingers AFTER the marker appears — pure dead time on the test that drives it.
+  # 10 ms keeps the loop from burning a core (6000 iterations still bound it to
+  # the same ~60 s valve) while cutting up to 40 ms of that tail per invocation.
   def install_blocking_failing_gh_cli do
     dir = Path.join(System.tmp_dir!(), "blocking-gh-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
@@ -342,8 +348,8 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
     #!/bin/sh
     : > '#{started}'
     i=0
-    while [ ! -e '#{release}' ] && [ "$i" -lt 1200 ]; do
-      sleep 0.05
+    while [ ! -e '#{release}' ] && [ "$i" -lt 6000 ]; do
+      sleep 0.01
       i=$((i + 1))
     done
     exit 1
@@ -1080,10 +1086,19 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
   # async children — a test may have a deliberately-blocking merge-check task in
   # flight that must not be waited on. Waits carry a generous timeout so genuine
   # breakage still fails loudly.
+  #
+  # The barrier is `list_task_ids/0`, not `list_tasks/0`: BOTH are GenServer
+  # CALLS handled by the SAME registry process, so both are ordered strictly
+  # after the arming cast — but `list_task_ids/0` answers synchronously from a
+  # tiny (id, status, updated_at) projection, while `list_tasks/0` offloads a
+  # bounded FULL-ROW read that decodes up to 100 heavy JSON columns. In a
+  # full-suite run the run-wide store holds every live fixture, so the full
+  # decode was a per-call cost paid purely for an ordering barrier that needs
+  # no rows at all.
   def settle_debounced_task_reload(view, timeout \\ @async_wait_budget_ms) do
     # Synchronize with the arming cast(s) so their broadcasts are already
     # delivered before we read the debounce flag below.
-    _ = TaskRegistry.list_tasks()
+    _ = TaskRegistry.list_task_ids()
 
     # Reading assigns/1 drains any queued broadcast that arms the debounce (a
     # `:sys.get_state` round-trip processes every earlier message, and with it
