@@ -5,18 +5,24 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard.ChatGPTAuth do
   This control is the ACCOUNT part of the auth step — the `siwc_account` select,
   the "ChatGPT connected" line and the "Check connection" action — wrapped
   around the shared `EvoDashWeb.SettingsComponents.ChatGPTSignInPanel`, which is
-  the ONE sign-in surface (button / waiting block / CLI hint / failure message,
-  see its moduledoc). Two modes, decided by the owning page (it knows whether
-  the dashboard runs on the same machine as the execution node):
+  the ONE sign-in surface (button / waiting block / paste disclosure / CLI hint /
+  failure message, see its moduledoc). Two modes, decided by the owning page (it
+  knows whether the dashboard runs on the same machine as the execution node):
 
     * local (`manual: false`) — a "Sign in with ChatGPT" button starts a real
-      sign-in and the panel reports waiting/failure;
+      sign-in and the panel reports waiting/failure, always offering the
+      "Can't reach this page?" paste disclosure (redirect URL or bare code) that
+      the page handles through its `chatgpt_sign_in_paste` /
+      `chatgpt_sign_in_submit` events;
     * remote/unsupported (`manual: true`) — no button: the only route is
-      `genesis chatgpt login` on the execution node, plus the one-line reason.
+      `genesis chatgpt login` on the execution node, which also accepts a pasted
+      redirect URL, plus the one-line reason.
 
-  The `sign_in` map is owned by the page (`:flow_id`, `:url`, `:phase` —
-  `:idle | :waiting | :ok | :error` — and `:reason`); nothing here reads config,
-  the clock or a flow module.
+  The `sign_in` map is the page's normalized sign-in state — see
+  `EvoDashWeb.SettingsComponents.ChatGPTSignInPanel` and
+  `EvoDashWeb.SettingsLive.ChatGPTSignInState` (the shared state module owning
+  every transition for both `/settings` and `/welcome`) for its shape. Nothing
+  here reads config, the clock or a flow module: this component only renders.
   """
 
   use EvoDashWeb, :html
