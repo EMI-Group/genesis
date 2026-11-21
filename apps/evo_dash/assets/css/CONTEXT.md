@@ -53,6 +53,8 @@ LiveView `:if` removal — `phx-remove={JS.hide(transition: {"motion-exit-lift",
 Project palette exit — either the `phx-remove` recipe above (preferred) or a hook setting `data-palette-state="closing"` on `#project-omnibox`, which applies the `palette-fade-out` keyframe (defined in `app.css`) to `.project-palette-backdrop` / `.project-palette-overlay`.
 Workbench windows — `dialog.workbench-window[open]` animates in on `showModal()`, while the `workbench.js` close path sets `data-window-state="closing"` and defers `close()` for the exit (plus the `::backdrop` fade).
 Native modals — `dialog_modal.js` sets `data-dialog-state="opening|open|closing"` and defers `close()`, so `dialog.modal[data-dialog-state="closing"]` (+ `::backdrop`) can finally animate out.
+View transitions — `./view_transitions.css` (the LAST `@import`) owns the `page` / `project-swap` pseudo-element fades; see § View transitions below.
+Shared list entry — `class="motion-list-enter"` on new rows, toggled by the `ListEnter` hook from `data-list-enter-scope` + per-row `data-list-enter-key`; see § `.motion-list-enter` below.
 The LAST rule in `motion.css` is the global `prefers-reduced-motion` backstop (`animation-duration`, `animation-iteration-count`, `transition-duration`, `transition-delay` and `scroll-behavior: auto`, all `!important`, on `*, *::before, *::after`); nothing may follow it, and per-component guards elsewhere stay as harmless redundancy.
 
 ### `.motion-list-enter` (the one motion class that lives in `app.css`)
