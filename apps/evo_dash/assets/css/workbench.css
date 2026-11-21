@@ -278,8 +278,10 @@
     padding var(--motion-slow) var(--motion-ease-out),
     border-inline-start-width var(--motion-slow) var(--motion-ease-out);
 }
-/* Closed AND closing share the exit geometry: "closed" is the single frame an
-   entrance is painted at before it becomes "open" (the transition's start),
+/* Closed AND closing share ONE collapsed geometry: "closed" is the resolved
+   start value an entrance is laid out at while displayed before it becomes
+   "open" (the JS half forces that style + layout pass in the same task,
+   js/hooks/workbench_panel_dom.js — the collapsed frame is never painted),
    "closing" is the running exit. */
 .workbench-history[data-panel-state="closed"],
 .workbench-history[data-panel-state="closing"] {
