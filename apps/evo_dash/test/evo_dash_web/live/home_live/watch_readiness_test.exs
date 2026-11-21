@@ -173,7 +173,11 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
     # The session answers a `:starting` watch with its pre-state snapshot and keeps
     # the registration, so a slow setup no longer defers the dashboard's first cut.
     assert_receive {:chat_stream_ready, target, token, ^id, result}, @async_wait_budget_ms
-    refute_receive :watch_observed_starting, 100
+    # Both this attempt's notifications and the readiness reply are sent by the
+    # ONE serial worker (the runner runs inline in it), so per-sender signal
+    # order already proves no `:watch_observed_starting` is in flight; the exact
+    # `phase: :starting` snapshot below is the same claim from the result side.
+    refute_receive :watch_observed_starting, 0
 
     assert {:ok,
             {:ok,
@@ -194,12 +198,14 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
     # The admitted pre-state cut owns the stream: still setup-held, nothing else arrives.
     assert ready.assigns.chat_stream.delta.seq == 0
     assert ready.assigns.chat_status == :running
-    refute_receive {:chat_stream_ready, _, _, ^id, _}, 100
+    await_worker_idle(socket.assigns.chat_stream_worker)
+    refute_receive {:chat_stream_ready, _, _, ^id, _}, 0
 
     send(setup_worker, :release_setup)
     assert_receive {:model_entered, model_worker}, @async_wait_budget_ms
     # One registration, one readiness reply: the run continues on the SAME stream.
-    refute_receive {:chat_stream_ready, _, _, ^id, _}, 200
+    await_worker_idle(socket.assigns.chat_stream_worker)
+    refute_receive {:chat_stream_ready, _, _, ^id, _}, 0
 
     assert ready.assigns.chat_status == :running
     assert Watch.failure(ready.assigns) == nil
@@ -242,11 +248,19 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
     on_exit(fn -> Process.exit(socket.assigns.chat_stream_worker, :kill) end)
     assert_receive :starting_attempt, @async_wait_budget_ms
     Watch.detach(socket)
-    Process.sleep(100)
+    # `detach/1` queues `:unregister` into the serial worker, which serves it on
+    # the spot (it is parked in the retry `receive`): once the worker is back in
+    # its idle receive the readiness loop is GONE, so no further attempt can
+    # even be emitted. That makes the probes below conclusive, where the two
+    # fixed 100 ms observation windows could only ever have caught two absent
+    # 50 ms-haps — a window is a bet on wall clock, a parked worker is a proof.
+    await_worker_idle(socket.assigns.chat_stream_worker)
+    # Drop the attempts the loop emitted before the unregister landed.
+    flush_starting_attempts()
     count = :atomics.get(counter, 1)
-    Process.sleep(100)
+    refute_receive :starting_attempt, 0
     assert :atomics.get(counter, 1) == count
-    refute_receive {:chat_stream_ready, _, _, ^id, _}
+    refute_receive {:chat_stream_ready, _, _, ^id, _}, 0
   end
 
   test "ordinary errors fail once and diagnostic logs contain only the error category" do
@@ -265,7 +279,10 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
         socket = socket(id) |> Watch.attach()
         assert_receive {:chat_stream_ready, _, _, ^id, _}, @async_wait_budget_ms
         assert_receive :failed_watch_attempt, @async_wait_budget_ms
-        refute_receive :failed_watch_attempt, 100
+        # The reply is sent by the serial worker AFTER the last attempt, so a
+        # parked worker proves the transport failure was never retried.
+        await_worker_idle(socket.assigns.chat_stream_worker)
+        refute_receive :failed_watch_attempt, 0
         Process.exit(socket.assigns.chat_stream_worker, :kill)
       end)
 
@@ -293,7 +310,10 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
         assert_receive {:chat_stream_ready, _, _, ^id, {:ok, {:error, {:bad_state, :starting}}}},
                        @async_wait_budget_ms
 
-        refute_receive :deadline_watch_attempt, 100
+        # The deadline answer is the loop's LAST word; a parked worker means it
+        # did not re-arm past the deadline.
+        await_worker_idle(socket.assigns.chat_stream_worker)
+        refute_receive :deadline_watch_attempt, 0
         Process.exit(socket.assigns.chat_stream_worker, :kill)
       end)
 
@@ -322,7 +342,11 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
     assert_receive {:chat_stream_ready, _, _, ^next_id, {:ok, {:ok, _, 0}}},
                    @async_wait_budget_ms
 
-    refute_receive {:chat_stream_ready, _, _, ^id, _}, 100
+    # The retired registration never reaches its reply on the ONE serial worker
+    # (its retry was abandoned for the queued unregister/re-register), so the
+    # parked worker makes this conclusive with no observation window.
+    await_worker_idle(socket.assigns.chat_stream_worker)
+    refute_receive {:chat_stream_ready, _, _, ^id, _}, 0
     Watch.detach(changed)
     Process.exit(socket.assigns.chat_stream_worker, :kill)
   end
@@ -365,6 +389,53 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
         @async_wait_budget_ms ->
           flunk("the real session yield did not settle the assistant spinner")
       end
+    end
+  end
+
+  # Waits until the serial registration worker has finished the command it was
+  # given and is parked in its idle `receive`.
+  #
+  # This is the suite's deterministic replacement for the fixed observation
+  # windows that used to police "nothing else arrives": the worker is the ONLY
+  # sender of `{:chat_stream_ready, …}` and of every readiness-attempt
+  # notification, it serves commands strictly serially, and it can emit nothing
+  # while parked — so a `refute_receive …, 0` AFTER this helper is conclusive
+  # (no pending message, and none possible later), where a 100–200 ms window was
+  # only ever a bet that the absent message would have shown up by then.
+  # A dead worker is equally conclusive: it can never send again.
+  defp await_worker_idle(worker, timeout \\ @async_wait_budget_ms) do
+    await_worker_idle_loop(worker, System.monotonic_time(:millisecond) + timeout)
+  end
+
+  defp await_worker_idle_loop(worker, deadline) do
+    idle? =
+      case Process.info(worker, :current_function) do
+        # parked in `worker/3`'s receive (`register_when_ready/5` while retrying)
+        {:current_function, {EvoDashWeb.HomeLive.Watch, :worker, 3}} -> true
+        {:current_function, _busy} -> false
+        nil -> true
+      end
+
+    cond do
+      idle? ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("the serial registration worker never went idle: #{inspect(worker)}")
+
+      true ->
+        Process.sleep(@poll_interval_ms)
+        await_worker_idle_loop(worker, deadline)
+    end
+  end
+
+  # Drops readiness attempts that the retry loop emitted before detach landed,
+  # so a later zero-timeout refute observes only post-detach activity.
+  defp flush_starting_attempts do
+    receive do
+      :starting_attempt -> flush_starting_attempts()
+    after
+      0 -> :ok
     end
   end
 
