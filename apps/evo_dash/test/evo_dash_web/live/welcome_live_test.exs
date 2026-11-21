@@ -17,9 +17,10 @@ defmodule EvoDashWeb.WelcomeLiveTest do
   # reach the LiveView. The wait stays bounded and still fails loudly.
   # EVERY cross-process stub notification in this file is asserted on this
   # budget, `begin` and `cancel` included: they are emitted from inside the
-  # flow call's own `Task.async` (bounded by the product's 15 s call timeout,
-  # NOT by the event handler that awaits it), so a second-scale budget here
-  # would be a latency assumption rather than a correctness bound.
+  # flow call's own `Task.async` (bounded by the per-call budget this suite
+  # injects through `:chatgpt_signin_call_timeout_ms` — see the sign-in setup
+  # below — NOT by the event handler that awaits it), so a second-scale budget
+  # here would be a latency assumption rather than a correctness bound.
   @async_wait_budget_ms 30_000
   # `:sys.get_state/2` timeout for `assigns/1`: the LiveView can be starved for
   # seconds on a loaded host, where the 5 s default exits the test.

@@ -18,6 +18,11 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignInTest do
   # call budget so a starved host can never kill a stub call.
   @async_wait_budget_ms 30_000
 
+  # A "generous" per-call budget for the seam-behaviour tests: far above the
+  # slow stub's 5 ms sleep (so a loaded host cannot turn the positive case into
+  # a flake) and far below the 15 s production default (so the test stays fast).
+  @generous_call_budget_ms 2_000
+
   @reasons [
     :authorization_denied,
     :plan_not_authorized,
@@ -73,6 +78,19 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignInTest do
 
   defmodule PendingStub do
     def begin(_account, _opts), do: {:ok, %{id: "flow-pending", url: "https://example.test/p"}}
+    def cancel(_flow), do: :ok
+    def status(_flow), do: :pending
+  end
+
+  # Answers only AFTER a short real sleep, so the product's per-call budget is
+  # what decides whether the call is seen to finish. The 5 ms sleep is far below
+  # every budget used here, so the outcome is never a scheduling guess.
+  defmodule SlowStub do
+    def begin(_account, _opts) do
+      Process.sleep(5)
+      {:ok, %{id: "flow-slow", url: "https://example.test/slow"}}
+    end
+
     def cancel(_flow), do: :ok
     def status(_flow), do: :pending
   end
@@ -180,6 +198,27 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignInTest do
   describe "call_timeout_ms/0" do
     test "the production default stays 15 s when nothing is seeded" do
       assert ChatGPTSignIn.call_timeout_ms() == 15_000
+    end
+
+    test "an injected generous budget lets a slow flow call finish" do
+      inject(SlowStub)
+      # Well under the 15 s production default, well over the stub's 5 ms sleep:
+      # the call only answers within budget because the seam moved the cut-off.
+      Process.put(:chatgpt_signin_call_timeout_ms, @generous_call_budget_ms)
+
+      assert ChatGPTSignIn.call_timeout_ms() == @generous_call_budget_ms
+
+      assert {:ok, %{id: "flow-slow", url: "https://example.test/slow"}} =
+               ChatGPTSignIn.begin(nil)
+    end
+
+    test "an injected tiny budget cuts the SAME call off as unavailable" do
+      inject(SlowStub)
+      # The identical 5 ms call the test above sees finish: at 1 ms the spawned
+      # call cannot complete, so the boundary answers its documented failure.
+      Process.put(:chatgpt_signin_call_timeout_ms, 1)
+
+      assert {:error, :sign_in_unavailable} = ChatGPTSignIn.begin(nil)
     end
   end
 
