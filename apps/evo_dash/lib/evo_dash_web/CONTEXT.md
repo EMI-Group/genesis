@@ -192,11 +192,10 @@ Executed GNOME/libadwaita (Adwaita) design language. This is the markup-side map
 
 ## Design Conventions — Adwaita token grammar (markup)
 
-Rules for NEW markup. Sibling convention records: `components/CONTEXT.md`, `live/system_live/CONTEXT.md`, `live/components/CONTEXT.md`.
+Rules for NEW markup (full catalog; sibling records: `components/CONTEXT.md`, `live/system_live/CONTEXT.md`, `live/components/CONTEXT.md`).
 
-- **Alpha floor**: user-relevant text never below `/50`; labels/meta ≥ `/60`; small/primary content ≥ `/70`; fold `text-[10px]`/`text-[11px]` to `text-xs`. Decorative large icons may keep `/30`–`/40`; empty/loading states get exactly ONE dim layer. `--color-secondary` IS mapped in both themes, but for small body text (≈3.8:1) prefer `text-base-content/80`.
-- **Hairlines/borders on content surfaces**: `border-base-300` (base-200 on a base-100 surface is ≈1.06:1 invisible; base-200 only on base-200 chrome). Cards/panels `rounded-xl` max (prefer `rounded-lg`); action buttons `rounded-lg`/`rounded-md`; pill badges may keep `rounded-full`.
-- **`*-content` tokens must never sit on translucent tints** (polarity-swapped per theme) — use full `text-<semantic>` on `bg-<semantic>/10..20`; `-content` only on the solid fill. `badge-ghost` on a tinted/gray strip is gray-on-gray → `badge-outline border-base-content/25 text-base-content/80`.
-- **No raw color literals** (`text-red-500`, `bg-white/10`, `bg-black/10`, `bg-neutral text-neutral-content` — the last two unmapped stock DaisyUI tokens) → theme tokens (`text-error`, `bg-primary-content/10`, `bg-base-content/5`, `bg-base-200`); `bg-base-50` is a dead class (only base-100/200/300 exist in both custom themes).
-- **Sidebar brand wordmark** is plain `text-base-content` — no gradient/bg-clip-text.
+- **Tokens over literals**: no raw color literals (`text-red-500`, `bg-white/10`, `bg-black/10`, unmapped `bg-neutral text-neutral-content`) → `text-error`, `bg-error/10`, `bg-base-200`, `bg-base-content/5`; `bg-base-50` is a dead class (only base-100/200/300 exist in both themes).
+- **Alpha**: user-relevant text ≥ `/50`, labels/meta ≥ `/60`, small/primary content ≥ `/70`, fold `text-[10px]`/`text-[11px]` to `text-xs`; decorative large icons may keep `/30`–`/40`; empty/loading states get exactly ONE dim layer; small body text prefers `text-base-content/80` over `--color-secondary` (≈3.8:1).
+- **Borders/corners**: `border-base-300` on content surfaces (base-200 is ≈1.06:1 invisible there; base-200 only on base-200 chrome); cards/panels `rounded-xl` max (prefer `rounded-lg`), action buttons `rounded-lg`/`rounded-md`, pills `rounded-full`.
+- **`*-content` tokens only on solid fills** — on `/10`–`/20` tints use full `text-<semantic>`; `badge-ghost` on a tinted strip → `badge-outline border-base-content/25 text-base-content/80`; the sidebar brand wordmark is plain `text-base-content`.
 - Locked single-source schemes — never "fix": `Helpers.task_status_*`/`agent_status_*`/`connection_status_*` (tests pin them), chart `--chart-*` CSS-var strings, `theme_color.ex` palette, the home chat bottom fade.
