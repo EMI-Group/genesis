@@ -1,8 +1,7 @@
 import {projectPreview} from "./workbench_project_preview"
 import {closeAnimated} from "./disclosure_motion.js"
-import {initialPanelState, planPanelRequest, completePanelClose, isPanelCloseTransition,
-  panelCloseWaitsForTransition, PANEL_CLOSED, PANEL_OPEN, PANEL_CLOSING,
-  PANEL_CLOSE_FALLBACK_MS} from "./workbench_panel"
+import {createPanelHost} from "./workbench_panel_dom"
+import {initialPanelState, PANEL_OPEN} from "./workbench_panel"
 
 const TAB_KEY = "genesis-workbench.tabs.v1"
 const ACCENT_KEY = "genesis-workbench.accent"
@@ -190,9 +189,7 @@ const Workbench = {
     write(sessionStorage, TAB_KEY, this.tabs)
     this.media = matchMedia(WIDE)
     this.reduceMotion = matchMedia("(prefers-reduced-motion: reduce)")
-    this.panelStates = new Map()
-    this.panelClose = new Map()
-    this.panelFrames = new Map()
+    this.panelHost = createPanelHost(() => Boolean(this.reduceMotion?.matches))
     this.panelReady = false
     // Only an explicit choice in THIS tab re-opens the panel; a fresh tab is closed.
     this.historyOpen = initialPanelState(read(sessionStorage, HISTORY_KEY, null)) === PANEL_OPEN
@@ -334,8 +331,7 @@ const Workbench = {
     this.media.removeEventListener("change", this.onResize)
     window.removeEventListener("phx:page-loading-stop", this.onNavigation)
     window.removeEventListener("storage", this.onStorage)
-    for (const key of [...this.panelClose.keys()]) this.clearPanelClose(key)
-    for (const key of [...this.panelFrames.keys()]) this.cancelPanelFrame(key)
+    this.panelHost.destroy()
     // Release the preview snapshot cache + its shadow-DOM host — but NEVER mid
     // handoff: `release()` clears a pending handoff, and the overlay host lives
     // on `document.body`, OUTSIDE this hook's element, precisely so a
@@ -720,14 +716,17 @@ const Workbench = {
     }
   },
 
+  // The per-panel state machine and the open/close start frames live in the
+  // `panelHost` (workbench_panel_dom.js); every LiveView patch re-runs this, so
+  // an unchanged state is a pure re-assert that never restarts a running close.
   syncHistoryPanel(animate = true) {
     const panel = this.el.querySelector("#workbench-history")
     if (!panel) return
     const git = this.el.querySelector("#workbench-git")
     const gitOpen = Boolean(git && this.gitOpen && this.project)
     const open = this.historyOpen && Boolean(this.project) && !gitOpen
-    this.applyPanelState(panel, open, animate)
-    if (git) this.applyPanelState(git, gitOpen, animate)
+    this.panelHost.apply(panel, open, animate)
+    if (git) this.panelHost.apply(git, gitOpen, animate)
     const drawerOpen = (open || gitOpen) && !this.media.matches
     const resizer = this.el.querySelector("#workbench-right-resize")
     if (resizer) resizer.hidden = drawerOpen || !(open || gitOpen)
@@ -744,93 +743,6 @@ const Workbench = {
     }
     this.el.querySelector("#workbench-history-toggle")?.setAttribute("aria-expanded", String(open))
     this.el.querySelector("#workbench-git-toggle")?.setAttribute("aria-expanded", String(gitOpen))
-  },
-
-  // Drives one aside through the pure state machine. Every LiveView patch
-  // re-runs this, so an unchanged state is a pure re-assert: a running close is
-  // never restarted and a stable open never re-animates.
-  applyPanelState(panel, wantOpen, animate) {
-    const key = panel.id
-    const state = this.panelStates.get(key) || initialPanelState(panel.dataset.panelState === PANEL_OPEN)
-    const plan = planPanelRequest(state, wantOpen)
-    if (plan.state === state) {
-      if (panel.hidden !== plan.hidden) panel.hidden = plan.hidden
-      this.setPanelState(panel, plan.state)
-      return
-    }
-    this.panelStates.set(key, plan.state)
-    this.clearPanelClose(key)
-    if (plan.state === PANEL_OPEN) {
-      panel.hidden = false
-      if (animate && plan.animate) {
-        // Paint one frame at the closed style so the transition has a start.
-        this.setPanelState(panel, PANEL_CLOSED)
-        this.panelFrames.set(key, requestAnimationFrame(() => {
-          this.panelFrames.delete(key)
-          if (this.panelStates.get(key) === PANEL_OPEN) this.setPanelState(panel, PANEL_OPEN)
-        }))
-      } else {
-        this.setPanelState(panel, PANEL_OPEN)
-      }
-    } else if (plan.state === PANEL_CLOSING) {
-      this.cancelPanelFrame(key)
-      panel.hidden = false
-      this.setPanelState(panel, PANEL_CLOSING)
-      if (animate && panelCloseWaitsForTransition(plan.animate, this.reducedMotion())) {
-        this.armPanelClose(panel, key)
-      } else {
-        this.finishPanelClose(panel)
-      }
-    } else {
-      this.cancelPanelFrame(key)
-      panel.hidden = true
-      this.setPanelState(panel, PANEL_CLOSED)
-    }
-  },
-
-  setPanelState(panel, state) {
-    if (panel.dataset.panelState !== state) panel.dataset.panelState = state
-  },
-
-  reducedMotion() {
-    return Boolean(this.reduceMotion?.matches)
-  },
-
-  armPanelClose(panel, key) {
-    const onEnd = event => {
-      if (event.target !== panel) return
-      if (!isPanelCloseTransition(this.panelStates.get(key), event.propertyName)) return
-      this.finishPanelClose(panel)
-    }
-    const timer = setTimeout(() => this.finishPanelClose(panel), PANEL_CLOSE_FALLBACK_MS)
-    panel.addEventListener("transitionend", onEnd)
-    this.panelClose.set(key, {panel, onEnd, timer})
-  },
-
-  clearPanelClose(key) {
-    const pending = this.panelClose.get(key)
-    if (!pending) return
-    clearTimeout(pending.timer)
-    pending.panel.removeEventListener("transitionend", pending.onEnd)
-    this.panelClose.delete(key)
-  },
-
-  cancelPanelFrame(key) {
-    const frame = this.panelFrames.get(key)
-    if (frame == null) return
-    cancelAnimationFrame(frame)
-    this.panelFrames.delete(key)
-  },
-
-  finishPanelClose(panel) {
-    const key = panel.id
-    this.clearPanelClose(key)
-    const done = completePanelClose(this.panelStates.get(key))
-    if (!done) return false
-    this.panelStates.set(key, done.state)
-    panel.hidden = done.hidden
-    this.setPanelState(panel, done.state)
-    return true
   },
 
   setHistory(open, focus = false) {
