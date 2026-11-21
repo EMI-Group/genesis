@@ -394,6 +394,32 @@ defmodule EvoGit.Agent.Tools.ElixirEval.EngineTest do
     end
   end
 
+  describe "reduction budget charges evaluation work, not observation" do
+    # Dune enforces its own per-evaluation reduction budget from a busy-poll
+    # helper started with a bare `spawn/1`, whose reductions grow with WALL time
+    # (~10M per 100ms) instead of with evaluation work. Charging that helper
+    # reported a legitimately blocked evaluation as a runaway, so a blocked-but-
+    # cheap evaluation must complete in both interpreted tiers: this blocks well
+    # past the point where the poller alone crosses the sampled tree budget.
+    test "a blocked-but-cheap evaluation is never reported as a runaway", ctx do
+      for tier <- [:read, :write] do
+        assert evaluate(ctx.fixture, "Process.sleep(600); :slept", tier) ==
+                 {:ok, "Result: :slept"}
+      end
+    end
+
+    # The budget still stops a genuinely runaway evaluation in every tier that
+    # must enforce it, with the same fixed message.
+    test "a runaway interpreted evaluation is still stopped and reported", ctx do
+      code = "Enum.reduce(1..1_000_000_000, 0, fn n, acc -> n + acc end)"
+
+      for tier <- [:read, :write] do
+        assert evaluate(ctx.fixture, code, tier) ==
+                 {:error, "Evaluation reductions limit exceeded."}
+      end
+    end
+  end
+
   describe "engine code validation independent of wrapper" do
     test "oversized or invalid UTF-8 code fails with a bounded error", ctx do
       assert Engine.max_code_bytes() == 16_384

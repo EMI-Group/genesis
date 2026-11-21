@@ -14,6 +14,16 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
   Reduction/memory limits are sampled every 5 ms, not OS resource isolation: a native
   BIF can transiently overshoot a sample, and an approved sudo program has full VM
   authority, including the ability to interfere with this guardian or tracing.
+
+  The sampled reduction budget charges evaluation WORK only: the root worker and every
+  OTP-started (`proc_lib`) descendant, which is where Dune's interpreter and its Task
+  harness run the evaluated code. Dune also enforces its own per-evaluation budget with
+  a busy-poll helper started by a bare `spawn/1`, whose reductions grow with WALL time
+  (~10M per 100ms) rather than with work; charging that helper made this budget a
+  wall-clock detector that reported a legitimate evaluation blocked in an admitted call
+  (or in `Process.sleep/1`) as a runaway. Bare-spawn helpers remain covered by the tree
+  memory and process-count budgets, and a runaway interpreted evaluation is still
+  stopped and reported by Dune's own reductions limit for read and write.
   """
   alias EvoGit.Agent.Tools.ElixirEval.{Broker, Custodian, Render}
   @max_heap_words 2_000_000
@@ -163,6 +173,9 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
     state = %{
       worker: worker,
       workers: %{worker => monitor},
+      # Reductions are charged to the root worker and to OTP-started work
+      # processes only; see the moduledoc. Memory stays tree-wide.
+      counted: MapSet.new([worker]),
       owners: owners,
       broker_ref: broker_ref,
       custody_ref: custody_ref,
@@ -294,7 +307,24 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
       state
     else
       monitor = Process.monitor(child)
-      %{state | workers: Map.put(state.workers, child, monitor), spawned: state.spawned + 1}
+
+      %{
+        state
+        | workers: Map.put(state.workers, child, monitor),
+          counted: maybe_count(state.counted, child),
+          spawned: state.spawned + 1
+      }
+    end
+  end
+
+  # Dune's reduction poller is started with a bare `spawn/1`, so it is the only
+  # descendant whose reductions measure observation rather than evaluation work;
+  # charging it overruled legitimate blocked-but-cheap evaluations. OTP-started
+  # (`proc_lib`) processes are the ones evaluated work runs in.
+  defp maybe_count(counted, child) do
+    case Process.info(child, :initial_call) do
+      {:initial_call, {:proc_lib, _, _}} -> MapSet.put(counted, child)
+      _ -> counted
     end
   end
 
@@ -306,10 +336,16 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
           {bytes, reds, total}
 
         info ->
-          count = Keyword.fetch!(info, :reductions)
           binary_bytes = Enum.reduce(info[:binary], 0, fn {_, size, _}, sum -> sum + size end)
-          delta = max(count - Map.get(state.reductions, pid, 0), 0)
-          {bytes + info[:memory] + binary_bytes, Map.put(reds, pid, count), total + delta}
+          memory = bytes + info[:memory] + binary_bytes
+
+          if MapSet.member?(state.counted, pid) do
+            count = Keyword.fetch!(info, :reductions)
+            delta = max(count - Map.get(state.reductions, pid, 0), 0)
+            {memory, Map.put(reds, pid, count), total + delta}
+          else
+            {memory, reds, total}
+          end
       end
     end)
   end
