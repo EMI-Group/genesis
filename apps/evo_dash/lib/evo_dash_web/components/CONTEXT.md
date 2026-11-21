@@ -42,7 +42,7 @@ Reusable Phoenix function components and layout templates for the EvoDash web in
 
 `layouts/root.html.heex` is the only template (meta tags, CSRF, LiveView title, asset links, client-side theme script); all component modules `use EvoDashWeb, :html` and are pure function components (`<.task_card task={@task} />`, `<.flash kind={:warning} flash={@flash} />`).
 
-Flash kinds: `:info` → `alert-info` + `hero-information-circle` (success/informational), `:error` → `alert-error` + `hero-exclamation-circle` (errors, validation failures), `:warning` → `alert-warning` + `hero-exclamation-triangle` (warnings, missing configuration).
+Flash kinds: `:info` → `alert-info` + `hero-information-circle` (success/informational), `:error` → `alert-error` + `hero-exclamation-circle` (errors, validation), `:warning` → `alert-warning` + `hero-exclamation-triangle` (warnings, missing config).
 
 Theme is entirely CLIENT-side except the shell accent: `Layouts.app`'s `attr(:accent_color, :string, default: "blue")` sets `data-accent-color` on `#app-layout` from `LiveHooks.Appearance`'s node-aware `EvoGit.Config.resolve([:appearance, :accent_color])` via `EvoDash.AccentCache`, and app.css's ten accent rules retarget `--color-primary`/`--color-accent` for that subtree; everything else (localStorage `phx:theme`, `data-theme`/`data-theme-mode`, `phx:set-theme` toggles, `@custom-variant dark`, `themes: false` → `--color-base-*` + `color-mix`) is the parent `lib/evo_dash_web/CONTEXT.md` "Theming & Color System". ProjectsLive's per-project `--project-accent`/`--project-ring-accent` on `#dashboard-root` is separate; shell chrome is token-based (`#app-layout` + sidebar `bg-base-200`, `#main-scroll`/`main#main-content` `bg-base-100`).
 
