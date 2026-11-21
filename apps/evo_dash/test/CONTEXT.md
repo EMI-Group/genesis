@@ -4,7 +4,7 @@
 
 ExUnit suite for the `:evo_dash` app: the runner bootstrap, shared support modules, and suites that mirror `apps/evo_dash/lib/`.
 Test files (`*_test.exs`) live in `evo_dash/` and `evo_dash_web/` beside the code they cover, plus `support/config_dir_test.exs` and `evo_dash/runtime_config_test.exs` covering the root `config/runtime.exs`; bootstrap is `test_helper.exs`, helpers are `support/`.
-`support/` holds 7 compiled `.ex` modules plus ONE test script, `support/config_dir_test.exs` (only `*.ex` files are compiled, so ExUnit loads the `_test.exs` like any suite).
+`support/` holds 8 compiled `.ex` modules plus TWO uncompiled test scripts, `support/config_dir_test.exs` and `support/fs_cleanup_test.exs` (only `*.ex` files are compiled, so ExUnit loads the `_test.exs` like any suite).
 Case modules split between `async: true` and globally constrained `async: false` suites; the sync inventory and parallelism policy live under "Async policy".
 `mix test apps/evo_dash/test` from the umbrella root runs exactly this app's suite; bare root `mix test` also runs the `evo_git` suite first.
 The domain singletons (`EvoGit.Store`, `EvoGit.TaskRegistry`, `EvoGit.TaskInfo`, `EvoGit.VCT`) live in `:evo_git` and are tested there; per-test Store/TaskRegistry isolation is `EvoDash.Test.IsolatedTaskStore` (children of `EvoGit.Supervisor`, NOT `EvoDash.Supervisor`).
@@ -12,7 +12,7 @@ The domain singletons (`EvoGit.Store`, `EvoGit.TaskRegistry`, `EvoGit.TaskInfo`,
 
 ## Routing Table
 
-- `support/` → `ConnCase`, `TestHelpers` (`flush_loading/4`), the two directory-picker fakes, `EvoDash.Test.IsolatedTaskStore`, `EvoDash.Test.ConfigDir` (the per-process config-dir seam + its proof test `support/config_dir_test.exs`) — detail: `support/CONTEXT.md`.
+- `support/` → `ConnCase`, `TestHelpers` (`flush_loading/4`), the two directory-picker fakes, `EvoDash.Test.IsolatedTaskStore`, `EvoDash.Test.ConfigDir` (the per-process config-dir seam + its proof test `support/config_dir_test.exs`), `EvoDash.Test.FsCleanup` (the deadline-bounded temp-tree removal primitive + `support/fs_cleanup_test.exs`) — detail: `support/CONTEXT.md`.
 - `evo_dash/` → domain-layer suites (ActiveTasks, ChatHistory, AttachedFile, NodeContext, DirectoryPicker, SafeCall, DesktopLifetime, UpdateStatus, SettingsUtils, MarkdownRender, ConnectionDiagnostics, ChatGPTLogin/CLI/Stream, ProjectGit) — detail: `evo_dash/CONTEXT.md`.
   `node_context_test.exs` holds FOUR case modules (`NodeContextTest` + `NodeContextConfigTest` async, `NodeContextVctTest` + `NodeContextSessionTest` sync); `NodeContextVctTest` owns the VCT delegates and `NodeContextSessionTest` the interactive-session passthroughs, driving one REAL repo-less session per test through the top-level `StubAgent` role.
   The async `EvoDash.NodeContextTest` also covers the managed-process RPC helpers `list_processes/2`, `get_process/2`, `process_stats/2` and `process_control/4` against an isolated per-test `EvoGit.ProcessManager` (`Process.put(:evogit_process_manager_server, name)`).
@@ -56,9 +56,11 @@ Never silence noise by raising the global Logger level.
 The one leak class the suite structurally prevents is a `EvoGit.TaskRegistry` read worker calling a store that is being stopped; keep `IsolatedTaskStore`'s ordered teardown instead of reaching for a Logger-level silencing.
 
 ### Deterministic waits (no fixed sleeps, no tight windows)
-Bounded polls run at a 1–2 ms cadence (`@wait_poll_ms 2`, `@poll_ms 1`); a fixed `Process.sleep` is never a wait mechanism.
+Bounded polls run at a 1–2 ms cadence (`@wait_poll_ms 2`, `@poll_ms 1`); a fixed `Process.sleep` is never a wait for an async result — it survives only as a poll cadence (`@poll_ms`/`@wait_poll_ms`/`@poll_interval_ms`, 1–2 ms) or as producer/stub latency (`safe_call_test`'s `SlowServer`, `projects_live_test`'s `connect_delay_ms`, `health_controller_test`'s elapsed-wall-clock uptime model, `review_live_test.rm_rf_retry`'s filesystem backoff).
+A `receive … after N` INSIDE an injected runner/stub is a handshake-lost valve, not an await, and keeps its own budget.
 `refute_receive`/`refute_push_event` may use a 0 ms window ONLY after a preceding drain or `:sys.get_state` round-trip has provably completed the mailbox.
 A timed NEGATIVE window ("nothing else arrives") is dead time unless the claim itself is timing: prefer a structural witness read through `assigns/1`, then a 0 ms refute.
+Timed NEGATIVE windows of tens of milliseconds (0–50 ms `refute_receive`/`refute_push_event`/sampled negative polls in `node_aware_pure_test`, `review_live_test`, `safe_call_test`, `node_context_test`, `home_live_test`, `agents_live_task_broadcast_test`, `tasks_live_test`) stay: a short negative window can only false-PASS, never flake, and each is a multiple of the 10 ms test debounce seam with a structural backstop.
 The witness idioms, each proven non-vacuous in place:
 - a monotonic counter / flag written INSIDE the same callback that spawns the work (`chat_fetch_seq` for a history fetch, `approval_responses[id]` for an approval dispatch, `send_pending`/`send_in_flight` for an upload-gated send);
 - the supervised-child SET (`Task.Supervisor.children(EvoDash.TaskSupervisor)` filtered by `:"$callers"`), because `EvoDash.SafeCall.start/3` registers its child synchronously before the click returns;
@@ -69,16 +71,17 @@ Never shorten a window that IS the detection mechanism; positive assertions keep
 `assigns/1` is a synchronous `:sys.get_state(view.pid, 30_000)` round-trip and Erlang guarantees per-sender ordering, so `send(view.pid, msg)` followed by any `assigns/1` read is already synchronized.
 Always pass that explicit timeout: `:sys.get_state/1`'s 5 s default exits the test whenever the LiveView is starved on this shared host.
 The same applies to `Phoenix.LiveViewTest.render_async/2`, whose 5 s sibling is its 100 ms DEFAULT: pass the file's async budget (`render_async(view, async_wait_budget())` in `projects_live_test.exs`), because a fixed 100 ms is a load assumption, not a correctness bound.
-Debounce-sensitive waits poll the page's own pending flag or reuse the file-local `wait_until/2` / `flush_*_load/2` helper; async-load deadlines and poll budgets are 30 s module attributes (`@async_wait_budget_ms`, `@assigns_timeout_ms`, `@runner_start_timeout`, `@settle_timeout_ms`).
+Debounce-sensitive waits poll the page's own pending flag or reuse the file-local `wait_until/2` / `flush_*_load/2` helper; every await budget in the suite is a 30 s module attribute (`@async_wait_budget_ms`, `@assigns_timeout_ms`, `@runner_start_timeout`, `@settle_timeout_ms`).
 Per-suite wait contracts: `live/CONTEXT.md`, `live_hooks/CONTEXT.md`, `evo_dash/CONTEXT.md`.
 
 ### Per-test config dirs — cleanup drains supervised writers before removing
 `EvoDash.Test.ConfigDir.isolate!/1` (installed from a `setup` block) creates one unique `<tmp>/<prefix>-<os pid>-<int>-<random>` dir per test and removes it in `on_exit`.
 The `<os pid>` and random components are load-bearing: `System.unique_integer/1` is unique only WITHIN one BEAM, so two suites sharing one `TMPDIR` used to compute the SAME path and each remove the other's LIVE dir mid-test (an observed `File.Error` reading `config.toml`) — never name a temp fixture with a bare integer.
 That removal is only safe while no LIVE process can recreate an entry under it, and the shared `EvoDash.TaskSupervisor` never stops children per test: a spawned page-load child keeps the test pid in its `:"$callers"` chain, resolves `<override>/genesis` and writes a skeleton (`EvoGit.RemoteConnections.list/0`), so `File.rm_rf` can meet a just-recreated tree and fail `{:error, :eexist, _}`.
-The seam's invariant (detail: `support/CONTEXT.md`): the `on_exit` closure captures the REGISTRAR pid and first waits, monitor-based and bounded, for every `EvoDash.TaskSupervisor` child it can attribute to this dir — registrar in `:"$callers"`, a caller chain that resolves the dir, or a `:"$callers"` pid recorded in the dir's own `.evodash-owners/` registry — then removes the dir; a surviving `:eexist` is retried boundedly, and every other error still raises through `File.rm_rf!/1`.
-`isolate_module!` records those owner markers, so a module-level dir is now drained as safely as `isolate!/1` (whose registrar is the test pid itself and needs no marker on the hot path); the registry lives INSIDE the dir, so removal is self-cleaning and a stale marker for a dead pid is never matched.
-The only remaining escape is a writer whose caller chain names no registrar and no recorded owner — a raw `spawn/1`.
+The seam's invariant (detail: `support/CONTEXT.md`): the `on_exit` closure captures the REGISTRAR pid and first waits, monitor-based and bounded, for every `EvoDash.TaskSupervisor` child it can attribute to this dir — registrar in `:"$callers"`, a caller chain that resolves the dir, or a `:"$callers"` pid recorded in the dir's own `.evodash-owners/` registry — then removes the dir through `EvoDash.Test.FsCleanup.rm_rf!/2`, passing that drain as its `:before_attempt` hook (re-run before EVERY attempt with the removal's remaining window); a transient `:eexist`/`:enotempty` is retried until the primitive's single 10 s deadline, and every other error still raises `File.Error`.
+`isolate!/1`/`isolate_module!/1` is the config directory's ONLY removal owner: `on_exit` is LIFO, so a suite's own raw `File.rm_rf!` for the same dir runs FIRST with no drain and the drained callback loses the race — never register a second raw removal.
+`isolate_module!` records those owner markers, so a module-level dir is drained as safely as `isolate!/1` (whose registrar is the test pid itself and needs no marker on the hot path); the registry lives INSIDE the dir, so removal is self-cleaning and a stale marker for a dead pid is never matched.
+The only writer the drain cannot name is one whose caller chain carries no registrar and no recorded owner — a raw `spawn/1` — and it relies on the primitive's deadline alone.
 A new config-isolating suite needs nothing extra: call `isolate!/1` from `setup` and keep the module `async: true`.
 The drain also logs a `Logger.warning` when it actually WAITS more than 1 s (two `System.monotonic_time` reads otherwise, so it is free and silent on a healthy run) — a blocked drain is invisible in ExUnit's per-test time and was the symptom of the suite's two worst hidden costs.
 A test must RELEASE a blocking stub/worker it started; leaving one to time out makes the test pay that timeout serially in this drain, outside every reported timing.

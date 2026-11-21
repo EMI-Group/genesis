@@ -2,10 +2,10 @@
 
 ## Intent
 
-Shared, production-free support modules for the EvoDash suite: the connection case template, the async-load flush helper, the two directory-picker fakes, the Store/TaskRegistry isolation helper, the per-process config-dir seam, and the hermetic ChatGPT sign-in stub.
+Shared, production-free support modules for the EvoDash suite: the connection case template, the async-load flush helper, the two directory-picker fakes, the Store/TaskRegistry isolation helper, the per-process config-dir seam, the deadline-bounded temp-tree removal primitive, and the hermetic ChatGPT sign-in stub.
 Compiled only in `:test` via `elixirc_paths(:test) = ["lib", "test/support"]` (`apps/evo_dash/mix.exs`).
-Seven compiled `.ex` modules carry setup, helpers and fakes only — never test logic or assertions.
-The directory also holds ONE test script, `config_dir_test.exs`, which is NOT compiled (only `*.ex` is) but loaded by ExUnit like any other suite; it lives here because it is the proof module for this directory's config-dir seam.
+Eight compiled `.ex` modules carry setup, helpers and fakes only — never test logic or assertions.
+The directory also holds TWO test scripts, `config_dir_test.exs` and `fs_cleanup_test.exs`, which are NOT compiled (only `*.ex` is) but loaded by ExUnit like any other suite; they live here because each is the proof module for one support module of this directory.
 
 ## Routing Table
 
@@ -65,11 +65,12 @@ It is the resolver behind the DEFAULT-INERT `:config_dir_fun` seam of `EvoGit.Pl
 API: `resolve/0` (the installed fun — own `:evogit_config_dir` dictionary entry, then the first override found in the `$callers` chain of LOCAL-node pids), `activate/1`, `isolate_module!/1` (unique `<tmp>/<prefix>-<os pid>-<int>-<random>` dir + `on_exit` cleanup + an owner marker, no dictionary write), `isolate!/1` (`isolate_module!` + `activate`, i.e. the plain-`setup` convenience, no marker), `config_dir/0` (`EvoGit.Platform.config_dir/0`, the concrete `<override>/genesis` path), `await_supervised_writers/2` (registrar-only drain, `:ok | :timeout`) and `await_dir_writers/3` (the cleanup drain: registrar, resolved destination, or recorded owner).
 The OS pid and random components in the name are load-bearing: `System.unique_integer/1` is unique only within one BEAM, so two suites sharing one `TMPDIR` used to compute the same path and remove each other's LIVE dir mid-test.
 A module-level dir records its activating pids as empty files under `<dir>/.evodash-owners/<pid>` (read back with `:erlang.list_to_pid/1`, no process needed); the registry sits INSIDE the dir so removal is self-cleaning and a marker for a dead pid is never matched.
-**Cleanup invariant** — the `on_exit` removal captures the REGISTRAR pid (`self()` at `isolate_module!` time, i.e. the test process for `isolate!/1`) and FIRST waits, monitor-based and bounded (`@cleanup_writer_budget_ms` 5 s, re-scanning so a still-live view's next load is awaited too), for every live `EvoDash.TaskSupervisor` child attributable to this dir: its `:"$callers"` chain names the registrar, or resolves this dir, or names a pid recorded in the dir's owner registry; only then does it `File.rm_rf`.
+**Cleanup invariant** — the `on_exit` removal captures the REGISTRAR pid (`self()` at `isolate_module!` time, i.e. the test process for `isolate!/1`) and FIRST waits, monitor-based and bounded (`@cleanup_writer_budget_ms` 5 s, re-scanning so a still-live view's next load is awaited too), for every live `EvoDash.TaskSupervisor` child attributable to this dir: its `:"$callers"` chain names the registrar, or resolves this dir, or names a pid recorded in the dir's owner registry; only then does it remove the tree through `EvoDash.Test.FsCleanup.rm_rf!/2`, with that same drain passed as the `:before_attempt` hook (it receives the removal's REMAINING window and runs before EVERY attempt).
 The pid stays readable in the CHILD's dictionary after the test process died, which is what makes the drain deterministic (`ExUnit.OnExitHandler` runs `on_exit` after `exit(:shutdown)`).
 Why it is required: the shared `EvoDash.TaskSupervisor` never stops children per test, and an async page load resolves `<override>/genesis` and writes a skeleton (`EvoGit.RemoteConnections.list/0` → `File.mkdir_p/1` + `File.write/2`), so removing the tree while such a child is in flight recreates it and fails `File.rm_rf` with `{:error, :eexist, _}` (the observed once-per-full-run `File.Error` inside `on_exit`).
-A surviving `{:error, :eexist, _}` is retried a bounded `@cleanup_attempts` times (3, re-draining each attempt) as the honest backstop for a re-creator whose caller chain identifies no registrar and no recorded owner — a raw `spawn/1`; per-test `isolate!/1` and module-level `isolate_module!` are both fully covered.
-Every other removal error is still raised through `File.rm_rf!/1`, so a real failure keeps failing loudly.
+`isolate!/1` and `isolate_module!/1` are the config directory's ONLY removal owner: `on_exit` is LIFO, so a suite registering its OWN raw `File.rm_rf!` for the same dir removes the tree FIRST with no drain at all and the drained callback is the one that loses the race — a second raw `File.rm_rf!` reinstates the flake by construction.
+A re-creator whose caller chain identifies no registrar and no recorded owner — a raw `spawn/1` — is covered by the primitive's single deadline rather than a fixed attempt count: the drain runs before EVERY attempt, so a writer that keeps winning the race is retried (20 ms cadence, one 10 s budget, paid only on that path) instead of counted, and per-test `isolate!/1` and module-level `isolate_module!` are both fully covered.
+A non-transient removal error, or a transient one outliving the deadline, still raises `File.Error`, so a real failure keeps failing loudly.
 Both apps' helpers share the same process-dictionary key, so a root `mix test` resolves identically whichever helper installed the fun last.
 `$callers` inheritance covers `GenServer`/`Task`/`Supervisor` children started from the test process (`Task.Supervisor.start_child/2` included — the `EvoDash.SafeCall` path) and a `Phoenix.LiveViewTest` view (its channel sets `$callers` to the test pid, `deps/phoenix_live_view/lib/phoenix_live_view/channel.ex:1297`); it does NOT cover a raw `spawn/1` or the boot-time app-global singletons (`EvoGit.AgentScheduler`, `EvoGit.TaskRegistry`, `EvoGit.Store`, `EvoGit.PeakHourEngine`, `EvoDash.ChatHistory`, `EvoDash.UpdateStatus`), so modules whose config reads happen inside those stay `async: false`.
 Proof + usage contract, all three levels asserted empirically in `config_dir_test.exs`: `EvoDash.Test.ConfigDirTest` keeps the supervised-task inheritance, nested-task transitivity, raw-spawn escape boundary and fallback redirect proofs async (2 tests), plus a `cleanup ordering (supervised writers)` describe that pins the drain (it waits for a supervised writer holding the test pid, whose late `mkdir_p` + write lands before removal, and it IGNORES a writer spawned from a foreign caller chain).
@@ -77,10 +78,17 @@ Proof + usage contract, all three levels asserted empirically in `config_dir_tes
 The mounted proof asserts that no foreign batch runner is installed, checks the view's `$callers` chain, waits with a bounded poll for the real Projects `model_selection_ready?`, checks its sole canonical provider and selected spec, and verifies Settings' isolated config path and rendered provider action.
 The shared fixture helper is defined before the async module, creates a unique config directory per test and never changes process-wide state; config-directory isolation itself remains async-safe.
 
+### `EvoDash.Test.FsCleanup` (`fs_cleanup.ex`)
+
+`rm_rf!/2(path, opts \\ [])` is the ONE deadline-bounded recursive removal for a test-owned temp tree: `File.rm_rf/1` lists, deletes, then `rmdir`s the parent, so a LIVE writer in between fails the final rmdir with `{:error, :eexist, _}` (`:enotempty` on other filesystems) and `File.rm_rf!/1` raises a `File.Error` ExUnit attributes to the wrong test.
+It retries ONLY those transient reasons until ONE deadline (`:budget_ms`, default 10 s, `:retry_delay_ms` cadence 20 ms) — paid only when a writer actually keeps winning the race — and calls the `:before_attempt` hook with the REMAINING window before EVERY attempt, including the first.
+Any other reason, or a transient one outliving the deadline, logs a `Logger.error` naming the root path and the residual entries, then raises `File.Error`, so a genuinely unremovable tree still fails loudly.
+The config-dir seam is its first caller (it passes its writer drain as `:before_attempt`); proven by `fs_cleanup_test.exs`, an uncompiled ExUnit script in this directory.
+
 ### `EvoDash.Test.ChatGPTLoginStub` (`chatgpt_login_stub.ex`)
 
 Hermetic per-test stand-in for `EvoDash.ChatGPTLogin`, installed through `EvoDashWeb.LLMSetup.ChatGPTSignIn.login_module/0`'s CALL-TIME `$callers` seam (`:chatgpt_login_module`) plus the per-test Agent pid under `:chatgpt_stub_pid`.
-`install!/1(begin: {...}, statuses: [...])` starts the Agent in the CALLING process's dictionary and shrinks the poll to 5 ms; `begin/2`, `status/1` and `cancel/1` resolve the Agent through `$callers` too, because the boundary calls from `Task.async`/poll tasks, never only from the view.
+`install!/1(begin: {...}, statuses: [...])` starts the Agent in the CALLING process's dictionary, shrinks the poll to 5 ms and seeds the SIWC call-budget seam (`Process.put(:chatgpt_signin_call_timeout_ms, 30_000)`); `begin/2`, `status/1` and `cancel/1` resolve the Agent through `$callers` too, because the boundary calls from `Task.async`/poll tasks, never only from the view.
 Every call notifies the test pid (`{:chatgpt_stub, :begin, account}` / `:status` / `:cancel`) and a cancelled flow always answers `:pending`, so no loopback listener, network or BEAM-global state is involved.
 Used by `live/settings_live/provider_wizard_test.exs` (wizard surface) and the generalized-sign-in suites `chatgpt_sign_in_state_test.exs` / `chatgpt_sign_in_surfaces_test.exs` (detail + status surfaces).
 
@@ -96,7 +104,7 @@ Measured per-call breakdown: ~0.9 ms already-migrated boot + ~0.07 ms copy + ~1.
 ## Constraints
 
 - Keep support modules free of test logic and assertions.
-- `config_dir_test.exs` is a TEST file placed here because it proves this directory's support module: only `*.ex` files are compiled through `elixirc_paths(:test)`, so the `_test.exs` is loaded by ExUnit as an ordinary test file (and carries the assertions).
+- `config_dir_test.exs` / `fs_cleanup_test.exs` are TEST files placed here because each proves one support module: only `*.ex` files are compiled through `elixirc_paths(:test)`, so a `_test.exs` is loaded by ExUnit as an ordinary test file (and carries the assertions).
 - Keep the isolation helper's shutdown ORDER (registry → read-worker drain → store → supervisor) and the unlink; both are load-bearing for zero stray console output.
 - **Two concurrent runs of the same suite under one `TMPDIR` collide**: isolated roots are `<tmp>/evogit_test_<prefix>_<unique_integer>`, and `System.unique_integer/1` is unique only WITHIN one BEAM.
   Symptoms look unrelated — `isolated_task_store_test.exs`'s `assert [^root] = isolated_root_dirs()` failing, a `File.CopyError` while seeding, then a cascade of `EvoGit.Store`/`EvoGit.TaskRegistry` "no process" failures (a failed `isolate!/1` leaves the production children terminated for the rest of that run).
