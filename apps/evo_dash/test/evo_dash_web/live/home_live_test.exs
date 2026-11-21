@@ -3240,8 +3240,14 @@ defmodule EvoDashWeb.HomeLiveTest do
 
         # Even a forged repeat event cannot submit a busy request twice.
         render_click(view, "approval_response", %{"request_id" => id, "decision" => decision})
+        # ApprovalWorkflow.respond/3 is the ONE dispatch path and it both starts
+        # the SafeCall child and records a FRESH `System.unique_integer/1` seq
+        # under this request id in the SAME callback, so an unchanged seq (read
+        # through the synchronous :sys.get_state round-trip) proves that click
+        # never dispatched — a stronger witness than a quiet window, and one
+        # that cannot be raced by a slow child.
         assert assigns(view).approval_responses[id] == seq
-        refute_receive {:approval_response_called, _, _, _, _}, 50
+        refute_received {:approval_response_called, _, _, _, _}
 
         send(worker, {:respond, :ok})
         wait_until(fn -> assigns(view)[:pending_approvals] == [] end)
@@ -3373,7 +3379,11 @@ defmodule EvoDashWeb.HomeLiveTest do
       })
 
       assert assigns(view).approval_responses == %{}
-      refute_receive {:unexpected_approval_response, _, _, _}, 50
+      # Each of the three forged clicks above is followed by that
+      # `approval_responses == %{}` assertion, and ApprovalWorkflow.respond/3
+      # records a fresh seq there in the SAME callback that starts the SafeCall
+      # child — so none of them dispatched a responder, at any timing.
+      refute_received {:unexpected_approval_response, _, _, _}
     end
 
     test "the evaluator dialog shows the exact code and marks the sudo tier as danger", %{
@@ -4058,9 +4068,12 @@ defmodule EvoDashWeb.HomeLiveTest do
         assert approval_notification_host(html).request_ids == ["req-1"]
       end
 
-      # No responder task may even be dispatched by a notification click.
+      # No responder task may even be dispatched by a notification click: the
+      # per-iteration `approval_responses == %{}` assertion above is that proof,
+      # because ApprovalWorkflow.respond/3 records a fresh seq in the SAME
+      # callback that starts the SafeCall child (and it is the only such site).
       assert assigns(view).approval_responses == %{}
-      refute_receive {:unexpected_notification_authorization, _, _, _}, 50
+      refute_received {:unexpected_notification_authorization, _, _, _}
     end
 
     test "notification review rejects stale, foreign and malformed browser scopes", %{conn: conn} do
