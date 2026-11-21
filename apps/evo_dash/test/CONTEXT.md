@@ -75,6 +75,9 @@ That removal is only safe while no LIVE process can recreate an entry under it, 
 The seam's invariant (detail: `support/CONTEXT.md`): the `on_exit` closure captures the REGISTRAR pid and first waits, monitor-based and bounded, for every `EvoDash.TaskSupervisor` child that still lists it in `:"$callers"`, then removes the dir; a surviving `:eexist` is retried boundedly for a re-creator with no registrar in its chain, and every other error still raises through `File.rm_rf!/1`.
 `isolate!` is therefore the covered path — a module-level `isolate_module!` dir is only backstopped, because its registrar is the `setup_all` process, which appears in no child's chain.
 A new config-isolating suite needs nothing extra: call `isolate!/1` from `setup` and keep the module `async: true`.
+The drain also logs a `Logger.warning` when it actually WAITS more than 1 s (two `System.monotonic_time` reads otherwise, so it is free and silent on a healthy run) — a blocked drain is invisible in ExUnit's per-test time and was the symptom of the suite's two worst hidden costs.
+A test must RELEASE a blocking stub/worker it started; leaving one to time out makes the test pay that timeout serially in this drain, outside every reported timing.
+The historical biggest offender was not a leaked stub but `:global` lock contention on the LLMDB catalog load (see the warm-up in `test_helper.exs`).
 
 ### Mount funnels — a page-load result must never clobber test-driven state
 Some LiveViews spawn an `EvoDash.TaskSupervisor` child at mount or on a `handle_params` patch, and its result message REPLACES assigns with the mount-time snapshot.
@@ -83,6 +86,9 @@ They locate this mount's children by the view pid in the child's `:"$callers"` e
 The `:"$callers"` filter is load-bearing: `EvoDash.TaskSupervisor` never kills children per test, so waiting on EVERY supervisor child made each mount pay its whole deadline; the owner-aware poll (2 ms cadence, 30 s best-effort cap) looks only at this mount's tasks.
 `review_live_test.flush_review_load/2` composes the funnel with `EvoDashWeb.TestHelpers.flush_loading/4` (funnel first, then the loading marker), and `tasks_live_test.flush_tasks_load/2` adds a `tasks_loading == false` poll plus a final `render(view)`.
 Reuse one of these helpers instead of re-deriving the race; `render_async/2` does NOT await `Task.Supervisor` children, which is why `flush_loading/4` and the funnels exist.
+A funnel must EXCLUDE the pids the page itself declares long-lived (the inspector's serial `StreamWatch` worker in `assigns[:inspector_stream_worker]`), because such a child cannot exit while it is attached and the funnel would sit on its whole fallback — that single mistake cost `agents_live_test` 5 s.
+The trailing `render/1` of a funnel is load-bearing: LiveViewTest relays queued `push_event`s only when the proxy applies a diff, so skipping it defers the same merge cost instead of removing it.
+`EvoDashWeb.TestHelpers.flush_loading/4` is a loading-marker poll bound, not a `$callers` monitor; only the page funnels monitor children.
 
 ### Definition order inside a test file is load-bearing
 An `async: true` module is handed to the ExUnit runner as soon as its `defmodule` is evaluated, i.e. while the rest of the file is still loading.
