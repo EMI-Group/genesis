@@ -138,7 +138,7 @@ Scripts override that fallback (nil/error → fallback; invalid canonical script
 
 ## Peak/Off-Peak Concurrency Engine (`EvoGit.PeakHourEngine`)
 
-`EvoGit.PeakHourEngine` lives in `../peak_hour_engine.ex` (outside this node) and re-derives EVERY peak/day/holiday decision from `EvoGit.PeakHours` (`in_peak?/4`, `next_transition/4`, `effective_concurrency/2`) with no second code path; the scheduler only carries the per-account schedule keys (`off_peak_days`, `off_peak_holidays`, `windows`, `tz`) through `State` and re-derives them on a `"scheduler_config"` event. Detail: `../CONTEXT.md`.
+`EvoGit.PeakHourEngine` lives in `../peak_hour_engine.ex` (outside this node) and re-derives EVERY peak/day/holiday decision from `EvoGit.PeakHours` (`in_peak?/4`, `next_transition/4`, `effective_concurrency/2`), with no second code path; the scheduler only carries the per-account schedule keys (`off_peak_days`, `off_peak_holidays`, `windows`, `tz`) through `State` and re-derives them on a `"scheduler_config"` event (`../CONTEXT.md`).
 
 ## Blocking Surface (ONE GenServer serves every agent)
 
