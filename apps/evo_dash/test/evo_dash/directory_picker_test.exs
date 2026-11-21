@@ -32,6 +32,12 @@ defmodule EvoDash.DirectoryPickerTest do
   alias EvoDash.DirectoryPicker
   alias EvoDash.DirectoryPicker.Wx.Fake, as: FakeWx
 
+  # Every result/dialog message below is produced by an ASYNC producer (the
+  # pick Task, the gated dialog), so a ~1 s literal budget is a latency
+  # assumption rather than a correctness bound: the shared host swings 10-30x
+  # under load (see test/CONTEXT.md).
+  @async_wait_budget_ms 30_000
+
   setup do
     # Reset the fake's mode/gate. The fake server pid is deliberately kept —
     # picks now init wx fresh in each Task, so the cached server pid is stale
@@ -67,23 +73,25 @@ defmodule EvoDash.DirectoryPickerTest do
     test "first pick opens the dialog and delivers the picked path" do
       assert DirectoryPicker.pick(self(), "picker-1") == :ok
       await_pick_idle()
-      assert_receive {:directory_picker_result, "picker-1", {:ok, "/fake/picked/dir"}}, 1000
+
+      assert_receive {:directory_picker_result, "picker-1", {:ok, "/fake/picked/dir"}},
+                     @async_wait_budget_ms
     end
 
     test "subsequent picks after first pick work correctly" do
       assert DirectoryPicker.pick(self(), "picker-1") == :ok
       await_pick_idle()
-      assert_receive {:directory_picker_result, "picker-1", {:ok, _}}, 1000
+      assert_receive {:directory_picker_result, "picker-1", {:ok, _}}, @async_wait_budget_ms
 
       assert DirectoryPicker.pick(self(), "picker-2") == :ok
       await_pick_idle()
-      assert_receive {:directory_picker_result, "picker-2", {:ok, _}}, 1000
+      assert_receive {:directory_picker_result, "picker-2", {:ok, _}}, @async_wait_budget_ms
     end
 
     test "picks work even after the wx server was killed between picks" do
       assert DirectoryPicker.pick(self(), "picker-1") == :ok
       await_pick_idle()
-      assert_receive {:directory_picker_result, "picker-1", {:ok, _}}, 1000
+      assert_receive {:directory_picker_result, "picker-1", {:ok, _}}, @async_wait_budget_ms
 
       # Simulate OTP's wxe_server stopping itself when its last registered user
       # exits. Since each pick now inits wx fresh in its Task, the next pick
@@ -92,13 +100,15 @@ defmodule EvoDash.DirectoryPickerTest do
 
       assert DirectoryPicker.pick(self(), "picker-2") == :ok
       await_pick_idle()
-      assert_receive {:directory_picker_result, "picker-2", {:ok, "/fake/picked/dir"}}, 1000
+
+      assert_receive {:directory_picker_result, "picker-2", {:ok, "/fake/picked/dir"}},
+                     @async_wait_budget_ms
     end
 
     test "a pick whose wx server dies mid-pick degrades to :unavailable and clears busy" do
       assert DirectoryPicker.pick(self(), "picker-1") == :ok
       await_pick_idle()
-      assert_receive {:directory_picker_result, "picker-1", {:ok, _}}, 1000
+      assert_receive {:directory_picker_result, "picker-1", {:ok, _}}, @async_wait_budget_ms
 
       # Server dies between wx init and set_env/1 in the pick Task — the Task's
       # wx call exits with {:noproc, ...}, which must NOT crash the picker.
@@ -107,7 +117,7 @@ defmodule EvoDash.DirectoryPickerTest do
       assert DirectoryPicker.pick(self(), "picker-2") == :ok
       # Exactly one result message, degraded to :unavailable.
       await_pick_idle()
-      assert_receive {:directory_picker_result, "picker-2", :unavailable}, 1000
+      assert_receive {:directory_picker_result, "picker-2", :unavailable}, @async_wait_budget_ms
       # Zero window (invariant A): the await fence above proves the pick Task is
       # done, so its one result message is already in this mailbox.
       refute_receive {:directory_picker_result, "picker-2", _}, 0
@@ -116,7 +126,7 @@ defmodule EvoDash.DirectoryPickerTest do
       FakeWx.set_mode(:normal)
       assert DirectoryPicker.pick(self(), "picker-3") == :ok
       await_pick_idle()
-      assert_receive {:directory_picker_result, "picker-3", {:ok, _}}, 1000
+      assert_receive {:directory_picker_result, "picker-3", {:ok, _}}, @async_wait_budget_ms
     end
 
     test "wx init failure in Task degrades to :unavailable and clears busy" do
@@ -127,7 +137,7 @@ defmodule EvoDash.DirectoryPickerTest do
       # :ok because the Task was spawned successfully.
       assert DirectoryPicker.pick(self(), "picker-1") == :ok
       await_pick_idle()
-      assert_receive {:directory_picker_result, "picker-1", :unavailable}, 1000
+      assert_receive {:directory_picker_result, "picker-1", :unavailable}, @async_wait_budget_ms
       # Zero window (invariant A): the await fence above proves the pick Task is
       # done, so its one result message is already in this mailbox.
       refute_receive {:directory_picker_result, "picker-1", _}, 0
@@ -136,7 +146,7 @@ defmodule EvoDash.DirectoryPickerTest do
       FakeWx.set_mode(:normal)
       assert DirectoryPicker.pick(self(), "picker-2") == :ok
       await_pick_idle()
-      assert_receive {:directory_picker_result, "picker-2", {:ok, _}}, 1000
+      assert_receive {:directory_picker_result, "picker-2", {:ok, _}}, @async_wait_budget_ms
     end
 
     test "concurrent picks are serialized (busy)" do
@@ -145,7 +155,7 @@ defmodule EvoDash.DirectoryPickerTest do
       FakeWx.set_gate(self())
 
       assert DirectoryPicker.pick(self(), "picker-1") == :ok
-      assert_receive {:dialog_open, task_pid}, 5_000
+      assert_receive {:dialog_open, task_pid}, @async_wait_budget_ms
 
       # Second pick while busy → synchronous unavailable, no result message.
       # Zero window (invariant B): the rejected pick never reached the
@@ -156,11 +166,13 @@ defmodule EvoDash.DirectoryPickerTest do
       # Release the dialog; the first pick completes and busy clears.
       send(task_pid, :release_dialog)
       await_pick_idle()
-      assert_receive {:directory_picker_result, "picker-1", {:ok, "/fake/picked/dir"}}, 1000
+
+      assert_receive {:directory_picker_result, "picker-1", {:ok, "/fake/picked/dir"}},
+                     @async_wait_budget_ms
 
       assert DirectoryPicker.pick(self(), "picker-3") == :ok
       await_pick_idle()
-      assert_receive {:directory_picker_result, "picker-3", {:ok, _}}, 1000
+      assert_receive {:directory_picker_result, "picker-3", {:ok, _}}, @async_wait_budget_ms
     end
 
     test "returns {:error, :unavailable} when disabled by config" do
@@ -176,18 +188,24 @@ defmodule EvoDash.DirectoryPickerTest do
     test "file pick opens the file dialog and delivers the picked file path" do
       assert DirectoryPicker.pick(self(), "file-1", :file) == :ok
       await_pick_idle()
-      assert_receive {:directory_picker_result, "file-1", {:ok, "/fake/picked/file.txt"}}, 1000
+
+      assert_receive {:directory_picker_result, "file-1", {:ok, "/fake/picked/file.txt"}},
+                     @async_wait_budget_ms
     end
 
     test "pick/2 behaves exactly like pick/3 :directory" do
       assert DirectoryPicker.pick(self(), "picker-1") == :ok
       await_pick_idle()
-      assert_receive {:directory_picker_result, "picker-1", {:ok, "/fake/picked/dir"}}, 1000
+
+      assert_receive {:directory_picker_result, "picker-1", {:ok, "/fake/picked/dir"}},
+                     @async_wait_budget_ms
 
       # pick/2 delegates to pick/3 with :directory — identical result protocol.
       assert DirectoryPicker.pick(self(), "picker-2", :directory) == :ok
       await_pick_idle()
-      assert_receive {:directory_picker_result, "picker-2", {:ok, "/fake/picked/dir"}}, 1000
+
+      assert_receive {:directory_picker_result, "picker-2", {:ok, "/fake/picked/dir"}},
+                     @async_wait_budget_ms
     end
 
     test "concurrent file picks are serialized (busy)" do
@@ -196,7 +214,7 @@ defmodule EvoDash.DirectoryPickerTest do
       FakeWx.set_gate(self())
 
       assert DirectoryPicker.pick(self(), "file-1", :file) == :ok
-      assert_receive {:dialog_open, task_pid}, 5_000
+      assert_receive {:dialog_open, task_pid}, @async_wait_budget_ms
 
       # Second file pick while busy → synchronous unavailable, no result message.
       # Zero window (invariant B): the rejected pick never reached the
@@ -212,11 +230,13 @@ defmodule EvoDash.DirectoryPickerTest do
       # Release the dialog; the first pick completes and busy clears.
       send(task_pid, :release_dialog)
       await_pick_idle()
-      assert_receive {:directory_picker_result, "file-1", {:ok, "/fake/picked/file.txt"}}, 1000
+
+      assert_receive {:directory_picker_result, "file-1", {:ok, "/fake/picked/file.txt"}},
+                     @async_wait_budget_ms
 
       assert DirectoryPicker.pick(self(), "file-3", :file) == :ok
       await_pick_idle()
-      assert_receive {:directory_picker_result, "file-3", {:ok, _}}, 1000
+      assert_receive {:directory_picker_result, "file-3", {:ok, _}}, @async_wait_budget_ms
     end
 
     test "file pick wx init failure degrades to :unavailable and clears busy" do
@@ -227,7 +247,7 @@ defmodule EvoDash.DirectoryPickerTest do
       # :ok because the Task was spawned successfully.
       assert DirectoryPicker.pick(self(), "file-1", :file) == :ok
       await_pick_idle()
-      assert_receive {:directory_picker_result, "file-1", :unavailable}, 1000
+      assert_receive {:directory_picker_result, "file-1", :unavailable}, @async_wait_budget_ms
       # Zero window (invariant A): the await fence above proves the pick Task is
       # done, so its one result message is already in this mailbox.
       refute_receive {:directory_picker_result, "file-1", _}, 0
@@ -236,7 +256,7 @@ defmodule EvoDash.DirectoryPickerTest do
       FakeWx.set_mode(:normal)
       assert DirectoryPicker.pick(self(), "file-2", :file) == :ok
       await_pick_idle()
-      assert_receive {:directory_picker_result, "file-2", {:ok, _}}, 1000
+      assert_receive {:directory_picker_result, "file-2", {:ok, _}}, @async_wait_budget_ms
     end
 
     test "returns {:error, :unavailable} when disabled by config (file mode)" do
