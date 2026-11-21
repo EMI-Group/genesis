@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const source = readFileSync(`${__dirname}/dialog_modal.js`, 'utf8')
   .replace('export default DialogModal;', 'DialogModal;');
 
-function mount({api = 'native', heading = true, hiddenHeading = false, rejectedHeadingFocus = false, unsafeTarget = false, alreadyOpen = false} = {}) {
+function mount({api = 'native', heading = true, hiddenHeading = false, rejectedHeadingFocus = false, unsafeTarget = false, alreadyOpen = false, animated = false} = {}) {
   const document = {activeElement: null};
   const nodes = new Map();
   function node(tag, {id = '', inside = false, action = false, visible = true} = {}) {
@@ -44,6 +44,11 @@ function mount({api = 'native', heading = true, hiddenHeading = false, rejectedH
   el.contains = element => !!element && (element === el || element.inside);
   el.open = alreadyOpen;
   if (alreadyOpen) el.setAttribute('open', '');
+  // `animated` adds the node the hook actually watches: both phases wait for a
+  // target-verified animationend on `.modal-box` (motion.css section 9), which
+  // only exists alongside the reduced-motion bridge every real page provides.
+  const box = node('div', {inside: true});
+  if (animated) el.querySelector = selector => (selector === '.modal-box' ? box : null);
   const title = node('h2', {inside: true, visible: !hiddenHeading});
   if (rejectedHeadingFocus) title.focus = () => {}; // visibility:hidden can retain layout boxes.
   const allow = node('button', {inside: true, action: true});
@@ -67,7 +72,16 @@ function mount({api = 'native', heading = true, hiddenHeading = false, rejectedH
   };
   const pushes = [];
   const events = new Map();
-  const hook = vm.runInNewContext(source, {document});
+  // Fake timers: the animated path arms its bounded fallback, so a test must be
+  // able to prove the animationend cancelled it instead of waiting 200 ms.
+  const timers = [];
+  const sandbox = {document};
+  if (animated) {
+    sandbox.genesisMotion = {prefersReducedMotion: () => false};
+    sandbox.setTimeout = (fn, ms) => { const timer = {fn, ms, cleared: false}; timers.push(timer); return timer; };
+    sandbox.clearTimeout = timer => { if (timer) timer.cleared = true; };
+  }
+  const hook = vm.runInNewContext(source, sandbox);
   Object.assign(hook, {
     el,
     handleEvent(name, fn) { events.set(name, fn); return name; },
@@ -82,7 +96,7 @@ function mount({api = 'native', heading = true, hiddenHeading = false, rejectedH
     return event;
   }
   hook.mounted();
-  return {hook, el, title, allow, deny, opener, document, pushes, events, fire, node,
+  return {hook, el, title, allow, deny, opener, document, pushes, events, fire, node, box, timers,
     shows: () => shows, closes: () => closes};
 }
 
@@ -250,4 +264,32 @@ test('server teardown closes and restores without a dismissal, removes handlers,
     assert.equal(page.el.open, false);
     assert.deepEqual(page.pushes, []);
   }
+});
+
+test('both phases animate the .modal-box panel the hook watches, never the dialog', () => {
+  const page = mount({animated: true});
+  const boxEnd = event => page.box.listeners.get('animationend')({target: event});
+
+  // Entry: the phase stays "opening" until the BOX itself finishes; a child
+  // animation bubbling through the box (or the ::backdrop, dispatched at the
+  // dialog) must never settle it early.
+  assert.equal(page.el.getAttribute('data-dialog-state'), 'opening');
+  boxEnd(page.allow);
+  assert.equal(page.el.getAttribute('data-dialog-state'), 'opening');
+  boxEnd(page.box);
+  assert.equal(page.el.getAttribute('data-dialog-state'), 'open');
+
+  // Exit: same watched node, and the dialog stays open until it finishes.
+  page.fire('cancel');
+  assert.equal(page.el.getAttribute('data-dialog-state'), 'closing');
+  boxEnd(page.allow);
+  assert.equal(page.el.getAttribute('data-dialog-state'), 'closing');
+  assert.equal(page.el.open, true);
+  boxEnd(page.box);
+  assert.equal(page.el.getAttribute('data-dialog-state'), null);
+  assert.equal(page.el.open, false);
+  assert.equal(page.box.listeners.size, 0, 'the listener is released on completion');
+  assert.ok(page.timers.length > 0 && page.timers.every(timer => timer.cleared),
+    'every bounded fallback is cancelled by the animationend');
+  onlyDismissal(page);
 });
