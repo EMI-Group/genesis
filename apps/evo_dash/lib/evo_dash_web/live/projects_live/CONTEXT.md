@@ -61,7 +61,7 @@ The only work left in the process is the instant click mutation (`cancel_task`, 
 
 ### Async write path (the ONE shape)
 
-Every write that can block — a task launch, a project command, an attachment read — has ONE shape: bump a monotonic seq (or record the picker id in `:attach_pending`), set its `*_running`/`*_pending` marker, spawn the work with `EvoDash.SafeCall.start/3,4` against `EvoDash.TaskSupervisor` (never a bare `Task.start`), then apply the result in a seq-marked (or marker-gated) `handle_info/2` that clears the marker, so the tab never blocks.
+Every blocking write — a task launch, a project command, an attachment read — has ONE shape: bump a monotonic seq (or record the picker id in `:attach_pending`), set its `*_running`/`*_pending` marker, spawn the work with `EvoDash.SafeCall.start/3,4` against `EvoDash.TaskSupervisor` (never a bare `Task.start`), then apply the result in a seq-marked (or marker-gated) `handle_info/2` that clears the marker, so the tab never blocks.
 A purely-instant validation failure stays synchronous and owns its own flash (`:attachments_over_cap`, a missing custom agent, a stale-model `{:error, reason}`, a failed `SafeCall.start` itself).
 A failed spawn clears nothing it never set (`task_launching`/`command_running` stay false) and flashes a retry-able error, so no affordance is left wedged.
 The GitHub issue-fix launch is the deliberate exception: a synchronous `SafeCall.run/1` start (`GitHub.start_fix_task/3`), because it already runs off the async issues flow and its result drives the modal close.
