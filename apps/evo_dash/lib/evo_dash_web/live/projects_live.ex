@@ -78,15 +78,16 @@ defmodule EvoDashWeb.ProjectsLive do
       >
         <%!--
           Full-bleed Phoenix LiveDashboard: no header chrome — the iframe
-          fills the entire main content area. The `Layouts.app` main content
-          is `flex-1` inside an `h-screen` flex column with `py-4` padding
-          (1rem top + 1rem bottom = 2rem), so `calc(100vh - 2rem)` spans
-          exactly the available area with no wasted space.
+          fills the entire main content area. `main#main-content` is the
+          `flex-1 min-h-0` page box inside the shell, so its content box
+          already excludes the persistent top bar and the main padding;
+          `.shell-fill` (height: 100%) spans exactly that area with no
+          viewport math, which keeps it correct if the shell chrome changes.
         --%>
         <iframe
           src={~p"/phoenix/dashboard/home"}
-          class="w-full"
-          style="min-height: calc(100vh - 2rem); border: none;"
+          class="w-full shell-fill"
+          style="border: none;"
           title="Phoenix LiveDashboard"
         ></iframe>
       </EvoDashWeb.Layouts.app>

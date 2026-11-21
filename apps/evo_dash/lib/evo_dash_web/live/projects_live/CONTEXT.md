@@ -232,6 +232,11 @@ Workspace events: `palette_mode` (`phx-value-mode="new_workspace"` enters the fo
 Palette keyboard arithmetic is `Palette.item_count/3` (filtered rows + 3 actions locally, 2 remotely) and `Palette.new_workspace_index/2`; the action exists on remote nodes (unlike "Create New Project"), and the form's ordered refs, description and refusal copy come from `Workspace.member_refs/2`, `description_param/1` and `error_message/1`.
 A node switch resets `workspaces`, `expanded_workspaces` and `new_workspace_members`, so a remote view never shows another node's workspaces.
 
+## Phoenix LiveDashboard (system dashboard) page
+
+`:system_dashboard` renders the `Layouts.app` shell plus ONE full-bleed `<iframe src="/phoenix/dashboard/home">` carrying `class="w-full shell-fill"` and `style="border: none;"`.
+`.shell-fill` (`height: 100%; min-height: 0`) sizes the iframe against the definite-height content box of `main#main-content`, which already excludes the persistent top bar (`.workbench-top`) and the main padding — no `100vh` math, so the frame stays correct when the shell chrome changes.
+
 ## Test strategy
 
 - `test/evo_dash_web/live/projects_live_test.exs` drives the real store; because mount/handle_params work is async, assertions on `projects`, `active_project_path` and notifications use `wait_assigns(view, predicate)` (~300 attempts) instead of asserting right after `live/2`.

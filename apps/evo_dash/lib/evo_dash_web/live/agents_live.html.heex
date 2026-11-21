@@ -20,8 +20,10 @@
   <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
     {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
   <% else %>
-    <!-- Fixed viewport layout: no page-level scroll on xl+, panels scroll independently -->
-    <div class="agents-page-layout animate-fade-in-up animation-delay-100">
+    <!-- Fills the shell content box (never the viewport): on xl+ the grid takes
+    `height: 100%` from `main#main-content` and each panel scrolls independently,
+    so there is no page-level scroll; below xl it is normal page flow. -->
+    <div class="agents-page-layout shell-fill animate-fade-in-up animation-delay-100">
       <EvoDashWeb.AgentsLive.TreePanel.tree_panel
         agents_error={@agents_error}
         agents_loading={@agents_loading}

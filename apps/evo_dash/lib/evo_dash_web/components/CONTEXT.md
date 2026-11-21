@@ -174,6 +174,12 @@ All three bottom-bar dropdowns (`theme_toggle_compact/1`, `language_selector/1`,
 
 The page content background is `bg-base-100` on **`#main-scroll`** — the scroll container (`flex-1 overflow-auto` inside the fixed `h-dvh` chain `body` / `#app-layout` `bg-base-200` → `#desktop-quit-hook` `flex-1 min-h-0`). It must stay there: a scroll container's own background paints its visible box at every scroll offset, whereas a background on the non-scrolling inner `main#main-content` only paints the first viewport and would reveal `base-200` as a bottom seam. `main#main-content` (`flex-1 min-h-0`) keeps a redundant same-color `bg-base-100` and MUST keep `min-h-0` — main being viewport-capped is what makes Projects' expanded task-form pin-to-bottom and Home's internal chat scroll work.
 
+### In-shell page height contract (`main#main-content` content box)
+
+`main#main-content` is a definite-height flex item, so its content box is already viewport minus the persistent top bar (`.workbench-top`, `0 0 3.5rem`) and minus the main padding (`px-4 … pt-4 pb-4`) — in-shell pages size against THAT box, never against the viewport.
+`.shell-fill` (app.css: `height: 100%; min-height: 0`) is the ONE utility for a page root that must FILL the content box (the `/phoenix/dashboard` LiveDashboard iframe, the xl+ `AgentsLive` grid); a page that scrolls normally keeps plain page flow and must not force `height`.
+No in-shell page takes `height`/`min-height` from `100vh`/`100dvh` (a `max-height` CAP may); `--shell-topbar-h` (defined once on `#app-layout`, `3.5rem`) is the only way a cap may account for the top bar, and `#main-scroll` stays the ONE page scroller.
+
 ### `phx-click` + JS hook on the same element — double firing
 
 `phx-click` + a `phx-hook` on the SAME element sends BOTH the hook's handling AND the `phx-click` event; don't put both on one element unless a matching `handle_event/3` clause exists.

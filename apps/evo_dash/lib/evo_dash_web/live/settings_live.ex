@@ -195,8 +195,9 @@ defmodule EvoDashWeb.SettingsLive do
 
              md+ INDEPENDENT-SCROLL HEIGHT CHAIN: `#main-content` (layouts.ex)
              is `flex-1 min-h-0` inside the `h-dvh` app shell, so this
-             wrapper's `md:h-full` is bounded to viewport-minus-chrome; the
-             two-column row below is `md:flex-1 md:min-h-0`. The sidebar
+             wrapper's `md:h-full` is bounded to the shell content box
+             (viewport minus the persistent top bar and the main padding);
+             the two-column row below is `md:flex-1 md:min-h-0`. The sidebar
              (sidebar.ex — `md:h-full` bounded column whose `flex-1
              overflow-y-auto min-h-0` nav scrolls on its own) and each
              content column are bounded by that row and scroll independently
