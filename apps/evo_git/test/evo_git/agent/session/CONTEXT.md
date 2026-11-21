@@ -28,6 +28,7 @@ The retry-wait suite is `async: false` for two forced globals named in-file: the
 The checkpoint-boundary suite is `async: true`: every test owns an isolated unnamed `EvoGit.AgentState` server pinned on the TEST process dictionary, so neither the cast target nor the baseline key is shared.
 Session fixtures inject `exchange_opts` and `scheduler: self()` so scripted worker behavior and terminal messages are test-local.
 Session API calls (`inspect/2`, `history/2`) are bounded RETRIES, never one tight call timeout: a late reply on a saturated host is a VM-scheduling artifact, not a session fact, and a blocked-turn seam's `after` budget stays far above every bounded wait so a turn never ends under an assertion.
+Every await that covers real session work — a session start plus an exchange — shares ONE module-level budget of 30 s (`@await_budget_ms`, or a module's existing `@async_wait_budget_ms`/`@wait_ms`), which only absorbs host scheduling latency: each helper returns as soon as it observes the awaited event, so the happy path pays nothing and an event that never arrives still fails the assertion.
 Interactive-close finalizers lack the test process dictionary, so archive assertions read uniquely identified rows in the app-global task store.
 A sequence shared across exchanges must live outside the exchange worker process dictionary because each exchange has a fresh worker; `interactive_close_test.exs` uses a linked Agent for its reply sequence.
 
