@@ -478,6 +478,17 @@ defmodule EvoGit.Agent.ToolDispatchTest do
   # The same 50ms cadence expressed as fractional seconds for POSIX `sleep`.
   @rendezvous_poll_seconds "0.05"
 
+  # Shrunk per-call budgets for the dispatcher-ceiling cases below. Each of them
+  # proves a RELATIVE ordering — an explicit `timeout` argument beats the tool's
+  # advertised default, and a wait-budget argument never becomes the dispatch
+  # ceiling — so the numbers only have to be observable, never the production
+  # 120 s / 85 s values. `@workload_ms` is a fake tool's simulated work: long
+  # enough to outlive `@explicit_timeout_ms`/the 50 ms wait budget by a wide
+  # margin, short enough not to dominate the suite.
+  @explicit_timeout_ms 60
+  @batch_ceiling_ms 100
+  @workload_ms 150
+
   # Builds the two shell commands for the parallel-execution test. Each command
   # appends its OWN start marker, then blocks (bounded) until the PEER's start
   # marker exists, then appends its own end marker. On a correct concurrent run
@@ -514,6 +525,15 @@ defmodule EvoGit.Agent.ToolDispatchTest do
 
   describe "batch_execute_tools/4 parallel execution" do
     setup do
+      # Test-only CALL-TIME seam (`EvoGit.ProcessManager.Control.kill_grace_ms/0`):
+      # a dispatcher-level timeout escalates TERM → grace → KILL on the real OS
+      # process, and the production 1500 ms grace would dominate a call whose
+      # whole point is a ~120 ms budget. The escalation (and its post-KILL
+      # liveness verdict) is unchanged — only the flush window shrinks, because
+      # these workloads are `sleep`/blocked fakes that terminate on KILL anyway.
+      # Restored per test, so the production default is never affected.
+      put_seam(:process_kill_grace_ms, 0)
+
       repo_root =
         Path.join(
           System.tmp_dir!(),
@@ -583,8 +603,8 @@ defmodule EvoGit.Agent.ToolDispatchTest do
     test "an explicit `timeout` argument still wins over the advertised default", context do
       # The dispatcher raises a resolved timeout to the tool's advertised default
       # (`Tools.default_timeout_ms/1` — 120 s for the platform shell tool) ONLY
-      # when the model supplied no usable `timeout`. An explicit 120 ms budget
-      # must therefore still cut the call short instead of being lifted to 120 s.
+      # when the model supplied no usable `timeout`. An explicit budget therefore
+      # still cuts the call short instead of being lifted to 120 s.
       %{repo_root: repo_root} = context
 
       sleep_command =
@@ -594,35 +614,36 @@ defmodule EvoGit.Agent.ToolDispatchTest do
         {ReqLLM.ToolCall.new(
            "call_1",
            EvoGit.Agent.ToolNames.shell_tool_name(),
-           Jason.encode!(%{"command" => sleep_command, "timeout" => 120})
+           Jason.encode!(%{"command" => sleep_command, "timeout" => @explicit_timeout_ms})
          ), 0}
       ]
 
       [{0, _tool_call_id, _name, output}] =
         ToolDispatch.batch_execute_tools(calls, 1_800_000, repo_root, :low)
 
-      assert output =~ "timed out after 120ms"
+      assert output =~ "timed out after #{@explicit_timeout_ms}ms"
     end
 
     test "a string or float `timeout` argument counts as explicit", context do
-      # The unified tool-surface `timeout` shapes are NOT integers: `"120"`
-      # (numeric string) and `120.9` (float, truncated) both mean "the model
-      # asked for ~120 ms". Recognition is shared with
+      # The unified tool-surface `timeout` shapes are NOT integers: a numeric
+      # string and a float (truncated) both mean "the model asked for
+      # `@explicit_timeout_ms`". Recognition is shared with
       # `ToolInvocation.resolve_timeout/4` (`Shared.fetch_duration_ms/2`), so the
       # advertised 120 s shell default must NOT apply — an unrecognised string
-      # budget would leave the fake tool running to completion (the 300 ms
-      # workload) instead of cutting it at 120 ms.
+      # budget would leave the fake tool running to completion (the
+      # `@workload_ms` workload) instead of cutting it at `@explicit_timeout_ms`.
       %{repo_root: repo_root} = context
       shell_name = EvoGit.Agent.ToolNames.shell_tool_name()
 
       install_fake_tools(%{
         shell_name => fn _args, _repo_path, _repo_root, _node_path ->
-          Process.sleep(300)
+          Process.sleep(@workload_ms)
           "completed without being cut"
         end
       })
 
-      for {timeout, index} <- Enum.with_index(["120", 120.9]) do
+      for {timeout, index} <-
+            Enum.with_index(["#{@explicit_timeout_ms}", @explicit_timeout_ms + 0.9]) do
         calls = [
           {ReqLLM.ToolCall.new(
              "call_#{index}",
@@ -634,8 +655,9 @@ defmodule EvoGit.Agent.ToolDispatchTest do
         [{0, _tool_call_id, _name, output}] =
           ToolDispatch.batch_execute_tools(calls, 1_800_000, repo_root, :low)
 
-        assert output =~ "timed out after 120ms",
-               "a #{inspect(timeout)} timeout argument must be honoured as 120 ms"
+        assert output =~ "timed out after #{@explicit_timeout_ms}ms",
+               "a #{inspect(timeout)} timeout argument must be honoured as " <>
+                 "#{@explicit_timeout_ms} ms"
       end
     end
 
@@ -643,8 +665,8 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       # The string spelling must not sneak past the wait-budget FLOOR rule:
       # `job_output`'s `timeout` bounds its INTERNAL `wait: true` loop, so a
       # `"50"` request has to be raised to the advertised wait default (85 s,
-      # shrunk here by the batch's `max_timeout` of 300 ms) instead of becoming
-      # the dispatch ceiling.
+      # shrunk here by the batch's `max_timeout` of `@batch_ceiling_ms`) instead
+      # of becoming the dispatch ceiling.
       %{repo_root: repo_root} = context
 
       install_fake_tools(%{"job_output" => blocking_tool()})
@@ -657,9 +679,9 @@ defmodule EvoGit.Agent.ToolDispatchTest do
         )
 
       [{0, _tool_call_id, _name, output}] =
-        ToolDispatch.batch_execute_tools([{call, 0}], 300, repo_root, :low)
+        ToolDispatch.batch_execute_tools([{call, 0}], @batch_ceiling_ms, repo_root, :low)
 
-      assert output =~ "timed out after 300ms"
+      assert output =~ "timed out after #{@batch_ceiling_ms}ms"
       refute output =~ "timed out after 50ms"
     end
 
@@ -675,10 +697,10 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       #
       # The whole resolved budget is observable WITHOUT waiting it out: the
       # dispatcher's timeout message carries it, and the batch's `max_timeout`
-      # is the same production clamp (shrunk here to 300 ms) applied to
-      # `max(resolved, advertised)`. `job_output`'s advertised default is 85 s
-      # (`Tools.default_timeout_ms/1`, pinned in `tool_names_test`), so 300 here
-      # means the explicit 50 ms was raised — not adopted.
+      # is the same production clamp (shrunk here to `@batch_ceiling_ms`) applied
+      # to `max(resolved, advertised)`. `job_output`'s advertised default is 85 s
+      # (`Tools.default_timeout_ms/1`, pinned in `tool_names_test`), so the
+      # ceiling here means the explicit 50 ms was raised — not adopted.
       #
       # Both calls drive a fake tool that BLOCKS until the dispatcher kills it
       # (`blocking_tool/0`), so the per-call timeout is provably the first timer
@@ -696,9 +718,14 @@ defmodule EvoGit.Agent.ToolDispatchTest do
         )
 
       [{0, _tool_call_id, _name, job_output}] =
-        ToolDispatch.batch_execute_tools([{job_output_call, 0}], 300, repo_root, :low)
+        ToolDispatch.batch_execute_tools(
+          [{job_output_call, 0}],
+          @batch_ceiling_ms,
+          repo_root,
+          :low
+        )
 
-      assert job_output =~ "timed out after 300ms"
+      assert job_output =~ "timed out after #{@batch_ceiling_ms}ms"
 
       # The 50 ms wait budget did NOT become the dispatch ceiling.
       refute job_output =~ "timed out after 50ms"
@@ -713,7 +740,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
         )
 
       [{0, _tool_call_id, _name, shell_output}] =
-        ToolDispatch.batch_execute_tools([{shell_call, 0}], 300, repo_root, :low)
+        ToolDispatch.batch_execute_tools([{shell_call, 0}], @batch_ceiling_ms, repo_root, :low)
 
       assert shell_output =~ "timed out after 50ms"
     end
@@ -729,7 +756,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
 
       install_fake_tools(%{
         "job_output" => fn _args, _repo_path, _repo_root, _node_path ->
-          Process.sleep(300)
+          Process.sleep(@workload_ms)
           "job_output stub: done after outliving its wait budget"
         end
       })
@@ -748,6 +775,22 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       assert output =~ "done after outliving its wait budget"
       refute output =~ "timed out after"
     end
+  end
+
+  # Installs a test-only CALL-TIME app-env seam for the duration of ONE test and
+  # restores the PREVIOUS value afterwards (nil-aware: a key that was absent is
+  # deleted again, so the production default applies to every other module).
+  defp put_seam(key, value) do
+    previous = Application.get_env(:evo_git, key)
+    Application.put_env(:evo_git, key, value)
+
+    on_exit(fn ->
+      if is_nil(previous) do
+        Application.delete_env(:evo_git, key)
+      else
+        Application.put_env(:evo_git, key, previous)
+      end
+    end)
   end
 
   # Installs the test-only fake-tool registry (app env `:evo_git,
