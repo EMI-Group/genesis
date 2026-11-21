@@ -37,7 +37,9 @@ It is only the FALLBACK: a suite needing its own config dir isolates it per proc
 `ExUnit.after_suite/1` removes ONLY this run's own data dir and config dir, never the shared `<tmp>/evogit_test_data` / `<tmp>/evogit_test_config` parents (a concurrent run owns siblings).
 Directory picker disabled (`Application.put_env(:evo_dash, :directory_picker, enabled: false)`, mirrored by `config/test.exs`) so no native modal dialog can hang the suite.
 `:evo_git, :nix_enabled` pinned `false` so `EvoGit.Nix.enabled?/0` never reads the developer's config or shells out to real nix; suites needing nix enable it explicitly.
-Five CALL-TIME timer seams are shrunk: `:agents_live_flush_ms` (10), `:agents_live_commit_graph_tick_ms` (10), `:system_samples_seed_retry_ms` (10), `:flush_loading_poll_ms` (1), `:node_aware_reload_debounce_ms` (10).
+Six CALL-TIME timer seams are shrunk: `:agents_live_flush_ms` (10), `:agents_live_commit_graph_tick_ms` (10), `:system_samples_seed_retry_ms` (10), `:flush_loading_poll_ms` (1), `:node_aware_reload_debounce_ms` (10), `:llm_retry_backoff_base_ms` (25, an `:evo_git` seam).
+The last one exists so a REAL provider retry (503 / truncated stream) costs 25 ms instead of the production ~1 s jittered backoff; only `async: false` modules may pin it, because ExUnit drains the async cohort first.
+The LLMDB catalog is warmed ONCE here (`LLMDB.Catalog.ensure_loaded!()`) before the parallel phase: its first touch is a `:global`-locked packaged-catalog parse, and inside a scheduler callback that first touch wedges every scheduler caller for seconds.
 Each seam is read at the call site via `Application.get_env(:evo_dash, key, <prod default>)`, so production timings are untouched when the block is absent.
 `ExUnit.start(capture_log: true)`.
 The default-inert per-process config-dir seam: `Application.put_env(:evo_git, :config_dir_fun, {EvoDash.Test.ConfigDir, :resolve, []})` — the same `{m, f, a}` shape and process-dictionary key (`:evogit_config_dir`) `:evo_git`'s own helper installs, so a root `mix test` resolves identically whichever helper loaded last and production (which never sets the key) is byte-identical.
@@ -55,6 +57,11 @@ The one leak class the suite structurally prevents is a `EvoGit.TaskRegistry` re
 ### Deterministic waits (no fixed sleeps, no tight windows)
 Bounded polls run at a 1–2 ms cadence (`@wait_poll_ms 2`, `@poll_ms 1`); a fixed `Process.sleep` is never a wait mechanism.
 `refute_receive`/`refute_push_event` may use a 0 ms window ONLY after a preceding drain or `:sys.get_state` round-trip has provably completed the mailbox.
+A timed NEGATIVE window ("nothing else arrives") is dead time unless the claim itself is timing: prefer a structural witness read through `assigns/1`, then a 0 ms refute.
+The witness idioms, each proven non-vacuous in place:
+- a monotonic counter / flag written INSIDE the same callback that spawns the work (`chat_fetch_seq` for a history fetch, `approval_responses[id]` for an approval dispatch, `send_pending`/`send_in_flight` for an upload-gated send);
+- the supervised-child SET (`Task.Supervisor.children(EvoDash.TaskSupervisor)` filtered by `:"$callers"`), because `EvoDash.SafeCall.start/3` registers its child synchronously before the click returns;
+- a sole-sender serial worker parked in its idle `receive` (`Process.info(pid, :current_function)`), which proves it has emitted everything it was going to (`home_live/watch_readiness_test.exs` `await_worker_idle/2`).
 Never shorten a window that IS the detection mechanism; positive assertions keep generous second-scale timeouts so real breakage still fails loudly.
 `assigns/1` is a synchronous `:sys.get_state(view.pid, 30_000)` round-trip and Erlang guarantees per-sender ordering, so `send(view.pid, msg)` followed by any `assigns/1` read is already synchronized.
 Always pass that explicit timeout: `:sys.get_state/1`'s 5 s default exits the test whenever the LiveView is starved on this shared host.
