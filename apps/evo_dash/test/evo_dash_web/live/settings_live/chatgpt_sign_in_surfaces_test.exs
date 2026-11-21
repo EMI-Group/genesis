@@ -200,13 +200,97 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
 
   # Selector membership on a CAPTURED render.
   #
-  # `has_element?/2` reads the page's CURRENT state, which is the wrong
-  # instrument for a TRANSIENT one: the stub answers `status/1` on the very next
-  # 5 ms poll, so the waiting block may already be replaced by the success by
-  # the time a later read runs. Every "while it waits" claim is therefore made
-  # against the render the triggering event itself returned.
+  # A captured render is the right instrument only for a state that has already
+  # been APPLIED: `has_element?/2` re-reads the page, so it proves the CURRENT
+  # state, never what an event returned. No claim below depends on how fast a
+  # later read runs: the flow's verdict is gated by the TEST (`status_gate/1`),
+  # so the waiting surface is a STABLE phase that every instrument can read —
+  # and a success can only arrive once the test opens that gate.
   defp rendered?(html, selector),
     do: html |> Floki.parse_fragment!() |> Floki.find(selector) != []
+
+  # The same claim for the click's OWN render, with a SELF-DIAGNOSING failure.
+  #
+  # The click's render must already show the waiting surface (the event's
+  # handler decided the phase), and when it does not the message has to report
+  # WHAT the page really rendered: a bare "expected truthy" cannot tell an
+  # `:error` phase from a non-waiting surface or a stale diff. `elapsed_ms` is
+  # part of the evidence — the product's flow call is bounded
+  # (`EvoDashWeb.LLMSetup.ChatGPTSignIn.call_timeout_ms/0`), so a whole-budget
+  # elapsed proves a starved call while a fast non-waiting render proves the
+  # phase was decided immediately.
+  defp assert_waiting_on_click(click_html, view, panel, surface, elapsed_ms) do
+    selector = "#" <> panel <> "-waiting"
+
+    if rendered?(click_html, selector) do
+      :ok
+    else
+      state = Map.get(assigns(view), :chatgpt_sign_in) || %{}
+
+      flunk("""
+      expected the click's own render to show #{selector}, but it did not.
+      page sign-in state: #{inspect(state)}
+      expected surface: #{inspect(surface)}
+      page surface:     #{inspect(ChatGPTSignInState.surface(state))}
+      rendered error:   #{inspect(floki_text(click_html, "#" <> panel <> "-sign-in-error"))}
+      idle button rendered: #{rendered?(click_html, "#" <> panel <> "-sign-in")}
+      manual hint rendered: #{rendered?(click_html, "#" <> panel <> "-manual-hint")}
+      click took #{elapsed_ms} ms
+      """)
+    end
+  end
+
+  defp floki_text(html, selector) do
+    case html |> Floki.parse_fragment!() |> Floki.find(selector) do
+      [] -> nil
+      nodes -> nodes |> Floki.text() |> String.trim()
+    end
+  end
+
+  # Clicks a surface's sign-in button and keeps BOTH the render the event
+  # returned and how long the click itself took (evidence for the bounded
+  # flow-call budget).
+  defp click_sign_in(view, panel) do
+    started_at = System.monotonic_time(:millisecond)
+    html = view |> element("#" <> panel <> "-sign-in") |> render_click()
+    {html, System.monotonic_time(:millisecond) - started_at}
+  end
+
+  # ── a TEST-CONTROLLED flow verdict ────────────────────────────────────────
+  #
+  # `ChatGPTLoginStub` pops ONE status answer per poll, so a single `:pending`
+  # fun would be consumed by the first poll and every later one would answer
+  # `:pending` from the empty queue — which this file cannot use: the poll task
+  # (`EvoDashWeb.LLMSetup.ChatGPTSignIn.start_poll/2`) runs under
+  # `EvoDash.TaskSupervisor` with the view in its `:"$callers"`, so a flow that
+  # never terminates makes `settle_mount_loads/1` sit on its whole budget.
+  # The gate therefore answers `:pending` while it is CLOSED and the flow's
+  # verdict as soon as the TEST opens it — the waiting phase is a stable state
+  # for as long as the test needs, and the page's own poll then delivers the
+  # success and finishes, exactly as a real authorization does.
+  # `:counters` is process-independent, so the fun can read it from the stub's
+  # own agent, and the queue is deep enough to outlive any load stall.
+  @status_gate_depth 60_000
+
+  defp status_gate(account) do
+    counter = :counters.new(1, [])
+
+    answers =
+      List.duplicate(
+        fn ->
+          if :counters.get(counter, 1) == 0 do
+            :pending
+          else
+            {:ok, %{account: account}}
+          end
+        end,
+        @status_gate_depth
+      )
+
+    %{counter: counter, statuses: %{@flow_id => answers}}
+  end
+
+  defp open_status_gate(%{counter: counter}), do: :counters.put(counter, 1, 1)
 
   # ── bounded sign-in waits (event-driven, never a fixed sleep) ─────────────
   defp await_page_sign_in(view, phase, surface) do
@@ -227,7 +311,8 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
     else
       assert System.monotonic_time(:millisecond) < deadline,
              "ChatGPT sign-in never reached #{inspect(phase)} on #{inspect(surface)} " <>
-               "(was #{inspect(current_phase)} on #{inspect(ChatGPTSignInState.surface(state))})"
+               "(was #{inspect(current_phase)} on #{inspect(ChatGPTSignInState.surface(state))}, " <>
+               "state #{inspect(state)})"
 
       receive do
       after
@@ -235,6 +320,36 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
       end
 
       await_page_sign_in(view, phase, surface, deadline)
+    end
+  end
+
+  # A bounded wait for the page's START-FAILURE verdict (`:error` phase on
+  # `surface`), answering the applied state so the reason is assertable.
+  defp await_start_failure(view, surface) do
+    await_start_failure(
+      view,
+      surface,
+      System.monotonic_time(:millisecond) + @async_wait_budget_ms
+    )
+  end
+
+  defp await_start_failure(view, surface, deadline) do
+    state = assigns(view)[:chatgpt_sign_in] || %{}
+
+    if Map.get(state, :phase) == :error and surface == ChatGPTSignInState.surface(state) do
+      _ = render(view)
+      state
+    else
+      assert System.monotonic_time(:millisecond) < deadline,
+             "ChatGPT sign-in never reported a start failure on #{inspect(surface)} " <>
+               "(state #{inspect(state)})"
+
+      receive do
+      after
+        2 -> :ok
+      end
+
+      await_start_failure(view, surface, deadline)
     end
   end
 
@@ -449,9 +564,15 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
     test "the detail surface records the account and triggers a credential reload", %{
       conn: conn
     } do
+      # The flow's verdict is gated by THIS test: the stub keeps answering
+      # `:pending` until the gate opens, so the waiting phase is a STABLE state
+      # (a `[{:ok, …}]` queue settles it on the very next 5 ms poll, which made
+      # every "while it waits" claim race a transient window — see `rendered?/2`).
+      gate = status_gate("work")
+
       ChatGPTStub.install!(
         begin: {:ok, %{id: @flow_id, url: @flow_url, port: 48_123}},
-        statuses: [{:ok, %{account: "work"}}]
+        statuses: gate.statuses
       )
 
       seed_openai_codex_profile()
@@ -460,15 +581,28 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
 
       seq_before = assigns(view).auth_status_seq
 
-      click_html =
-        view |> element("#" <> detail_panel(@profile_id) <> "-sign-in") |> render_click()
+      {click_html, click_ms} = click_sign_in(view, detail_panel(@profile_id))
 
       assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
-      # The stub answers immediately, so the waiting block is TRANSIENT: pin it
-      # on the click's own render, never on a later read that can already show
-      # the success.
-      assert rendered?(click_html, "#" <> detail_panel(@profile_id) <> "-waiting")
+      # The event's own render already shows the waiting surface …
+      assert_waiting_on_click(
+        click_html,
+        view,
+        detail_panel(@profile_id),
+        {:detail, @profile_id},
+        click_ms
+      )
 
+      # … and the APPLIED state keeps showing it, because the gate is still
+      # closed: nothing but this test can end the wait.
+      await_page_sign_in(view, :waiting, {:detail, @profile_id})
+      assert has_element?(view, "#" <> detail_panel(@profile_id) <> "-waiting")
+      link = view |> element("#" <> detail_panel(@profile_id) <> "-sign-in-url") |> render()
+      assert attr(link, "href") == @flow_url
+
+      # Open the gate: the page's OWN poll answers the success (the same path a
+      # real authorization takes) and the poll task finishes with it.
+      open_status_gate(gate)
       await_page_sign_in(view, :ok, {:detail, @profile_id})
 
       # Settle the success path's supervised credential reload (and any queued
@@ -506,9 +640,13 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
     test "the status surface records the account and triggers a credential reload", %{
       conn: conn
     } do
+      # Gated for the same reason as the detail surface: the waiting phase must
+      # be a stable state, never a transient window.
+      gate = status_gate("work-status")
+
       ChatGPTStub.install!(
         begin: {:ok, %{id: @flow_id, url: @flow_url, port: 48_123}},
-        statuses: [{:ok, %{account: "work-status"}}]
+        statuses: gate.statuses
       )
 
       seed_openai_codex_profile()
@@ -517,14 +655,25 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
 
       seq_before = assigns(view).auth_status_seq
 
-      click_html =
-        view |> element("#" <> status_panel(@profile_id) <> "-sign-in") |> render_click()
+      {click_html, click_ms} = click_sign_in(view, status_panel(@profile_id))
 
       assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
-      # Transient for the same reason as the detail surface: the success can be
-      # applied before any later read, so pin it on the click's render.
-      assert rendered?(click_html, "#" <> status_panel(@profile_id) <> "-waiting")
 
+      assert_waiting_on_click(
+        click_html,
+        view,
+        status_panel(@profile_id),
+        {:status, @profile_id},
+        click_ms
+      )
+
+      await_page_sign_in(view, :waiting, {:status, @profile_id})
+      assert has_element?(view, "#" <> status_panel(@profile_id) <> "-waiting")
+      link = view |> element("#" <> status_panel(@profile_id) <> "-sign-in-url") |> render()
+      assert attr(link, "href") == @flow_url
+
+      # The page's own poll delivers the success once the gate opens.
+      open_status_gate(gate)
       await_page_sign_in(view, :ok, {:status, @profile_id})
 
       # This surface reads the REAL credential load (it injects nothing), so the
@@ -593,6 +742,81 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
       assert error =~ "Genesis could not start a local sign-in"
       refute error =~ "loopback_listener_unavailable"
       refute render(view) =~ "loopback_listener_unavailable"
+    end
+  end
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 5b. the BOUNDED flow start — a start that cannot complete is an error,
+  #     never a waiting surface (and never a hung poll)
+  # ═══════════════════════════════════════════════════════════════════════════
+  describe "bounded flow start" do
+    test "a start the product cannot complete renders the error phase, never a waiting surface",
+         %{conn: conn} do
+      ChatGPTStub.install!(
+        begin: fn ->
+          Process.sleep(200)
+          {:ok, %{id: @flow_id, url: @flow_url, port: 48_123}}
+        end
+      )
+
+      # AFTER `install!/1`, which itself pins this seam at the 30 s async budget:
+      # shrinking the product's per-call budget below the stub's own answer
+      # reproduces — deterministically, with NO host load — the failure shape this
+      # suite hit on a starved host. That is why the waiting-surface claims above
+      # hold the flow `:pending` and read the APPLIED state instead of depending
+      # on the click's own render of a phase the flow can leave in 5 ms.
+      Process.put(:chatgpt_signin_call_timeout_ms, 1)
+
+      seed_openai_codex_profile()
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_account(view, @profile_id)
+
+      {click_html, _click_ms} = click_sign_in(view, detail_panel(@profile_id))
+
+      assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+
+      state = await_start_failure(view, {:detail, @profile_id})
+      assert state.reason == :sign_in_unavailable
+      assert state.flow_id == nil
+
+      refute rendered?(click_html, "#" <> detail_panel(@profile_id) <> "-waiting")
+      assert rendered?(click_html, "#" <> detail_panel(@profile_id) <> "-sign-in-error")
+
+      # The surface is honest and retry-able: the friendly message (never the
+      # reason atom) and a fresh sign-in button.
+      assert floki_text(click_html, "#" <> detail_panel(@profile_id) <> "-sign-in-error") =~
+               "Genesis could not start a local sign-in"
+
+      assert has_element?(view, "#" <> detail_panel(@profile_id) <> "-sign-in")
+      refute has_element?(view, "#" <> detail_panel(@profile_id) <> "-waiting")
+    end
+
+    test "the waiting surface persists for as long as the flow stays pending", %{conn: conn} do
+      ChatGPTStub.install!(
+        begin: {:ok, %{id: @flow_id, url: @flow_url, port: 48_123}},
+        statuses: %{}
+      )
+
+      seed_openai_codex_profile()
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_account(view, @profile_id)
+
+      view |> element("#" <> detail_panel(@profile_id) <> "-sign-in") |> render_click()
+      assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, {:detail, @profile_id})
+
+      # Nothing settles a pending flow on its own, so repeated independent reads
+      # (each one a fresh render) all see the SAME waiting surface: a later read
+      # is as sound as the click's own render, which is the instrument rule this
+      # suite relies on.
+      for _read <- 1..3 do
+        assert has_element?(view, "#" <> detail_panel(@profile_id) <> "-waiting")
+        assert waiting_block_count(view) == 1
+      end
+
+      assert assigns(view).chatgpt_sign_in.flow_id == @flow_id
+      assert assigns(view).profile_form_draft["siwc_account"] in [nil, ""]
+      refute has_element?(view, "#" <> detail_panel(@profile_id) <> "-sign-in")
     end
   end
 

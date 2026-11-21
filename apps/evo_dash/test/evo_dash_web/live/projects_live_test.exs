@@ -6324,6 +6324,16 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
 
       pick_staged(view, "objective_file_image", "image", png_path)
 
+      # `pick_staged` only STARTS the off-process read (the fake picker sends
+      # its result, the page spawns the read in `EvoDash.TaskSupervisor` and
+      # applies `{{:attachment_loaded, ...}}` a frame later), so a bare
+      # `assigns/1` read races that apply — under load it can observe the
+      # pre-apply `[]`. Await the APPLIED assign through the file's documented
+      # load-tolerant helper, then pin its exact contents below.
+      await_attachment(view, "objective_file_image", fn assigns ->
+        assigns[:staged_attachments] != []
+      end)
+
       assert assigns(view)[:staged_attachments] == [
                %{
                  "type" => "image",
