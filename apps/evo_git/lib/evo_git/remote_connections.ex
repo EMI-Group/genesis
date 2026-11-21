@@ -231,33 +231,38 @@ defmodule EvoGit.RemoteConnections do
     Path.join(EvoGit.Config.config_dir(), @config_filename)
   end
 
-  # BEAM-global memo of the LAST logged skeleton-creation failure.
+  # BEAM-global memo of every skeleton-creation failure already logged, keyed per
+  # failure IDENTITY (`%{{file_path, reason} => true}`).
   #
   # `list/0` runs on every dashboard render (often from async page loads), so an
   # unwritable/unavailable config directory would otherwise emit one warning per
-  # render. Exactly one warning is emitted per failure IDENTITY
-  # (`{file_path, reason}`): an identical repeat is silent, while a changed path
-  # or a changed reason is a new identity and logs again.
+  # render. Exactly one warning is emitted per identity for the BEAM's lifetime:
+  # an identical repeat is silent NO MATTER what was logged in between — the
+  # sequence A → B → A logs A once and B once, never A twice — while a changed
+  # path or a changed reason is a new identity and logs again.
   #
   # `:persistent_term` is the documented once-only home (the app has no other
-  # BEAM-wide store); the value is a small tuple and is written at most once per
-  # distinct failure, so the (expensive) `put` is never on a hot path. Tests may
-  # clear it with `:persistent_term.erase({EvoGit.RemoteConnections,
+  # BEAM-wide store); the value is a small map and is written at most once per
+  # distinct failure, so the (expensive) `put` never lands on a hot path. The map
+  # is bounded by reality rather than by an eviction mechanism: one BEAM only ever
+  # sees the handful of config directories its host actually has. Tests may clear
+  # it with `:persistent_term.erase({EvoGit.RemoteConnections,
   # :ensure_file_failure})`.
   @failure_memo_key {__MODULE__, :ensure_file_failure}
 
   defp warn_creation_failure_once(file_path, reason) do
     identity = {file_path, reason}
+    logged = :persistent_term.get(@failure_memo_key, %{})
 
-    if :persistent_term.get(@failure_memo_key, nil) != identity do
-      :persistent_term.put(@failure_memo_key, identity)
+    if Map.has_key?(logged, identity) do
+      :ok
+    else
+      :persistent_term.put(@failure_memo_key, Map.put(logged, identity, true))
 
       Logger.warning(
         "Failed to create remote connections file at #{file_path}: #{inspect(reason)}"
       )
     end
-
-    :ok
   end
 
   # Normalizes a raw connection map into a fully-populated target with all

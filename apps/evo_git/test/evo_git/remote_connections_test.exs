@@ -1,26 +1,26 @@
 defmodule EvoGit.RemoteConnectionsTest do
-  # `async: false` — forced by TWO BEAM-global observables these cases assert on:
+  # `async: true` — every case is isolated on all three axes these cases observe:
   #
-  #   1. the once-per-failure memo in `:persistent_term`, keyed
-  #      `{EvoGit.RemoteConnections, :ensure_file_failure}` — the module writes
-  #      it (every failing `ensure_file/0`) and observes it through log output,
-  #      so a concurrently running module failing the same way would perturb the
-  #      "exactly once" count; and
-  #   2. `ExUnit.CaptureLog`'s `:logger` handler, which captures events from ALL
-  #      concurrently running processes (no per-test log isolation), so an exact
-  #      occurrence count is only sound while no other module logs at the same
-  #      time.
-  #
-  # Everything else uses a per-process config directory
-  # (`EvoGit.TestSupport.ConfigDir`), so the real `~/.config/genesis/` is never
-  # touched.
-  use ExUnit.Case, async: false
+  #   1. FILES: each case works in its own per-test config directory, whose name
+  #      `EvoGit.TestSupport.ConfigDir` makes unique across BEAMs AND processes
+  #      (`<prefix>-<os pid>-<unique int>-<random>`), so no case can read, create
+  #      or clobber another's file (nor the real `~/.config/genesis/`).
+  #   2. LOGS: `ExUnit.CaptureLog`'s handler sees the WHOLE node, so no assertion
+  #      here is an "any log at all" count — every one matches THIS test's own
+  #      unique path (`.../<unique dir>/remote_connections.toml`), which a
+  #      concurrently running module can neither produce nor suppress.
+  #   3. The once-per-failure memo in `:persistent_term` is keyed per
+  #      `{file_path, reason}` IDENTITY, so a concurrent module can only ever
+  #      touch its own entry; this module additionally resets the whole memo
+  #      before and after every case.
+  use ExUnit.Case, async: true
 
   import ExUnit.CaptureLog
 
   alias EvoGit.TestSupport.ConfigDir
 
-  # Mirrors the production memo key (see `EvoGit.RemoteConnections`): it is
+  # Mirrors the production memo key (see `EvoGit.RemoteConnections`), whose value
+  # is the MAP of already-logged `{file_path, reason}` identities: it is
   # BEAM-global, so it is cleared before AND after every case.
   @failure_memo_key {EvoGit.RemoteConnections, :ensure_file_failure}
 
@@ -43,7 +43,9 @@ defmodule EvoGit.RemoteConnectionsTest do
 
       log = capture_log(fn -> assert :ok = EvoGit.RemoteConnections.ensure_file() end)
 
-      assert log == ""
+      # Path-scoped (never `log == ""`): the capture is node-wide, so another
+      # module's warning is irrelevant — ours must simply be absent.
+      refute log =~ failure_prefix(toml_path)
       assert File.exists?(toml_path)
       assert File.read!(toml_path) =~ "Genesis Remote Connections"
     end
@@ -63,7 +65,7 @@ defmodule EvoGit.RemoteConnectionsTest do
 
       log = capture_log(fn -> assert :ok = EvoGit.RemoteConnections.ensure_file() end)
 
-      assert log == ""
+      refute log =~ failure_prefix(toml_path)
       assert File.read!(toml_path) == existing
       assert [%{id: "keep-me"}] = EvoGit.RemoteConnections.list()
     end
@@ -85,11 +87,12 @@ defmodule EvoGit.RemoteConnectionsTest do
     end
 
     test "list/0 still returns [] when the file cannot be created" do
-      block_config_dir!()
+      config_dir = block_config_dir!()
+      toml_path = Path.join(config_dir, "remote_connections.toml")
 
       log = capture_log(fn -> assert EvoGit.RemoteConnections.list() == [] end)
 
-      assert log =~ "Failed to create remote connections file at"
+      assert log =~ failure_prefix(toml_path)
     end
   end
 
@@ -97,8 +100,7 @@ defmodule EvoGit.RemoteConnectionsTest do
     test "warns exactly once per failure identity across repeated calls" do
       config_dir = block_config_dir!()
 
-      message =
-        "Failed to create remote connections file at #{config_dir}/remote_connections.toml"
+      message = failure_prefix(Path.join(config_dir, "remote_connections.toml"))
 
       log =
         capture_log(fn ->
@@ -121,9 +123,10 @@ defmodule EvoGit.RemoteConnectionsTest do
       assert count_occurrences(first_log, "at #{first_path}:") == 1
 
       # Identical repeat: the memo suppresses it.
-      assert capture_log(fn ->
-               assert {:error, :enotdir} = EvoGit.RemoteConnections.ensure_file()
-             end) == ""
+      repeat_log =
+        capture_log(fn -> assert {:error, :enotdir} = EvoGit.RemoteConnections.ensure_file() end)
+
+      assert count_occurrences(repeat_log, "at #{first_path}:") == 0
 
       # A different config dir means a different PATH — a new failure identity.
       second_override = ConfigDir.isolate!("evogit-remote-connections-second")
@@ -135,6 +138,35 @@ defmodule EvoGit.RemoteConnectionsTest do
         capture_log(fn -> assert {:error, :enotdir} = EvoGit.RemoteConnections.ensure_file() end)
 
       assert count_occurrences(second_log, "at #{second_path}:") == 1
+    end
+
+    test "interleaved distinct identities each warn exactly once (A -> B -> A warns twice)" do
+      first_base = ConfigDir.isolate!("evogit-remote-connections-interleaved-a")
+      second_base = ConfigDir.isolate!("evogit-remote-connections-interleaved-b")
+
+      first_message =
+        failure_prefix(Path.join(block_config_dir!(first_base), "remote_connections.toml"))
+
+      second_message =
+        failure_prefix(Path.join(block_config_dir!(second_base), "remote_connections.toml"))
+
+      log =
+        capture_log(fn ->
+          use_config_dir!(first_base)
+          assert {:error, :enotdir} = EvoGit.RemoteConnections.ensure_file()
+
+          use_config_dir!(second_base)
+          assert {:error, :enotdir} = EvoGit.RemoteConnections.ensure_file()
+
+          # A again. A single last-value slot forgets A as soon as B is logged, so
+          # this third call used to warn for A a SECOND time (three warnings in
+          # total). Per-identity memoization logs A once and B once: 2, not 3.
+          use_config_dir!(first_base)
+          assert {:error, :enotdir} = EvoGit.RemoteConnections.ensure_file()
+        end)
+
+      assert count_occurrences(log, first_message) == 1
+      assert count_occurrences(log, second_message) == 1
     end
   end
 
@@ -384,6 +416,12 @@ defmodule EvoGit.RemoteConnectionsTest do
 
   # --- Helpers ---
 
+  # The exact warning PREFIX the module emits for one file path. Every log
+  # assertion goes through this so it can only ever match THIS test's own
+  # (unique) directory — the capture handler is node-wide and shared with every
+  # concurrently running module.
+  defp failure_prefix(toml_path), do: "Failed to create remote connections file at #{toml_path}"
+
   # Clears the BEAM-global once-per-failure memo (a `:persistent_term` key), so
   # no case inherits suppression and no other module inherits ours.
   defp clear_failure_memo do
@@ -393,11 +431,19 @@ defmodule EvoGit.RemoteConnectionsTest do
     end
   end
 
+  # Points this process' config-dir seam at `base` (the directory
+  # `EvoGit.Platform.config_dir("genesis")` joins `"genesis"` onto).
+  # `ConfigDir.activate/1` is not usable here: it records an ownership marker
+  # INSIDE the directory, and these directories are deliberately occupied by a
+  # regular FILE so `File.mkdir_p/1` must fail.
+  defp use_config_dir!(base), do: Process.put(:evogit_config_dir, base)
+
   # Occupies `<config_dir>` with a REGULAR FILE, so `File.mkdir_p/1` must fail:
   # Elixir normalizes "path exists but is not a directory" to `{:error, :enotdir}`
-  # (deterministic on every OS). Returns the config dir path.
-  defp block_config_dir! do
-    config_dir = EvoGit.Config.config_dir()
+  # (deterministic on every OS). `base` selects which isolated config directory to
+  # block (default: the current process' override). Returns the config dir path.
+  defp block_config_dir!(base \\ nil) do
+    config_dir = if base, do: Path.join(base, "genesis"), else: EvoGit.Config.config_dir()
     File.mkdir_p!(Path.dirname(config_dir))
     File.write!(config_dir, "not a directory")
     config_dir
