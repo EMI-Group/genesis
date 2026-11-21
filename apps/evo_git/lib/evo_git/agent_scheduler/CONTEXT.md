@@ -145,7 +145,7 @@ Scripts override that fallback (nil/error → fallback; invalid canonical script
 Every turn-path scheduler interaction is a plain `GenServer.call` into the ONE `EvoGit.AgentScheduler` mailbox, so inline work in a handler delays every other agent's slot grant, release, config read and pause/cancel probe.
 `request_llm_slot/2` and `request_tool_slot/2` default to `timeout \\ :infinity`, so a queued caller waits silently; the wait shows only as the `:llm_waiting` activity `Sink.start_call/1` sets BEFORE `with_llm_slot/2`, so queueing renders as "Waiting for model capacity", never `:idle`.
 Inline work that stalls all slot traffic:
-- `Lifecycle.retry_agent/4` → `WorktreeManager.salvage_for_retry/2` on EVERY abnormal session `:DOWN`, budget `Salvage.timeout_ms() + @salvage_call_grace_ms` (15 000 + 5 000 = 20 s), the salvage commit + `rm_rf_retry` + `git prune` + branch delete running inline.
+- `Lifecycle.retry_agent/4` → `WorktreeManager.salvage_for_retry/2` on EVERY abnormal session `:DOWN` (budget `Salvage.timeout_ms() + @salvage_call_grace_ms` = 20 s), the salvage commit + `rm_rf_retry` + `git prune` + branch delete running inline.
 - `{:run_agent, …}` → `maybe_reset_task_archives/2` (synchronous `Store.delete_task_archives/1`) + `Dispatch.next_task_number/1` (`File.ls` of `.genesis/workers`).
 - `{:update_config, …}` → `reconcile_pool_after_update/1` (`ReqLLMPool.reconcile/1` → `Finch.set_pool_count`).
 - `{:DOWN, …}` → `Slots.release_agent_slots/2` + `grant_pending_llm_slots/1`, each a full pass over `State.all_model_ids/1`.
