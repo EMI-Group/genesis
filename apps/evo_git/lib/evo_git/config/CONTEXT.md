@@ -40,60 +40,29 @@ No facade operation changes credentials, reloads the scheduler or applies runtim
 `normalization.ex` owns the shared default merge, safe existing-atom conversion, enum/model normalization and legacy migration for BOTH snapshot loading and candidate validation; serialization and credential handling stay in `config.ex`.
 
 ### `EvoGit.Config.LLMCatalog` (provider/model shortcuts)
-| Function | Description |
-|----------|-------------|
-| `providers/0` | Predefined providers with models (Anthropic, OpenAI, ChatGPT Subscription/Codex, Google, DeepSeek, Alibaba, Z.ai, MiniMax, Moonshot AI, xAI, OpenRouter, OpenAI-Compatible) |
-| `provider_models/1` | Model shortcuts for a provider atom |
-| `resolve_model/2` | `{provider_atom, model_input}` → `"provider:model"` string (backward-compat) |
-| `resolve_runtime_spec/3` | CANONICAL map analog: `%{provider: atom, id: string}` (+ optional `base_url`/`extra`) — a ReqLLM `runtime_spec()`, NOT a task `model_spec`; opts `:base_url`, `:variant`, `:extra`; `resolve_model_spec/3` is the documented compatibility alias. |
-| `requires_base_url?/1` | `true` for `:openai_compatible` (default `false`) |
-| `find_provider/1` | Provider entry by atom (checks `provider_atoms`) |
-| `auth_modes/1` | `[:api_key] \| [:api_key, :oauth] \| [:oauth]`; default `[:api_key]` for an unknown/API-key-only provider |
-| `oauth_source/1` | Subscription login source (`:chatgpt` for `:openai_codex`, `:claude_code` for `:anthropic`), else `nil` |
-| `oauth_only?/1` | `true` when `:api_key` is NOT in `auth_modes/1` |
-| `supports_oauth?/1` | `true` when `:oauth` is in `auth_modes/1` |
-| `unknown_provider_help/0` | Guidance text (llmdb.xyz + ReqLLM docs links) |
-| `known_credential_keys/0` | All unique credential key names — an entry's `credential_key` is contributed ONLY when `:api_key` is in its `auth_modes` (so OAuth-only `:openai_codex` never makes `api_key_present?/1` report a key); VARIANT keys are unconditional. |
+- Discovery: `providers/0` (Anthropic, OpenAI, ChatGPT Subscription/Codex, Google, DeepSeek, Alibaba, Z.ai, MiniMax, Moonshot AI, xAI, OpenRouter, OpenAI-Compatible), `provider_models/1`, `find_provider/1` (matches `provider_atoms`), `unknown_provider_help/0` (llmdb.xyz + ReqLLM docs links).
+- Resolution: `resolve_model/2` → `"provider:model"` (backward-compat); `resolve_runtime_spec/3` (`:base_url`/`:variant`/`:extra`) → the CANONICAL `%{provider: atom, id: string}` ReqLLM `runtime_spec()` (+ optional `base_url`/`extra`), NOT a task `model_spec` — `resolve_model_spec/3` is its documented compatibility alias; `requires_base_url?/1` is `true` for `:openai_compatible` (default `false`).
+- Auth: `auth_modes/1` (`[:api_key] | [:api_key, :oauth] | [:oauth]`, default `[:api_key]` for an unknown/API-key-only provider), `oauth_source/1` (`:chatgpt` for `:openai_codex`, `:claude_code` for `:anthropic`, else `nil`), `oauth_only?/1` (`:api_key` NOT in `auth_modes/1`), `supports_oauth?/1`.
+- `known_credential_keys/0`: all unique credential key names — an entry contributes its `credential_key` ONLY when `:api_key` is in its `auth_modes` (so OAuth-only `:openai_codex` never makes `api_key_present?/1` report a key); VARIANT keys are unconditional.
+
 **Model lists are derived data**: ChatGPT registrations supply the available model IDs/display names; other providers use shortcuts derived from the vendored LLMDB snapshot (`deps/llm_db/priv/llm_db/snapshot.json`).
 
 ### `EvoGit.Config.ProviderPresets` (built-in schedule presets)
-`provider_presets.ex` — machine-readable copies of peak/off-peak policies a vendor publishes unambiguously, so the dashboard's provider-profile editor can pre-fill an account's schedule in one click.
-| Function | Description |
-|----------|-------------|
-| `all/0` / `ids/0` | Every preset / the stable preset ids, in display order |
-| `get/1` | One preset by id; `nil` for an unknown id or a non-binary input |
-| `for_provider/1` | Presets for one provider, by atom (`:deepseek`) or case-/separator-insensitive STRING (`"deepseek"`, `"ZAI-Coding-Plan"`); `[]` for nil or an unknown provider |
+`provider_presets.ex` — machine-readable copies of peak/off-peak policies a vendor publishes unambiguously, so the dashboard's provider-profile editor pre-fills an account's schedule in one click.
 DATA ONLY: writes no config, touches no disk, starts no process, reads no clock, raises on nothing.
-The envelope is `%{id, label, provider, schedule, note}`; `schedule` is STRING-keyed so it merges into a string-keyed canonical account over `concurrency`, `peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days`, `off_peak_holidays`, carries only the keys its provider uses, and is valid input for `EvoGit.PeakHours.validate_windows/1`, `validate_days/1` and `validate_holidays/1`. A published price/quota ratio maps conservatively onto slots (a rate that halves off-peak → `peak_concurrency` = half of `concurrency`) as an editable pre-fill, never a vendor-capacity claim.
-Two presets ship: `deepseek-standard` (`:deepseek`, UTC weekday windows, CN holidays + weekends off-peak) and `zai-glm-coding-plan` (`:zai_coding_plan`, weekday 14:00-18:00 Singapore time); sources and the per-provider no-preset rationale: the module's moduledoc + `docs/llm-profiles.md` §7.
+- `all/0` / `ids/0` (every preset / stable ids in display order), `get/1` (one preset by id; `nil` for an unknown id or non-binary input), `for_provider/1` (by atom `:deepseek` or case-/separator-insensitive STRING `"deepseek"`/`"ZAI-Coding-Plan"`; `[]` for nil or unknown).
+- Envelope `%{id, label, provider, schedule, note}`; `schedule` is STRING-keyed so it merges into a string-keyed canonical account over `concurrency`, `peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days`, `off_peak_holidays`, carries only the keys its provider uses, and is valid input for `EvoGit.PeakHours.validate_windows/1`, `validate_days/1` and `validate_holidays/1`. A published price/quota ratio maps conservatively onto slots (a rate that halves off-peak → `peak_concurrency` = half of `concurrency`) as an editable pre-fill, never a vendor-capacity claim.
+- Two ship: `deepseek-standard` (`:deepseek`, UTC weekday windows, CN holidays + weekends off-peak) and `zai-glm-coding-plan` (`:zai_coding_plan`, weekday 14:00-18:00 Singapore time); sources and per-provider no-preset rationale: the module's moduledoc + `docs/llm-profiles.md` §7.
 
 ### `EvoGit.Config.VersionState` (upgrade detection)
-Tracks the last-seen Genesis version in `version_state.toml` (config dir); defaults to `"0.8.0"` when no file exists.
-| Function | Description |
-|----------|-------------|
-| `get_version/0` | Recorded version string (default `"0.8.0"` if absent/unparseable/missing key) |
-| `current_version/0` | Runtime version via `Application.spec(:evo_git, :vsn) \|> to_string()` |
-| `save_version/1` | Persists a version string (`save_version/0` persists `current_version/0`). `:ok \| {:error, reason}` |
-| `upgraded?/0` | `true` if recorded version ≠ current version |
-| `record_current_version/0` | Persists `current_version/0`; call after showing the update log. |
+Tracks the last-seen Genesis version in `version_state.toml` (config dir); `get_version/0` defaults to `"0.8.0"` when the file is absent/unparseable/a key is missing.
+`current_version/0` reads `Application.spec(:evo_git, :vsn) |> to_string()`; `save_version/1` persists a version string (`save_version/0` persists `current_version/0`) answering `:ok | {:error, reason}`; `upgraded?/0` is recorded ≠ current; `record_current_version/0` persists `current_version/0` (call after showing the update log).
 
 ### `EvoGit.Platform` (cross-platform utilities)
-| Function | Description |
-|----------|-------------|
-| `os/0` | `:linux`, `:macos`, `:windows`, or `:unknown` |
-| `config_dir/1` / `data_dir/1` | Platform config / data dirs |
-| `shell/0` | Effective shell — honors `[tools] shell`; defaults `"bash"` (Linux/macOS) / `"powershell"` (Windows) |
-| `shell_args/1` | `["-c", cmd]` (POSIX) or PowerShell `-EncodedCommand` args (via `EvoGit.Powershell`) |
-| `systemd_available?/0` / `nix_available?/0` | Linux + systemd / `nix` on PATH (Linux and macOS) |
+`os/0` (`:linux` / `:macos` / `:windows` / `:unknown`); `config_dir/1` / `data_dir/1`; `shell/0` (honors `[tools] shell`; defaults `"bash"` on Linux/macOS, `"powershell"` on Windows); `shell_args/1` (`["-c", cmd]` or PowerShell `-EncodedCommand` args via `EvoGit.Powershell`); `systemd_available?/0` (Linux + systemd) / `nix_available?/0` (`nix` on PATH, Linux and macOS).
 
 ### `EvoGit.ProjectConfig` (per-repo genesis.toml)
-| Function | Description |
-|----------|-------------|
-| `read/1` | Parses `genesis.toml` from repo root |
-| `worktree_script/1,2` | Worktree init script for the current / given OS, with variant resolution |
-| `write_worktree_script/2` | Writes/merges `[worktree].script`, preserving existing sections/keys |
-| `commands/1` | User-defined dev command shortcuts from `[commands]` |
-| `foreign_repos/1` | `ForeignRepo` structs |
+`read/1` (parse `genesis.toml` from the repo root); `worktree_script/1,2` (init script for the current/given OS, with variant resolution); `write_worktree_script/2` (writes/merges `[worktree].script`, preserving existing sections/keys); `commands/1` (user dev-command shortcuts); `foreign_repos/1` (`ForeignRepo` structs).
 
 ### genesis.toml Structure
 Three tables: `[worktree]` `script` (single fallback) with optional OS-specific variants as TOML dotted keys (`script.linux`/`script.macos`/`script.windows`; resolution `script.<current_os>` → `script` → `nil`), `[commands]` user shortcuts displayed in the dashboard and manually triggered (never auto-executed), and `[foreign_repos.<id>]` with `path` + `description` (+ `writable`/`base_sha`, see below).
@@ -213,8 +182,8 @@ The single effort ladder is `Schema.ReasoningEffort`: `levels/0` → `[:none, :m
 
 `config_status/0` reports `missing: [:llm_model]` plus "LLM model is not configured. Set [llm] model in config.toml." when NO profile carries a usable model: the predicate runs over `Schema.model_profiles(resolved)` and counts a `:model` that is a non-empty binary OR a valid map spec (non-empty map with non-nil `:provider` and non-empty binary `:id`) — nil, `""` and `%{}` all fail, so a custom-endpoint map model (kept a map whenever `base_url`/other override keys are present) passes.
 **Validation asymmetry**: per-profile `:model` validation treats `nil` as an error but accepts ANY binary, so `""` passes `Schema.validate` yet fails this gate, yielding `validation_errors: []` plus `missing: [:llm_model]`; the flat `[:llm, :model]` spec is equally lax. This gate is the ONLY place empty strings are rejected, and a missing `:llm` section / `llm.models = []` / flat nil model produce NO validation error — the warning is the sole signal, by design.
-**Legacy mirror rule (`migrate_llm_models/1`)**: with no canonical providers, flat `[llm] model` mirrors ONLY the FIRST legacy profile — a no/nil model there leaves the flat field nil even when later profiles carry valid models (so `resolve([:llm, :model])` is nil), a first-profile `""` mirrors as `""`, and canonical configs synthesize no flat mirror.
-**Disk shape after save**: with a nonempty providers list `save_user_config/1` strips legacy `llm.models` and flat model/generation/auth/provider-options mirrors; legacy-only configs keep `[[llm.models]]` and lose flat generation/model fields only when that list is nonempty. `stringify_keys/1` drops nil values at every map level, so legacy nil-model profiles round-trip without a model key.
+**Legacy mirror & disk shape**: with no canonical providers, `migrate_llm_models/1` mirrors flat `[llm] model` ONLY from the FIRST legacy profile — a nil model there leaves the flat field nil even when later profiles carry valid models (so `resolve([:llm, :model])` is nil), a first-profile `""` mirrors as `""`, and canonical configs synthesize no flat mirror.
+`save_user_config/1` with a nonempty providers list strips legacy `llm.models` and the flat model/generation/auth/provider-options mirrors, while a legacy-only config keeps `[[llm.models]]` and loses flat generation/model fields only when that list is nonempty; `stringify_keys/1` drops nil values at every map level, so legacy nil-model profiles round-trip without a model key.
 
 ## OAuth / Subscription Auth
 Subscription (OAuth) auth spends an existing ChatGPT/Claude login instead of a per-token API key; the ONLY credential store is the managed file — the profile's `oauth_file` (default `<config_dir>/auth.json`), ReqLLM-native JSON keyed by provider OAuth id (`"openai-codex"` / `"anthropic"`) with `type`/`access`/`refresh`/`expires`(ms)/`accountId` — and `credentials.toml` never carries OAuth data.
@@ -223,8 +192,7 @@ Subscription (OAuth) auth spends an existing ChatGPT/Claude login instead of a p
 - **Which profiles are OAuth** (`Schema.LLM.oauth_profile?/1`): `auth_mode == :oauth` OR the provider is `oauth_only?/1` — so `model = "openai_codex:gpt-5.6-terra"` needs no `auth_mode`.
 - **What reaches the request** (`profile_generation_params/1`): an OAuth profile gains `provider_options: [auth_mode: :oauth, oauth_file: <resolved>]`, overridden key-wise by explicit profile `provider_options` (three-level precedence: `schema/CONTEXT.md`).
 - **Credentials**: Anthropic OAuth lazily imports the vendor login into its configured managed file; ChatGPT Subscription uses the protected Genesis SIWC registration identified by `siwc_account`, resolved at request time (existing `openai_codex` identifiers continue through the SIWC adapter).
-- **Env fallback**: `CLAUDE_CODE_OAUTH_TOKEN` (then `ANTHROPIC_OAUTH_TOKEN`) for `:anthropic` when no file credential exists — OAuth without refresh, never written to disk; `:openai_codex` has no env fallback.
-- **`known_credential_keys/0` filter**: an entry contributes its `credential_key` only when `:api_key` is in its `auth_modes`, so an OAuth-only provider never makes `api_key_present?/1` report a key; variant keys stay unconditional.
+- **Env fallback**: `CLAUDE_CODE_OAUTH_TOKEN` then `ANTHROPIC_OAUTH_TOKEN` for `:anthropic` with no file credential — OAuth without refresh, never written to disk; `:openai_codex` has none.
 - **Health (`config_status/0`)**: the `:api_key` check passes when `api_key_present?(credentials())`, an API-key account's exact custom `api_key_env_var` resolves from the environment or persisted credentials, OR a configured OAuth profile's credential resolves (`Schema.LLM.oauth_credential_status/1`, which imports first and degrades to "not configured" on a broken file). With OAuth profiles the failure warning names the OAuth providers, their `login_instructions/1` text and the per-profile file(s) from `oauth_file_for/1` ("Managed OAuth file: <path>", plural when profiles differ; `default_oauth_file/0` when none resolves); without one it keeps "No API key found. Add keys to credentials.toml or configure via the settings page." A profile reporting `{:error, {:managed_file_unwritable, reason}}` (login exists, managed copy unwritable — read-only home, Nix sandbox) instead gets `EvoGit.Auth.managed_file_unwritable_remedy/2`'s actionable text and omits the misleading vendor-login instructions.
 - **Onboarding**: the dashboard Welcome setup and Settings → LLM editor ask an OAuth-capable provider for an auth mode ("API key" vs "Subscription (OAuth)"), skip the question for an OAuth-only provider, never prompt for an API key on the OAuth path, and save `auth_mode = "oauth"` (the API-key path writes none and clears a stale one). `EvoGit.SystemCheck.do_llm_test/2` runs `ensure_profile_credentials/1` before its connection test and, on `{:managed_file_unwritable, reason}`, returns `{:error, "LLM connection test not run — <remedy>"}` WITHOUT issuing a request.
 
@@ -241,11 +209,10 @@ Subscription (OAuth) auth spends an existing ChatGPT/Claude login instead of a p
 
 ## Constraints
 - **No config key caps TOTAL agents / live worktrees / subagent spawn breadth.** `Definitions.schemas/0` has NO `max_agents`/`max_worktrees`/`max_subagents`/breadth key; `[:scheduler, :max_agent_depth]` (default 8) is the ONLY structural limit and bounds recursion DEPTH only (`Subagents.validate_subagent_depth/3`). `spawn_validated_subagents/5` spawns EVERY validated spec via `Dispatch.register_agent/7` — no queue, no spawn cap, each with a FRESH worktree. The ONLY bound is worktree CREATE-pipeline concurrency: `WorktreeManager`'s bounded FIFO admission queue capped at the app env `:max_concurrent_worktree_creation` (default 4 — NOT a config.toml schema key; detail: `agent_scheduler/CONTEXT.md`), which never limits live worktrees/agents. Slot pools gate LLM/tool CALLS; `State`'s `queue` is the resume FIFO for paused schedulers.
-- `save_user_config/1` → `config.toml`; `save_credentials/1` → `credentials.toml`; both create the config dir if needed.
 - Does NOT depend on `AgentScheduler` — runtime overrides are managed separately.
 - **`Config.resolve/0` and `Schema.validate/1` never read model metadata or the LLMDB catalog** — pure map work (merge → atomize → migrate → validate); the ONLY catalog reach is `Schema.LLM.model_metadata/1` (`schema/CONTEXT.md` → "Model metadata seam"), so a memory/latency surprise attributed to config resolution is never catalog-related.
 - Config dir follows XDG conventions via `EvoGit.Platform.os()`; all file reads use `case File.read/1` (non-crashing) with explicit `with`/`case` — no `try/rescue`.
-- Reads go through `resolve/0,1` (the RAM snapshot); the only persisted writes are `save_user_config/1`, `save_credentials/1` and the partial `Config.update/1`, which delegate the actual write to `@doc false persist_user_config/1` / `save_credentials/1` and then refresh through `Watcher.notify_change/1`.
+- Reads go through the RAM snapshot; the only persisted writes are `save_user_config/1`, `save_credentials/1` and the partial `Config.update/1`, all refreshing through `Watcher.notify_change/1`.
 - **Model format**: `"provider:model"` string (preferred; resolves through LLMDB for cost tracking) OR map spec `%{provider: atom, id: string, base_url: string, extra: %{...}}` (ReqLLM-native). Map specs are normalized at resolve time (`normalize_model_map/1` inside `atomize_enum_values/1`): `:provider`+`:id` only → `"provider:id"`; with override keys they stay atomized maps. `[[llm.models]]` supports multiple endpoints per provider+model via per-profile `base_url`, and the provider atom determines the API key env var.
 - `config_status/0` checks LLM model presence + at least one API key; GitHub username is **optional** (a missing username never appears in `:missing`/`:warnings` nor makes `:ok?` false).
 - **Crash resilience (untrusted user config boundary)**: the `resolve/0` → `config_status/0` pipeline MUST NEVER raise on user content (incl. valid TOML with wrong value types, e.g. `llm = "string"`). `deep_merge/2` discards type-mismatched values (keeping defaults); `migrate_llm_models/1`, `atomize_enum_values/1`, `Schema.model_profiles/1` and `Schema.validate/1` guard non-map structures, and `Schema.validate/1` uses `safe_get_in` (not `get_in`) to avoid Access crashes. Bad config → `validation_errors`, never a crash — the user must always boot the app and reach the settings page.
