@@ -152,7 +152,7 @@ Attrs: `commits` (`:list`, **required**), `repos` (`:list`, default `[]`), `acti
 
 Attrs: `files` (`:list`, **required**), `selected_file` (`:string`, default `nil`), `expanded_dirs` (`:map`, default `%{}`), `file_filter` (`:string`, default `""`).
 
-Sticky sidebar (`w-full lg:w-72 shrink-0 lg:sticky lg:top-0 lg:max-h-[100dvh] overflow-y-auto`). Header: "Files changed" title + file count; filter input (`name="filter"`, **`filter_files`**, `phx-debounce="200"`); **`collapse_all_dirs`** / **`expand_all_dirs`** ghost buttons. Body: see "Server-driven tree state" below. File rows (`file_row/1`, private, shared by tree file-nodes and the flat filtered list) fire **`select_file`** with `phx-value-path` and highlight via `selected_file` (`bg-primary/10 text-primary-standalone`).
+Sticky sidebar (`w-full xl:w-60 2xl:w-72 shrink-0 xl:sticky xl:top-0 max-h-[min(25rem,55dvh)] xl:max-h-[calc(100dvh-var(--shell-topbar-h)-5rem)] overflow-y-auto`). Header: "Files changed" title + file count; filter input (`name="filter"`, **`filter_files`**, `phx-debounce="200"`); **`collapse_all_dirs`** / **`expand_all_dirs`** ghost buttons. Body: see "Server-driven tree state" below. File rows (`file_row/1`, private, shared by tree file-nodes and the flat filtered list) fire **`select_file`** with `phx-value-path` and highlight via `selected_file` (`bg-primary/10 text-primary-standalone`). The xl+ cap is a `max-height` CAP that subtracts the shell's persistent top bar through `--shell-topbar-h` (defined once on `#app-layout`) plus `5rem` of local chrome (main `pt-4 pb-4` and the sticky row offset) — never a bare `100dvh`, which overshoots under the top bar and clips the sidebar bottom; the `55dvh` form below xl is only a cap on a normal-flow page.
 
 #### `diff_viewer/1`
 

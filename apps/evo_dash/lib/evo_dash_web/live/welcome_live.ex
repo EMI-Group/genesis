@@ -524,7 +524,7 @@ defmodule EvoDashWeb.WelcomeLive do
       guide={@guide}
       accent_color={@accent_color}
     >
-      <div class="min-h-screen max-w-5xl mx-auto px-4 lg:px-6 py-4 space-y-5">
+      <div class="min-h-full max-w-5xl mx-auto px-4 lg:px-6 py-4 space-y-5">
         <div class="flex items-center justify-between gap-3">
           <button
             type="button"
