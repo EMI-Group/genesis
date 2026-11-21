@@ -20,6 +20,11 @@ defmodule EvoDash.SafeCallTest do
   alias EvoDash.SafeCall
   alias EvoDash.SafeCallTest.SlowServer
 
+  # Every awaited message is sent from a supervised child's OWN process, so a
+  # 2 s literal budget is a latency assumption, not a correctness bound: the
+  # shared host swings 10-30x under load (see test/CONTEXT.md).
+  @async_wait_budget_ms 30_000
+
   # A freshly named supervisor per test keeps the suite fully parallel-safe.
   defp start_named_supervisor! do
     name = :"safe_call_test_sup_#{System.unique_integer([:positive])}"
@@ -151,7 +156,7 @@ defmodule EvoDash.SafeCallTest do
       assert {:ok, pid} = SafeCall.start(self(), tag, fn -> :value end)
       assert is_pid(pid)
 
-      assert_receive {^tag, {:ok, :value}}, 2000
+      assert_receive {^tag, {:ok, :value}}, @async_wait_budget_ms
     end
 
     test "delivers {tag, {:error, {:exit, reason}}} when the call exits" do
@@ -159,7 +164,7 @@ defmodule EvoDash.SafeCallTest do
 
       assert {:ok, _pid} = SafeCall.start(self(), tag, fn -> exit(:boom) end)
 
-      assert_receive {^tag, {:error, {:exit, :boom}}}, 2000
+      assert_receive {^tag, {:error, {:exit, :boom}}}, @async_wait_budget_ms
     end
 
     test "delivers {tag, {:error, {:exception, exception}}} when the call raises" do
@@ -167,7 +172,8 @@ defmodule EvoDash.SafeCallTest do
 
       assert {:ok, _pid} = SafeCall.start(self(), tag, fn -> raise "boom" end)
 
-      assert_receive {^tag, {:error, {:exception, %RuntimeError{message: "boom"}}}}, 2000
+      assert_receive {^tag, {:error, {:exception, %RuntimeError{message: "boom"}}}},
+                     @async_wait_budget_ms
     end
 
     test "delivers {tag, {:error, {:throw, value}}} when the call throws" do
@@ -175,7 +181,7 @@ defmodule EvoDash.SafeCallTest do
 
       assert {:ok, _pid} = SafeCall.start(self(), tag, fn -> throw(:ball) end)
 
-      assert_receive {^tag, {:error, {:throw, :ball}}}, 2000
+      assert_receive {^tag, {:error, {:throw, :ball}}}, @async_wait_budget_ms
     end
 
     test "sends the result to the given parent, not to the caller by default" do
@@ -214,14 +220,14 @@ defmodule EvoDash.SafeCallTest do
                  supervisor: supervisor
                )
 
-      assert_receive {:child_running, ^pid}, 2000
+      assert_receive {:child_running, ^pid}, @async_wait_budget_ms
 
       # The child really ran under the OVERRIDE, not under the default one.
       assert pid in Task.Supervisor.children(supervisor)
       refute pid in Task.Supervisor.children(EvoDash.TaskSupervisor)
 
       send(pid, :go)
-      assert_receive {^tag, {:ok, :value}}, 2000
+      assert_receive {^tag, {:ok, :value}}, @async_wait_budget_ms
     end
 
     test "an explicit supervisor still carries errors back to the parent" do
@@ -231,7 +237,7 @@ defmodule EvoDash.SafeCallTest do
       assert {:ok, _pid} =
                SafeCall.start(self(), tag, fn -> exit(:boom) end, supervisor: supervisor)
 
-      assert_receive {^tag, {:error, {:exit, :boom}}}, 2000
+      assert_receive {^tag, {:error, {:exit, :boom}}}, @async_wait_budget_ms
     end
 
     test "an unknown/dead supervisor never claims success and never starts a child" do

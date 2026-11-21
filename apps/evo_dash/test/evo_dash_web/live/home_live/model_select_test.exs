@@ -3,6 +3,11 @@ defmodule EvoDashWeb.HomeLive.ModelSelectTest do
 
   alias EvoDashWeb.HomeLive.{ChatState, ModelSelect}
 
+  # The awaited envelope comes from a supervised `EvoDash.SafeCall` child, so a
+  # 5 s literal is a latency assumption, not a correctness bound: the shared
+  # host swings 10-30x under load (see test/CONTEXT.md).
+  @async_wait_budget_ms 30_000
+
   # Exercise the real shared resolver, not a duplicate picker implementation.
   # All task options are inspected as values: no task, scheduler or LLM is run.
   @config %{
@@ -278,7 +283,7 @@ defmodule EvoDashWeb.HomeLive.ModelSelectTest do
       token = {:model_select_loaded, 17, target}
       EvoDash.SafeCall.start(self(), token, fn -> ModelSelect.load(target) end)
 
-      assert_receive {^token, {:ok, {:error, _reason}}}, 5_000
+      assert_receive {^token, {:ok, {:error, _reason}}}, @async_wait_budget_ms
     end
   end
 

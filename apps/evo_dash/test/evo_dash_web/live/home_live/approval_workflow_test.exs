@@ -531,6 +531,12 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
   # membership, a task-list read or a non-nil task ref.
   @task_less_task_id "4f2a9c7e1b3d5a60"
 
+  # Every awaited message below is sent by an OFF-PROCESS supervised worker (the
+  # approval runners / responders), so a ~2 s literal budget is a latency
+  # assumption, not a correctness bound: the shared host swings 10-30x under
+  # load (see test/CONTEXT.md).
+  @async_wait_budget_ms 30_000
+
   defp task_less_socket(overrides \\ %{}) do
     socket(Map.merge(%{chat_task_id: @task_less_task_id, chat_agent_id: 1001}, overrides))
   end
@@ -581,7 +587,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
     seq = socket.assigns.approval_recovery_seq
     scope = scope(socket)
     assert socket.assigns.approval_recovering
-    assert_receive {:pending_started, worker, :source@host}, 2_000
+    assert_receive {:pending_started, worker, :source@host}, @async_wait_budget_ms
     refute worker == self()
     monitor = Process.monitor(worker)
 
@@ -590,9 +596,9 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
     send(worker, :release)
 
     assert_receive {{:approval_pending_loaded, ^seq, ^scope} = tag, {:ok, [^expected]} = result},
-                   2_000
+                   @async_wait_budget_ms
 
-    assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, 2_000
+    assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, @async_wait_budget_ms
     socket = ApprovalWorkflow.recovered(socket, tag, result)
     assert socket.assigns.pending_approvals == [expected]
     refute socket.assigns.approval_recovering
@@ -602,17 +608,26 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
     Application.put_env(:evo_dash, :approval_pending_runner, fn _ -> [] end)
     first = ApprovalWorkflow.recover(socket())
     first_seq = first.assigns.approval_recovery_seq
-    assert_receive {{:approval_pending_loaded, ^first_seq, _} = first_tag, {:ok, []}}, 2_000
+
+    assert_receive {{:approval_pending_loaded, ^first_seq, _} = first_tag, {:ok, []}},
+                   @async_wait_budget_ms
+
     second = ApprovalWorkflow.recover(first)
     second_seq = second.assigns.approval_recovery_seq
     assert second_seq > first_seq
-    assert_receive {{:approval_pending_loaded, ^second_seq, _} = second_tag, {:ok, []}}, 2_000
+
+    assert_receive {{:approval_pending_loaded, ^second_seq, _} = second_tag, {:ok, []}},
+                   @async_wait_budget_ms
+
     assert ApprovalWorkflow.recovered(second, first_tag, {:ok, [request()]}) == second
 
     third = second |> ApprovalWorkflow.init() |> ApprovalWorkflow.recover()
     third_seq = third.assigns.approval_recovery_seq
     assert third_seq > second_seq
-    assert_receive {{:approval_pending_loaded, ^third_seq, _} = third_tag, {:ok, []}}, 2_000
+
+    assert_receive {{:approval_pending_loaded, ^third_seq, _} = third_tag, {:ok, []}},
+                   @async_wait_budget_ms
+
     assert ApprovalWorkflow.recovered(third, second_tag, {:ok, [request()]}) == third
     assert ApprovalWorkflow.recovered(third, third_tag, {:ok, []}).assigns.pending_approvals == []
   end
@@ -633,16 +648,19 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
 
     socket = socket(%{chat_node: nil, current_node: :source@host}) |> ApprovalWorkflow.recover()
     seq = socket.assigns.approval_recovery_seq
-    assert_receive {:pending_source, :source@host}, 2_000
-    assert_receive {{:approval_pending_loaded, ^seq, _} = tag, {:ok, [^expected]} = result}, 2_000
+    assert_receive {:pending_source, :source@host}, @async_wait_budget_ms
+
+    assert_receive {{:approval_pending_loaded, ^seq, _} = tag, {:ok, [^expected]} = result},
+                   @async_wait_budget_ms
+
     socket = ApprovalWorkflow.recovered(socket, tag, result)
     socket = ApprovalWorkflow.respond(socket, "request-1", "approve")
     seq = socket.assigns.approval_responses["request-1"]
-    assert_receive {:response_source, :source@host, "request-1", "approve"}, 2_000
+    assert_receive {:response_source, :source@host, "request-1", "approve"}, @async_wait_budget_ms
 
     assert_receive {{:approval_workflow_response, ^seq, _, "request-1"} = tag,
                     {:ok, {:error, :not_found}} = result},
-                   2_000
+                   @async_wait_budget_ms
 
     socket = ApprovalWorkflow.responded(socket, tag, result)
     assert socket.assigns.pending_approvals == []
@@ -657,7 +675,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
 
     assert_receive {{:approval_pending_loaded, ^seq, _} = tag,
                     {:error, {:exit, :offline}} = result},
-                   2_000
+                   @async_wait_budget_ms
 
     socket = ApprovalWorkflow.recovered(socket, tag, result)
     refute socket.assigns.approval_recovering
@@ -668,7 +686,10 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
     socket = ApprovalWorkflow.recover(socket)
     assert socket.assigns.approval_error == nil
     next_seq = socket.assigns.approval_recovery_seq
-    assert_receive {{:approval_pending_loaded, ^next_seq, _} = tag, {:ok, []} = result}, 2_000
+
+    assert_receive {{:approval_pending_loaded, ^next_seq, _} = tag, {:ok, []} = result},
+                   @async_wait_budget_ms
+
     assert ApprovalWorkflow.recovered(socket, tag, result).assigns.pending_approvals == []
   end
 
@@ -688,12 +709,15 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
     first_seq = socket.assigns.approval_responses["request-1"]
     assert socket.assigns.pending_approvals == [request()]
     assert ApprovalWorkflow.busy?(socket.assigns, "request-1")
-    assert_receive {:response_called, worker, :source@host, "request-1", "approve"}, 2_000
+
+    assert_receive {:response_called, worker, :source@host, "request-1", "approve"},
+                   @async_wait_budget_ms
+
     refute worker == self()
 
     assert_receive {{:approval_workflow_response, ^first_seq, _, "request-1"} = old_tag,
                     {:ok, {:error, :offline}} = result},
-                   2_000
+                   @async_wait_budget_ms
 
     # The authoritative pending API can omit a consumed request before the
     # responder's failure is applied; that must not destroy its retry card.
@@ -703,7 +727,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
 
     assert_receive {{:approval_pending_loaded, ^recovery_seq, _} = recovery_tag,
                     {:ok, []} = recovery_result},
-                   2_000
+                   @async_wait_budget_ms
 
     socket = ApprovalWorkflow.recovered(socket, recovery_tag, recovery_result)
     assert socket.assigns.pending_approvals == [request()]
@@ -728,7 +752,10 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
     next_seq = socket.assigns.approval_responses["request-1"]
     assert next_seq > first_seq
     assert socket.assigns.approval_error == nil
-    assert_receive {:retry_started, worker, :source@host, "request-1", "deny"}, 2_000
+
+    assert_receive {:retry_started, worker, :source@host, "request-1", "deny"},
+                   @async_wait_budget_ms
+
     monitor = Process.monitor(worker)
     Application.put_env(:evo_dash, :approval_responder, fn _, _, _ -> raise "wrong runner" end)
     assert ApprovalWorkflow.respond(socket, "request-1", "approve") == socket
@@ -737,9 +764,9 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
 
     assert_receive {{:approval_workflow_response, ^next_seq, _, "request-1"} = tag,
                     {:ok, :ok} = result},
-                   2_000
+                   @async_wait_budget_ms
 
-    assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, 2_000
+    assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, @async_wait_budget_ms
     socket = ApprovalWorkflow.responded(socket, tag, result)
     assert socket.assigns.pending_approvals == []
     refute ApprovalWorkflow.busy?(socket.assigns, "request-1")
@@ -806,11 +833,11 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
         ApprovalWorkflow.recover(socket(%{chat_task_id: @task_less_task_id, chat_agent_id: nil}))
 
       seq = socket.assigns.approval_recovery_seq
-      assert_receive {:task_less_pending, worker, :source@host}, 2_000
+      assert_receive {:task_less_pending, worker, :source@host}, @async_wait_budget_ms
       refute worker == self()
 
       assert_receive {{:approval_pending_loaded, ^seq, _} = tag, {:ok, [^request]} = result},
-                     2_000
+                     @async_wait_budget_ms
 
       assert ApprovalWorkflow.recovered(socket, tag, result).assigns.pending_approvals == [
                request
@@ -823,7 +850,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
       seq = socket.assigns.approval_recovery_seq
 
       assert_receive {{:approval_pending_loaded, ^seq, _} = tag, {:ok, [^request]} = result},
-                     2_000
+                     @async_wait_budget_ms
 
       assert ApprovalWorkflow.recovered(socket, tag, result).assigns.pending_approvals == [
                request
@@ -836,7 +863,10 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
 
       socket = ApprovalWorkflow.recover(task_less_socket())
       seq = socket.assigns.approval_recovery_seq
-      assert_receive {{:approval_pending_loaded, ^seq, _} = tag, {:ok, [_]} = result}, 2_000
+
+      assert_receive {{:approval_pending_loaded, ^seq, _} = tag, {:ok, [_]} = result},
+                     @async_wait_budget_ms
+
       assert ApprovalWorkflow.recovered(socket, tag, result).assigns.pending_approvals == []
     end
 
@@ -863,14 +893,18 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
         socket = ApprovalWorkflow.respond(socket, id, decision)
         assert ApprovalWorkflow.busy?(socket.assigns, id)
 
-        assert_receive {:task_less_response, worker, :source@host, ^id, ^decision}, 2_000
+        assert_receive {:task_less_response, worker, :source@host, ^id, ^decision},
+                       @async_wait_budget_ms
+
         refute worker == self()
         monitor = Process.monitor(worker)
         send(worker, {:respond, result})
 
-        assert_receive {{:approval_workflow_response, _seq, _, ^id} = tag, envelope}, 2_000
+        assert_receive {{:approval_workflow_response, _seq, _, ^id} = tag, envelope},
+                       @async_wait_budget_ms
+
         assert envelope == {:ok, result}
-        assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, 2_000
+        assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, @async_wait_budget_ms
 
         socket = ApprovalWorkflow.responded(socket, tag, envelope)
         assert socket.assigns.pending_approvals == []
@@ -892,7 +926,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
       seq = socket.assigns.approval_recovery_seq
 
       assert_receive {{:approval_pending_loaded, ^seq, _} = tag, {:ok, [^foreign]} = result},
-                     2_000
+                     @async_wait_budget_ms
 
       assert ApprovalWorkflow.recovered(socket, tag, result).assigns.pending_approvals == []
     end
