@@ -86,6 +86,7 @@ The tail is real OS subprocess FORKS: a `git` fork is 2.4-6 ms, a trivial `#!/bi
 Timer waits are sunk: every remaining wait is event-driven and the seams below cover the cadence knobs; the ONE-OFF ReqLLM `LLMDB.load/1` decode (~2.5 s) is paid by the first ReqLLM-touching module per BEAM (`./evo_git/agent/CONTEXT.md`).
 `without_model_profiles/1` (a global `EvoGit.AgentScheduler` `model_profiles` rewrite) is the single biggest remaining blocker — 7 modules — and replacing it needs an isolated-scheduler INSTANCE, deliberately not built.
 Smaller levers, each ≲1 s of serial tail and out of scope for an opportunistic sweep: a per-process `without_model_profiles/1`, `:llm_model_metadata_fun` (3 modules), `:command_approval_timeout` (3), `:nix_enabled` + the nix `:persistent_term` (3), `:tool_dispatch_test_tools` (2).
+`agent/elixir_eval_dispatch_test`'s shared-task approval-floor case injects a 200 ms `[:scheduler, :default_tool_timeout]` through `ConfigDir.isolate!/1` — PROBED in the batch process, which is where the executor resolves each call's timeout (`$callers` carries the seam) — instead of waiting the production 10 s twice.
 Modules deliberately LEFT sync: `cow_worktree_test` (per-test `:persistent_term` flag), `github_test` / `remote_node_github_test` / `remote_connection_test` (process-wide `PATH`), `self_reflective_source_test` (one case hits the app-global `EvoGit.VCT`), `store_test` / `store_summary_test` (they own the app-global store/registry under the canonical name).
 
 ## Timing Seams (default-inert, read at call time)

@@ -19,6 +19,7 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
   alias EvoGit.Agent.ToolDispatch
   alias EvoGit.AgentScheduler.{AgentState, ControlPlane, SchedMeta}
   alias EvoGit.{CommandApproval, Store}
+  alias EvoGit.TestSupport.ConfigDir
 
   @deadline 10_000
   @denied "requires a live root reflective assistant"
@@ -217,16 +218,30 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
     end
   end
 
-  @tag timeout: 120_000
+  # The SHARED-TASK MUTATION approval floor — not the generic tool deadline —
+  # bounds these calls. The config dir isolated here carries a 200 ms
+  # `default_tool_timeout` (probed below in the batch process itself), so holding
+  # the approval 100 ms BEYOND that deadline proves the tool survived on
+  # `max(default_tool_timeout, approval window)`: a tool still killed at the
+  # default deadline would answer with the deadline text, not the denial. The
+  # module's 10 s `:command_approval_timeout` keeps the request itself alive.
   test "shared task mutations retain approval time beyond the default tool deadline", ctx do
+    ConfigDir.isolate!("evogit-eval-approval-window")
+    config_dir = EvoGit.Config.config_dir()
+    File.mkdir_p!(config_dir)
+    File.write!(Path.join(config_dir, "config.toml"), "[scheduler]\ndefault_tool_timeout = 200\n")
+    EvoGit.Config.Cache.reload(dir: config_dir)
+    assert EvoGit.Config.resolve([:scheduler, :default_tool_timeout]) == 200
+
     hold = EvoGit.Agent.DelegationHints.default_tool_timeout() + 100
-    Application.put_env(:evo_git, :command_approval_timeout, hold + @deadline)
+    assert hold == 300
 
     for name <- ~w(genesis_pause_task genesis_resume_task) do
       assert EvoGit.Agent.Tools.serial_tool?(name)
 
       owner =
         start_batch(ctx, [call(name, %{"task_id" => "missing-target"})],
+          probe: fn -> EvoGit.Config.resolve([:scheduler, :default_tool_timeout]) end,
           meta: fn meta ->
             spec = %{
               meta.spec
@@ -236,6 +251,11 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
             %{meta | spec: spec}
           end
         )
+
+      # The executor resolves every call's timeout in THIS batch process, so the
+      # injected default must be visible THERE; otherwise `hold` would still sit
+      # under a 10 s production deadline and prove nothing.
+      assert_receive {:batch_probe, 200}, @deadline
 
       assert_receive {:approval_requested, request}, @deadline
       assert request.tool_name == name
@@ -252,11 +272,13 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
   test "max_timeout still caps the approval floor and cleans the dead tool's request", ctx do
     path = Path.join(ctx.repo_root, "must-not-run.txt")
     code = "File.write!(#{inspect(path)}, \"unexpected\")"
-    owner = start_batch(ctx, [eval(code, "sudo", %{"timeout" => 1})], max_timeout: 1_000)
+    # The cap only has to sit FAR BELOW the approval window (10 s here), so the
+    # smallest value that still lets the request land keeps the test short.
+    owner = start_batch(ctx, [eval(code, "sudo", %{"timeout" => 1})], max_timeout: 200)
     request = approval!(ctx, code, :sudo)
     id = request.request_id
     assert [{0, _, "elixir_eval", output}] = finish(owner)
-    assert output =~ "Tool execution timed out after 1000ms"
+    assert output =~ "Tool execution timed out after 200ms"
     assert_receive {:approval_resolved, ^id, :timed_out}, @deadline
 
     refute Enum.any?(CommandApproval.pending(), &(&1.request_id == id))
@@ -369,6 +391,7 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
 
   defp start_batch(ctx, calls, opts \\ []) do
     id = 9_900_000 + System.unique_integer([:positive])
+    owner = self()
 
     task =
       Task.async(fn ->
@@ -384,6 +407,14 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
             Process.put(:evogit_task_registry_server, ctx.registry)
             Process.put(:repo_path, ctx.repo_root)
             Process.put(:genesis_repo_root, ctx.repo_root)
+
+            # A caller-supplied probe runs in THIS batch process — the one that
+            # resolves each tool call's own timeout — and reports its value back,
+            # so a test can pin the configuration dispatch will actually read.
+            case Keyword.get(opts, :probe) do
+              probe when is_function(probe, 0) -> send(owner, {:batch_probe, probe.()})
+              _ -> :ok
+            end
 
             ToolDispatch.batch_execute_tools(
               Enum.with_index(calls),
