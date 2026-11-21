@@ -3920,7 +3920,10 @@ defmodule EvoDashWeb.ReviewLiveLoadTest do
 
       view |> element("button[phx-click='ignore']") |> render_click()
 
-      assert_redirect(view, "/projects")
+      # The ignore handler only marks the in-progress state and hands the work
+      # to Runner.spawn/4; the push_navigate lands later in ActionResults, so
+      # poll for it instead of using assert_redirect's short default window.
+      assert_redirect(view, "/projects", 2000)
 
       assert TaskRegistry.get_task(task_id).review_status == :ignored
     end
@@ -5653,7 +5656,9 @@ defmodule EvoDashWeb.ReviewLiveAutoResolveTest do
       # Proof the capture actually held the TaskRegistry log line.
       assert log =~ "TaskRegistry"
 
-      assert_redirect(view, "/projects")
+      # The auto-resolve redirect is emitted by ActionResults when the spawned
+      # action settles, so poll for it instead of the short default window.
+      assert_redirect(view, "/projects", 2000)
 
       assert TaskRegistry.get_task(task_id).review_status == :continued
 
@@ -5720,8 +5725,9 @@ defmodule EvoDashWeb.ReviewLiveAutoResolveTest do
       render_click(view, "resume")
 
       # The resume action runs off-process; settle it (the view STOPS on its
-      # push_navigate, which this helper tolerates) so the redirect below is
-      # already in the proxy mailbox instead of racing assert_redirect's window.
+      # push_navigate, which this helper tolerates) so the action has been
+      # applied, then poll for the redirect: it is relayed to the test proxy
+      # asynchronously, so a short default window can miss it on a loaded host.
       await_review_action_settled(view)
 
       # The resume URL carries resume_from/starting_commit/project for the
@@ -5738,7 +5744,7 @@ defmodule EvoDashWeb.ReviewLiveAutoResolveTest do
             resume_from: task_id
           )
 
-      assert_redirect(view, expected)
+      assert_redirect(view, expected, 2000)
 
       assert TaskRegistry.get_task(task_id).review_status == :continued
     end
@@ -5776,7 +5782,7 @@ defmodule EvoDashWeb.ReviewLiveAutoResolveTest do
             resume_from: task_id
           )
 
-      assert_redirect(view, expected)
+      assert_redirect(view, expected, 2000)
     end
   end
 end
@@ -5898,9 +5904,11 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
 
       # Click the ignore button — this triggers a navigation, so we assert the
       # LiveView process terminates and the browser is redirected to "/projects".
+      # The redirect comes from ActionResults once the spawned action settles,
+      # so poll for it instead of using the short default window.
       view |> element("button[phx-click='ignore']") |> render_click()
 
-      assert_redirect(view, "/projects")
+      assert_redirect(view, "/projects", 2000)
 
       # The cast runs async, but a synchronous get_task call guarantees all
       # prior casts to the registry have been processed.
@@ -5994,8 +6002,10 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
         ExUnit.CaptureLog.capture_log(fn ->
           render_click(view, "auto_resolve")
           # The action runs off-process: settle it so the push_navigate has been
-          # applied before assert_redirect polls (and so the spawned task has
-          # certainly been started before await_merge_task_terminal looks for it).
+          # APPLIED in the LiveView (its relay to the test proxy is still
+          # asynchronous, hence the bounded poll below) and so the spawned task
+          # has certainly been started before await_merge_task_terminal looks
+          # for it.
           await_review_action_settled(view)
           await_merge_task_terminal(task_id)
         end)
@@ -6003,7 +6013,7 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
       # Proof the capture actually held the TaskRegistry log line.
       assert log =~ "TaskRegistry"
 
-      assert_redirect(view, "/projects")
+      assert_redirect(view, "/projects", 2000)
 
       # The original task is marked :continued (mirroring the resume flow).
       assert TaskRegistry.get_task(task_id).review_status == :continued
