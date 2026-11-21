@@ -145,16 +145,16 @@ Window math, the holiday calendar and the clock seams (`:peak_hours_now_fun`, `:
 
 ## Blocking Surface (ONE GenServer serves every agent)
 
-Every turn-path scheduler interaction is a plain `GenServer.call` into the single `EvoGit.AgentScheduler` mailbox, so inline work in one handler delays every other agent's slot grant, release, config read and pause/cancel probe.
-`request_llm_slot/2` and `request_tool_slot/2` default to `timeout \\ :infinity`, so a queued caller waits silently; the wait is visible only as the `:llm_waiting` stream activity, which the agent sets via `Sink.start_call/1` BEFORE `with_llm_slot/2`, so queueing renders as "Waiting for model capacity", never `:idle`.
-Inline work that stalls all slot traffic while it runs:
-- `Lifecycle.retry_agent/4` → `salvaged_commit/1` → `WorktreeManager.salvage_for_retry/2` on EVERY abnormal session `:DOWN`, budget `Salvage.timeout_ms() + @salvage_call_grace_ms` (15 000 + 5 000 = 20 s), the manager running the salvage commit + `rm_rf_retry` + `git prune` + branch delete inline.
-- `{:run_agent, …}` → `maybe_reset_task_archives/2` (synchronous `Store.delete_task_archives/1`) + `Dispatch.next_task_number/1` (a `File.ls` scan of `.genesis/workers`).
-- `{:update_config, …}` → `reconcile_pool_after_update/1` (`EvoGit.ReqLLMPool.reconcile/1` → `Finch.set_pool_count`).
+Every turn-path scheduler interaction is a plain `GenServer.call` into the ONE `EvoGit.AgentScheduler` mailbox, so inline work in a handler delays every other agent's slot grant, release, config read and pause/cancel probe.
+`request_llm_slot/2` and `request_tool_slot/2` default to `timeout \\ :infinity`, so a queued caller waits silently; the wait shows only as the `:llm_waiting` activity `Sink.start_call/1` sets BEFORE `with_llm_slot/2`, so queueing renders as "Waiting for model capacity", never `:idle`.
+Inline work that stalls all slot traffic:
+- `Lifecycle.retry_agent/4` → `WorktreeManager.salvage_for_retry/2` on EVERY abnormal session `:DOWN`, budget `Salvage.timeout_ms() + @salvage_call_grace_ms` (15 000 + 5 000 = 20 s), the salvage commit + `rm_rf_retry` + `git prune` + branch delete running inline.
+- `{:run_agent, …}` → `maybe_reset_task_archives/2` (synchronous `Store.delete_task_archives/1`) + `Dispatch.next_task_number/1` (`File.ls` of `.genesis/workers`).
+- `{:update_config, …}` → `reconcile_pool_after_update/1` (`ReqLLMPool.reconcile/1` → `Finch.set_pool_count`).
 - `{:DOWN, …}` → `Slots.release_agent_slots/2` + `grant_pending_llm_slots/1`, each a full pass over `State.all_model_ids/1`.
-- `{:force_kill_task_agents_for_task | :begin_graceful_cancel | :begin_task_pause, …}` → `Store.list_sched_meta/0` full-table scan + per-agent ETS writes + queue purges.
-The scheduler owns NO periodic scan or heartbeat: its only timers are the per-account backoff sweep (`:retry_llm_waiting`) and the subagent re-attach timeout, and `SystemSampler` is the only periodic external caller (3 s, `get_llm_slot_status/0`, cheap map reads).
-A crash RETRY is followed by `Process.sleep(30_000 * retries)` in the session's start task (`agent/session/setup.ex`, after the fresh worktree exists) — 30/60/90 s in which the agent is registered `:running` with no `:llm_waiting` activity, so the dashboard shows "Idle" for exactly that long.
+- `{:force_kill_task_agents_for_task | :begin_graceful_cancel | :begin_task_pause, …}` → `Store.list_sched_meta/0` full scan + per-agent ETS writes + queue purges.
+The scheduler owns NO periodic scan or heartbeat: its only timers are the per-account backoff sweep (`:retry_llm_waiting`) and the sub-agent re-attach timeout, and `SystemSampler` is the only periodic external caller (3 s, `get_llm_slot_status/0`, cheap map reads).
+A crash RETRY sleeps `30_000 * retries` in the session's start task (`agent/session/setup.ex`, after the fresh worktree exists) — 30/60/90 s of registered `:running` with no `:llm_waiting` activity, so the dashboard shows "Idle".
 
 ## Slot Management (Slots + ToolPermits)
 
