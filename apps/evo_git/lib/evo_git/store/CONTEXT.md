@@ -185,7 +185,7 @@ Reads NEVER raise/exit/return `{:error, _}` — they return the empty value of t
 
 **Writer offload (writes)** — each write handler forwards its operation closure plus the ORIGINAL caller's `from` to `EvoGit.Store.Writer` and replies `{:noreply, state}` immediately, so a slow write cannot stall the facade mailbox while reads, counts and the 60 s lease heartbeat are served; the writer replies after the commit in strict arrival order, and being LINKED to the store a raising statement takes both down.
 
-**Caller-side containment (`EvoGit.TaskRegistry.StoreGuard`)** — the registry wraps every SYNCHRONOUS store call in `StoreGuard.read(op, degraded, fun)` / `StoreGuard.write(op, fun)`, catching `:exit`/raise/throw, logging at `:error` and degrading: reads to their documented empty value, writes to `{:error, :store_unavailable}`, which every call site handles exactly like `{:error, :disk_full}` — a Store crash (or an absent store at `TaskRegistry.init/1`) never kills the registry.
+**Caller-side containment (`EvoGit.TaskRegistry.StoreGuard`)** — the registry wraps every SYNCHRONOUS store call in `StoreGuard.read(op, degraded, fun)` / `StoreGuard.write(op, fun)`, catching `:exit`/raise/throw, logging at `:error` and degrading: reads to their documented empty value, writes to `{:error, :store_unavailable}` (handled exactly like `{:error, :disk_full}`), so a Store crash — or an absent store at `TaskRegistry.init/1` — never kills the registry.
 
 **Not offloaded**: the two test seams `__repo_pid__/1` / `__writer__/1`; everything else that reads a DB column goes through `offload/5`.
 
