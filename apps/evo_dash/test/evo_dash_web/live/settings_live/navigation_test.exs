@@ -225,8 +225,7 @@ defmodule EvoDashWeb.SettingsLive.NavigationLiveTest do
   setup do
     # Per-process config isolation through the `:config_dir_fun` seam — never an
     # `XDG_CONFIG_HOME` write — so an empty config dir is guaranteed.
-    dir = EvoDash.Test.ConfigDir.isolate!("evogit_settings_nav_test_config")
-    on_exit(fn -> File.rm_rf!(dir) end)
+    EvoDash.Test.ConfigDir.isolate!("evogit_settings_nav_test_config")
 
     # Default: the nix category is displayable, so the nav is host-independent
     # (the gating tests below flip it off and restore it in their own on_exit).

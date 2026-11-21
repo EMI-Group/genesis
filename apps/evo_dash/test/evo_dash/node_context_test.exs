@@ -981,8 +981,7 @@ defmodule EvoDash.NodeContextConfigTest do
     # No cache invalidation is needed: the `:persistent_term` config/agent
     # caches are keyed by FILE PATH and every test resolves a unique path.
     setup do
-      dir = EvoDash.Test.ConfigDir.isolate!("evogit_node_context_config")
-      on_exit(fn -> File.rm_rf!(dir) end)
+      EvoDash.Test.ConfigDir.isolate!("evogit_node_context_config")
       :ok
     end
 
@@ -1072,8 +1071,7 @@ defmodule EvoDash.NodeContextConfigTest do
     # every test resolves a unique one, so a cached entry can never leak in
     # from — or into — another test: no reload is needed around the setup.
     setup do
-      dir = EvoDash.Test.ConfigDir.isolate!("evogit_node_context_tools")
-      on_exit(fn -> File.rm_rf!(dir) end)
+      EvoDash.Test.ConfigDir.isolate!("evogit_node_context_tools")
       :ok
     end
 

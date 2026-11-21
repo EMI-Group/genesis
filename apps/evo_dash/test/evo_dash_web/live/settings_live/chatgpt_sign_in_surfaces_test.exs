@@ -52,8 +52,7 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
   @assigns_timeout_ms 30_000
 
   setup do
-    dir = EvoDash.Test.ConfigDir.isolate!("evogit_settings_chatgpt_surfaces_test")
-    on_exit(fn -> File.rm_rf!(dir) end)
+    EvoDash.Test.ConfigDir.isolate!("evogit_settings_chatgpt_surfaces_test")
     # Process-less public ETS table shared by the whole run — clear ONLY the
     # local context (a whole-table reset would delete a concurrent module's
     # per-test snapshot).

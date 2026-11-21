@@ -40,8 +40,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
   # WITHOUT touching any BEAM-global env var — the same per-process idiom as
   # settings_live_test.exs.
   setup do
-    dir = EvoDash.Test.ConfigDir.isolate!("evogit_settings_agents_test_config")
-    on_exit(fn -> File.rm_rf!(dir) end)
+    EvoDash.Test.ConfigDir.isolate!("evogit_settings_agents_test_config")
 
     # ActiveTasks is a process-less public ETS table shared by the whole run.
     # This module is `async: true`, so clear ONLY the local `{nil, node()}`

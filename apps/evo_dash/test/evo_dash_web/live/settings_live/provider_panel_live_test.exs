@@ -101,8 +101,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
   defp assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
 
   setup do
-    dir = EvoDash.Test.ConfigDir.isolate!("evogit_settings_provider_panel_test")
-    on_exit(fn -> File.rm_rf!(dir) end)
+    EvoDash.Test.ConfigDir.isolate!("evogit_settings_provider_panel_test")
     # ActiveTasks is a process-less public ETS table shared by the whole run;
     # clear ONLY the local context so a concurrent module keeps its snapshot.
     EvoDash.ActiveTasks.invalidate(nil, node())

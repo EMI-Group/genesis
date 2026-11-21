@@ -296,8 +296,7 @@ defmodule EvoDashWeb.TasksLiveTest do
   # load tasks through `$callers`) for the target's TOML, plus a
   # Registry-backed stand-in for the connection manager.
   defp register_remote_target!(prefix) do
-    dir = EvoDash.Test.ConfigDir.isolate!("evogit_test_config_#{prefix}")
-    on_exit(fn -> File.rm_rf!(dir) end)
+    EvoDash.Test.ConfigDir.isolate!("evogit_test_config_#{prefix}")
 
     target_id = "#{prefix}-target-#{System.unique_integer([:positive])}"
 
