@@ -208,7 +208,10 @@ ExUnit parallelises across MODULES, never within one, so splitting one long file
 ### Suite runtime: what actually costs time
 No hidden per-test tax: a typical LiveView test mounts and clicks in 20–100 ms; `enable_expensive_runtime_checks: true` (root `config/test.exs`) is COMPILE-time only, and `EvoDash.Test.IsolatedTaskStore` costs ≈6.5 ms per call.
 The cost structure is app boot per `mix test` invocation (~3–4 s), the SERIAL `async: false` phase, and a PARALLEL phase floored by the largest async module.
+Whichever test runs FIRST in a BEAM carries a one-time ~1.7–1.9 s warm-up (the first `AgentScheduler {:update_config, …}` and the LLMDB catalog build), so a lone file measured in isolation always shows one bogus outlier — it is not that test's cost and must not be "fixed".
+Measured test-side FLOORS (do not re-investigate these without new evidence): `HomeLiveTest` ≈7 s for 164 tests at the `/assistant` mount floor (4–15 ms each); `ProjectsLiveSyncTest` ≈900 ms for 26 tests; the review sync modules are real-git bound (repo template copies plus a ~25 ms `LoadData.load/3` per repo); `TasksLiveTest`'s archive tests are assertion-bearing 500-entry renders.
 Moving a suite out of the serial tail is the one test-side transformation that shortens a run; clearing the remaining floor needs the production levers above.
+Measured production-side costs that inflate the suite (each needs an `apps/evo_git` or `apps/evo_dash/lib` change, not a test change): `AgentScheduler.handle_call` deriving catalog metadata synchronously (wedges every caller on first touch), `AgentScheduler.config_map/1` recomputing `EvoGit.Platform.sandbox_backend/0` (a PATH scan) on every call, `EvoGit.Review.default_merge_target/1` re-spawning `git show-ref` after `list_branches/1`, and `ReviewLive` spawning TWO `LoadData.load` tasks per connected mount.
 This host is SHARED: timings swing 10–30× on load, so compare same-session A/B runs.
 
 ### Test-file `try/rescue`
@@ -218,6 +221,7 @@ Forbidden around assertions or the behavior under test: if an assertion would fa
 ### LiveViewTest and module-loading limits
 `render/1` cannot see `:sys.replace_state` mutations on the LiveView process (the test proxy renders its own cached `html_tree`); drive the real event path or send the actual `handle_info` message instead.
 For transient states (a `:testing` spinner) the same rule applies: no direct state surgery.
+Prefer clicking the rendered ELEMENT (`element(view, sel) |> render_click()`, no values) over `render_click(view, event, %{"id" => …})`: an explicit value set masks a broken component contract, and a `phx-value-*` attribute in KEBAB case arrives hyphenated (LiveView strips only the `phx-value-` prefix) so a kebab attribute silently produces `"task-id"` and a `FunctionClauseError` in a snake_case handler — every `phx-value-*` must be snake_case.
 `function_exported?/3` does NOT load a module, so a test asserting an export must call `Code.ensure_loaded!/1` first (`evo_dash/node_context_test.exs` carries the regression example).
 
 ### Pins that must not be weakened
