@@ -241,7 +241,7 @@ defmodule EvoDashWeb.ArchiveTreeTest do
         )
 
       assert html =~ ~s(phx-click="load_more_task_archive")
-      assert html =~ ~s(phx-value-task-id="task-42")
+      assert html =~ ~s(phx-value-task_id="task-42")
       assert html =~ "Load more"
       refute html =~ "Loading…"
 
@@ -304,7 +304,7 @@ defmodule EvoDashWeb.ArchiveTreeTest do
       doc = Floki.parse_document!(html)
 
       assert html =~ ~s(phx-click="load_task_archive_agent_result")
-      assert html =~ ~s(phx-value-agent-id="page-root")
+      assert html =~ ~s(phx-value-agent_id="page-root")
       assert html =~ "Show result"
       # No Result header is rendered while nothing was fetched.
       refute Floki.text(doc) =~ "Result"

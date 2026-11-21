@@ -171,7 +171,7 @@ defmodule EvoDashWeb.ArchiveComponents do
             <button
               class="btn btn-sm btn-outline rounded-md"
               phx-click="load_more_task_archive"
-              phx-value-task-id={@task_id}
+              phx-value-task_id={@task_id}
               disabled={@loading_more?}
             >
               <%= if @loading_more? do %>
@@ -189,7 +189,7 @@ defmodule EvoDashWeb.ArchiveComponents do
               <button
                 class="btn btn-xs btn-ghost rounded-md shrink-0"
                 phx-click="load_more_task_archive"
-                phx-value-task-id={@task_id}
+                phx-value-task_id={@task_id}
               >
                 <.icon name="hero-arrow-path" class="size-3.5 mr-1" /> {gettext("Retry")}
               </button>
@@ -350,8 +350,8 @@ defmodule EvoDashWeb.ArchiveComponents do
               <button
                 class="btn btn-xs btn-ghost rounded-md shrink-0"
                 phx-click="load_task_archive_agent_result"
-                phx-value-task-id={@task_id}
-                phx-value-agent-id={@agent_id}
+                phx-value-task_id={@task_id}
+                phx-value-agent_id={@agent_id}
               >
                 <.icon name="hero-arrow-path" class="size-3.5 mr-1" /> {gettext("Retry")}
               </button>
@@ -361,8 +361,8 @@ defmodule EvoDashWeb.ArchiveComponents do
               <button
                 class="btn btn-xs btn-ghost rounded-md"
                 phx-click="load_task_archive_agent_result"
-                phx-value-task-id={@task_id}
-                phx-value-agent-id={@agent_id}
+                phx-value-task_id={@task_id}
+                phx-value-agent_id={@agent_id}
               >
                 <.icon name="hero-document-magnifying-glass" class="size-3.5 mr-1" />
                 {gettext("Show result")}
