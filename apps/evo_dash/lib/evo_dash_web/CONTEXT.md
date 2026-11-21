@@ -194,12 +194,9 @@ Executed GNOME/libadwaita (Adwaita) design language. This is the markup-side map
 
 Rules for NEW markup. Sibling convention records: `components/CONTEXT.md`, `live/system_live/CONTEXT.md`, `live/components/CONTEXT.md`.
 
-- **Alpha floor**: user-relevant text never below `/50`; labels/meta ≥ `/60`; small/primary content ≥ `/70`; fold `text-[10px]`/`text-[11px]` to `text-xs`. Decorative large icons may keep `/30`–`/40`; empty/loading states get exactly ONE dim layer.
+- **Alpha floor**: user-relevant text never below `/50`; labels/meta ≥ `/60`; small/primary content ≥ `/70`; fold `text-[10px]`/`text-[11px]` to `text-xs`. Decorative large icons may keep `/30`–`/40`; empty/loading states get exactly ONE dim layer. `--color-secondary` IS mapped in both themes, but for small body text (≈3.8:1) prefer `text-base-content/80`.
 - **Hairlines/borders on content surfaces**: `border-base-300` (base-200 on a base-100 surface is ≈1.06:1 invisible; base-200 only on base-200 chrome). Cards/panels `rounded-xl` max (prefer `rounded-lg`); action buttons `rounded-lg`/`rounded-md`; pill badges may keep `rounded-full`.
-- **`bg-base-50` is a dead class** — only base-100/200/300 tokens exist in both custom themes.
-- **`*-content` tokens must never sit on translucent tints** (polarity-swapped per theme) — use full `text-<semantic>` on `bg-<semantic>/10..20`; `-content` only on the solid fill.
-- **`badge-ghost` on tinted/gray strips = gray-on-gray** → `badge-outline border-base-content/25 text-base-content/80`.
-- **No raw color literals** (`text-red-500`, `bg-white/10`, `bg-black/10`, `bg-neutral text-neutral-content` — the last two unmapped stock DaisyUI tokens) → theme tokens (`text-error`, `bg-primary-content/10`, `bg-base-content/5`, `bg-base-200`).
+- **`*-content` tokens must never sit on translucent tints** (polarity-swapped per theme) — use full `text-<semantic>` on `bg-<semantic>/10..20`; `-content` only on the solid fill. `badge-ghost` on a tinted/gray strip is gray-on-gray → `badge-outline border-base-content/25 text-base-content/80`.
+- **No raw color literals** (`text-red-500`, `bg-white/10`, `bg-black/10`, `bg-neutral text-neutral-content` — the last two unmapped stock DaisyUI tokens) → theme tokens (`text-error`, `bg-primary-content/10`, `bg-base-content/5`, `bg-base-200`); `bg-base-50` is a dead class (only base-100/200/300 exist in both custom themes).
 - **Sidebar brand wordmark** is plain `text-base-content` — no gradient/bg-clip-text.
-- **`--color-secondary` IS mapped in both themes**; for small body text (≈3.8:1) prefer `text-base-content/80`.
 - Locked single-source schemes — never "fix": `Helpers.task_status_*`/`agent_status_*`/`connection_status_*` (tests pin them), chart `--chart-*` CSS-var strings, `theme_color.ex` palette, the home chat bottom fade.
