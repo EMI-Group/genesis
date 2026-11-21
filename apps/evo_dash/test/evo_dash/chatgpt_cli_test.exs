@@ -114,6 +114,163 @@ defmodule EvoDash.ChatGPTCLITest do
     assert printed =~ "gpt-5\tGPT-5"
   end
 
+  test "a pasted code completes the login without the browser callback", %{account: account} do
+    port = free_port()
+
+    StubStore.put(account, %{
+      test: self(),
+      status:
+        {:ok, %{account_id: account, models: [%{"slug" => "gpt-5", "display_name" => "GPT-5"}]}}
+    })
+
+    test = self()
+
+    exchange = fn attempt, params ->
+      send(test, {:cli_stub_exchange, attempt, params})
+      {:ok, %{"access_token" => "stub-access", "code" => params["code"]}}
+    end
+
+    # The stdin reader calls `IO.gets(:stdio, "")`, which reads from the group
+    # leader, so the device's own input IS the user pasting the line and
+    # pressing Enter.
+    {:ok, device} = StringIO.open("pasted-code-123\n")
+
+    start_cli(device, ["login", "--account", account, "--port", Integer.to_string(port)],
+      store: StubStore,
+      exchange: exchange
+    )
+
+    assert_receive {:cli_stub_exchange, attempt, params}, @async_wait_budget_ms
+    assert params["code"] == "pasted-code-123"
+    # The paste completed the SAME attempt the printed URL was minted for.
+    assert attempt.state == state_from_url(wait_for(fn -> url_in(output(device)) end))
+
+    assert_receive {:stub_install, ^account, record}, @async_wait_budget_ms
+    assert record["code"] == "pasted-code-123"
+
+    assert_receive {:cli_result, :ok}, @async_wait_budget_ms
+
+    printed = output(device)
+    assert printed =~ "paste the address it redirected to"
+    refute printed =~ "No local listener is open on this machine"
+    assert printed =~ "Checking the pasted sign-in..."
+    assert printed =~ "Connected ChatGPT account #{account}."
+    assert printed =~ "gpt-5\tGPT-5"
+  end
+
+  test "a rejected paste keeps the attempt open and a later paste completes it", %{
+    account: account
+  } do
+    port = free_port()
+
+    StubStore.put(account, %{
+      test: self(),
+      status: {:ok, %{account_id: account, models: []}}
+    })
+
+    test = self()
+
+    exchange = fn _attempt, params ->
+      send(test, {:cli_stub_exchange, params})
+      {:ok, %{"access_token" => "stub-access"}}
+    end
+
+    # First a redirect URL carrying a FOREIGN state, then prose that holds no
+    # code at all, then the real retry: only the third line can complete the
+    # sign-in, so the first two must leave the attempt pending.
+    pasted = """
+    http://127.0.0.1:1455/auth/callback?state=another-sign-in&code=stale-code
+    this is not a redirect or a code
+    retried-code-456
+    """
+
+    {:ok, device} = StringIO.open(pasted)
+
+    start_cli(device, ["login", "--account", account, "--port", Integer.to_string(port)],
+      store: StubStore,
+      exchange: exchange
+    )
+
+    assert_receive {:cli_stub_exchange, %{"code" => "retried-code-456"}}, @async_wait_budget_ms
+    refute_receive {:cli_stub_exchange, _params}, 200
+
+    assert_receive {:stub_install, ^account, record}, @async_wait_budget_ms
+    assert record["access_token"] == "stub-access"
+
+    assert_receive {:cli_result, :ok}, @async_wait_budget_ms
+
+    printed = output(device)
+    assert printed =~ "That link does not belong to this sign-in."
+    assert printed =~ "That text carries no sign-in code."
+    assert printed =~ "Connected ChatGPT account #{account}."
+  end
+
+  test "login without any stdin input still completes through the loopback callback", %{
+    account: account
+  } do
+    port = free_port()
+
+    StubStore.put(account, %{test: self(), status: {:ok, %{account_id: account, models: []}}})
+
+    test = self()
+
+    exchange = fn _attempt, params ->
+      send(test, {:cli_stub_exchange, params})
+      {:ok, %{"access_token" => "stub-access"}}
+    end
+
+    # A non-interactive run: the reader sees `:eof` at once, exits, and the
+    # command must still wait for the browser instead of crashing or spinning.
+    {:ok, device} = StringIO.open("")
+
+    start_cli(device, ["login", "--account", account, "--port", Integer.to_string(port)],
+      store: StubStore,
+      exchange: exchange
+    )
+
+    url = wait_for(fn -> url_in(output(device)) end)
+    state = state_from_url(url)
+
+    {status, _headers, _body} =
+      http_request(port, "/auth/callback?state=#{URI.encode_www_form(state)}&code=abc")
+
+    assert status == 200
+
+    assert_receive {:stub_install, ^account, _record}, @async_wait_budget_ms
+    assert_receive {:cli_result, :ok}, @async_wait_budget_ms
+
+    assert output(device) =~ "Connected ChatGPT account #{account}."
+  end
+
+  test "an attempt that cannot bind a listener prints the manual hint and completes from a paste",
+       %{account: account} do
+    {port, occupied} = occupied_port()
+    on_exit(fn -> :ok = :gen_tcp.close(occupied) end)
+
+    StubStore.put(account, %{test: self(), status: {:ok, %{account_id: account, models: []}}})
+
+    test = self()
+
+    exchange = fn _attempt, params ->
+      send(test, {:cli_stub_exchange, params})
+      {:ok, %{"access_token" => "stub-access"}}
+    end
+
+    {:ok, device} = StringIO.open("manual-code-789\n")
+
+    start_cli(device, ["login", "--account", account, "--port", Integer.to_string(port)],
+      store: StubStore,
+      exchange: exchange
+    )
+
+    assert_receive {:cli_stub_exchange, %{"code" => "manual-code-789"}}, @async_wait_budget_ms
+    assert_receive {:cli_result, :ok}, @async_wait_budget_ms
+
+    printed = output(device)
+    assert printed =~ "No local listener is open on this machine"
+    assert printed =~ "Connected ChatGPT account #{account}."
+  end
+
   test "status reads through the injected store", %{account: account} do
     StubStore.put(account, %{
       test: self(),
@@ -178,6 +335,14 @@ defmodule EvoDash.ChatGPTCLITest do
     {:ok, port} = :inet.port(socket)
     :ok = :gen_tcp.close(socket)
     port
+  end
+
+  # A port that is already taken: the flow cannot bind its loopback listener
+  # there, so it degrades to `mode: :manual` — the remote-host shape.
+  defp occupied_port do
+    {:ok, socket} = :gen_tcp.listen(0, [:binary, ip: {127, 0, 0, 1}, active: false])
+    {:ok, port} = :inet.port(socket)
+    {port, socket}
   end
 
   defp http_request(port, path) do
