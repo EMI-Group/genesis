@@ -500,7 +500,7 @@ defmodule EvoDashWeb.ProcessesLive do
                 phx-click="set_status"
                 phx-value-status={tab}
                 class={[
-                  "min-h-9 flex-1 px-3 py-1.5 rounded-md text-sm font-medium cursor-pointer transition-colors whitespace-nowrap",
+                  "min-h-[var(--control-h-sm)] pointer-coarse:min-h-[var(--touch-target)] flex-1 px-3 py-1.5 rounded-md text-sm font-medium cursor-pointer transition-colors whitespace-nowrap",
                   @status_filter == tab && "bg-base-100 shadow-sm text-base-content",
                   @status_filter != tab &&
                     "hover:bg-base-200/80 text-base-content/70 hover:text-base-content"
@@ -520,7 +520,7 @@ defmodule EvoDashWeb.ProcessesLive do
             >
               <select
                 name="kind"
-                class="select select-bordered min-h-10 w-full rounded-md bg-base-100 lg:w-44"
+                class="select select-bordered w-full rounded-md bg-base-100 lg:w-44"
                 aria-label={gettext("Process kind")}
               >
                 <option value="all" selected={@kind_filter == "all"}>
@@ -548,7 +548,7 @@ defmodule EvoDashWeb.ProcessesLive do
                 phx-debounce="200"
                 value={@search_query}
                 placeholder={gettext("Search processes")}
-                class="input input-bordered min-h-10 w-full rounded-md"
+                class="input input-bordered w-full rounded-md"
                 aria-label={gettext("Search processes")}
               />
             </.form>
@@ -601,7 +601,7 @@ defmodule EvoDashWeb.ProcessesLive do
             name="hero-arrow-path"
             class="size-10 mx-auto mb-4 text-base-content/40 animate-spin"
           />
-          <p class="text-lg font-medium text-base-content/70">{gettext("Loading processes...")}</p>
+          <p class="text-lg font-semibold text-base-content/70">{gettext("Loading processes...")}</p>
         </div>
 
         <!-- Load failure with nothing to show -->
@@ -612,7 +612,7 @@ defmodule EvoDashWeb.ProcessesLive do
           class="rounded-lg border border-base-300 px-4 py-10 text-center sm:py-14"
         >
           <.icon name="hero-exclamation-triangle" class="size-10 mx-auto mb-4 text-error/70" />
-          <p class="text-lg font-medium text-error">{gettext("Could not load processes.")}</p>
+          <p class="text-lg font-semibold text-error">{gettext("Could not load processes.")}</p>
           <p class="text-xs text-base-content/60 mt-1 font-mono break-all">{@executions_error}</p>
           <button type="button" class="btn btn-sm btn-ghost mt-3 text-error" phx-click="retry">
             <.icon name="hero-arrow-path" class="size-3.5" /> {gettext("Retry")}
@@ -624,7 +624,7 @@ defmodule EvoDashWeb.ProcessesLive do
           :if={@executions_error != nil and @executions != []}
           id="processes-refresh-error"
           role="alert"
-          class="mb-3 flex items-center justify-between gap-3 rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-sm text-error"
+          class="mb-4 flex items-center justify-between gap-3 rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-sm text-error"
         >
           <span class="flex items-center gap-2 min-w-0">
             <.icon name="hero-exclamation-triangle" class="size-4 shrink-0" />
@@ -645,7 +645,7 @@ defmodule EvoDashWeb.ProcessesLive do
           class="rounded-lg border border-base-300 px-4 py-10 text-center text-base-content/70 sm:py-14"
         >
           <.icon name="hero-cpu-chip" class="size-10 mx-auto mb-4 text-base-content/40" />
-          <p class="font-semibold text-base-content">
+          <p class="text-base font-semibold text-base-content">
             {if @filters_active,
               do: gettext("No processes match these filters."),
               else: empty_message(@status_filter)}
