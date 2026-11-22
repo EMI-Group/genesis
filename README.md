@@ -94,7 +94,7 @@ For example:
 
 [Installation guide](https://genesis.evox.group/getting-started/installation/) · [Model configuration](https://genesis.evox.group/config/)
 
-Want to understand or operate Genesis? Open **Assistant** (`/assistant`) — **Genesis Assistant** understands the running system and can act on it: it reads Genesis source and inspects runtime state without approval, drives tasks and scheduler/configuration changes only after you approve the exact action, and answers in your language. See the [Genesis Assistant guide](docs/genesis-assistant.md) for capabilities and safety boundaries.
+Open **Assistant** (`/assistant`) to ask about Genesis, inspect runtime state, or manage tasks and settings in your language. It reads source and runtime state directly; task, scheduler, and configuration changes require approval of the specific action. See the [Genesis Assistant guide](docs/genesis-assistant.md).
 
 ### Headless server
 
@@ -150,11 +150,11 @@ default_reasoning_effort = "low"
 context_window = 128000
 ```
 
-Set `OPENAI_API_KEY` on the node running the task; do not put secrets in model rows. Nested model settings override generation, context-window, and reasoning defaults, not account authentication or capacity. The reasoning default is explicit—it is not inferred from the first effort in the list. OAuth uses account-level `auth_mode = "oauth"` and optional `oauth_file`; see [subscription authentication](docs/llm-oauth.md).
+Set `OPENAI_API_KEY` on the node running the task. Keep credentials in the provider profile; model entries customize generation, context window, and reasoning settings. Set `default_reasoning_effort` explicitly. For OAuth setup, see [subscription authentication](docs/llm-oauth.md).
 
-The same concrete selection is available outside the task form through the MCP tool's task submission. An explicit choice locks that Provider profile → Model → Reasoning effort selection for the task and its agents, while **Auto (by rules)** keeps your configured defaults.
+MCP task submission supports the same provider, model, and reasoning selection.
 
-Legacy `[[llm.models]]` configuration remains a compatibility input; use provider profiles for new configuration. `EvoGit.Config.Schema.resolve_model_spec/2` validates a programmatic selection before it is enqueued.
+Use provider profiles for new configurations. Existing `[[llm.models]]` configurations remain supported.
 
 See [Provider profiles and concrete model selection](docs/llm-profiles.md) for defaults, migration, and scheduling details.
 
@@ -213,3 +213,4 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for developmen
 Genesis grew out of [EvoGit](https://github.com/BillHuang2001/evogit) and follows the broader [EvoX](https://github.com/EMI-Group/evox) research lineage.
 
 Released under the [GNU Affero General Public License v3.0](LICENSE).
+
