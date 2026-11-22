@@ -132,7 +132,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
             class="checkbox checkbox-xs"
           />
           <span class="text-xs">{chip.label}</span>
-          <span :if={chip.suggested} class="text-[10px] text-base-content/50">*</span>
+          <span :if={chip.suggested} class="text-2xs text-base-content/50">*</span>
         </label>
       </div>
       <p class="text-xs leading-relaxed text-base-content/70">
@@ -290,11 +290,11 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
   end
 
   defp reasoning_chip_class(true) do
-    "flex cursor-pointer items-center gap-1.5 rounded-lg border border-primary bg-primary/5 px-2 py-1"
+    "flex cursor-pointer items-center gap-1.5 rounded-lg border border-primary bg-primary/5 px-2.5 py-1.5"
   end
 
   defp reasoning_chip_class(_checked?) do
-    "flex cursor-pointer items-center gap-1.5 rounded-lg border border-base-300 bg-base-100 px-2 py-1"
+    "flex cursor-pointer items-center gap-1.5 rounded-lg border border-base-300 bg-base-100 px-2.5 py-1.5"
   end
 
   attr(:prefix, :string, required: true)
@@ -432,7 +432,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
             type="button"
             phx-click="remove_provider_peak_hours_row"
             phx-value-index={index}
-            class="btn btn-ghost btn-xs text-error"
+            class="btn btn-ghost btn-sm text-error"
             aria-label={gettext("Remove peak window %{number}", number: row_number(index))}
           >{gettext("Remove window")}</button>
         </div>
@@ -461,7 +461,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
       <div class="flex flex-wrap gap-2">
         <label
           :for={{day, label} <- @days}
-          class="flex cursor-pointer items-center gap-1.5 rounded-md border border-base-300 bg-base-100 px-2 py-1 text-xs"
+          class="flex cursor-pointer items-center gap-1.5 rounded-md border border-base-300 bg-base-100 px-2.5 py-1.5 text-xs"
         >
           <input
             type="checkbox"
@@ -523,7 +523,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
           type="button"
           phx-click="refresh_auth_status"
           phx-value-profile_id={value(@profile, "id")}
-          class="btn btn-ghost btn-xs gap-1"
+          class="btn btn-ghost btn-sm gap-1"
           aria-label={gettext("Recheck subscription login")}
         ><.icon name="hero-arrow-path" class="size-3.5" />{gettext("Recheck")}</button>
       </div>

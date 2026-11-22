@@ -55,7 +55,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.ScheduleEditor do
           phx-click="apply_provider_schedule"
           phx-value-preset_id={preset.id}
           title={Map.get(preset, :note)}
-          class="btn btn-ghost btn-xs"
+          class="btn btn-ghost btn-sm"
         >
           {preset.label}
         </button>
@@ -76,7 +76,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.ScheduleEditor do
             type="button"
             phx-click="apply_provider_schedule"
             phx-value-preset_id={@preset_id}
-            class="btn btn-ghost btn-xs"
+            class="btn btn-ghost btn-sm"
           >
             {gettext("Re-apply")}
           </button>
@@ -84,7 +84,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.ScheduleEditor do
             :if={@can_undo}
             type="button"
             phx-click="undo_provider_schedule"
-            class="btn btn-ghost btn-xs"
+            class="btn btn-ghost btn-sm"
           >
             {gettext("Undo")}
           </button>
@@ -92,7 +92,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.ScheduleEditor do
             type="button"
             phx-click="dismiss_schedule_applied"
             aria-label={gettext("Dismiss schedule notice")}
-            class="btn btn-ghost btn-xs"
+            class="btn btn-ghost btn-sm btn-square"
           >
             <.icon name="hero-x-mark" class="size-3.5" />
           </button>
