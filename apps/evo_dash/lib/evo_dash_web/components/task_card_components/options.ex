@@ -46,9 +46,9 @@ defmodule EvoDashWeb.TaskCardComponents.Options do
 
     ~H"""
     <div class="space-y-3">
-      <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
+      <div class="bg-base-100 p-3 rounded-xl border border-base-200 shadow-inner">
         <div class={[
-          "text-sm whitespace-pre-wrap break-words",
+          "text-base whitespace-pre-wrap break-words",
           if(@truncate, do: "max-h-48 overflow-y-auto", else: "")
         ]}>
           {@primary_text.text}
