@@ -18,18 +18,18 @@ defmodule EvoDashWeb.AgentsLive.TreePanel do
   """
   use EvoDashWeb, :html
 
-  attr :agents_error, :any, default: nil
-  attr :agents_loading, :boolean, required: true
-  attr :left_view, :atom, required: true
-  attr :agents, :list, required: true
-  attr :repo_trees, :list, required: true
-  attr :selected_agent_id, :any, default: nil
-  attr :new_agent_ids, :any, default: nil
-  attr :changed_status_ids, :any, default: nil
-  attr :commit_graph, :list, required: true
-  attr :commit_graph_loading, :boolean, required: true
-  attr :commit_graph_error, :any, default: nil
-  attr :current_node_id, :any, default: nil
+  attr(:agents_error, :any, default: nil)
+  attr(:agents_loading, :boolean, required: true)
+  attr(:left_view, :atom, required: true)
+  attr(:agents, :list, required: true)
+  attr(:repo_trees, :list, required: true)
+  attr(:selected_agent_id, :any, default: nil)
+  attr(:new_agent_ids, :any, default: nil)
+  attr(:changed_status_ids, :any, default: nil)
+  attr(:commit_graph, :list, required: true)
+  attr(:commit_graph_loading, :boolean, required: true)
+  attr(:commit_graph_error, :any, default: nil)
+  attr(:current_node_id, :any, default: nil)
 
   def tree_panel(assigns) do
     ~H"""
@@ -86,7 +86,8 @@ defmodule EvoDashWeb.AgentsLive.TreePanel do
                 id="left-view-tree"
                 type="button"
                 class={[
-                  "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
+                  "inline-flex min-h-[var(--control-h-sm)] items-center px-3 py-1 text-xs font-medium rounded-md transition-colors",
+                  "pointer-coarse:min-h-[var(--touch-target)]",
                   @left_view == :tree && "bg-base-100 text-base-content shadow-sm",
                   @left_view != :tree && "text-base-content/70 hover:text-base-content"
                 ]}
@@ -99,7 +100,8 @@ defmodule EvoDashWeb.AgentsLive.TreePanel do
                 id="left-view-commits"
                 type="button"
                 class={[
-                  "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
+                  "inline-flex min-h-[var(--control-h-sm)] items-center px-3 py-1 text-xs font-medium rounded-md transition-colors",
+                  "pointer-coarse:min-h-[var(--touch-target)]",
                   @left_view == :commits && "bg-base-100 text-base-content shadow-sm",
                   @left_view != :commits && "text-base-content/70 hover:text-base-content"
                 ]}
@@ -120,7 +122,7 @@ defmodule EvoDashWeb.AgentsLive.TreePanel do
                   class="size-8 mx-auto mb-4 text-base-content/60 animate-spin"
                 />
                 <%!-- 加载中提示：智能体列表从当前节点异步拉取时的占位加载态 --%>
-                <p class="text-lg text-base-content">{gettext("Loading agents…")}</p>
+                <p class="text-sm text-base-content/70">{gettext("Loading agents…")}</p>
               </div>
             <% else %>
               <%= if @agents == [] do %>

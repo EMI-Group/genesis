@@ -44,7 +44,7 @@ defmodule EvoDashWeb.AgentsLive.DetailPanel do
               <div id={"agent-detail-#{agent.id}"} class="agent-detail-content">
                 <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
                   <div class="flex min-w-0 flex-wrap items-center gap-2">
-                    <h3 class="card-title">
+                    <h3 class="card-title text-base font-semibold">
                       <.icon name="hero-identification" class="size-5" />
                       #{agent.task_local_id || agent.id}
                     </h3>
@@ -168,7 +168,7 @@ defmodule EvoDashWeb.AgentsLive.DetailPanel do
                           )}
                         </h4>
                         <code
-                          class="text-xs font-mono bg-base-200/60 border border-base-300 px-3 py-1.5 rounded block truncate w-full"
+                          class="text-xs font-mono bg-base-200/60 border border-base-300 px-2 py-1 rounded block truncate w-full"
                           title={agent.base_commit}
                         >
                           {shorten_sha(agent.base_commit)}
@@ -184,7 +184,7 @@ defmodule EvoDashWeb.AgentsLive.DetailPanel do
                           )}
                         </h4>
                         <code
-                          class={"text-xs font-mono px-3 py-1.5 rounded block truncate w-full " <> commit_bg_class(agent)}
+                          class={"text-xs font-mono px-2 py-1 rounded block truncate w-full " <> commit_bg_class(agent)}
                           title={agent.current_commit}
                         >
                           {shorten_sha(agent.current_commit)}
@@ -258,7 +258,7 @@ defmodule EvoDashWeb.AgentsLive.DetailPanel do
                 <%= if page.show_usage do %>
                   <div class="mt-2">
                     <div class="grid grid-cols-3 gap-2 mt-2">
-                      <div class="bg-base-200/50 border border-base-300 rounded-lg p-2.5">
+                      <div class="bg-base-200/50 border border-base-300 rounded-lg p-3">
                         <div class="text-xs text-base-content/70">
                           {gettext("Input Tokens")}
                         </div>
@@ -266,7 +266,7 @@ defmodule EvoDashWeb.AgentsLive.DetailPanel do
                           {format_number(agent.usage.input_tokens)}
                         </div>
                       </div>
-                      <div class="bg-base-200/50 border border-base-300 rounded-lg p-2.5">
+                      <div class="bg-base-200/50 border border-base-300 rounded-lg p-3">
                         <div class="text-xs text-base-content/70">
                           {gettext("Output Tokens")}
                         </div>
@@ -274,7 +274,7 @@ defmodule EvoDashWeb.AgentsLive.DetailPanel do
                           {format_number(agent.usage.output_tokens)}
                         </div>
                       </div>
-                      <div class="bg-base-200/50 border border-base-300 rounded-lg p-2.5">
+                      <div class="bg-base-200/50 border border-base-300 rounded-lg p-3">
                         <div class="text-xs text-base-content/70">
                           {gettext("Total Tokens")}
                         </div>
@@ -285,7 +285,7 @@ defmodule EvoDashWeb.AgentsLive.DetailPanel do
                     </div>
                     <div class="mt-4 pt-4 border-t border-base-300">
                       <div class="grid grid-cols-2 gap-2 mt-2">
-                        <div class="bg-base-200/50 border border-base-300 rounded-lg p-2.5">
+                        <div class="bg-base-200/50 border border-base-300 rounded-lg p-3">
                           <div class="text-xs text-base-content/70">
                             {gettext("Cached Tokens")}
                           </div>
@@ -293,7 +293,7 @@ defmodule EvoDashWeb.AgentsLive.DetailPanel do
                             {format_number(Map.get(agent.usage, :cached_tokens, 0))}
                           </div>
                         </div>
-                        <div class="bg-base-200/50 border border-base-300 rounded-lg p-2.5">
+                        <div class="bg-base-200/50 border border-base-300 rounded-lg p-3">
                           <div class="text-xs text-base-content/70">
                             {gettext("Cache Hit Rate")}
                           </div>
@@ -326,7 +326,7 @@ defmodule EvoDashWeb.AgentsLive.DetailPanel do
                           else: format_number(meter.current_tokens) %>
                       <% compression_label =
                         "#{meter.compression_count} (#{agent.compression_pct}%)" %>
-                      <div class="mt-2 bg-base-200/50 border border-base-300 rounded-lg p-2.5">
+                      <div class="mt-2 bg-base-200/50 border border-base-300 rounded-lg p-3">
                         <div class="flex items-baseline justify-between gap-2">
                           <div class="text-xs text-base-content/70">
                             {gettext("Context")}
@@ -394,7 +394,7 @@ defmodule EvoDashWeb.AgentsLive.DetailPanel do
                     </div>
                     <div class="mt-4 pt-4 border-t border-base-300">
                       <div class="grid grid-cols-3 gap-2 mt-2">
-                        <div class="bg-base-200/50 border border-base-300 rounded-lg p-2.5">
+                        <div class="bg-base-200/50 border border-base-300 rounded-lg p-3">
                           <div class="text-xs text-base-content/70">
                             {gettext("Input Cost")}
                           </div>
@@ -402,7 +402,7 @@ defmodule EvoDashWeb.AgentsLive.DetailPanel do
                             ${format_cost(agent.usage.input_cost)}
                           </div>
                         </div>
-                        <div class="bg-base-200/50 border border-base-300 rounded-lg p-2.5">
+                        <div class="bg-base-200/50 border border-base-300 rounded-lg p-3">
                           <div class="text-xs text-base-content/70">
                             {gettext("Output Cost")}
                           </div>
@@ -410,7 +410,7 @@ defmodule EvoDashWeb.AgentsLive.DetailPanel do
                             ${format_cost(agent.usage.output_cost)}
                           </div>
                         </div>
-                        <div class="bg-base-200/50 border border-base-300 rounded-lg p-2.5">
+                        <div class="bg-base-200/50 border border-base-300 rounded-lg p-3">
                           <div class="text-xs text-base-content/70">
                             {gettext("Total Cost")}
                           </div>
@@ -524,7 +524,7 @@ defmodule EvoDashWeb.AgentsLive.DetailPanel do
                 </div>
               </div>
             <% else %>
-              <p class="text-base-content">{gettext("Agent not found")}</p>
+              <p class="text-sm text-base-content/70">{gettext("Agent not found")}</p>
             <% end %>
           <% else %>
             <div class="text-center py-16">
