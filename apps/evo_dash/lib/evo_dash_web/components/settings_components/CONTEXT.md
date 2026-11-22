@@ -118,6 +118,7 @@ Type follows the ONE dashboard ladder (`docs/ui-density.md` / skill `ui-density`
 No arbitrary font size (`text-[…]`) and no 700 weight outside numeric metrics, badge text and `<strong>` — headings, card titles and status lines are `font-semibold`.
 Controls: secondary/row actions are `btn-sm`, every icon-only action is `btn-sm btn-square`, and a pane's primary submit is a default `btn`; card/panel bodies are `p-4` (wizard shell `p-5`) on `rounded-xl` containers with `rounded-lg` controls.
 Rows are compact and dense: one line per account summary, grids inside the detail, no hero boxes, gradients or decorative blurs.
+The Settings page PANE GUTTERS are owned by the live-page wave: `px-8 py-8` (`search_results.ex`), `px-8 py-6` (`section_header.ex`) and `px-8 py-2.5` (`save_bar.ex`) are deliberately left in the components.
 Interactive affordances that must not submit carry `type="button"`, and `summary` toggles are plain clicks.
 
 ## SettingCard and generic category cards
