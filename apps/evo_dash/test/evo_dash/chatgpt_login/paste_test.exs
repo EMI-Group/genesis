@@ -39,6 +39,24 @@ defmodule EvoDash.ChatGPTLogin.PasteTest do
     assert Paste.parse("<bare-code>\n") == {:ok, %{"code" => "bare-code"}}
   end
 
+  # The exact callback an in-browser SIWC approval redirects to (the bug report's
+  # "that text carries no authorization code" paste): a loopback callback with
+  # `scope=` plus REAL codes, the issuer and the app's client id.
+  @reported_url "http://localhost:1455/auth/callback?code=ac.1.AAApCOcLN1KblOS9Hs6gK85rmND5UPbcyPz19SIOqvopbPI4lLStK00R7X0w3LNz9t6ZCOdkiiYrbrAKxi0LCR3T92flcApKGyN86x5AzZGi4-v9CvguvvBmVGY&scope=openid+profile+email+offline_access&state=QobijGG4NozG_rxKnuiP3jnfglyGs7_rU7u1kBFDDCo&iss=https%3A%2F%2Fauth.openai.com&client_id=oaiapp_2d1b1c3d4e5f6a7b8c9d0e1f2a3b4c5d"
+  @reported_code "ac.1.AAApCOcLN1KblOS9Hs6gK85rmND5UPbcyPz19SIOqvopbPI4lLStK00R7X0w3LNz9t6ZCOdkiiYrbrAKxi0LCR3T92flcApKGyN86x5AzZGi4-v9CvguvvBmVGY"
+  @reported_state "QobijGG4NozG_rxKnuiP3jnfglyGs7_rU7u1kBFDDCo"
+  test "the reported callback URL parses to its code and state" do
+    assert Paste.parse(@reported_url) ==
+             {:ok, %{"code" => @reported_code, "state" => @reported_state}}
+
+    # A copy-pasted address bar value can arrive wrapped or space-padded.
+    assert Paste.parse("  <#{@reported_url}>  ") ==
+             {:ok, %{"code" => @reported_code, "state" => @reported_state}}
+
+    # The bare authorization code the same browser shows is also accepted.
+    assert Paste.parse(@reported_code) == {:ok, %{"code" => @reported_code}}
+  end
+
   test "an error parameter is a denial, even beside a code (parity with the HTTP callback)" do
     assert Paste.parse("#{@url}?error=access_denied&state=xyz") == {:error, :authorization_denied}
     assert Paste.parse("error=access_denied&code=abc") == {:error, :authorization_denied}

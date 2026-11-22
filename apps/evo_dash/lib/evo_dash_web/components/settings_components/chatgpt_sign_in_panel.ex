@@ -28,9 +28,15 @@ defmodule EvoDashWeb.SettingsComponents.ChatGPTSignInPanel do
 
   Every control is `type="button"` and the paste input uses `phx-change`, never
   a nested form: this panel renders INSIDE the provider detail `<form>`, so it
-  must never submit. Both actions carry `phx-value-surface` (and
+  must never submit itself. Both actions carry `phx-value-surface` (and
   `phx-value-profile_id` when one is set), so a page can drive several surfaces
   with one handler pair.
+  That input is an INPUT-level `phx-change`, so its real payload carries ONLY
+  the input's own field (`%{"paste" => text, "_target" => "paste"}` — LiveView
+  reads `phx-value-*` from the FORM, never the input) and a page must read
+  `"paste"`, not `"value"`; pressing Enter in it still triggers the enclosing
+  form's implicit submit, which is harmless only because the provider draft
+  boundary drops the `paste` key.
 
   Anti-replay / surface isolation for the page state itself (`surface_state/2`)
   lives here too: the page owns the state

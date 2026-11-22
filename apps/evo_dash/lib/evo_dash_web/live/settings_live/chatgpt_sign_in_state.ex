@@ -322,6 +322,44 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
   end
 
   @doc """
+  Whether an EVENT payload should act on the page's current sign-in state.
+  The paste input is the awkward case: an input-level `phx-change` makes
+  LiveView serialize the enclosing form's field VALUES (so the payload does
+  carry `"paste"`) but read `phx-value-*` from the FORM, never the input —
+  hence a keystroke in the paste input arrives with NO `surface` and NO
+  `profile_id` at all. A surface-less payload therefore targets the ONE state
+  that is WAITING (there is exactly one `:chatgpt_sign_in` state per page, and
+  `paste_target?/2` has nothing to match against); a payload that DOES name a
+  surface keeps the strict `paste_target?/2` guard, so a superseded/closed
+  attempt, or a paste addressed to another surface, still never mutates the
+  waiting state.
+  """
+  @spec paste_payload_target?(term(), term()) :: boolean()
+  def paste_payload_target?(state, params) do
+    case payload_surface(params) do
+      nil -> is_map(state) and Map.get(state, :phase) == :waiting
+      surface -> paste_target?(state, surface)
+    end
+  end
+
+  @doc """
+  The redirect URL / code text a payload carries — TOTAL.
+  The paste input is `name="paste"`, so a real `phx-change` payload carries
+  `"paste"` and never `"value"`; `"value"` stays accepted as the fallback of a
+  form-style submit (a `<button>`'s own value is `""`) and of hand-built
+  payloads. Atom-keyed payloads are tolerated, and anything else answers `""`.
+  """
+  @spec paste_text(term()) :: String.t()
+  def paste_text(params) when is_map(params) do
+    case raw_text(param_value(params, :paste)) do
+      "" -> raw_text(param_value(params, :value))
+      text -> text
+    end
+  end
+
+  def paste_text(_params), do: ""
+
+  @doc """
   Records the text typed into a waiting surface's "paste the redirect URL"
   input: verbatim in `:paste` (the user may still be typing) with a cleared
   inline `:paste_error`.
@@ -338,8 +376,8 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
   Hands the recorded paste back to the OWNING waiting flow — the manual
   (remote-host) completion of the same attempt.
   `params` is the surface's payload: the text is `:paste` when the user typed
-  something, else the payload's `value` (a form-style submit carries the input
-  in the payload, a bare button click carries none). A blank text answers the
+  something, else the payload's own paste text via `paste_text/1` (a bare
+  button click carries none). A blank text answers the
   inline, retryable `:no_code` error WITHOUT touching the flow; a state with no
   flow degrades to the `:error` phase; otherwise
   `EvoDashWeb.LLMSetup.ChatGPTSignIn.submit/2` acknowledges the paste and the
@@ -419,20 +457,22 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
   @doc """
   Records the text typed into a waiting surface's "paste the redirect URL" input.
 
-  A `phx-change`, so it is CHEAP and never touches the flow: it only stores
-  `params["value"]` in `:paste` and clears the previous inline `:paste_error`.
-  A payload for another surface — or for a surface that is not waiting any more
-  — changes NOTHING (the same stale guard `owned_by?/2` applies), so a closed or
-  superseded attempt never resurfaces.
+  A `phx-change`, so it is CHEAP and never touches the flow: it only stores the
+  payload's paste text (`paste_text/1` — the input's own `"paste"` field, so the
+  real browser payload works) in `:paste` and clears the previous inline
+  `:paste_error`.
+  The payload is judged by `paste_payload_target?/2`, so a surface-less keystroke
+  lands on the ONE waiting attempt, while a payload naming another surface — or a
+  surface that is not waiting any more — changes NOTHING (a closed or superseded
+  attempt never resurfaces).
   """
   @spec chatgpt_sign_in_paste(term(), term()) :: {:noreply, term()}
   def chatgpt_sign_in_paste(socket, params) do
-    surface = surface_from_params(params)
     state = page_sign_in(socket)
 
     state =
-      if paste_target?(state, surface) do
-        put_paste(state, param_value(params, "value"))
+      if paste_payload_target?(state, params) do
+        put_paste(state, paste_text(params))
       else
         state
       end
@@ -455,14 +495,16 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
     * any other failure becomes the `:error` phase.
 
   A submit for a surface that no longer owns a waiting flow (superseded, closed,
-  cancelled) is dropped before the flow is called at all.
+  cancelled) is dropped before the flow is called at all; the payload is judged
+  by `paste_payload_target?/2`, so a click's own `phx-value-*` still win and a
+  surface-less payload only lands on the ONE waiting attempt.
   """
   @spec chatgpt_sign_in_submit(term(), term()) :: {:noreply, term()}
   def chatgpt_sign_in_submit(socket, params) do
-    surface = surface_from_params(params)
     state = page_sign_in(socket)
 
-    state = if paste_target?(state, surface), do: submit_paste(state, params), else: state
+    state =
+      if paste_payload_target?(state, params), do: submit_paste(state, params), else: state
 
     {:noreply, socket |> assign(:chatgpt_sign_in, state) |> sync_sign_in_state()}
   end
@@ -575,11 +617,11 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
     Map.merge(state, %{phase: :error, reason: reason, paste_error: nil})
   end
 
-  # The typed text wins; a payload-level `value` is the fallback for a
-  # form-style submit (a bare button click carries none).
+  # The typed text wins; the payload's own paste text (`paste_text/1`, which
+  # also accepts a form-style `value`) is the fallback for a submit.
   defp paste_input(state, params) do
     case text_value(Map.get(state, :paste)) do
-      "" -> text_value(param_value(params, "value"))
+      "" -> text_value(paste_text(params))
       text -> text
     end
   end
@@ -597,6 +639,23 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInState do
   # payload may use atoms.
   defp other_key(_params, key) when is_binary(key), do: nil
   defp other_key(params, key), do: Map.get(params, Atom.to_string(key))
+
+  # The surface a PAYLOAD names, or `nil` when it names none at all — the
+  # input-level `phx-change` shape, which carries only the input's own field.
+  defp payload_surface(params) when is_map(params) do
+    if named_param?(params, :surface) or named_param?(params, :profile_id),
+      do: surface_from_params(params),
+      else: nil
+  end
+
+  defp payload_surface(_params), do: nil
+
+  defp named_param?(params, key) do
+    case param_value(params, key) do
+      value when is_binary(value) -> String.trim(value) != ""
+      value -> not is_nil(value)
+    end
+  end
 
   defp raw_text(value) when is_binary(value), do: value
   defp raw_text(_value), do: ""

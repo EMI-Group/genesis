@@ -1091,6 +1091,45 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
       refute has_element?(view, "#" <> panel <> "-sign-in-paste-error")
     end
 
+    # The REAL browser payload for a keystroke in the paste input: an
+    # input-level `phx-change` makes LiveView serialize the enclosing form's
+    # VALUES (so `"paste"` arrives) while `phx-value-*` is read from the FORM,
+    # never the input — so the payload carries no `"surface"`, no
+    # `"profile_id"` and no `"value"`. A page that reads `params["value"]`
+    # therefore always saw a blank paste and answered "no authorization code".
+    test "a keystroke in the paste input lands on the waiting attempt (real payload)", %{
+      conn: conn
+    } do
+      ChatGPTStub.install!(
+        begin: {:ok, %{id: @flow_id, url: @flow_url, port: 48_123}},
+        statuses: %{},
+        submit: {:ok, %{id: @flow_id}}
+      )
+
+      seed_openai_codex_profile()
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_account(view, @profile_id)
+      panel = detail_panel(@profile_id)
+      view |> element("#" <> panel <> "-sign-in") |> render_click()
+      assert_receive {:chatgpt_stub, :begin, _account}, @async_wait_budget_ms
+      await_page_sign_in(view, :waiting, {:detail, @profile_id})
+      typed = "http://localhost:1455/auth/callback?code=ac.1.abc&state=s1"
+      render_change(view, "chatgpt_sign_in_paste", %{"paste" => typed, "_target" => "paste"})
+      # Recorded verbatim, from the input's OWN field name.
+      assert assigns(view).chatgpt_sign_in.paste == typed
+      assert assigns(view).chatgpt_sign_in.paste_error == nil
+      refute_receive {:chatgpt_stub, :submit, _flow_id, _input}, 0
+      # The submit button carries its `phx-value-*` (and an empty `.value`), so
+      # the recorded paste is what reaches the flow.
+      view |> element("#" <> panel <> "-sign-in-paste-submit") |> render_click()
+      assert_receive {:chatgpt_stub, :submit, @flow_id, ^typed}, @async_wait_budget_ms
+      state = assigns(view).chatgpt_sign_in
+      assert state.phase == :waiting
+      assert state.paste == ""
+      assert state.paste_error == nil
+      refute has_element?(view, "#" <> panel <> "-sign-in-paste-error")
+    end
+
     test "a rejected paste keeps the waiting panel with an inline error", %{conn: conn} do
       ChatGPTStub.install!(
         begin: {:ok, %{id: @flow_id, url: @flow_url, port: 48_123}},

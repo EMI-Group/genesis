@@ -244,13 +244,15 @@ defmodule EvoDashWeb.WelcomeLive do
   # The waiting panel's manual "paste the redirect URL" fallback. `/welcome`
   # renders ONE sign-in surface (the wizard's auth step), so the SAME shared
   # transitions `/settings` uses apply: recording the typed text is cheap and
-  # never touches the flow, and the submit hands it back to the SAME attempt.
+  # never touches the flow (the text comes from `paste_text/1`, because the
+  # input-level `phx-change` payload carries the input's own `"paste"` field and
+  # never a `"value"`), and the submit hands it back to the SAME attempt.
   def handle_event("chatgpt_sign_in_paste", params, socket) do
     state = socket.assigns.chatgpt_sign_in
 
     state =
       if ChatGPTSignInState.paste_target?(state, :wizard),
-        do: ChatGPTSignInState.put_paste(state, Map.get(params, "value")),
+        do: ChatGPTSignInState.put_paste(state, ChatGPTSignInState.paste_text(params)),
         else: state
 
     {:noreply, assign(socket, :chatgpt_sign_in, state)}

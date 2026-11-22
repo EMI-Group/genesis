@@ -455,6 +455,152 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInStateTest do
     end
   end
 
+  # ── The REAL browser payload ───────────────────────────────────────────────
+  #
+  # A keystroke in the panel's paste input is an INPUT-level `phx-change`, so
+  # LiveView serializes the enclosing form's field VALUES (hence `"paste"`) but
+  # reads `phx-value-*` from the FORM, never the input. The shipped payload is
+  # therefore exactly `%{"paste" => text, "_target" => "paste"}` — no
+  # `"value"`, no `"surface"`, no `"profile_id"`. That shape (not the
+  # convenient one) is what the "always says no authorization code" bug hit, so
+  # every test below speaks it.
+  describe "the real input-level phx-change payload (no surface, no value)" do
+    @url "http://localhost:1455/auth/callback?code=ac.1.abc&state=s1"
+    test "a surface-less keystroke lands on the ONE waiting attempt, whatever its surface" do
+      for surface <- [:wizard, {:detail, "profile-1"}, {:status, "profile-2"}] do
+        # An earlier rejection is cleared by the new keystroke.
+        waiting = %{waiting_state(surface) | paste_error: :invalid_callback}
+
+        {:noreply, pasted} =
+          ChatGPTSignInState.chatgpt_sign_in_paste(socket(waiting), %{
+            "paste" => @url,
+            "_target" => "paste"
+          })
+
+        state = assign_state(pasted)
+        assert state.paste == @url
+        assert state.paste_error == nil
+        assert state.phase == :waiting
+        assert state.surface == surface
+      end
+
+      # Recording a keystroke never touches the flow.
+      refute_receive {:chatgpt_stub, :submit, _flow_id, _input}, 0
+    end
+
+    test "the recorded paste reaches the flow through the submit button's payload" do
+      install!({:ok, %{id: @flow_id, url: @flow_url, port: 48_123}})
+      surface = {:detail, "profile-1"}
+
+      {:noreply, pasted} =
+        ChatGPTSignInState.chatgpt_sign_in_paste(socket(waiting_state(surface)), %{
+          "paste" => @url,
+          "_target" => "paste"
+        })
+
+      # `phx-click` DOES carry `phx-value-*` (and a `<button>`'s `.value` is ""),
+      # so the submit payload names the surface and carries no text.
+      {:noreply, submitted} =
+        ChatGPTSignInState.chatgpt_sign_in_submit(pasted, %{
+          "surface" => "detail",
+          "profile_id" => "profile-1",
+          "value" => ""
+        })
+
+      assert_receive {:chatgpt_stub, :submit, @flow_id, @url}, @receive_timeout_ms
+      state = assign_state(submitted)
+      assert state.phase == :waiting
+      assert state.paste == ""
+      assert state.paste_error == nil
+      assert state.flow_id == @flow_id
+    end
+
+    test "a genuinely blank submission still answers the retryable :no_code" do
+      waiting = waiting_state(:wizard)
+
+      {:noreply, pasted} =
+        ChatGPTSignInState.chatgpt_sign_in_paste(socket(waiting), %{
+          "paste" => "",
+          "_target" => "paste"
+        })
+
+      assert assign_state(pasted).paste == ""
+
+      {:noreply, submitted} =
+        ChatGPTSignInState.chatgpt_sign_in_submit(pasted, %{"surface" => "wizard", "value" => ""})
+
+      assert assign_state(submitted).phase == :waiting
+      assert assign_state(submitted).paste_error == :no_code
+      refute_receive {:chatgpt_stub, :submit, _flow_id, _input}, 0
+    end
+
+    test "a surface-less payload never resurrects a non-waiting attempt" do
+      for phase <- [:idle, :ok, :error] do
+        # A closed/superseded attempt keeps its surface but is no longer waiting.
+        closed = %{
+          waiting_state({:detail, "profile-1"})
+          | phase: phase,
+            flow_id: nil,
+            paste: "",
+            paste_error: nil
+        }
+
+        {:noreply, pasted} =
+          ChatGPTSignInState.chatgpt_sign_in_paste(socket(closed), %{
+            "paste" => @url,
+            "_target" => "paste"
+          })
+
+        assert assign_state(pasted) == closed
+
+        {:noreply, submitted} =
+          ChatGPTSignInState.chatgpt_sign_in_submit(socket(closed), %{
+            "paste" => @url,
+            "_target" => "paste"
+          })
+
+        assert assign_state(submitted) == closed
+      end
+
+      refute_receive {:chatgpt_stub, :submit, _flow_id, _input}, 0
+    end
+
+    test "a payload that DOES name another surface is still dropped" do
+      waiting = waiting_state({:detail, "profile-1"})
+
+      for params <- [
+            %{"paste" => @url, "surface" => "detail", "profile_id" => "profile-2"},
+            %{"paste" => @url, "surface" => "status", "profile_id" => "profile-1"},
+            %{"paste" => @url, "surface" => "wizard"}
+          ] do
+        {:noreply, pasted} =
+          ChatGPTSignInState.chatgpt_sign_in_paste(socket(waiting), params)
+
+        assert assign_state(pasted) == waiting
+
+        {:noreply, submitted} =
+          ChatGPTSignInState.chatgpt_sign_in_submit(socket(waiting), params)
+
+        assert assign_state(submitted) == waiting
+      end
+
+      refute_receive {:chatgpt_stub, :submit, _flow_id, _input}, 0
+    end
+
+    test "paste_text/1 reads the input's own field, tolerates value and atom keys" do
+      assert ChatGPTSignInState.paste_text(%{"paste" => @url}) == @url
+      assert ChatGPTSignInState.paste_text(%{"paste" => @url, "value" => "other"}) == @url
+      assert ChatGPTSignInState.paste_text(%{"value" => @url}) == @url
+      assert ChatGPTSignInState.paste_text(%{paste: @url}) == @url
+      assert ChatGPTSignInState.paste_text(%{value: @url}) == @url
+      assert ChatGPTSignInState.paste_text(%{"paste" => ""}) == ""
+      assert ChatGPTSignInState.paste_text(%{"_target" => "paste"}) == ""
+      assert ChatGPTSignInState.paste_text(%{}) == ""
+      assert ChatGPTSignInState.paste_text(nil) == ""
+      assert ChatGPTSignInState.paste_text("code=abc") == ""
+    end
+  end
+
   describe "apply_result/3" do
     test "a non-current flow id is stale and leaves a WAITING state untouched" do
       state = waiting_state({:detail, "profile-1"})
