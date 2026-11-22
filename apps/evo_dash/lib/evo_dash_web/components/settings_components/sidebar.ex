@@ -119,7 +119,7 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
               value={@search_text}
               placeholder={gettext("Filter settings...")}
               phx-change="search"
-              class="input w-full pl-10 pr-9 bg-base-200/50 border-transparent hover:bg-base-200 focus:bg-base-100 transition-[background-color,box-shadow,border-color] duration-200 rounded-md font-medium text-sm h-10"
+              class="input w-full pl-10 pr-9 bg-base-200/50 border-transparent hover:bg-base-200 focus:bg-base-100 transition-[background-color,box-shadow,border-color] duration-200 rounded-md font-medium text-sm"
             />
           </form>
           <%= if @search_text != "" do %>
@@ -194,7 +194,7 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
             id="settings-config-path-copy"
             phx-hook="ClipboardCopy"
             data-content={@config_path}
-            class="btn btn-ghost btn-xs btn-square shrink-0"
+            class="btn btn-ghost btn-sm btn-square shrink-0"
             title={gettext("Copy path")}
           >
             <.icon name="hero-clipboard-document" class="size-3.5" />

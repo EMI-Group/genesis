@@ -31,7 +31,7 @@ defmodule EvoDashWeb.SettingsComponents.SaveBar do
   def save_bar(assigns) do
     ~H"""
     <div class="shrink-0 sticky bottom-0 z-10 bg-base-100/90 backdrop-blur-xl border-t border-base-200/60 px-8 py-2.5 flex justify-end">
-      <button type="submit" form={@form} class="btn btn-primary rounded-md min-w-32 font-bold">
+      <button type="submit" form={@form} class="btn btn-primary rounded-lg min-w-32 font-semibold">
         <.icon name="hero-document-check" class="size-5 mr-1.5" />
         {@label}
       </button>
