@@ -20,25 +20,36 @@
   <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
     {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
   <% else %>
-    <!-- Fills the shell content box (never the viewport): on xl+ the grid takes
-    `height: 100%` from `main#main-content` and each panel scrolls independently,
-    so there is no page-level scroll; below xl it is normal page flow. -->
-    <div class="agents-page-layout shell-fill animate-fade-in-up animation-delay-100">
-      <EvoDashWeb.AgentsLive.TreePanel.tree_panel
-        agents_error={@agents_error}
-        agents_loading={@agents_loading}
-        left_view={@left_view}
-        agents={@agents}
-        repo_trees={@repo_trees}
-        selected_agent_id={@selected_agent_id}
-        new_agent_ids={@new_agent_ids}
-        changed_status_ids={@changed_status_ids}
-        commit_graph={assigns[:commit_graph] || []}
-        commit_graph_loading={assigns[:commit_graph_loading] == true}
-        commit_graph_error={assigns[:commit_graph_error]}
-        current_node_id={@current_node_id}
-      />
-      <EvoDashWeb.AgentsLive.DetailPanel.detail_panel assigns={assigns} />
+    <!-- Page header + workbench. The title row is NON-scrolling: at xl+ the
+    wrapper is a two-row grid (`auto` header, `minmax(0, 1fr)` panels) filling
+    `main#main-content`, so `.agents-page-layout` still resolves its
+    `height: 100%` against that panel row and each panel keeps scrolling
+    independently — the header can never eat into the panels' scrollers or
+    force page-level scroll. Below xl it is normal page flow. -->
+    <div class="grid min-h-0 gap-4 xl:h-full xl:grid-rows-[auto_minmax(0,1fr)]">
+      <header class="min-w-0">
+        <h1 class="text-xl font-semibold text-base-content">{gettext("Agents")}</h1>
+        <p class="mt-1 text-sm text-base-content/70">
+          {gettext("Inspect the agent tree, live activity and commit history on this node.")}
+        </p>
+      </header>
+      <div class="agents-page-layout shell-fill animate-fade-in-up animation-delay-100">
+        <EvoDashWeb.AgentsLive.TreePanel.tree_panel
+          agents_error={@agents_error}
+          agents_loading={@agents_loading}
+          left_view={@left_view}
+          agents={@agents}
+          repo_trees={@repo_trees}
+          selected_agent_id={@selected_agent_id}
+          new_agent_ids={@new_agent_ids}
+          changed_status_ids={@changed_status_ids}
+          commit_graph={assigns[:commit_graph] || []}
+          commit_graph_loading={assigns[:commit_graph_loading] == true}
+          commit_graph_error={assigns[:commit_graph_error]}
+          current_node_id={@current_node_id}
+        />
+        <EvoDashWeb.AgentsLive.DetailPanel.detail_panel assigns={assigns} />
+      </div>
     </div>
 
     <EvoDashWeb.AgentsLive.Modals.modals

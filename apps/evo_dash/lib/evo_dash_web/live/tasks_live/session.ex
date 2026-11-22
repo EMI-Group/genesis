@@ -36,14 +36,14 @@ defmodule EvoDashWeb.TasksLive.Session do
         phx-click="close_close_session_modal"
       >
       </div>
-      <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-6 md:p-8">
+      <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-5 sm:p-6">
         <div class="flex items-center gap-3 mb-4">
           <.icon
             name="hero-chat-bubble-left-right"
             class="size-5 text-violet-600 dark:text-violet-400"
           />
           <%!-- zh_CN: 关闭交互式会话 --%>
-          <h3 class="text-lg font-bold">{gettext("Close this session?")}</h3>
+          <h3 class="text-lg font-semibold">{gettext("Close this session?")}</h3>
         </div>
 
         <p class="text-sm text-base-content/70 mb-2 leading-relaxed">

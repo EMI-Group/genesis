@@ -24,8 +24,8 @@ defmodule EvoDashWeb.AgentsLive.Modals do
     <!-- Full Message Modal -->
     <%= if @selected_history_entry do %>
       <div class="modal modal-open bg-black/50" id="full-message-modal">
-        <div class="modal-box w-11/12 max-w-5xl">
-          <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+        <div class="modal-box w-11/12 max-w-5xl p-5 sm:p-6">
+          <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
             <.icon name={history_entry_icon(@selected_history_entry.type)} class="size-5" />
             {@selected_history_entry.type}
             <span class="text-sm font-normal text-base-content/70 ml-auto">
@@ -54,8 +54,8 @@ defmodule EvoDashWeb.AgentsLive.Modals do
     <!-- Full Objective Modal -->
     <%= if @selected_objective do %>
       <div class="modal modal-open bg-black/50" id="full-objective-modal">
-        <div class="modal-box w-11/12 max-w-5xl">
-          <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+        <div class="modal-box w-11/12 max-w-5xl p-5 sm:p-6">
+          <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
             <.icon name="hero-document-text" class="size-5" />
             {gettext("Full Objective")}
           </h3>
@@ -78,8 +78,8 @@ defmodule EvoDashWeb.AgentsLive.Modals do
     <!-- Send Message Modal -->
     <%= if @send_message_agent_id do %>
       <div class="modal modal-open bg-black/50" id="send-message-modal">
-        <div class="modal-box w-11/12 max-w-2xl">
-          <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+        <div class="modal-box w-11/12 max-w-2xl p-5 sm:p-6">
+          <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
             <.icon name="hero-chat-bubble-left-ellipsis" class="size-5" />
             {gettext("Send Message to Agent #%{id}",
               id: @id_to_display[@send_message_agent_id] || @send_message_agent_id
