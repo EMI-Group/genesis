@@ -880,6 +880,74 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert Floki.attribute(Floki.parse_fragment!(input), "value") == [typed]
     end
 
+    # The LITERAL callback URL from the bug report, byte-exact as the browser's
+    # address bar carried it.
+    @reported_callback_url "http://127.0.0.1:37893/auth/callback?code=ac.1.AAApCOcLN1KblOS9Hs6gK85rmND5UPbcyPz19SIOqvopbPI4lLStK00R7X0w3LNz9t6ZCOdkiiYrbrAKxi0LCR3T92flcApKGyN86x5AzZGi4-v9CvguvvBmVGY&scope=chatgpt.tokens.use.direct+email+offline_access+openid+profile+resource.invoke&state=QobijGG4NozG_rxKnuiP3jnfglyGs7_rU7u1kBFDDCo&iss=https%3A%2F%2Fauth.openai.com&client_id=oaiapp_Uz2Qm8Q8xxBP34mgtzJ892jag"
+
+    # The REAL browser payload for a keystroke in the paste input: an
+    # input-level `phx-change` makes LiveView serialize only the input's own
+    # field, so the payload carries NO `"surface"`, NO `"profile_id"` and NO
+    # `"value"` — the shape under which a page reading `params["value"]` saw a
+    # blank paste and answered "no authorization code" (the reported bug).
+    test "a keystroke in the paste input lands on the ONE waiting attempt (real payload)",
+         %{conn: conn} do
+      EvoGit.TestSupport.ChatGPTFixture.seed!("work")
+
+      Process.put(
+        :signin_stub_begin,
+        {:ok, %{id: "welcome-flow", url: @sign_in_url, port: 37_893}}
+      )
+
+      {:ok, view, _html} = start(conn)
+      pick(view, "openai_codex")
+
+      # (a) the stale guard: while no attempt waits, the same keystroke payload
+      # records nothing at all.
+      render_change(view, "chatgpt_sign_in_paste", %{
+        "paste" => @reported_callback_url,
+        "_target" => "paste"
+      })
+
+      assert assigns(view).chatgpt_sign_in == ChatGPTSignInState.new()
+
+      click_html = view |> element("#welcome-chatgpt-sign-in") |> render_click()
+      assert rendered?(click_html, "#welcome-chatgpt-waiting")
+      assert_receive {:signin_stub, {:begin, "default"}}, @async_wait_budget_ms
+
+      # (b) the real keystroke payload, verbatim: the surface-less text lands on
+      # the ONE waiting (`:wizard`) attempt and the flow is untouched.
+      render_change(view, "chatgpt_sign_in_paste", %{
+        "paste" => @reported_callback_url,
+        "_target" => "paste"
+      })
+
+      state = assigns(view).chatgpt_sign_in
+      assert state.paste == @reported_callback_url
+      assert state.paste_error == nil
+      assert state.phase == :waiting
+      assert ChatGPTSignInState.surface(state) == :wizard
+      refute Map.has_key?(assigns(view).draft, "paste")
+      refute_receive {:signin_stub, {:submit, _flow_id, _input}}, 0
+
+      # … and the panel echoes exactly what the user pasted.
+      input = view |> element("#welcome-chatgpt-sign-in-paste-input") |> render()
+      assert Floki.attribute(Floki.parse_fragment!(input), "value") == [@reported_callback_url]
+
+      # (c) the submit button hands THAT text to the SAME waiting flow.
+      view |> element("#welcome-chatgpt-sign-in-paste-submit") |> render_click()
+
+      assert_receive {:signin_stub, {:submit, "welcome-flow", @reported_callback_url}},
+                     @async_wait_budget_ms
+
+      state = assigns(view).chatgpt_sign_in
+      # The flow ACKED the paste; the terminal result still rides the poll.
+      assert state.phase == :waiting
+      assert state.paste == ""
+      assert state.paste_error == nil
+      assert has_element?(view, "#welcome-chatgpt-waiting")
+      refute Map.has_key?(assigns(view).draft, "paste")
+    end
+
     test "a rejected paste keeps the waiting state with an inline error", %{conn: conn} do
       {:ok, view, _html} = start(conn)
       pick(view, "openai_codex")

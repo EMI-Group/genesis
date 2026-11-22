@@ -57,6 +57,18 @@ defmodule EvoDash.ChatGPTLogin.PasteTest do
     assert Paste.parse(@reported_code) == {:ok, %{"code" => @reported_code}}
   end
 
+  # The LITERAL callback URL from the bug report, byte-exact as the browser's
+  # address bar carried it: a loopback port (`37893`), the `scope=` list a code
+  # flow returns (`+`-joined), the issuer and the app's `client_id`. Only `code`
+  # and `state` survive the parser by design, and this URL's values are exactly
+  # the `@reported_code`/`@reported_state` above.
+  @literal_reported_url "http://127.0.0.1:37893/auth/callback?code=ac.1.AAApCOcLN1KblOS9Hs6gK85rmND5UPbcyPz19SIOqvopbPI4lLStK00R7X0w3LNz9t6ZCOdkiiYrbrAKxi0LCR3T92flcApKGyN86x5AzZGi4-v9CvguvvBmVGY&scope=chatgpt.tokens.use.direct+email+offline_access+openid+profile+resource.invoke&state=QobijGG4NozG_rxKnuiP3jnfglyGs7_rU7u1kBFDDCo&iss=https%3A%2F%2Fauth.openai.com&client_id=oaiapp_Uz2Qm8Q8xxBP34mgtzJ892jag"
+
+  test "the literal reported callback URL parses to exactly its code and state" do
+    assert Paste.parse(@literal_reported_url) ==
+             {:ok, %{"code" => @reported_code, "state" => @reported_state}}
+  end
+
   test "an error parameter is a denial, even beside a code (parity with the HTTP callback)" do
     assert Paste.parse("#{@url}?error=access_denied&state=xyz") == {:error, :authorization_denied}
     assert Paste.parse("error=access_denied&code=abc") == {:error, :authorization_denied}
