@@ -538,18 +538,41 @@
 .workbench-settings-section-header {
   padding-inline: clamp(1rem, 4vw, 2rem);
 }
+/* The Settings-server picker is a shrinkable flex row: the label keeps its
+   nowrap wording, the select takes whatever is left and may shrink. A
+   percentage-width (`w-full`) select inside a shrink-to-fit flex line is what
+   used to overflow the window header past the iframe edge. */
 .workbench-settings-server-picker {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
   font-size: .8125rem;
 }
-.workbench-settings-server-picker label { white-space: nowrap; }
+.workbench-settings-server-picker .fieldset {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+}
+.workbench-settings-server-picker label {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  min-width: 0;
+  white-space: nowrap;
+}
+.workbench-settings-server-picker .label { flex: none; }
 .workbench-settings-server-picker select {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
   max-width: min(13rem, 42vw);
 }
 @media (max-width: 480px) {
-  .workbench-settings-server-picker {
+  .workbench-settings-server-picker label {
     flex-direction: column;
     align-items: flex-end;
-    gap: .2rem;
+    row-gap: .2rem;
   }
 }
 #workbench-settings-frame {

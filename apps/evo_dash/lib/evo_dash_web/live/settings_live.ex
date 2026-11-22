@@ -92,7 +92,7 @@ defmodule EvoDashWeb.SettingsLive do
               [{gettext("Local"), "local"}] ++
                 Enum.map(@remote_targets, &{&1.name, &1.id})
             }
-            class="select select-sm w-full"
+            class="select select-sm"
           />
         </.form>
       </header>
