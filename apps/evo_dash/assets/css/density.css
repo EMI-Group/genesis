@@ -1,0 +1,126 @@
+/* ===========================================================================
+   Density & typography — the dashboard's ONE scale.
+
+   Imported by `app.css` immediately after `@import "tailwindcss"` and before
+   every component stylesheet (assistant/workbench/motion/view_transitions), so
+   the ladder below REPLACES Tailwind's stock steps and no component file has
+   to know about a size.
+
+   Rules for component CSS and markup:
+     * never write an arbitrary font size (`text-[11px]`) — use a ladder step
+       (`text-2xs` … `text-3xl`) or `var(--text-*)`;
+     * never write a numeric font weight but 400 / 500 / 600 (700 only for
+       numbers, badges and `<strong>`);
+     * controls, rows, card padding and page gutters come from the tokens on
+       `:root` below (`var(--control-h)`, `var(--row-h)`, `var(--card-pad)`,
+       `var(--page-gutter)`), never from a fresh literal;
+     * 12 px is the floor for dashboard chrome.
+
+   Design record: `docs/ui-density.md`; consumer skill: `ui-density`.
+   =========================================================================== */
+
+/* Type ladder — Tailwind 4 generates `text-*` utilities (size + line-height)
+   from these pairs. Values are rem so a user's browser font-size still scales
+   the whole dashboard.
+
+     2xs  12/16  micro badges only
+     xs   13/18  metadata, dense labels
+     sm   14/20  UI default: labels, buttons, rows, cells
+     base 15/24  reading text, task titles, composer
+     lg   17/24  card / section title
+     xl   20/26  the one page h1
+     2xl  24/30  hero only
+     3xl  30/36  hero only                                                   */
+@theme {
+  --text-2xs: 0.75rem;
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.9375rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg: 1.0625rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.625rem;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 1.875rem;
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 2.25rem;
+
+  /* Reading rhythm for prose blocks (markdown bodies, objectives) — `leading-body`. */
+  --leading-body: 1.6;
+}
+
+/* Height / spacing tokens. `:root` (not `@theme`) on purpose: these are plain
+   custom properties, not utilities, so they can be consumed from any component
+   stylesheet with `var(--…)` and a future runtime density switch can retarget
+   them with one attribute selector instead of a second `@theme`. */
+:root {
+  /* Controls: default 40 px, compact (`-sm`) 32 px, inline adornment 24 px.
+     DaisyUI's own dial (`--size-field` / `--size-selector`, 0.25rem in both
+     theme blocks of `app.css`) multiplies to exactly these: 10× / 8× / 6×. */
+  --control-h: 2.5rem;
+  --control-h-sm: 2rem;
+  --control-h-xs: 1.5rem;
+
+  /* Rows: dense inspector 36 px, standard clickable row 40 px, two-line 48 px. */
+  --row-h-sm: 2.25rem;
+  --row-h: 2.5rem;
+  --row-h-tall: 3rem;
+
+  /* Coarse-pointer floor: anything a finger hits. */
+  --touch-target: 2.75rem;
+
+  /* Card padding (`p-4` / `p-5` hero) and page gutters
+     (`px-4 sm:px-5 lg:px-6` — the shell's `#main-content` padding). */
+  --card-pad: 1rem;
+  --card-pad-lg: 1.25rem;
+  --page-gutter: 1rem;
+  --page-gutter-sm: 1.25rem;
+  --page-gutter-lg: 1.5rem;
+}
+
+/* Text inputs must be >= 16 px on a coarse pointer or iOS zooms the whole page
+   when one takes focus. */
+@media (pointer: coarse) {
+  /* The DaisyUI dial: 10 / 8 / 6 × 0.275rem = 44 / 35.2 / 26.4 px, so the
+     default control and the icon buttons clear the 44 px floor without listing
+     every daisyUI class here. 0.25rem (the desktop dial) is 40/32/24.
+     Un-layered author CSS, so it wins over the plugin's `@layer base` tokens
+     whatever the source order (daisyUI emits them through `addBase`). */
+  :root {
+    --size-field: 0.275rem;
+    --size-selector: 0.275rem;
+  }
+
+  /* The IDs are load-bearing: `:where()` would zero the whole selector's
+     specificity and every `.input`/`.workbench-row` class rule would win.
+     `#app-layout` covers the dashboard shell, `#workbench-window-content` the
+     Settings popup's own document (same bundle, no #app-layout there). */
+  :is(#app-layout, #workbench-window-content) :is(input, select, textarea) {
+    font-size: 1rem;
+  }
+
+  /* Every row / nav entry / menu item a finger hits clears 44 px. */
+  :is(#app-layout, #workbench-window-content) :is(
+    .workbench-row,
+    .workbench-history-row > a,
+    .workbench-history-row > button,
+    .workbench-tab,
+    .workbench-icon-button,
+    .workbench-project-link,
+    .workbench-project-window-link,
+    .workbench-project-activity-link,
+    .workbench-git-file,
+    .workbench-git-branch,
+    .workbench-settings-nav-toggle,
+    .project-picker-list .workbench-row,
+    .assistant-quick-action,
+    .assistant-menu-item,
+    .assistant-context-button
+  ) {
+    min-height: var(--touch-target);
+  }
+}

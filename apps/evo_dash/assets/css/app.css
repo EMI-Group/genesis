@@ -2,6 +2,12 @@
    https://tailwindcss.com/docs/configuration */
 
 @import "tailwindcss" source(none);
+/* The density + type ladder. Immediately after Tailwind so its @theme block
+   REPLACES the stock `text-*` steps for every rule below it; the component
+   stylesheets then consume `var(--text-*)` / `var(--row-h)` / `var(--control-h)`.
+   It must stay OUT of the workbench→motion adjacency (pinned by
+   assistant_motion.test.cjs) and before `./view_transitions.css` (last). */
+@import "./density.css";
 @import "./assistant.css";
 @import "./workbench.css";
 /* The shared motion foundation. CSS requires @import before every other rule,
@@ -71,8 +77,8 @@
   --radius-selector: 0.375rem;
   --radius-field: 0.5rem;
   --radius-box: 0.75rem;
-  --size-selector: 0.21875rem;
-  --size-field: 0.21875rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
   --border: 1px;
   --depth: 1;
   --noise: 0;
@@ -119,8 +125,8 @@
   --radius-selector: 0.375rem;
   --radius-field: 0.5rem;
   --radius-box: 0.75rem;
-  --size-selector: 0.21875rem;
-  --size-field: 0.21875rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
   --border: 1px;
   --depth: 1;
   --noise: 0;
@@ -777,7 +783,7 @@ button, a, input, textarea, select, summary,
   gap: 0.25rem 1rem;
   padding: 0.5rem 1rem;
   border-top: 1px solid var(--color-base-200);
-  font-size: 0.875rem;
+  font-size: var(--text-sm);
 }
 
 .agents-legend-title {
@@ -799,7 +805,7 @@ button, a, input, textarea, select, summary,
   color: var(--color-neutral-content);
   border-radius: var(--radius-field);
   padding: 0.25rem 0.5rem;
-  font-size: 0.875rem;
+  font-size: var(--text-sm);
   line-height: 1.25;
   text-align: center;
   pointer-events: none;
@@ -1316,7 +1322,7 @@ button, a, input, textarea, select, summary,
   grid-template-columns: 50px calc(50% - 50px) 50px calc(50% - 50px);
   width: 100%;
   font-family: monospace;
-  font-size: 12px;
+  font-size: var(--text-2xs);
 }
 
 .diff-split-row {
@@ -1382,7 +1388,7 @@ button, a, input, textarea, select, summary,
   color: oklch(0.5 0.18 255 / 0.7);
   padding: 0 8px;
   line-height: 20px;
-  font-size: 12px;
+  font-size: var(--text-2xs);
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -1997,7 +2003,7 @@ button, a, input, textarea, select, summary,
   border: 1px solid var(--color-base-300);
   background: var(--color-base-100);
   font-family: ui-monospace, monospace;
-  font-size: 10px;
+  font-size: var(--text-2xs);
   line-height: 1.2;
   color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
 }
@@ -2230,7 +2236,7 @@ button, a, input, textarea, select, summary,
        below, and only if the toolbar's own size changes.
      * --input-toolbar-budget is the room `.input-controls` occupies below the
        textarea: its 0.625rem padding × 2 (= 1.25rem) plus the ~1.75rem control
-       row (btn-sm / select-sm = 8 × --size-field 0.21875rem), i.e. ~3rem,
+       row (btn-sm / select-sm = 8 × --size-field 0.25rem), i.e. ~3rem,
        rounded up to 4.5rem so the floor can only ever UNDER-fill — a floor that
        is too large merely leaves a slightly shorter textarea, while one that is
        too small would push the send button out of the card's overflow: hidden.
@@ -2608,7 +2614,7 @@ details.capsule-sub[data-capsule-sub-state="closing"] > .capsule-list {
   top: calc(100% + 0.25rem);
   left: 0;
   z-index: 10;
-  font-size: 0.7rem;
+  font-size: var(--text-2xs);
   line-height: 1.2;
   white-space: nowrap;
   color: color-mix(in oklab, var(--color-warning) 75%, var(--color-base-100));
@@ -2677,7 +2683,7 @@ details.capsule-sub[data-capsule-sub-state="closing"] > .capsule-list {
   width: 12rem;
   height: 2rem;
   padding: 0 0.5rem;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   line-height: 1;
   border-radius: 0.375rem;
   border: 1px solid color-mix(in oklab, var(--color-base-content) 40%, transparent);
@@ -2737,7 +2743,7 @@ details.capsule-sub[data-capsule-sub-state="closing"] > .capsule-list {
   max-width: 20rem;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 0.7rem;
+  font-size: var(--text-2xs);
   line-height: 1.2;
   white-space: nowrap;
   color: color-mix(in oklab, var(--color-warning) 80%, var(--color-base-100));
