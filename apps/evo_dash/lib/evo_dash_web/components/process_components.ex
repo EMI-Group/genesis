@@ -140,7 +140,7 @@ defmodule EvoDashWeb.ProcessComponents do
           aria-label={gettext("Process details: %{command}", command: truncate_string(@command, 90))}
           aria-expanded={to_string(@expanded)}
           aria-controls={if @expanded, do: "process-details-#{@id || "unknown"}"}
-          class="flex min-h-10 w-full cursor-pointer items-center gap-2 rounded-md text-start hover:text-primary-standalone focus-visible:outline-2 focus-visible:outline-primary-standalone"
+          class="flex min-h-[var(--row-h)] w-full cursor-pointer items-center gap-2 rounded-md text-start hover:text-primary-standalone focus-visible:outline-2 focus-visible:outline-primary-standalone"
           {@row_attrs}
         >
           <%!-- ONE chevron that rotates on expand — a swapped icon would
@@ -207,7 +207,7 @@ defmodule EvoDashWeb.ProcessComponents do
           <button
             :if={@running? and @live?}
             type="button"
-            class="btn btn-ghost btn-sm btn-square min-h-9 min-w-9"
+            class="btn btn-ghost btn-sm btn-square min-h-[var(--row-h-sm)] min-w-[var(--row-h-sm)]"
             title={gettext("Pause (SIGSTOP)")}
             aria-label={gettext("Pause")}
             phx-click={@pause_event}
@@ -218,7 +218,7 @@ defmodule EvoDashWeb.ProcessComponents do
           <button
             :if={@paused? and @live?}
             type="button"
-            class="btn btn-ghost btn-sm btn-square min-h-9 min-w-9"
+            class="btn btn-ghost btn-sm btn-square min-h-[var(--row-h-sm)] min-w-[var(--row-h-sm)]"
             title={gettext("Resume (SIGCONT)")}
             aria-label={gettext("Resume")}
             phx-click={@resume_event}
@@ -229,7 +229,7 @@ defmodule EvoDashWeb.ProcessComponents do
           <button
             :if={@live?}
             type="button"
-            class="btn btn-ghost btn-sm btn-square min-h-9 min-w-9 text-warning"
+            class="btn btn-ghost btn-sm btn-square min-h-[var(--row-h-sm)] min-w-[var(--row-h-sm)] text-warning"
             title={gettext("Terminate — asks the process to exit gracefully (TERM)")}
             aria-label={gettext("Terminate")}
             phx-click={Phoenix.LiveView.JS.push_focus() |> Phoenix.LiveView.JS.push(@terminate_event)}
@@ -240,7 +240,7 @@ defmodule EvoDashWeb.ProcessComponents do
           <button
             :if={@live?}
             type="button"
-            class="btn btn-ghost btn-sm btn-square min-h-9 min-w-9 text-error"
+            class="btn btn-ghost btn-sm btn-square min-h-[var(--row-h-sm)] min-w-[var(--row-h-sm)] text-error"
             title={gettext("Kill — force-terminates the process (TERM, then KILL)")}
             aria-label={gettext("Kill")}
             phx-click={Phoenix.LiveView.JS.push_focus() |> Phoenix.LiveView.JS.push(@kill_event)}
@@ -342,7 +342,7 @@ defmodule EvoDashWeb.ProcessComponents do
     <div class="grid gap-3 md:grid-cols-2">
       <div class="space-y-2 min-w-0">
         <div>
-          <h5 class="text-xs font-semibold uppercase text-base-content/70 mb-0.5">
+          <h5 class="text-2xs font-semibold uppercase text-base-content/70 mb-0.5">
             {gettext("Full Command")}
           </h5>
           <pre class="rounded border border-base-300 bg-base-100 p-2 text-xs whitespace-pre-wrap [overflow-wrap:anywhere]"><%= @command %></pre>
@@ -353,11 +353,11 @@ defmodule EvoDashWeb.ProcessComponents do
             class="flex min-w-0 flex-wrap gap-x-4 gap-y-1 xl:hidden"
           >
             <div :if={@agents_link} class="flex min-w-0 items-center gap-1">
-              <span class="text-xs text-base-content/70">{gettext("Agent")}</span>
+              <span class="text-sm text-base-content/70">{gettext("Agent")}</span>
               <.execution_link href={@agents_link} value={field(@execution, :agent_id)} />
             </div>
             <div :if={@tasks_link} class="flex min-w-0 items-center gap-1">
-              <span class="text-xs text-base-content/70">{gettext("Task")}</span>
+              <span class="text-sm text-base-content/70">{gettext("Task")}</span>
               <.execution_link href={@tasks_link} value={field(@execution, :task_id)} />
             </div>
           </div>
@@ -378,7 +378,7 @@ defmodule EvoDashWeb.ProcessComponents do
         </div>
       </div>
       <div class="min-w-0">
-        <h5 class="text-xs font-semibold uppercase text-base-content/70 mb-1">
+        <h5 class="text-2xs font-semibold uppercase text-base-content/70 mb-1">
           {gettext("Control Log")}
         </h5>
         <%= if @log == [] do %>
@@ -425,7 +425,7 @@ defmodule EvoDashWeb.ProcessComponents do
   defp detail_field(assigns) do
     ~H"""
     <div class="min-w-0">
-      <span class="text-xs text-base-content/60">{@label}: </span>
+      <span class="text-sm text-base-content/60">{@label}: </span>
       <span class={["text-xs break-all", @mono && "font-mono"]}>{blank_text(@value)}</span>
     </div>
     """
@@ -521,14 +521,14 @@ defmodule EvoDashWeb.ProcessComponents do
       <div class="fixed inset-0 bg-black/50" phx-click={@close_event}></div>
       <.focus_wrap
         id="process-confirm-focus"
-        class="relative max-h-full w-full max-w-lg overflow-y-auto rounded-lg border border-base-300 bg-base-100 p-4 sm:p-6"
+        class="relative max-h-full w-full max-w-lg overflow-y-auto rounded-xl border border-base-300 bg-base-100 p-4 sm:p-6"
       >
         <div class="flex items-center gap-3 mb-3">
           <.icon
             name={if @action == :kill, do: "hero-exclamation-triangle", else: "hero-x-circle"}
             class={"size-5 #{if @action == :kill, do: "text-error", else: "text-warning"}"}
           />
-          <h2 id="process-confirm-title" class="text-lg font-bold">{@title}</h2>
+          <h2 id="process-confirm-title" class="text-lg font-semibold">{@title}</h2>
         </div>
         <p class="text-sm text-base-content/70 mb-3 leading-relaxed">{@description}</p>
         <div class="rounded border border-base-300 bg-base-200/40 p-2 mb-3">
@@ -540,7 +540,7 @@ defmodule EvoDashWeb.ProcessComponents do
           </div>
         </div>
         <form phx-submit={@submit_event} id="process-confirm-form">
-          <label class="text-xs font-semibold uppercase text-base-content/70" for="process-reason">
+          <label class="text-sm font-semibold text-base-content/70" for="process-reason">
             {gettext("Reason (required)")}
           </label>
           <textarea
@@ -563,7 +563,7 @@ defmodule EvoDashWeb.ProcessComponents do
             </button>
             <button
               type="submit"
-              class={"btn btn-sm rounded-md gap-2 #{if @action == :kill, do: "btn-error", else: "btn-warning"}"}
+              class={"btn rounded-md gap-2 #{if @action == :kill, do: "btn-error", else: "btn-warning"}"}
             >
               <.icon name="hero-x-circle" class="size-4" />
               {@submit_label}
