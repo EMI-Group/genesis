@@ -145,7 +145,7 @@ defmodule EvoDashWeb.ProjectWindow do
               >
                 <.icon name="hero-arrow-up" class="size-4" />
               </button>
-              <span class="truncate" title={@directory && @directory.path}>
+              <span class="truncate text-xs font-mono" title={@directory && @directory.path}>
                 {cond do
                   @directory -> @directory.path
                   @loading -> gettext("Loading…")
@@ -167,7 +167,7 @@ defmodule EvoDashWeb.ProjectWindow do
                   phx-click="browse"
                   phx-value-path={entry.path}
                   phx-target={@myself}
-                  class="workbench-row"
+                  class="workbench-row min-h-[var(--row-h)] text-sm"
                   disabled={@busy}
                 >
                   <.icon name="hero-folder" class="size-4 shrink-0" />
@@ -189,7 +189,7 @@ defmodule EvoDashWeb.ProjectWindow do
                   id="project-picker-path"
                   type="text"
                   aria-label={gettext("Project path")}
-                  class="input input-sm"
+                  class="input"
                   maxlength="4096"
                   required
                   disabled={@busy}
@@ -207,7 +207,7 @@ defmodule EvoDashWeb.ProjectWindow do
               :if={@mode == "create"}
               form="workbench-project-form"
               type="submit"
-              class="btn btn-primary btn-sm"
+              class="btn btn-primary"
               disabled={!@directory || @busy || @loading}
             >
               {if @busy, do: gettext("Working…"), else: gettext("Create")}
@@ -217,7 +217,7 @@ defmodule EvoDashWeb.ProjectWindow do
               type="button"
               phx-click="open"
               phx-target={@myself}
-              class="btn btn-primary btn-sm"
+              class="btn btn-primary"
               disabled={!@directory || @busy || @loading}
             >
               {if @busy, do: gettext("Working…"), else: gettext("Open project")}

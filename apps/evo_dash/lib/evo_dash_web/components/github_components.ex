@@ -99,7 +99,7 @@ defmodule EvoDashWeb.GitHubComponents do
                     phx-click="github_filter_state"
                     phx-value-state={state}
                     class={[
-                      "px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer transition-colors whitespace-nowrap",
+                      "px-4 py-2 min-h-[var(--row-h)] rounded-md text-sm font-medium cursor-pointer transition-colors whitespace-nowrap",
                       @issues.state_filter == state && "bg-base-100 shadow-sm text-base-content",
                       @issues.state_filter != state &&
                         "text-base-content/70 hover:text-base-content hover:bg-base-200/80"
@@ -118,7 +118,7 @@ defmodule EvoDashWeb.GitHubComponents do
               <% else %>
                 <ul class="flex flex-col gap-2">
                   <%= for issue <- @issues.issues do %>
-                    <li class="flex items-center gap-3 rounded-xl border border-base-200 bg-base-100/60 px-3 py-2.5 transition-colors hover:border-base-300">
+                    <li class="flex items-center gap-3 min-h-[var(--row-h)] rounded-xl border border-base-200 bg-base-100/60 px-3 py-2.5 transition-colors hover:border-base-300">
                       <div class="min-w-0 flex-1">
                         <div class="flex items-center gap-2 min-w-0">
                           <span class="font-mono text-xs text-base-content/60 shrink-0">
@@ -129,7 +129,7 @@ defmodule EvoDashWeb.GitHubComponents do
                           </span>
                           <span class="text-sm font-medium truncate">{issue.title}</span>
                         </div>
-                        <div class="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                        <div class="mt-2 flex items-center gap-2 flex-wrap">
                           <%= for label <- issue.labels do %>
                             <span class="badge badge-outline badge-xs">{label}</span>
                           <% end %>
