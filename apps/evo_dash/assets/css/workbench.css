@@ -807,7 +807,6 @@
 }
 .workbench-git-entry-meta {
   color: var(--workbench-text-muted);
-  font-size: var(--text-2xs);
   font-variant-numeric: tabular-nums;
 }
 .workbench-git-summary {

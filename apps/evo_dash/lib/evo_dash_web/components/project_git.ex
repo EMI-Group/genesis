@@ -689,7 +689,7 @@ defmodule EvoDashWeb.ProjectGit do
             title={commit.subject}
           >
             <span class="truncate text-sm">{commit.subject}</span>
-            <span class="workbench-git-entry-meta truncate font-mono">
+            <span class="workbench-git-entry-meta truncate text-xs font-mono">
               {meta_line([commit.short, commit.author, date_label(commit.date)])}
             </span>
           </button>
