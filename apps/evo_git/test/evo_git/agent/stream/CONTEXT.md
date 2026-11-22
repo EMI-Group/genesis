@@ -7,7 +7,7 @@ Source and shared support are outside this test node's write scope.
 
 ## Routing Table
 This node has no child directories.
-- `activity_test.exs` → pure Activity projection, exact public replacement/append events, current-attempt replacement, valid phases, retirement and stale/malformed event rejection.
+- `activity_test.exs` → pure Activity projection, exact public replacement/append events, current-attempt replacement, valid phases, retirement and stale/malformed event rejection, plus the `current_call.checkpointed` marker: every fresh call starts `false`, `{:call_checkpointed, id}` flips ONLY the matching call with exactly ONE replacement (stale/absent/already-marked ids emit nothing), chunks and retained phases preserve it, and every retirement path drops it with the call.
 - `sink_activity_test.exs` → process-local Sink installation, turn/reset/uninstall behavior, fresh IDs across `[0, 1, 0]` attempt indices, captured callback identity, stale callback rejection through Activity, positive current-call controls and interrupts.
 - `activity_phases_test.exs` → the `:compressing`/`:preparing` NON-CALL phases: one exact `{:activity, projection}` replacement with the call retired from a populated projection, `{:call_phase, "call", …}` retirement, the full accepted phase list with each event's own retire set, and stale-id/late-chunk/unknown-phase inertness.
 - `activity_snapshot_test.exs` → pending-batch consistent cuts for snapshot and repeated watch, exact live activity, post-flush sequence, covered-delta rejection and subsequent appends applied exactly once; a settled pre-LLM session reads `activity: %{phase: :preparing, current_call: nil}` (the worker publishes `:preparing` before its `boundary(:llm)` call).
@@ -36,7 +36,7 @@ Source defects must be reported upstream rather than repaired in this test node.
 
 ## Test Strategy
 Run `ERL_FLAGS='+S 4:4' mix test apps/evo_git/test/evo_git/agent/stream --no-deps-check --seed 42` from the repository cwd.
-The suite contains 71 tests, and every file remains below 1000 lines.
+The suite contains 83 tests, and every file remains below 1000 lines.
 Capture and public delivery are separate: four callbacks exist whenever Sink is installed, but zero watchers means no public batch, timer, broadcast or sequence consumption.
 Fresh call identity, not attempt index, separates an empty-response nudge from an earlier attempt zero.
 Captured callbacks for call A retain A even after B starts, and Activity rejects A's late chunks/phases without modifying B or emitting public events.
