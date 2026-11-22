@@ -35,11 +35,11 @@ defmodule EvoDashWeb.WelcomeCompleteLive do
       <div class="min-h-full lg:h-full lg:min-h-0 lg:overflow-hidden max-w-3xl mx-auto px-4 lg:px-6 py-3 lg:py-6 flex flex-col">
         <!-- Header (non-scrolling) -->
         <div class="flex items-center gap-3 mb-4 shrink-0">
-          <div class="text-3xl shrink-0">✨</div>
+          <div class="text-2xl shrink-0">✨</div>
           <div class="min-w-0">
-            <h2 class="text-xl font-bold leading-tight">
+            <h1 class="text-xl font-semibold leading-tight">
               {gettext("Write high-level prompts, not code")}
-            </h2>
+            </h1>
             <p class="text-sm text-base-content/60 leading-snug">
               {gettext(
                 "In Genesis you only write high-level prompts: describe the end goal, the features you want, and the framework to use. Genesis figures out the architecture, delegates agents, and writes the code."
@@ -50,11 +50,11 @@ defmodule EvoDashWeb.WelcomeCompleteLive do
 
         <!-- Example task — the page's sole focus -->
         <div class="flex-1 lg:overflow-y-auto lg:min-h-0 flex flex-col justify-center">
-          <div class="rounded-xl border border-base-300 bg-base-100 p-6">
+          <div class="rounded-xl border border-base-300 bg-base-100 p-5">
             <div class="flex items-center justify-between gap-2 mb-2">
-              <h3 class="text-base font-bold">
+              <h2 class="text-base font-semibold">
                 {gettext("Try an example task")}
-              </h3>
+              </h2>
               <button
                 id="welcome-example-copy"
                 phx-hook="ClipboardCopy"
@@ -76,7 +76,7 @@ defmodule EvoDashWeb.WelcomeCompleteLive do
 
         <!-- CTA -->
         <div class="flex justify-center mt-6 shrink-0">
-          <button phx-click="go_to_dashboard" class="btn btn-primary rounded-xl px-8">
+          <button phx-click="go_to_dashboard" class="btn btn-primary rounded-xl">
             {gettext("Go to Dashboard")}
           </button>
         </div>

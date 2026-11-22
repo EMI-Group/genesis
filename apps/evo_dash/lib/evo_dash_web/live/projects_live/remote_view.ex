@@ -119,7 +119,7 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
       <div role="alert" class="alert alert-error max-w-xl w-full">
         <.icon name="hero-exclamation-triangle" class="size-5 shrink-0" />
         <div class="min-w-0">
-          <h3 class="font-bold text-sm">
+          <h3 class="font-semibold text-sm">
             {gettext("Cannot connect to %{name}", name: @current_node_name)}
           </h3>
           <p class="text-sm break-words">{@last_error || gettext("Connection lost or failed")}</p>

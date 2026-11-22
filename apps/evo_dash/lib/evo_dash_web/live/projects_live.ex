@@ -153,13 +153,13 @@ defmodule EvoDashWeb.ProjectsLive do
           <div
             id="browser-notifications"
             phx-hook="BrowserNotifications"
-            class="flex-1 flex flex-col min-h-0"
+            class="flex-1 flex flex-col min-h-0 space-y-4"
           >
             <div
               :if={!@workbench_idle? and not is_nil(@model_selection_error)}
               id="model-selection-error"
               role="alert"
-              class="flex items-center gap-3 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm"
+              class="flex items-center gap-3 rounded-lg border border-warning/30 bg-warning/10 p-4 text-sm"
             >
               <p class="flex-1">
                 {gettext(

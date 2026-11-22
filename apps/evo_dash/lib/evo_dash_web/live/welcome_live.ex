@@ -534,7 +534,7 @@ defmodule EvoDashWeb.WelcomeLive do
       guide={@guide}
       accent_color={@accent_color}
     >
-      <div class="min-h-full max-w-5xl mx-auto px-4 lg:px-6 py-4 space-y-5">
+      <div class="min-h-full max-w-3xl mx-auto px-4 lg:px-6 py-4 space-y-5">
         <div class="flex items-center justify-between gap-3">
           <button
             type="button"
@@ -555,11 +555,11 @@ defmodule EvoDashWeb.WelcomeLive do
         </div>
 
         <div>
-          <h2 class="text-xl font-bold">
+          <h1 class="text-xl font-semibold">
             {if ViewModel.all_set?(@step, @has_model?, @wizard_active),
               do: gettext("You're All Set!"),
               else: gettext("Welcome to Genesis")}
-          </h2>
+          </h1>
           <p class="text-sm text-base-content/70 mt-1">
             {gettext("Configure a provider and its models to start building with Genesis.")}
           </p>
@@ -574,18 +574,18 @@ defmodule EvoDashWeb.WelcomeLive do
                   "Welcome setup configures this machine only. Switch to Local or use Settings for the remote node."
                 )}
               </span>
-              <a href={~p"/welcome"} class="btn btn-primary btn-sm">{gettext("Switch to Local")}</a>
+              <a href={~p"/welcome"} class="btn btn-primary">{gettext("Switch to Local")}</a>
             </div>
           <% ViewModel.all_set?(@step, @has_model?, @wizard_active) -> %>
             <div class="bg-success/10 border border-success/20 rounded-xl p-5 flex gap-3">
               <.icon name="hero-check-circle" class="size-7 text-success" />
               <div class="space-y-2">
-                <p class="font-bold text-success">{gettext("Ready to build!")}</p>
+                <p class="font-semibold text-success">{gettext("Ready to build!")}</p>
                 <p class="text-sm text-base-content/70">
                   {gettext("Your LLM is configured. You can manage it anytime in Settings.")}
                 </p>
                 <div class="flex flex-wrap gap-2">
-                  <button type="button" phx-click="get_started" class="btn btn-primary btn-sm">
+                  <button type="button" phx-click="get_started" class="btn btn-primary">
                     {gettext("Go to Dashboard")}
                   </button>
                   <a href={~p"/settings"} class="btn btn-ghost btn-sm">{gettext("Open Settings")}</a>
