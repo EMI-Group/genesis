@@ -154,7 +154,7 @@ defmodule EvoDashWeb.WelcomeCompleteLiveTest do
 
       # Primary CTA is rendered
       assert html =~ ~s(phx-click="go_to_dashboard")
-      assert html =~ "btn btn-primary rounded-xl px-8"
+      assert html =~ "btn btn-primary rounded-xl"
       assert html =~ "Go to Dashboard"
 
       # Fresh temp config dir → onboarding is needed before the click

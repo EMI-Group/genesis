@@ -16,7 +16,7 @@ defmodule EvoDashWeb.SettingsComponents.SectionHeader do
 
   def section_header(assigns) do
     ~H"""
-    <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-xl border-b border-base-200/60 px-8 py-6">
+    <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-xl border-b border-base-200/60 px-4 sm:px-6 py-4">
       <div class="flex items-center gap-3 mb-1">
         <div class="text-primary-standalone/60">
           <.icon name={@icon} class="size-5" />

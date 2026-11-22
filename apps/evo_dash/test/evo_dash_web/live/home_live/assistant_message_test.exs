@@ -280,7 +280,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
         [container] = Floki.find(doc, "div[class~='group/assistant'] > div:first-child")
 
         assert classes(container) ==
-                 ["py-2", "text-[15px]", "leading-relaxed", "break-words", "text-base-content"]
+                 ["py-2", "text-base", "leading-relaxed", "break-words", "text-base-content"]
 
         if streaming? do
           # While streaming the inner node is the raw partial text (+ caret);
@@ -498,7 +498,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
       assert html =~ "Turn 3"
       assert html =~ "1234 tokens"
       assert html =~ "1.5s"
-      assert html =~ "font-mono text-[11px] text-base-content/50"
+      assert html =~ "font-mono text-xs text-base-content/50"
     end
 
     test "renders only the labels it has" do
@@ -515,7 +515,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
     test "renders nothing without a usable turn/token count" do
       for meta <- [nil, %{}, :junk, %{turn: "2", total_tokens: "9"}, %{duration_ms: 1_000}] do
         html = render_card(stream_meta: meta)
-        refute html =~ "font-mono text-[11px]"
+        refute html =~ "font-mono text-xs"
         refute html =~ "tokens"
         refute html =~ "Turn "
       end
@@ -561,7 +561,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
 
       html = render_list(transcript, %{turn: 2, total_tokens: 55})
 
-      assert length(String.split(html, "font-mono text-[11px]")) == 2
+      assert length(String.split(html, "font-mono text-xs")) == 2
       assert html =~ "Turn 2"
       assert html =~ "55 tokens"
     end
