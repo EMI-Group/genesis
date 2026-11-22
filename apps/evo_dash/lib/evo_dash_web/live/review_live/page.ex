@@ -44,11 +44,11 @@ defmodule EvoDashWeb.ReviewLive.Page do
         <%= if @error do %>
           <div
             id="review-load-error"
-            class="rounded-lg border border-error/30 bg-error/5 p-6 text-center"
+            class="rounded-lg border border-error/30 bg-error/5 p-6 text-center space-y-3"
           >
-            <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-4" />
-            <h2 class="text-xl font-bold text-error mb-2">{gettext("Review Not Available")}</h2>
-            <p class="text-sm text-base-content/80 mb-4">{@error}</p>
+            <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto" />
+            <h2 class="text-xl font-semibold text-error">{gettext("Review Not Available")}</h2>
+            <p class="text-sm text-base-content/80">{@error}</p>
             <div class="flex flex-wrap items-center justify-center gap-3">
               <button type="button" phx-click="retry_load" class="btn btn-outline px-6 gap-2">
                 <.icon name="hero-arrow-path" class="size-4" /> {gettext("Retry")}
@@ -71,11 +71,11 @@ defmodule EvoDashWeb.ReviewLive.Page do
             <!-- Loading state -->
             <div role="status" class="flex items-center justify-center py-20">
               <span class="loading loading-spinner loading-lg text-primary-standalone"></span>
-              <span class="ml-3 text-base-content/60">{gettext("Loading review data...")}</span>
+              <span class="ml-3 text-sm text-base-content/60">{gettext("Loading review data...")}</span>
             </div>
           <% else %>
             <%= if @live_action == :commit do %>
-              <div class="pb-8">
+              <div class="space-y-4 pb-8">
                 <.reload_status :if={@loading and @page_ready?} />
                 <%!-- The commit detail renders only once its header exists: it
                      is nil until this route's load lands, and a SCOPED reload
@@ -263,8 +263,8 @@ defmodule EvoDashWeb.ReviewLive.Page do
                 </div>
 
                 <%= if @branch_exists and is_nil(@review_data) and not @loading do %>
-                  <div class="rounded-xl border border-warning/30 bg-warning/10 p-4 text-center">
-                    <.icon name="hero-exclamation-triangle" class="size-6 text-warning mx-auto mb-3" />
+                  <div class="rounded-xl border border-warning/30 bg-warning/10 p-4 text-center space-y-3">
+                    <.icon name="hero-exclamation-triangle" class="size-6 text-warning mx-auto" />
                     <p class="text-sm text-warning">
                       {gettext(
                         "Could not load diff data. The branch may have been modified externally."

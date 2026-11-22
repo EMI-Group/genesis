@@ -302,29 +302,29 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
     ~H"""
     <%= cond do %>
       <% not @opt_in? -> %>
-        <div class="p-8 text-center">
-          <.icon name="hero-archive-box-x-mark" class="size-10 text-base-content/40 mx-auto mb-3" />
+        <div class="p-6 text-center space-y-3">
+          <.icon name="hero-archive-box-x-mark" class="size-10 text-base-content/40 mx-auto" />
           <%!-- zh_CN: archive → 归档 --%>
           <p class="text-sm text-base-content/60">
             {gettext("Archive data was not collected for this task.")}
           </p>
           <%!-- zh_CN: archive → 归档 --%>
-          <p class="mt-1 text-xs text-base-content/50">
+          <p class="text-xs text-base-content/50">
             {gettext("Tasks started without archiving enabled keep no per-agent archive.")}
           </p>
         </div>
       <% @state == :error -> %>
-        <div class="rounded-xl border border-error/30 bg-error/5 p-6 text-center">
-          <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-3" />
+        <div class="rounded-xl border border-error/30 bg-error/5 p-6 text-center space-y-3">
+          <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto" />
           <p class="text-sm text-error">{@message}</p>
-          <p :if={@detail} class="mt-1 text-xs text-base-content/70">{@detail}</p>
-          <button type="button" phx-click="retry_archive" class="btn btn-outline btn-sm mt-4 gap-2">
+          <p :if={@detail} class="text-xs text-base-content/70">{@detail}</p>
+          <button type="button" phx-click="retry_archive" class="btn btn-outline btn-sm gap-2">
             <.icon name="hero-arrow-path" class="size-4" /> {gettext("Retry")}
           </button>
         </div>
       <% @state == :loaded and @records == [] -> %>
-        <div class="p-8 text-center">
-          <.icon name="hero-archive-box-x-mark" class="size-10 text-base-content/50 mx-auto mb-3" />
+        <div class="p-6 text-center space-y-3">
+          <.icon name="hero-archive-box-x-mark" class="size-10 text-base-content/50 mx-auto" />
           <p class="text-sm text-base-content/70">
             {gettext("No archived agent data available for this task.")}
           </p>
@@ -343,12 +343,12 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
           export_url={EvoDashWeb.Helpers.with_node_param("/tasks/#{@task_id}/export", @node_id)}
         />
       <% true -> %>
-        <div class="flex items-center justify-center py-20">
+        <div class="flex items-center justify-center p-6">
           <.icon
             name="hero-arrow-path"
             class="size-8 text-primary-standalone motion-safe:animate-spin"
           />
-          <span class="ml-3 text-base-content/60">{gettext("Loading archive…")}</span>
+          <span class="ml-3 text-sm text-base-content/60">{gettext("Loading archive…")}</span>
         </div>
     <% end %>
     """
