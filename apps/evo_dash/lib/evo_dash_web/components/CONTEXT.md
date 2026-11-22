@@ -59,13 +59,19 @@ Theme is client-side except the shell accent: `Layouts.app`'s `attr(:accent_colo
 - Desktop-only surfaces stay inert outside the Tauri shell: directory/file pickers render only when `@tauri_detected and !@remote`, so the headless server shows the manual path inputs.
 - **`phx-value-*` names must be snake_case** (`phx-value-task_id`, never a kebab suffix like `task-id`): LiveView strips only the `phx-value-` prefix, so a kebab attribute arrives as the hyphenated key `"task-id"` and a snake_case `handle_event` clause raises `FunctionClauseError` on a real browser click (LiveViewTest hides it because a test can pass values explicitly).
 
-## Measured Density Floor (row heights & touch targets)
+## Density & Type Scale (components)
 
-Sidebar density is set by CSS, not Tailwind: `.workbench-row` is `min-height: 1.95rem` (31.2px), `padding: .22rem .5rem`, `font-size: .8125rem` (`assets/css/workbench.css:201-212`), and `.workbench-tools > summary` adds `padding: .5rem .75rem` (`workbench.css:184`).
+The dashboard has ONE density + type scale — design record `docs/ui-density.md`, tokens `assets/css/density.css`; every component here renders on that ladder and never on an arbitrary font size (`text-[10px]`/`text-[11px]` are banned, 12px is the floor).
+Roles: `text-2xs` 12/16 all-caps micro badges/chips/lane chips/kbd/counts ONLY · `text-xs` 13/18 metadata (ids, timestamps, helper lines, secondary cells) · `text-sm` 14/20 the UI default (labels, buttons, list rows, cells) · `text-base` 15/24 reading text/task titles/objectives · `text-lg` 17/24 card/section titles · `text-xl` 20/26 the one page h1 · `text-2xl` 24/30 hero.
+Weights 400/500/600 only; `font-bold` is reserved for numbers, badges and `<strong>` (numeric metrics, status/type badges, agent ids), and bold headings are `font-semibold`.
+Controls: `btn`/`input`/`select` 40px, `-sm` 32px, icon-only `btn-sm btn-square`, `btn-xs` only for an inline adornment beside a larger target (never the sole action); the same action weight uses the same size across components.
+Rows: click targets ≥40px (`min-h-[var(--row-h)]`), dense inspector rows ≥36px (`min-h-[var(--row-h-sm)]`), two-line rows 48–56px (`min-h-[var(--row-h-tall)]`); the fixed 44px commit/gap row and the `.cg-scroll` chain stay CSS/JS-owned.
+Cards: body `p-4` (`p-5` single hero card), modals `p-5 sm:p-6`, `rounded-xl` cards/panels, `rounded-lg` controls/chips, `gap-3` inside groups and `space-y-4` between cards.
+CSS owns the coarse-pointer ≥44px touch floor and the ≥16px form-value floor (`.workbench-row` is `min-height: var(--row-h-sm)` in `assets/css/workbench.css`); markup never adds `min-h-11`/`pointer: coarse`/`max-sm:` touch variants.
 The expanded sidebar width comes from `#sidebar[data-sidebar-collapsed="false"] { width: var(--workbench-left-width, 16rem) }` (`workbench.css:604`) — 256px, NOT the `w-60` utility; below `lg` it is `min(18rem, 86vw)` (`workbench.css:607`) and the collapsed rail is `w-16` (64px, toggled by the `SidebarCollapse` hook).
 `.sidebar-label` is a JS marker class with NO CSS rule — `SidebarCollapse` adds/removes `hidden` on it (`assets/js/hooks/sidebar_collapse.js:280,312`).
-Every clickable row here is UNDER the 44px touch floor except the mobile hamburger (`size-11`) and the mobile sidebar close (`inline-size/block-size: 2.75rem`, `workbench.css:402`): sidebar nav links are 36px (`px-3 py-2 text-sm`), `.workbench-row`/settings/collapse are 31-32px, review tree rows `min-h-8` (32px), diff tabs `min-h-10` (40px), diff expand bar `min-h-7` (28px), lane chips ≈18px, process action buttons `min-h-9` (36px) — and there are ZERO `min-h-11` / `pointer: coarse` / `max-sm:` touch-target variants anywhere in this subtree (the only `max-sm:` utilities are the diff grid's `max-sm:grid-cols-…`/`max-sm:px-1!`).
 The review diff panes stack until **xl** (`flex flex-col xl:flex-row`, `review_components/diff_viewer.ex:396`), not lg.
+Follow-ups owned outside this node: the Settings pane gutters (`px-8 py-8` in `settings_components.ex`/`search_results.ex`, `px-8` in `section_header.ex`/`save_bar.ex`) move to `px-4 sm:px-6 py-4 sm:py-6` with the live-page wave, and the page-title `text-xl` upgrade is blocked by the `h1.text-lg` pin in `review_live_test.exs`.
 
 ### `try/rescue` Policy
 
