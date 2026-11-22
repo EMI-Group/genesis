@@ -105,7 +105,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard do
 
     ~H"""
     <section class="overflow-hidden rounded-xl border border-base-300 bg-base-100">
-      <header class="border-b border-base-300 px-6 py-5">
+      <header class="border-b border-base-300 px-5 py-4">
         <div class="flex items-start justify-between gap-4">
           <div class="min-w-0">
             <h2 class="text-lg font-semibold tracking-tight text-base-content">{@title}</h2>
@@ -130,7 +130,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard do
           </li>
         </ol>
       </header>
-      <div class="px-6 py-6">
+      <div class="p-5">
         <div class="wizard-step-enter" id={"wizard-step-" <> to_string(@step)}>
           {render_slot(@inner_block)}
         </div>
@@ -142,7 +142,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard do
           <span class="min-w-0">{@error_text}</span>
         </p>
       </div>
-      <footer class="flex items-center justify-between gap-3 border-t border-base-300 px-6 py-4">
+      <footer class="flex items-center justify-between gap-3 border-t border-base-300 px-5 py-4">
         <div class="flex items-center gap-2">
           <button
             type="button"
