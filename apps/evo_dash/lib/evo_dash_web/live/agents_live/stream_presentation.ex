@@ -12,7 +12,8 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
   tool announcements. Missing activity is unknown, not idle. Empty thinking is
   reported only after successful generation with complete source capture and
   no omitted thinking. Atomic snapshot handoff belongs to StreamWatch; checkpoint
-  parts are never suppressed by guessed overlap with live excerpts.
+  suppression follows only the current call's authoritative `checkpointed`
+  marker (absent reads as false), never a guessed overlap with live excerpts.
   """
 
   alias EvoDashWeb.AgentsLive.{RuntimeStream, StreamLimits}
@@ -107,6 +108,7 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
       message_index: field(projection, :message_index),
       turn: field(projection, :turn),
       attempt: field(projection, :attempt),
+      checkpointed: field(projection, :checkpointed) == true,
       complete: field(projection, :complete) == true,
       response: response,
       thinking: thinking,
