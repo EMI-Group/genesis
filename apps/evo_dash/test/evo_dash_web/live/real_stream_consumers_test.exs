@@ -486,12 +486,41 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
     Provider.finish(ctx.provider, socket, "tool_calls")
     assert_receive {:tool_batch_ready, ^gate, worker}, @budget
 
-    await(fn -> text(view, "#inspector-activity") == "Executing tools" end)
+    # The batch-start checkpoint adopts this call, so its row STAYS in the live
+    # tail as status-only chrome — header, activity label, plus the tool-execution
+    # status strip once descriptors are known — and drops the response/thinking
+    # content that the checkpoint row now owns.
+    await(fn ->
+      text(view, "#inspector-activity") == "Executing tools" and
+        elements(view, "#inspector-stream article[data-inspector-checkpointed]") != []
+    end)
+
     {:ok, during_tools, _} = Stream.snapshot(session.pid)
     assert during_tools.activity.phase == :tools
     assert during_tools.activity.current_call.id == first.activity.current_call.id
+    assert text(view, "#inspector-activity") == "Executing tools"
+    assert length(elements(view, "#inspector-stream article")) == 1
+
+    # The attribute is absent for a not-yet-checkpointed call.
+    checkpointed_attr =
+      elements(view, "#inspector-stream article")
+      |> Floki.attribute("data-inspector-checkpointed")
+
+    assert checkpointed_attr == ["true"]
+
     refute has_element?(view, "#inspector-stream-cursor")
-    assert text(view, "#inspector-stream details pre") == "Read planning thought"
+    assert elements(view, "#inspector-stream article pre") == []
+    assert text(view, "#inspector-stream details pre") == ""
+
+    # That content renders ONCE, from the checkpoint history: the resynced
+    # assistant message carries its reasoning_details and its response text.
+    assert text(
+             view,
+             "#agent-detail-#{session.id} [data-inspector-reasoning] .whitespace-pre-wrap"
+           ) == "Read planning thought"
+
+    assert length(Regex.scan(~r/Read planning thought/, render(view))) == 1
+    assert length(Regex.scan(~r/Checking the fixture/, render(view))) == 1
 
     send(worker, {:release_tools, gate})
     {next_socket, request} = Provider.request_with_body(ctx.provider, 1)
