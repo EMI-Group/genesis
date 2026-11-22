@@ -100,7 +100,7 @@ defmodule EvoDashWeb.SettingsComponents do
              the save_category form inside the scroll body below. The pinned
              save bar sits OUTSIDE that form and submits it via the HTML `form`
              association attribute (see the bar after the scroll body). --%>
-        <div class="flex-1 overflow-y-auto px-8 py-8 relative">
+        <div class="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 relative">
           <div class="">
             <%!-- Canonical provider accounts. The panel owns the single
                  section header, the account list, the one in-place expanded
@@ -309,7 +309,7 @@ defmodule EvoDashWeb.SettingsComponents do
           <input type="hidden" name="category" value={@category} />
 
           <%!-- Scrollable Content --%>
-          <div class="flex-1 overflow-y-auto px-8 py-8 relative">
+          <div class="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 relative">
             <div class="">
               <%= if @category == :sandbox do %>
                 <%!-- Sandbox backend banner --%>

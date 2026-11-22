@@ -5021,11 +5021,11 @@ defmodule EvoDashWeb.ReviewLiveChromeTest do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       html = flush_review_load(view)
 
-      # The page header's h1 (text-lg) is the only h1 on the show page.
+      # The page header's h1 (text-xl) is the only h1 on the show page.
       [h1] =
         html
         |> Floki.parse_document!()
-        |> Floki.find("h1.text-lg")
+        |> Floki.find("h1.text-xl")
 
       assert Floki.attribute(h1, "title") == [long_objective]
 

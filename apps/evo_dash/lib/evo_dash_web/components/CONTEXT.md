@@ -71,7 +71,8 @@ CSS owns the coarse-pointer ≥44px touch floor and the ≥16px form-value floor
 The expanded sidebar width comes from `#sidebar[data-sidebar-collapsed="false"] { width: var(--workbench-left-width, 16rem) }` (`workbench.css:604`) — 256px, NOT the `w-60` utility; below `lg` it is `min(18rem, 86vw)` (`workbench.css:607`) and the collapsed rail is `w-16` (64px, toggled by the `SidebarCollapse` hook).
 `.sidebar-label` is a JS marker class with NO CSS rule — `SidebarCollapse` adds/removes `hidden` on it (`assets/js/hooks/sidebar_collapse.js:280,312`).
 The review diff panes stack until **xl** (`flex flex-col xl:flex-row`, `review_components/diff_viewer.ex:396`), not lg.
-Follow-ups owned outside this node: the Settings pane gutters (`px-8 py-8` in `settings_components.ex`/`search_results.ex`, `px-8` in `section_header.ex`/`save_bar.ex`) move to `px-4 sm:px-6 py-4 sm:py-6` with the live-page wave, and the page-title `text-xl` upgrade is blocked by the `h1.text-lg` pin in `review_live_test.exs`.
+The Settings pane gutters are ONE rhythm: `px-4 sm:px-6` on every pane body, sticky section header, search-results body and save bar, matching `settings_live.ex`'s pane (vertical padding `py-4 sm:py-6` / `py-4` / `py-2.5`).
+The review page's `h1` is `text-xl font-semibold` (pinned by `review_live_test.exs`'s `h1.text-xl` lookup).
 
 ### `try/rescue` Policy
 

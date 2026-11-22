@@ -41,7 +41,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         </.link>
         <div class="flex-1 min-w-0 pt-1">
           <h1
-            class="line-clamp-3 text-lg font-semibold leading-snug [overflow-wrap:anywhere]"
+            class="line-clamp-3 text-xl font-semibold leading-snug [overflow-wrap:anywhere]"
             title={@title}
           >
             {short_title(@title)}

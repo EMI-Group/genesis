@@ -50,7 +50,7 @@ defmodule EvoDashWeb.SettingsComponents.SearchResults do
       />
 
       <%!-- Scrollable Content --%>
-      <div class="flex-1 overflow-y-auto px-8 py-8">
+      <div class="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-6">
         <%= if @total_matches == 0 do %>
           <div class="flex flex-col items-center justify-center py-20 text-center">
             <div class="text-base-content/30 mb-4">
