@@ -149,7 +149,7 @@ defmodule EvoDashWeb.SettingsComponents.ChatGPTSignInPanel do
           phx-click={@cancel_event}
           phx-value-surface={@surface}
           phx-value-profile_id={@profile_id}
-          class="btn btn-ghost btn-xs"
+          class="btn btn-ghost btn-sm"
         >
           {gettext("Cancel")}
         </button>
@@ -159,7 +159,7 @@ defmodule EvoDashWeb.SettingsComponents.ChatGPTSignInPanel do
         holds the callback query. --%>
         <details
           id={@id <> "-sign-in-paste-hint"}
-          class="rounded-md border border-base-300/70 bg-base-200/40 px-2 py-1"
+          class="rounded-md border border-base-300/70 bg-base-200/40 px-2 py-1.5"
         >
           <summary class="cursor-pointer text-xs font-medium text-base-content/70">
             {gettext("Can't reach this page?")}
@@ -193,7 +193,7 @@ defmodule EvoDashWeb.SettingsComponents.ChatGPTSignInPanel do
               phx-click={@submit_event}
               phx-value-surface={@surface}
               phx-value-profile_id={@profile_id}
-              class="btn btn-outline btn-xs"
+              class="btn btn-outline btn-sm"
             >
               {gettext("Submit pasted link")}
             </button>
