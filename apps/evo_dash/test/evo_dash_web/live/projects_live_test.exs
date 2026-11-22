@@ -5293,10 +5293,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       refute html =~ "acme/widgets"
     end
 
-    test "shows the GitHub button with owner/repo when the upstream resolves", %{
-      conn: conn,
-      tmp_dir: tmp_dir
-    } do
+    test "shows the GitHub entry point in the Git pane with owner/repo when the upstream resolves",
+         %{
+           conn: conn,
+           tmp_dir: tmp_dir
+         } do
       make_evolve_project(tmp_dir)
 
       put_github_seams(github_runner: ok_upstream_runner())
@@ -5310,6 +5311,12 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       assert html =~ "open_github_issues"
       assert html =~ "acme/widgets"
+      # The issues entry point belongs to the Git pane's GitHub block — the
+      # task-form toolbar no longer carries a GitHub button.
+      assert has_element?(
+               view,
+               "#workbench-git-content [phx-click=open_github_issues]"
+             )
     end
 
     test "opens the issues modal and renders the issue list", %{conn: conn, tmp_dir: tmp_dir} do
