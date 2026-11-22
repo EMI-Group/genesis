@@ -84,13 +84,16 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
   """
   def source_section(assigns) do
     ~H"""
-    <div id="genesis-source-card" class="rounded-lg border border-base-300 bg-base-100 flex flex-col">
-      <div class="flex items-center gap-3 p-4">
+    <div
+      id="genesis-source-card"
+      class="rounded-lg border border-base-300 bg-base-100 p-4 flex flex-col gap-3"
+    >
+      <div class="flex items-center gap-3">
         <div class="p-2 rounded-md bg-info/10 shrink-0">
           <.icon name="hero-code-bracket-square" class="size-4 text-info" />
         </div>
         <div class="flex-1 min-w-0 flex items-center gap-2">
-          <span class="font-semibold text-sm">{gettext("Genesis Source")} <% # zh_CN: "本地 Genesis 源码" %></span>
+          <span class="text-sm font-semibold">{gettext("Genesis Source")} <% # zh_CN: "本地 Genesis 源码" %></span>
           <%= if is_map(@source_status) and @source_status.is_reference do %>
             <span class="badge badge-info badge-sm gap-1 shrink-0">
               {gettext("in use")} <% # zh_CN: "使用中" %>
@@ -99,7 +102,7 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
         </div>
       </div>
 
-      <div class="px-4 pb-4 text-sm flex-1 flex flex-col">
+      <div class="text-sm flex-1 flex flex-col">
         <p class="text-xs text-base-content/60 mb-2">
           {gettext("Genesis source checkout used by the self-reflective agent.")} <% # zh_CN: "自省智能体使用的 Genesis 源码检出目录" %>
         </p>

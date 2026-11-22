@@ -37,12 +37,12 @@ defmodule EvoDashWeb.SystemLive.RuntimeControls do
   """
   def controls_section(assigns) do
     ~H"""
-    <div id="system-controls" class="mt-4">
+    <div id="system-controls">
       <div class="p-4 border-b border-base-300">
         <div class="flex items-center gap-3">
           <.icon name="hero-adjustments-horizontal" class="size-5 text-info shrink-0" />
           <div class="flex-1 min-w-0">
-            <h2 class="font-bold text-base">
+            <h2 class="text-lg font-semibold">
               {gettext("System Controls")} <% # zh_CN: "系统控制（系统仪表盘、调度器与虚拟机控制分组）" %>
             </h2>
             <p class="text-sm text-base-content/60">
@@ -65,7 +65,7 @@ defmodule EvoDashWeb.SystemLive.RuntimeControls do
                   if(@scheduler_paused, do: "text-warning", else: "text-success")}
               />
             </div>
-            <h3 class="text-base font-bold tracking-tight">
+            <h3 class="text-base font-semibold tracking-tight">
               {if @scheduler_paused,
                 do: gettext("Scheduler Paused"),
                 else: gettext("Scheduler Active")} <% # zh_CN: "调度器" %>
@@ -114,7 +114,7 @@ defmodule EvoDashWeb.SystemLive.RuntimeControls do
               <div class="p-2 rounded-md bg-info/10 shrink-0">
                 <.icon name="hero-chart-bar" class="size-5 text-info" />
               </div>
-              <h3 class="text-base font-bold tracking-tight">{gettext("System Dashboard")}</h3>
+              <h3 class="text-base font-semibold tracking-tight">{gettext("System Dashboard")}</h3>
             </div>
             <p class="text-sm text-base-content/60 flex-1">
               {gettext("View system metrics, processes, and application telemetry")}
@@ -132,7 +132,7 @@ defmodule EvoDashWeb.SystemLive.RuntimeControls do
             <div class="p-2 rounded-md bg-error/10 shrink-0">
               <.icon name="hero-power" class="size-5 text-error" />
             </div>
-            <h3 class="text-base font-bold tracking-tight text-error">
+            <h3 class="text-base font-semibold tracking-tight text-error">
               {gettext("System Control")}
             </h3>
           </div>

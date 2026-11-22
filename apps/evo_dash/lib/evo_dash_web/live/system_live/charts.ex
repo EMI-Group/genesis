@@ -412,12 +412,12 @@ defmodule EvoDashWeb.SystemLive.Charts do
       )
 
     ~H"""
-    <div class="mt-4">
+    <div>
       <div class="p-4 border-b border-base-300">
         <div class="flex items-center gap-3">
           <.icon name="hero-chart-bar" class="size-5 text-info shrink-0" />
           <div class="flex-1 min-w-0">
-            <h2 class="font-bold text-base">{gettext("Scheduler Status")}</h2>
+            <h2 class="text-lg font-semibold">{gettext("Scheduler Status")}</h2>
             <p class="text-sm text-base-content/60">
               {gettext(
                 "LLM slots, tool slots, and agent activity — sampled every 3 seconds over the last 3 minutes."
@@ -549,7 +549,7 @@ defmodule EvoDashWeb.SystemLive.Charts do
               </select>
             </form>
           <% end %>
-          <p class="text-[11px] leading-snug text-base-content/70">
+          <p class="text-xs leading-snug text-base-content/70">
             {gettext(
               "Slots are pooled per provider profile — the models of one profile share its slots."
             )}
