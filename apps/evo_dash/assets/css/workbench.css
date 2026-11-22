@@ -835,13 +835,44 @@
   color: var(--color-base-content);
   font-size: var(--text-2xs);
 }
-.workbench-git-heading h2 { margin: 0; font-size: var(--text-lg); }
-.workbench-git-heading p { margin-block: .18rem 0; }
+.workbench-git-heading { align-items: flex-start; }
+.workbench-git-heading h2 { margin: 0; font-size: var(--text-sm); font-weight: 600; line-height: 1.3; }
+.workbench-git-eyebrow {
+  margin: 0;
+  color: var(--workbench-text-muted);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  letter-spacing: .04em;
+}
+/* The current branch chip under the panel title: the branch name plus its
+   ahead/behind deltas, and the entry point to the Branches view. */
+.workbench-git-branchbar { display: flex; margin-block-start: .35rem; }
+.workbench-git-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  min-width: 0;
+  max-width: 100%;
+  padding: .2rem .45rem;
+  border-radius: .5rem;
+  background: var(--workbench-hover);
+  color: var(--color-base-content);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.workbench-git-chip:hover { background: var(--workbench-selected); color: var(--color-primary-standalone); }
+.workbench-git-delta {
+  flex: none;
+  color: var(--workbench-text-muted);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
 .workbench-git-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: .65rem;
-  margin-block-start: .65rem;
+  margin-block-start: .55rem;
+  padding-inline: .1rem;
   /* The git pane's ONE scroller (the heading above it stays pinned). */
   flex: 1 1 auto;
   min-height: 0;
@@ -852,54 +883,117 @@
 .workbench-git-history-entry {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: .18rem;
-  padding-block: .45rem;
+  gap: .1rem;
+  padding-block: .35rem;
 }
-.workbench-git-history-entry small { color: var(--workbench-text-muted); font-size: var(--text-2xs); }
 .workbench-git-history-entry[aria-pressed="true"] {
   background: var(--workbench-selected);
   color: var(--color-primary-standalone);
 }
+.workbench-git-entry-meta {
+  color: var(--workbench-text-muted);
+  font-variant-numeric: tabular-nums;
+}
 .workbench-git-summary {
-  padding: .25rem;
+  display: grid;
+  gap: .15rem;
+  padding: .5rem .6rem;
   border: 1px solid var(--color-base-300);
-  border-radius: .6rem;
+  border-radius: .75rem;
   background: var(--color-base-100);
 }
-.workbench-git-current { padding: .45rem; }
-.workbench-git-commit {
+.workbench-git-summary-line {
   display: flex;
-  gap: .45rem;
   align-items: baseline;
-  padding: .2rem .45rem .35rem;
+  gap: .4rem;
+  min-width: 0;
+  margin: 0;
   color: var(--workbench-text-muted);
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
 }
-.workbench-git-commit code { flex: none; color: var(--color-base-content); }
+.workbench-git-summary-sha { flex: none; color: var(--color-base-content); }
 .workbench-git-group + .workbench-git-group { margin-block-start: .7rem; }
-.workbench-git-group h3 {
+.workbench-git-group-heading {
   display: flex;
-  gap: .45rem;
+  gap: .35rem;
   align-items: center;
-  margin: .1rem .4rem .25rem;
+  margin: .1rem .45rem .3rem;
+  color: var(--workbench-text-muted);
   font-size: var(--text-2xs);
   font-weight: 600;
+  letter-spacing: .03em;
+  text-transform: uppercase;
 }
-.workbench-git-group h3 span, .workbench-git-code {
-  color: var(--workbench-text-muted);
-  font-size: var(--text-2xs);
-}
+.workbench-git-count { font-weight: 400; font-variant-numeric: tabular-nums; }
 .workbench-git-file, .workbench-git-branch { text-align: start; }
 /* Dense inspector lists (a file tree and a branch list, not primary nav rows):
    they keep the compact row the base `.workbench-row` used to be. */
 .workbench-git-file, .workbench-git-branch {
   min-height: var(--row-h-sm);
   font-size: var(--text-xs);
+  padding-block: .25rem;
 }
 .workbench-git-file[aria-pressed="true"], .workbench-git-branch[aria-pressed="true"] {
   background: var(--workbench-selected);
   color: var(--color-primary-standalone);
 }
+/* A muted square frame so the row's icon reads as a glyph slot, not a button. */
+.workbench-git-file-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  border-radius: .375rem;
+  background: var(--workbench-hover);
+  color: var(--workbench-text-muted);
+}
+/* The git status code is ONE tinted 2-char chip (the tint comes from
+   `code_tint/1`, the shape from here). */
+.workbench-git-code {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  min-inline-size: 1.35rem;
+  block-size: 1.1rem;
+  padding-inline: .25rem;
+  border-radius: .375rem;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.workbench-git-current-mark { flex: none; color: var(--color-primary-standalone); }
+.workbench-git-more {
+  display: block;
+  width: 100%;
+  margin-block-start: .2rem;
+  padding: .4rem .6rem;
+  border-radius: .5rem;
+  color: var(--workbench-text-muted);
+  font-size: var(--text-xs);
+  text-align: start;
+  cursor: pointer;
+}
+.workbench-git-more:hover { background: var(--workbench-hover); color: var(--color-base-content); }
+/* The GitHub block is a pinned footer of the pane (never scrolled away). */
+.workbench-git-github {
+  display: grid;
+  flex: none;
+  gap: .2rem;
+  margin-block-start: .5rem;
+  padding: .45rem .55rem 0;
+  border-block-start: 1px solid var(--color-base-300);
+}
+.workbench-git-github-slug {
+  display: flex;
+  gap: .35rem;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  color: var(--workbench-text-muted);
+  font-size: var(--text-xs);
+}
+.workbench-git-github-issues { min-height: var(--row-h-sm); }
 .workbench-git-search {
   box-sizing: border-box;
   width: 100%;

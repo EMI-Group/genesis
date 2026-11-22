@@ -10,6 +10,13 @@ defmodule EvoDashWeb.ProjectGit do
   @file_limit 30
   @branch_limit 60
 
+  attr(:github_status, :map,
+    default: nil,
+    doc:
+      "the project's GitHub upstream status (`%{state: :ok, owner:, repo:}`) — the " <>
+        "GitHub block renders ONLY from this assign and never issues its own RPC"
+  )
+
   @impl true
   def mount(socket) do
     {:ok,
@@ -420,6 +427,50 @@ defmodule EvoDashWeb.ProjectGit do
 
   defp meta_line(parts), do: parts |> Enum.filter(&(&1 not in [nil, ""])) |> Enum.join(" · ")
 
+  # Ahead/behind arrive as strings ("0" is truthy in Elixir), so a zero count is
+  # rendered as absent rather than as a noisy "↑0".
+  defp tracking_count(snapshot, key) when is_map(snapshot) do
+    case snapshot[key] do
+      count when is_binary(count) and count not in ["", "0"] -> count
+      _ -> nil
+    end
+  end
+
+  defp tracking_count(_snapshot, _key), do: nil
+
+  # The 2-char status chip is tinted by the git status letter (index/worktree
+  # short code); anything unknown keeps the neutral base-content tint.
+  defp code_tint(code) when is_binary(code) do
+    case String.trim(code) do
+      "A" <> _ -> "bg-success/15 text-success"
+      "D" <> _ -> "bg-error/15 text-error"
+      "M" <> _ -> "bg-warning/15 text-warning"
+      "R" <> _ -> "bg-info/15 text-info"
+      "C" <> _ -> "bg-info/15 text-info"
+      "U" <> _ -> "bg-error/15 text-error"
+      _ -> "bg-base-content/10 text-base-content/70"
+    end
+  end
+
+  defp code_tint(_code), do: "bg-base-content/10 text-base-content/70"
+
+  defp current_branch?(branch, snapshot),
+    do: branch.kind == :local && branch.name == snapshot[:branch]
+
+  defp branch_meta(branch, snapshot) do
+    if current_branch?(branch, snapshot),
+      do: gettext("Current branch"),
+      else: kind_label(branch.kind)
+  end
+
+  # The GitHub block renders ONLY from the parent's upstream status — no RPC of
+  # its own — and disappears entirely for a project without an upstream.
+  defp github_slug(%{state: :ok, owner: owner, repo: repo})
+       when is_binary(owner) and is_binary(repo) and owner != "" and repo != "",
+       do: "#{owner}/#{repo}"
+
+  defp github_slug(_status), do: nil
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -435,13 +486,36 @@ defmodule EvoDashWeb.ProjectGit do
       data-workbench-git-target={if @target, do: Atom.to_string(@target)}
     >
       <div class="workbench-section-heading workbench-git-heading">
-        <div>
-          <h2>Git</h2>
-          <p :if={@project} class="workbench-history-project" title={@project}>
-            {Path.basename(@project)} · {@server}
-          </p>
+        <div class="min-w-0 flex-1">
+          <p class="workbench-git-eyebrow text-2xs uppercase">{gettext("Source control")}</p>
+          <h2 class="truncate text-sm font-semibold" title={@project}>
+            {if @project, do: Path.basename(@project), else: gettext("No project")}
+          </h2>
+          <div :if={@snapshot || @head} class="workbench-git-branchbar">
+            <button
+              type="button"
+              class="workbench-git-chip"
+              phx-click="git_section"
+              phx-value-section="branches"
+              phx-target={@myself}
+              title={gettext("Browse branches")}
+            >
+              <.icon name="hero-code-bracket" class="size-3.5 shrink-0" />
+              <span class="min-w-0 truncate">{@head || gettext("Detached HEAD")}</span>
+              <span
+                :if={tracking_count(@snapshot, :ahead)}
+                class="workbench-git-delta"
+                title={gettext("Ahead of upstream")}
+              >↑{tracking_count(@snapshot, :ahead)}</span>
+              <span
+                :if={tracking_count(@snapshot, :behind)}
+                class="workbench-git-delta"
+                title={gettext("Behind upstream")}
+              >↓{tracking_count(@snapshot, :behind)}</span>
+            </button>
+          </div>
         </div>
-        <div class="flex shrink-0 gap-1">
+        <div class="flex shrink-0 items-center gap-1">
           <button
             type="button"
             id="workbench-git-refresh"
@@ -472,30 +546,42 @@ defmodule EvoDashWeb.ProjectGit do
       <p :if={@busy == :snapshot && !@snapshot && !@error} class="workbench-hint" role="status">
         {gettext("Loading Git status…")}
       </p>
+      <EvoDashWeb.Components.Skeleton.row
+        :if={@busy == :snapshot && !@snapshot && !@error}
+        count={3}
+        class="px-1.5"
+      />
       <p :if={@error} class="workbench-git-error" role="alert">{@error}</p>
 
       <div :if={@snapshot} class="workbench-git-body" aria-busy={to_string(@busy != nil)}>
-        <div class="workbench-git-summary" title={@snapshot.root}>
-          <button
-            type="button"
-            class="workbench-row workbench-git-current"
-            phx-click="git_section"
-            phx-value-section="branches"
-            phx-target={@myself}
-          >
-            <.icon name="hero-code-bracket" class="size-4 shrink-0" />
-            <span class="min-w-0 truncate text-sm font-semibold">{@head || gettext("Detached HEAD")}</span>
-            <.icon name="hero-chevron-down" class="size-3 shrink-0 ms-auto" />
-          </button>
-          <div :if={@snapshot[:commit]} class="workbench-git-commit text-xs">
-            <code>{short_commit(@snapshot.commit)}</code>
-            <span class="truncate" title={@snapshot.subject}>{@snapshot.subject}</span>
-          </div>
-          <div :if={@snapshot[:upstream]} class="workbench-git-commit text-xs">
-            <span class="truncate" title={@snapshot.upstream}>{@snapshot.upstream}</span>
-            <span :if={@snapshot[:behind]} title={gettext("Behind upstream")}>↓ {@snapshot.behind}</span>
-            <span :if={@snapshot[:ahead]} title={gettext("Ahead of upstream")}>↑ {@snapshot.ahead}</span>
-          </div>
+        <div
+          :if={@snapshot[:commit] || @snapshot[:upstream]}
+          class="workbench-git-summary"
+          title={@snapshot.root}
+        >
+          <p :if={@snapshot[:commit]} class="workbench-git-summary-line">
+            <code class="workbench-git-summary-sha font-mono text-2xs">
+              {short_commit(@snapshot.commit)}
+            </code>
+            <span class="min-w-0 flex-1 truncate" title={@snapshot.subject}>
+              {@snapshot.subject}
+            </span>
+          </p>
+          <p :if={@snapshot[:upstream]} class="workbench-git-summary-line">
+            <span class="min-w-0 flex-1 truncate" title={@snapshot.upstream}>
+              {@snapshot.upstream}
+            </span>
+            <span
+              :if={tracking_count(@snapshot, :ahead)}
+              class="workbench-git-delta"
+              title={gettext("Ahead of upstream")}
+            >↑{tracking_count(@snapshot, :ahead)}</span>
+            <span
+              :if={tracking_count(@snapshot, :behind)}
+              class="workbench-git-delta"
+              title={gettext("Behind upstream")}
+            >↓{tracking_count(@snapshot, :behind)}</span>
+          </p>
         </div>
 
         <div
@@ -525,7 +611,10 @@ defmodule EvoDashWeb.ProjectGit do
           </p>
           <section :for={{kind, files} <- file_groups(@snapshot.changes)} class="workbench-git-group">
             <% limit = Map.get(@shown_files, kind, @file_limit) %>
-            <h3 class="text-sm font-semibold">{group_label(kind)} <span>{length(files)}</span></h3>
+            <h3 class="workbench-git-group-heading">
+              <span>{group_label(kind)}</span>
+              <span class="workbench-git-count">{length(files)}</span>
+            </h3>
             <button
               :for={{file, index} <- Enum.take(files, limit)}
               type="button"
@@ -540,16 +629,19 @@ defmodule EvoDashWeb.ProjectGit do
               phx-target={@myself}
               title={String.replace_invalid(file.path)}
             >
-              <.icon name="hero-document" class="size-4 shrink-0" />
-              <span class="min-w-0 flex-1 truncate text-sm font-mono">{String.replace_invalid(
-                file.path
-              )}</span>
-              <span class="workbench-git-code" aria-hidden="true">{file.code}</span>
+              <span class="workbench-git-file-icon" aria-hidden="true">
+                <.icon name="hero-document" class="size-3.5" />
+              </span>
+              <span class="min-w-0 flex-1 truncate text-sm">{String.replace_invalid(file.path)}</span>
+              <span
+                class={["workbench-git-code font-mono", code_tint(file.code)]}
+                aria-hidden="true"
+              >{file.code}</span>
             </button>
             <button
               :if={length(files) > limit}
               type="button"
-              class="btn btn-sm btn-ghost"
+              class="workbench-git-more"
               phx-click="git_more_files"
               phx-value-kind={kind}
               phx-target={@myself}
@@ -562,18 +654,23 @@ defmodule EvoDashWeb.ProjectGit do
         <div :if={@section == "commits"} id="workbench-git-history">
           <% history = @history || %{} %>
           <p :if={history[:loading?]} class="workbench-hint" role="status">{gettext("Loading…")}</p>
+          <EvoDashWeb.Components.Skeleton.row
+            :if={history[:loading?]}
+            count={3}
+            class="px-1.5 pt-1"
+          />
           <div :if={history[:error]} class="workbench-git-error" role="alert">
             <p>{history.error}</p>
             <button
               type="button"
-              class="btn btn-sm btn-ghost"
+              class="workbench-git-more"
               phx-click="git_retry_history"
               phx-target={@myself}
             >
               {gettext("Retry")}
             </button>
           </div>
-          <p :if={history[:rows] == []} class="workbench-hint">
+          <p :if={history[:rows] == [] && !history[:loading?]} class="workbench-hint">
             {gettext("No commits on this branch.")}
           </p>
           <button
@@ -592,16 +689,14 @@ defmodule EvoDashWeb.ProjectGit do
             title={commit.subject}
           >
             <span class="truncate text-sm">{commit.subject}</span>
-            <small class="truncate text-xs font-mono">{meta_line([
-              commit.short,
-              commit.author,
-              date_label(commit.date)
-            ])}</small>
+            <span class="workbench-git-entry-meta truncate text-xs font-mono">
+              {meta_line([commit.short, commit.author, date_label(commit.date)])}
+            </span>
           </button>
           <button
             :if={history[:more?] && !history[:loading?]}
             type="button"
-            class="btn btn-sm btn-ghost"
+            class="workbench-git-more"
             phx-click="git_more_commits"
             phx-target={@myself}
           >{gettext("Show more commits")}</button>
@@ -709,18 +804,47 @@ defmodule EvoDashWeb.ProjectGit do
             phx-value-ref={branch.ref}
             title={String.replace_invalid(branch.name)}
           >
-            <.icon name="hero-code-bracket" class="size-4 shrink-0" />
-            <span class="min-w-0 flex-1 truncate text-sm">{String.replace_invalid(branch.name)}</span>
-            <span class="workbench-git-code">{if branch.kind == :local &&
-                                                   branch.name == @snapshot[:branch],
-                                                 do: gettext("Current"),
-                                                 else: kind_label(branch.kind)}</span>
+            <span class="workbench-git-file-icon" aria-hidden="true">
+              <.icon name="hero-code-bracket" class="size-3.5" />
+            </span>
+            <span class="grid min-w-0 flex-1">
+              <span class="truncate text-sm">{String.replace_invalid(branch.name)}</span>
+              <span class="workbench-git-entry-meta truncate">{branch_meta(branch, @snapshot)}</span>
+            </span>
+            <span
+              :if={current_branch?(branch, @snapshot)}
+              class="workbench-git-current-mark"
+              title={gettext("Current branch")}
+            >
+              <.icon name="hero-check" class="size-3.5" />
+            </span>
           </button>
           <p :if={length(matches) > @branch_limit} class="workbench-hint">
             {gettext("Search to narrow the branch list.")}
           </p>
         </div>
       </div>
+
+      <section
+        :if={github_slug(@github_status)}
+        class="workbench-git-github"
+        aria-label={gettext("GitHub")}
+      >
+        <p class="workbench-git-github-slug">
+          <.icon name="brand-github" class="size-4 shrink-0" />
+          <span class="min-w-0 truncate font-mono text-xs">{github_slug(@github_status)}</span>
+        </p>
+        <button
+          type="button"
+          class="workbench-row workbench-git-github-issues"
+          phx-click="open_github_issues"
+          title={"#{gettext("Open GitHub Issues")} · #{github_slug(@github_status)}"}
+        >
+          <.icon name="hero-chat-bubble-left-right" class="size-4 shrink-0" />
+          <span class="min-w-0 flex-1 truncate text-sm">{gettext("Issues")}</span>
+          <.icon name="hero-chevron-right" class="size-4 shrink-0" />
+        </button>
+      </section>
     </section>
     """
   end

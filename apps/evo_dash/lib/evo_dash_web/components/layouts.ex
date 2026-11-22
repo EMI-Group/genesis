@@ -44,6 +44,7 @@ defmodule EvoDashWeb.Layouts do
   attr(:workbench_draft, :string, default: nil)
   attr(:workbench_draft_project, :string, default: nil)
   attr(:workbench_git_project, :string, default: nil)
+  attr(:github_status, :map, default: nil, doc: "the active project's GitHub upstream status")
   attr(:workbench_git_branch, :string, default: nil)
   attr(:workbench_starting_commit, :string, default: nil)
 
@@ -543,6 +544,7 @@ defmodule EvoDashWeb.Layouts do
             target={@workbench_target}
             project={@workbench_git_project}
             server={workbench_git_server(assigns)}
+            github_status={@github_status}
           />
         </aside>
       </div>

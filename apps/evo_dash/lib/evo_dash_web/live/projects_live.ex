@@ -111,6 +111,7 @@ defmodule EvoDashWeb.ProjectsLive do
         workbench_git_project={if workbench_project == @active_project_path, do: @active_project_path}
         workbench_git_branch={@workbench_reconnect_params["wb_git_branch"]}
         workbench_starting_commit={@workbench_reconnect_params["starting_commit"]}
+        github_status={@github_status}
         current_node_name={@current_node_name}
         running_tasks={@running_tasks}
         session_list={assigns[:session_list] || []}
@@ -280,22 +281,6 @@ defmodule EvoDashWeb.ProjectsLive do
                         <.icon name="hero-code-bracket" class="size-4 shrink-0" />
                         <span class="truncate">{@workbench_reconnect_params["wb_git_branch"]}</span>
                       </span>
-                      <button
-                        :if={
-                          match?(
-                            %{state: :ok, owner: owner, repo: repo}
-                            when is_binary(owner) and is_binary(repo),
-                            @github_status
-                          )
-                        }
-                        type="button"
-                        class="workbench-icon-button shrink-0"
-                        phx-click="open_github_issues"
-                        title={"#{gettext("Open GitHub Issues")} · #{@github_status.owner}/#{@github_status.repo}"}
-                        aria-label={gettext("Open GitHub Issues")}
-                      >
-                        <.icon name="brand-github" class="size-4" />
-                      </button>
                       <button
                         type="button"
                         class="workbench-icon-button shrink-0"
