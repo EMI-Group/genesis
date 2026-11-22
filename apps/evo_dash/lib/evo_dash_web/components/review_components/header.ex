@@ -73,14 +73,14 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <%= if @repo_path do %>
           <span class="flex items-center gap-1.5 min-w-0" title={@repo_path}>
             <.icon name="hero-folder" class="size-4 shrink-0" />
-            <span class="font-mono truncate leading-none">{@repo_path}</span>
+            <span class="font-mono text-xs truncate leading-none">{@repo_path}</span>
           </span>
         <% end %>
         <%= if @branch_name do %>
           <span class="flex items-center gap-1.5 min-w-0">
             <.icon name="hero-code-bracket-square" class="size-4 shrink-0" />
             <span
-              class="font-mono bg-base-200 rounded-md px-1.5 py-0.5 leading-none truncate max-w-[16rem]"
+              class="font-mono text-xs bg-base-200 rounded-md px-1.5 py-0.5 leading-none truncate max-w-[16rem]"
               title={@branch_name}
             >
               {@branch_name}
@@ -91,7 +91,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
           <span class="flex items-center gap-1.5 min-w-0">
             <.icon name="hero-arrow-right" class="size-3.5 shrink-0 text-base-content/50" />
             <span
-              class="font-mono bg-base-200 rounded-md px-1.5 py-0.5 leading-none truncate max-w-[16rem]"
+              class="font-mono text-xs bg-base-200 rounded-md px-1.5 py-0.5 leading-none truncate max-w-[16rem]"
               title={@merge_target}
             >
               {@merge_target}
@@ -101,7 +101,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <%= if @commit_sha do %>
           <span class="flex items-center gap-1.5 min-w-0" title={@commit_sha}>
             <.icon name="hero-code-bracket" class="size-4 shrink-0" />
-            <span class="font-mono bg-base-200 rounded-md px-1.5 py-0.5 leading-none">{String.slice(
+            <span class="font-mono text-xs bg-base-200 rounded-md px-1.5 py-0.5 leading-none">{String.slice(
               @commit_sha,
               0,
               7
@@ -113,12 +113,12 @@ defmodule EvoDashWeb.ReviewComponents.Header do
           <span class="leading-none">{String.capitalize(to_string(@task_type))}</span>
         <% end %>
         <%= if @task_id do %>
-          <span class="min-w-0 max-w-full truncate font-mono leading-none" title={@task_id}>{@task_id}</span>
+          <span class="min-w-0 max-w-full truncate font-mono text-xs leading-none" title={@task_id}>{@task_id}</span>
         <% end %>
         <%= if @model_id do %>
           <%!-- zh_CN: LLM 模型配置 id --%>
           <span
-            class="min-w-0 max-w-[min(100%,16rem)] truncate font-mono leading-none"
+            class="min-w-0 max-w-[min(100%,16rem)] truncate font-mono text-xs leading-none"
             title={@model_id}
           >{@model_id}</span>
         <% end %>
@@ -147,21 +147,21 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <% additions = Map.get(@stats, :additions, Map.get(@stats, "additions", 0)) %>
         <% deletions = Map.get(@stats, :deletions, Map.get(@stats, "deletions", 0)) %>
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-          <span class="flex items-center gap-1.5 text-base-content/80">
+          <span class="flex items-center gap-1.5 text-xs text-base-content/80">
             <.icon name="hero-clock" class="size-4" />
             <%!-- zh_CN: commit → "提交" --%>
             {ngettext("%{count} commit", "%{count} commits", commits_count, count: commits_count)}
           </span>
-          <span class="flex items-center gap-1.5 text-base-content/80">
+          <span class="flex items-center gap-1.5 text-xs text-base-content/80">
             <.icon name="hero-document-text" class="size-4" />
             {gettext("%{count} files changed", count: files_count)}
           </span>
-          <span class="text-success font-semibold flex items-center gap-1">
+          <span class="text-success font-bold flex items-center gap-1">
             <%!-- zh_CN: +新增行数 --%>
             <.icon name="hero-arrow-up" class="size-3.5" />
             {additions}
           </span>
-          <span class="text-error font-semibold flex items-center gap-1">
+          <span class="text-error font-bold flex items-center gap-1">
             <%!-- zh_CN: −删除行数 --%>
             <.icon name="hero-arrow-down" class="size-3.5" />
             {deletions}
@@ -260,7 +260,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <div class="size-7 rounded-lg bg-primary/10 text-primary-standalone flex items-center justify-center shrink-0">
           <.icon name="hero-sparkles" class="size-4" />
         </div>
-        <span class="font-semibold text-base-content/85 shrink-0">
+        <span class="text-base font-semibold text-base-content/85 shrink-0">
           <%!-- zh_CN: 智能体报告 — the agent's final message --%>
           {gettext("Agent Report")}
         </span>
@@ -326,9 +326,9 @@ defmodule EvoDashWeb.ReviewComponents.Header do
           <% @summary_raw -> %>
             <%!-- The <pre> must stay single-line: whitespace-pre-wrap renders any
                leading indentation from a formatter-wrapped line as visible text. --%>
-            <pre class="text-xs sm:text-sm whitespace-pre-wrap break-words font-mono bg-base-200/30 p-4 rounded-lg border border-base-200">{@summary_preview}</pre>
+            <pre class="text-sm whitespace-pre-wrap break-words font-mono bg-base-200/30 p-4 rounded-lg border border-base-200">{@summary_preview}</pre>
           <% true -> %>
-            <div class="md-content text-sm leading-relaxed">
+            <div class="md-content text-base leading-relaxed">
               {raw(EvoDash.MarkdownRender.render(@summary_preview))}
             </div>
         <% end %>
@@ -379,7 +379,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <div class="size-7 rounded-lg bg-base-content/5 text-base-content/60 flex items-center justify-center shrink-0">
           <.icon name="hero-chat-bubble-bottom-center-text" class="size-4" />
         </div>
-        <span class="font-semibold text-base-content/85 shrink-0">
+        <span class="text-base font-semibold text-base-content/85 shrink-0">
           <%!-- zh_CN: 目标 — 提交给智能体的任务目标 --%>
           {gettext("Objective")}
         </span>
@@ -442,10 +442,10 @@ defmodule EvoDashWeb.ReviewComponents.Header do
           <%= if @objective_raw do %>
             <%!-- The <pre> must stay single-line: whitespace-pre-wrap renders any
                  leading indentation from a formatter-wrapped line as visible text. --%>
-            <pre class="text-xs sm:text-sm whitespace-pre-wrap break-words font-mono bg-base-200/30 p-4 rounded-lg border border-base-200">{@objective_preview}</pre>
+            <pre class="text-sm whitespace-pre-wrap break-words font-mono bg-base-200/30 p-4 rounded-lg border border-base-200">{@objective_preview}</pre>
           <% else %>
             <div class="max-h-[32rem] overflow-y-auto">
-              <div class="md-content text-sm leading-relaxed">
+              <div class="md-content text-base leading-relaxed">
                 {raw(EvoDash.MarkdownRender.render(@objective_preview))}
               </div>
             </div>

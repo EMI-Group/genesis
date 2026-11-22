@@ -221,13 +221,13 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
       <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
         <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_extract_skills">
         </div>
-        <div class="relative bg-base-100 rounded-xl shadow-2xl border border-base-300 max-w-lg w-full p-6 md:p-8">
+        <div class="relative bg-base-100 rounded-xl shadow-2xl border border-base-300 max-w-lg w-full p-5 sm:p-6">
           <div class="flex items-center gap-3 mb-4">
-            <div class="flex items-center justify-center size-10 rounded-md bg-secondary/10">
+            <div class="flex items-center justify-center size-10 rounded-lg bg-secondary/10">
               <.icon name="hero-academic-cap" class="size-5 text-secondary" />
             </div>
             <%!-- zh_CN: 提炼技能 — 从变更中总结可复用的技能文件 --%>
-            <h3 class="text-lg font-bold">{gettext("Extract Skills")}</h3>
+            <h3 class="text-lg font-semibold">{gettext("Extract Skills")}</h3>
           </div>
 
           <p class="text-sm text-base-content/70 mb-5">
@@ -262,7 +262,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             <div class="flex justify-end gap-3 pt-2">
               <button
                 type="button"
-                class="btn btn-ghost rounded-lg px-6"
+                class="btn btn-ghost btn-sm rounded-lg px-4"
                 phx-click="cancel_extract_skills"
               >
                 {gettext("Cancel")}
