@@ -318,7 +318,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                       class="flex items-center gap-1.5 max-w-full rounded-lg border border-base-300 bg-base-200/70 py-0.5 pl-2 pr-0.5"
                       title={attachment_attr(att, :name)}
                     >
-                      <span class="shrink-0 text-xs font-semibold uppercase tracking-wide text-base-content/60">
+                      <span class="shrink-0 text-2xs font-semibold uppercase tracking-wide text-base-content/60">
                         {staged_kind_label(attachment_attr(att, :type))}
                       </span>
                       <span class="min-w-0 max-w-[12rem] truncate text-xs font-medium text-base-content/80">

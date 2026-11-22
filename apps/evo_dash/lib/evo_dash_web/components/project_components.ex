@@ -245,7 +245,7 @@ defmodule EvoDashWeb.ProjectComponents do
       phx-hook="PaletteList"
     >
       <%= if @filtered_projects != [] do %>
-        <p class="text-xs font-semibold uppercase tracking-wide text-base-content/60 px-2 py-1">
+        <p class="text-2xs font-semibold uppercase tracking-wide text-base-content/60 px-2 py-1">
           {gettext("Projects")}
         </p>
         <%= for {project, i} <- Enum.with_index(@filtered_projects) do %>
@@ -255,7 +255,7 @@ defmodule EvoDashWeb.ProjectComponents do
               phx-click="select_project"
               phx-value-path={project.path}
               data-selected={@palette_selected_index == i}
-              class="project-palette-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors"
+              class="project-palette-item w-full flex items-center gap-3 px-3 py-2 min-h-[var(--row-h)] rounded-lg text-left transition-colors"
             >
               <.icon name="hero-folder" class="size-4 shrink-0" />
               <div class="min-w-0 flex-1">
@@ -280,7 +280,7 @@ defmodule EvoDashWeb.ProjectComponents do
               phx-stop-propagation
               aria-label={gettext("Forget %{name}", name: project.name)}
               title={gettext("Forget project")}
-              class="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-md opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto text-base-content/60 hover:text-error hover:bg-error/10 transition-opacity"
+              class="absolute right-1.5 top-1/2 -translate-y-1/2 p-2 rounded-md opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto text-base-content/60 hover:text-error hover:bg-error/10 transition-opacity"
             >
               <.icon name="hero-trash" class="size-4" />
             </button>
@@ -299,7 +299,7 @@ defmodule EvoDashWeb.ProjectComponents do
         phx-value-mode="open_path"
         data-workbench-project-window="open"
         data-selected={@palette_selected_index == @action_base}
-        class="project-palette-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors"
+        class="project-palette-item w-full flex items-center gap-3 px-3 py-2 min-h-[var(--row-h)] rounded-lg text-left transition-colors"
       >
         <.icon name="hero-folder-open" class="size-4 shrink-0" />
         <span class="text-sm">{gettext("Open Project by Path")}</span>
@@ -312,7 +312,7 @@ defmodule EvoDashWeb.ProjectComponents do
           phx-value-mode="new_project"
           data-workbench-project-window="create"
           data-selected={@palette_selected_index == @action_base + 1}
-          class="project-palette-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors"
+          class="project-palette-item w-full flex items-center gap-3 px-3 py-2 min-h-[var(--row-h)] rounded-lg text-left transition-colors"
         >
           <.icon name="hero-plus-circle" class="size-4 shrink-0" />
           <span class="text-sm">{gettext("Create New Project")}</span>
@@ -326,7 +326,7 @@ defmodule EvoDashWeb.ProjectComponents do
         phx-click="palette_mode"
         phx-value-mode="new_workspace"
         data-selected={@palette_selected_index == @new_workspace_index}
-        class="project-palette-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors"
+        class="project-palette-item w-full flex items-center gap-3 px-3 py-2 min-h-[var(--row-h)] rounded-lg text-left transition-colors"
       >
         <.icon name="hero-rectangle-stack" class="size-4 shrink-0" />
         <span class="text-sm">{gettext("New Workspace")}</span>
@@ -344,10 +344,10 @@ defmodule EvoDashWeb.ProjectComponents do
            activatable: it is not a runnable project. --%>
       <%= if @workspace_view != [] do %>
         <div class="border-t border-base-200 my-1"></div>
-        <p class="text-xs font-semibold uppercase tracking-wide text-base-content/60 px-2 py-1">
+        <p class="text-2xs font-semibold uppercase tracking-wide text-base-content/60 px-2 py-1">
           {gettext("Workspaces")}
         </p>
-        <p class="text-[11px] text-base-content/60 px-2 pb-1">
+        <p class="text-xs text-base-content/60 px-2 pb-1">
           <%!-- zh_CN: 工作区只是把项目分组，本身不是可运行的项目，不能作为任务执行路径 --%>
           {gettext("A workspace groups projects; it is not a runnable project.")}
         </p>
@@ -377,9 +377,9 @@ defmodule EvoDashWeb.ProjectComponents do
                 phx-click="toggle_workspace"
                 phx-value-point={ws.point}
                 aria-expanded={to_string(ws.expanded?)}
-                class="btn btn-ghost btn-xs gap-1 shrink-0"
+                class="btn btn-ghost btn-sm gap-1 shrink-0"
               >
-                <span class="text-[11px] font-normal">
+                <span class="text-xs font-normal">
                   {gettext("%{count} members", count: ws.count)}
                 </span>
                 <.icon
@@ -391,7 +391,7 @@ defmodule EvoDashWeb.ProjectComponents do
 
             <%= if ws.expanded? do %>
               <%= if ws.empty? do %>
-                <p class="text-[11px] text-base-content/60 pl-2 mt-1">
+                <p class="text-xs text-base-content/60 pl-2 mt-1">
                   {gettext("No members yet.")}
                 </p>
               <% else %>
@@ -408,7 +408,7 @@ defmodule EvoDashWeb.ProjectComponents do
                           {member.name}
                         </span>
                         <%= if is_binary(member.ref_key) do %>
-                          <span class="block text-[11px] text-base-content/60 font-mono truncate">
+                          <span class="block text-xs text-base-content/60 font-mono truncate">
                             {member.ref_key}
                           </span>
                         <% end %>
@@ -422,7 +422,7 @@ defmodule EvoDashWeb.ProjectComponents do
                       class="flex items-center gap-2 min-w-0"
                     >
                       <.icon name="hero-question-mark-circle" class="size-3 shrink-0 text-warning" />
-                      <span class="min-w-0 flex-1 text-[11px] text-base-content/70 font-mono truncate">
+                      <span class="min-w-0 flex-1 text-xs text-base-content/70 font-mono truncate">
                         {ref_key}
                       </span>
                       <span class="badge badge-warning badge-xs shrink-0">{gettext("Missing")}</span>
@@ -435,7 +435,7 @@ defmodule EvoDashWeb.ProjectComponents do
                       class="flex items-center gap-2 min-w-0"
                     >
                       <.icon name="hero-rectangle-stack" class="size-3 shrink-0" />
-                      <span class="min-w-0 flex-1 text-[11px] text-base-content/70 font-mono truncate">
+                      <span class="min-w-0 flex-1 text-xs text-base-content/70 font-mono truncate">
                         {ref_key}
                       </span>
                       <span class="badge badge-ghost badge-xs shrink-0">{gettext("Workspace")}</span>
@@ -500,7 +500,7 @@ defmodule EvoDashWeb.ProjectComponents do
             <input
               type="text"
               name="path"
-              class="input input-bordered input-sm w-full pr-8 font-mono text-sm"
+              class="input input-bordered w-full pr-8 font-mono text-sm"
               placeholder={gettext("Project path")}
               autofocus
               phx-hook="PathAutocomplete"
@@ -556,7 +556,7 @@ defmodule EvoDashWeb.ProjectComponents do
         <!-- Project path -->
         <div>
           <label class="label py-1">
-            <span class="label-text text-xs font-medium">{gettext("Project path")}</span>
+            <span class="label-text text-sm font-medium">{gettext("Project path")}</span>
           </label>
           <div class="flex items-center gap-2">
             <%= if @tauri_detected and !@remote do %>
@@ -574,7 +574,7 @@ defmodule EvoDashWeb.ProjectComponents do
               <input
                 type="text"
                 name="path"
-                class="input input-bordered input-sm w-full font-mono text-sm"
+                class="input input-bordered w-full font-mono text-sm"
                 placeholder={gettext("Project path")}
                 id="new-project-path-input"
                 phx-hook="PathAutocomplete"
@@ -638,7 +638,7 @@ defmodule EvoDashWeb.ProjectComponents do
       >
         <div>
           <label class="label py-1">
-            <span class="label-text text-xs font-medium">{gettext("Name")}</span>
+            <span class="label-text text-sm font-medium">{gettext("Name")}</span>
           </label>
           <input
             type="text"
@@ -646,20 +646,20 @@ defmodule EvoDashWeb.ProjectComponents do
             name="name"
             required
             placeholder={gettext("Workspace name")}
-            class="input input-bordered input-sm w-full"
+            class="input input-bordered w-full"
           />
         </div>
 
         <div>
           <label class="label py-1">
-            <span class="label-text text-xs font-medium">{gettext("Description (optional)")}</span>
+            <span class="label-text text-sm font-medium">{gettext("Description (optional)")}</span>
           </label>
           <input
             type="text"
             id="new-workspace-description-input"
             name="description"
             placeholder={gettext("Short description of what this group is for")}
-            class="input input-bordered input-sm w-full"
+            class="input input-bordered w-full"
           />
         </div>
 
@@ -672,8 +672,8 @@ defmodule EvoDashWeb.ProjectComponents do
                 class="badge badge-primary badge-sm gap-1 max-w-full"
                 title={point}
               >
-                <span class="font-mono text-[11px] shrink-0">{index + 1}.</span>
-                <span class="font-mono text-[11px] truncate">{point}</span>
+                <span class="font-mono text-xs shrink-0">{index + 1}.</span>
+                <span class="font-mono text-xs truncate">{point}</span>
               </span>
             <% end %>
           </div>
@@ -696,7 +696,7 @@ defmodule EvoDashWeb.ProjectComponents do
                 phx-click="toggle_workspace_member"
                 phx-value-point={project_point}
                 phx-value-path={Map.get(project, :path)}
-                class="w-full flex items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-base-200/60"
+                class="w-full flex items-center gap-2 px-2 py-1.5 min-h-[var(--row-h)] text-left transition-colors hover:bg-base-200/60"
               >
                 <.icon
                   name={if selected?, do: "hero-check-circle", else: "hero-plus-circle"}
@@ -708,7 +708,7 @@ defmodule EvoDashWeb.ProjectComponents do
                 />
                 <span class="min-w-0 flex-1">
                   <span class="block text-xs font-medium truncate">{display_name(project)}</span>
-                  <span class="block text-[11px] text-base-content/60 font-mono truncate">
+                  <span class="block text-xs text-base-content/60 font-mono truncate">
                     {project_point || Map.get(project, :path)}
                   </span>
                 </span>
@@ -720,7 +720,7 @@ defmodule EvoDashWeb.ProjectComponents do
         <button type="submit" class="btn btn-primary btn-sm gap-1">
           <.icon name="hero-check" class="size-4" /> {gettext("Create or update")}
         </button>
-        <p class="text-[11px] text-base-content/60">
+        <p class="text-xs text-base-content/60">
           <%!-- zh_CN: 同名工作区会被整体替换（名称、成员与描述一起覆盖），不会新增第二个 --%>
           {gettext("An existing workspace with the same name is replaced, not duplicated.")}
         </p>
@@ -898,7 +898,7 @@ defmodule EvoDashWeb.ProjectComponents do
           phx-value-project={@active_project}
         >
           <.icon name="hero-cog-6-tooth" class="size-4 text-base-content/60" />
-          <span class="text-sm font-semibold flex-1">{gettext("Project Settings")}</span>
+          <span class="text-base font-semibold flex-1">{gettext("Project Settings")}</span>
           <!-- Config status indicator -->
           <%= if @project_config do %>
             <span class="badge badge-success badge-xs gap-0.5">
@@ -980,7 +980,7 @@ defmodule EvoDashWeb.ProjectComponents do
 
     <!-- Project Root -->
     <div class="bg-base-200/40 rounded-lg p-2.5 border border-base-200">
-      <p class="text-xs text-base-content/70 font-medium uppercase tracking-wide">
+      <p class="text-2xs text-base-content/70 font-medium uppercase tracking-wide">
         {gettext("Project Root")}
       </p>
       <p class="text-xs font-mono mt-0.5 truncate">{@active_project}</p>
@@ -988,7 +988,7 @@ defmodule EvoDashWeb.ProjectComponents do
 
     <%= if @worktree_script do %>
       <div class="bg-base-200/40 rounded-lg p-2.5 border border-base-200">
-        <p class="text-xs text-base-content/70 font-medium uppercase tracking-wide">
+        <p class="text-2xs text-base-content/70 font-medium uppercase tracking-wide">
           {gettext("Worktree Init Script")}
         </p>
         <p class="text-xs font-mono mt-0.5">{@worktree_script}</p>
@@ -998,7 +998,7 @@ defmodule EvoDashWeb.ProjectComponents do
     <!-- Dev Commands -->
     <%= if @sorted_commands != [] do %>
       <div class="border-t border-base-200 pt-3">
-        <h3 class="text-sm font-semibold flex items-center gap-2 mb-2">
+        <h3 class="text-base font-semibold flex items-center gap-2 mb-2">
           <.icon name="hero-terminal" class="size-4 text-secondary" /> {gettext("Dev Commands")}
           <.tip text={
             gettext("Quick shortcuts for common development commands. Click Run to execute.")
@@ -1009,7 +1009,7 @@ defmodule EvoDashWeb.ProjectComponents do
             <div class="flex items-center gap-2 bg-base-200/40 rounded-lg p-2 border border-base-200 border-l-2 border-l-accent/40">
               <span class="badge badge-accent badge-sm font-mono">{name}</span>
               <span class="text-xs font-mono flex-1 truncate">{cmd}</span>
-              <button class="btn btn-ghost btn-xs" phx-click="run_command" phx-value-command={name}>
+              <button class="btn btn-ghost btn-sm" phx-click="run_command" phx-value-command={name}>
                 <.icon name="hero-play" class="size-3" /> {gettext("Run")}
               </button>
             </div>
@@ -1020,7 +1020,7 @@ defmodule EvoDashWeb.ProjectComponents do
 
     <!-- Foreign Repos -->
     <div class="border-t border-base-200 pt-3">
-      <h3 class="text-sm font-semibold flex items-center gap-2 mb-2">
+      <h3 class="text-base font-semibold flex items-center gap-2 mb-2">
         <.icon name="hero-server-stack" class="size-4 text-secondary" /> {gettext(
           "Foreign Repositories"
         )}
@@ -1068,14 +1068,14 @@ defmodule EvoDashWeb.ProjectComponents do
                 <%= unless ForeignRepo.primary?(repo.id) do %>
                   <span class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                     <button
-                      class="btn btn-ghost btn-xs"
+                      class="btn btn-ghost btn-sm btn-square"
                       phx-click="edit_foreign_repo"
                       phx-value-repo_id={repo.id}
                     >
                       <.icon name="hero-pencil" class="size-3" />
                     </button>
                     <button
-                      class="btn btn-ghost btn-xs text-error"
+                      class="btn btn-ghost btn-sm btn-square text-error"
                       phx-click="remove_foreign_repo"
                       phx-value-repo_id={repo.id}
                     >
@@ -1089,30 +1089,30 @@ defmodule EvoDashWeb.ProjectComponents do
                   <.form for={%{}} phx-submit="save_foreign_repo" class="space-y-2">
                     <div>
                       <label class="label py-1">
-                        <span class="label-text text-xs font-medium">{gettext("Repo ID")}</span>
+                        <span class="label-text text-sm font-medium">{gettext("Repo ID")}</span>
                       </label>
                       <input
                         type="text"
                         name="repo_id"
                         value={Map.get(edit_form, :repo_id, repo.id)}
                         readonly
-                        class="input input-bordered input-sm w-full font-mono opacity-60"
+                        class="input input-bordered w-full font-mono opacity-60"
                       />
                     </div>
                     <div>
                       <label class="label py-1">
-                        <span class="label-text text-xs font-medium">{gettext("Path")}</span>
+                        <span class="label-text text-sm font-medium">{gettext("Path")}</span>
                       </label>
                       <input
                         type="text"
                         name="path"
                         value={Map.get(edit_form, :path, repo.root)}
-                        class="input input-bordered input-sm w-full font-mono"
+                        class="input input-bordered w-full font-mono"
                       />
                     </div>
                     <div>
                       <label class="label py-1">
-                        <span class="label-text text-xs font-medium">{gettext(
+                        <span class="label-text text-sm font-medium">{gettext(
                           "Description (optional)"
                         )}</span>
                       </label>
@@ -1121,7 +1121,7 @@ defmodule EvoDashWeb.ProjectComponents do
                         name="description"
                         value={Map.get(edit_form, :description, repo.description)}
                         placeholder={gettext("Short description of what this repo does")}
-                        class="input input-bordered input-sm w-full"
+                        class="input input-bordered w-full"
                       />
                     </div>
                     <label class="flex items-center gap-2 cursor-pointer">
@@ -1132,29 +1132,29 @@ defmodule EvoDashWeb.ProjectComponents do
                         class="checkbox checkbox-sm checkbox-warning"
                         checked={Map.get(edit_form, :writable, repo.writable) in [true, "true"]}
                       />
-                      <span class="label-text text-xs font-medium"><%!-- zh_CN: Writable → 可写：可写的外来仓库会获得独立工作树和 evogit-agent-* 分支，参与任务但不会被任务合并 --%>{gettext(
+                      <span class="label-text text-sm font-medium"><%!-- zh_CN: Writable → 可写：可写的外来仓库会获得独立工作树和 evogit-agent-* 分支，参与任务但不会被任务合并 --%>{gettext(
                         "Writable"
                       )}</span>
                     </label>
                     <div>
                       <label class="label py-1">
-                        <span class="label-text text-xs font-medium">{gettext("Starting Commit")}</span>
+                        <span class="label-text text-sm font-medium">{gettext("Starting Commit")}</span>
                       </label>
                       <input
                         type="text"
                         name="base_sha"
                         value={Map.get(edit_form, :base_sha, repo.base_sha)}
                         placeholder={gettext("branch or SHA, blank = HEAD")}
-                        class="input input-bordered input-sm w-full font-mono"
+                        class="input input-bordered w-full font-mono"
                       />
                     </div>
                     <div class="flex gap-2">
-                      <button type="submit" class="btn btn-primary btn-xs flex-1 gap-1">
+                      <button type="submit" class="btn btn-primary btn-sm flex-1 gap-1">
                         <.icon name="hero-check" class="size-3" /> {gettext("Save")}
                       </button>
                       <button
                         type="button"
-                        class="btn btn-ghost btn-xs"
+                        class="btn btn-ghost btn-sm"
                         phx-click="cancel_edit_foreign_repo"
                       >
                         {gettext("Cancel")}
@@ -1181,7 +1181,7 @@ defmodule EvoDashWeb.ProjectComponents do
           <.form for={%{}} phx-submit="add_foreign_repo" class="space-y-2">
             <div>
               <label class="label py-1">
-                <span class="label-text text-xs font-medium">{gettext("Repo ID")}
+                <span class="label-text text-sm font-medium">{gettext("Repo ID")}
                 <.tip text={
                   gettext("A unique identifier for this repository (e.g., 'original', 'upstream')")
                 } /></span>
@@ -1191,13 +1191,13 @@ defmodule EvoDashWeb.ProjectComponents do
                 name="repo_id"
                 value={@new_repo_id}
                 placeholder="e.g., original"
-                class="input input-bordered input-sm w-full font-mono"
+                class="input input-bordered w-full font-mono"
                 required
               />
             </div>
             <div>
               <label class="label py-1">
-                <span class="label-text text-xs font-medium">{gettext("Path")}
+                <span class="label-text text-sm font-medium">{gettext("Path")}
                 <.tip text={gettext("Absolute path to the repository root on this machine")} /></span>
               </label>
               <div class="flex items-center gap-2">
@@ -1207,7 +1207,7 @@ defmodule EvoDashWeb.ProjectComponents do
                     name="path"
                     value={@new_repo_path}
                     placeholder={platform_placeholder(@platform)}
-                    class="input input-bordered input-sm w-full font-mono pr-8"
+                    class="input input-bordered w-full font-mono pr-8"
                     required
                     id="foreign-repo-path-input"
                     phx-hook="PathAutocomplete"
@@ -1236,14 +1236,14 @@ defmodule EvoDashWeb.ProjectComponents do
             </div>
             <div>
               <label class="label py-1">
-                <span class="label-text text-xs font-medium">{gettext("Description (optional)")}</span>
+                <span class="label-text text-sm font-medium">{gettext("Description (optional)")}</span>
               </label>
               <input
                 type="text"
                 name="description"
                 value={@new_repo_description}
                 placeholder={gettext("Short description of what this repo does")}
-                class="input input-bordered input-sm w-full"
+                class="input input-bordered w-full"
               />
             </div>
             <label class="flex items-center gap-2 cursor-pointer">
@@ -1253,7 +1253,7 @@ defmodule EvoDashWeb.ProjectComponents do
                 value="true"
                 class="checkbox checkbox-sm checkbox-warning"
               />
-              <span class="label-text text-xs font-medium"><%!-- zh_CN: Writable → 可写：可写的外来仓库会获得独立工作树和 evogit-agent-* 分支，参与任务但不会被任务合并 --%>{gettext(
+              <span class="label-text text-sm font-medium"><%!-- zh_CN: Writable → 可写：可写的外来仓库会获得独立工作树和 evogit-agent-* 分支，参与任务但不会被任务合并 --%>{gettext(
                 "Writable"
               )}
               <.tip text={
@@ -1264,7 +1264,7 @@ defmodule EvoDashWeb.ProjectComponents do
             </label>
             <div>
               <label class="label py-1">
-                <span class="label-text text-xs font-medium">{gettext("Starting Commit")}
+                <span class="label-text text-sm font-medium">{gettext("Starting Commit")}
                 <%!-- zh_CN: 起始提交：分支名或提交哈希，留空表示 HEAD --%>
                 <.tip text={gettext("Branch name or commit SHA, blank = HEAD")} /></span>
               </label>
@@ -1273,7 +1273,7 @@ defmodule EvoDashWeb.ProjectComponents do
                 name="base_sha"
                 value={Map.get(assigns, :new_repo_base_sha, "")}
                 placeholder={gettext("branch or SHA, blank = HEAD")}
-                class="input input-bordered input-sm w-full font-mono"
+                class="input input-bordered w-full font-mono"
               />
             </div>
             <div class="flex gap-2">

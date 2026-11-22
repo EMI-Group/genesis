@@ -484,14 +484,14 @@ defmodule EvoDashWeb.ProjectGit do
             phx-target={@myself}
           >
             <.icon name="hero-code-bracket" class="size-4 shrink-0" />
-            <span class="min-w-0 truncate font-semibold">{@head || gettext("Detached HEAD")}</span>
+            <span class="min-w-0 truncate text-sm font-semibold">{@head || gettext("Detached HEAD")}</span>
             <.icon name="hero-chevron-down" class="size-3 shrink-0 ms-auto" />
           </button>
-          <div :if={@snapshot[:commit]} class="workbench-git-commit">
+          <div :if={@snapshot[:commit]} class="workbench-git-commit text-xs">
             <code>{short_commit(@snapshot.commit)}</code>
             <span class="truncate" title={@snapshot.subject}>{@snapshot.subject}</span>
           </div>
-          <div :if={@snapshot[:upstream]} class="workbench-git-commit">
+          <div :if={@snapshot[:upstream]} class="workbench-git-commit text-xs">
             <span class="truncate" title={@snapshot.upstream}>{@snapshot.upstream}</span>
             <span :if={@snapshot[:behind]} title={gettext("Behind upstream")}>↓ {@snapshot.behind}</span>
             <span :if={@snapshot[:ahead]} title={gettext("Ahead of upstream")}>↑ {@snapshot.ahead}</span>
@@ -525,7 +525,7 @@ defmodule EvoDashWeb.ProjectGit do
           </p>
           <section :for={{kind, files} <- file_groups(@snapshot.changes)} class="workbench-git-group">
             <% limit = Map.get(@shown_files, kind, @file_limit) %>
-            <h3>{group_label(kind)} <span>{length(files)}</span></h3>
+            <h3 class="text-sm font-semibold">{group_label(kind)} <span>{length(files)}</span></h3>
             <button
               :for={{file, index} <- Enum.take(files, limit)}
               type="button"
@@ -541,7 +541,9 @@ defmodule EvoDashWeb.ProjectGit do
               title={String.replace_invalid(file.path)}
             >
               <.icon name="hero-document" class="size-4 shrink-0" />
-              <span class="min-w-0 flex-1 truncate">{String.replace_invalid(file.path)}</span>
+              <span class="min-w-0 flex-1 truncate text-sm font-mono">{String.replace_invalid(
+                file.path
+              )}</span>
               <span class="workbench-git-code" aria-hidden="true">{file.code}</span>
             </button>
             <button
@@ -589,8 +591,12 @@ defmodule EvoDashWeb.ProjectGit do
             phx-value-sha={commit.sha}
             title={commit.subject}
           >
-            <span class="truncate">{commit.subject}</span>
-            <small class="truncate">{meta_line([commit.short, commit.author, date_label(commit.date)])}</small>
+            <span class="truncate text-sm">{commit.subject}</span>
+            <small class="truncate text-xs font-mono">{meta_line([
+              commit.short,
+              commit.author,
+              date_label(commit.date)
+            ])}</small>
           </button>
           <button
             :if={history[:more?] && !history[:loading?]}
@@ -704,7 +710,7 @@ defmodule EvoDashWeb.ProjectGit do
             title={String.replace_invalid(branch.name)}
           >
             <.icon name="hero-code-bracket" class="size-4 shrink-0" />
-            <span class="min-w-0 flex-1 truncate">{String.replace_invalid(branch.name)}</span>
+            <span class="min-w-0 flex-1 truncate text-sm">{String.replace_invalid(branch.name)}</span>
             <span class="workbench-git-code">{if branch.kind == :local &&
                                                    branch.name == @snapshot[:branch],
                                                  do: gettext("Current"),

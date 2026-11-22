@@ -67,7 +67,7 @@ defmodule EvoDashWeb.SettingsComponents.SearchResults do
                   <div class="p-2 bg-primary/10 text-primary-standalone rounded-xl">
                     <.icon name={category_icon(category)} class="size-5" />
                   </div>
-                  <h3 class="text-lg font-bold tracking-tight text-base-content">
+                  <h3 class="text-lg font-semibold tracking-tight text-base-content">
                     {category_display_name(category)}
                   </h3>
                   <span class="text-xs font-bold tabular-nums px-2.5 py-1 rounded-lg bg-base-300/50 text-base-content/70">{length(

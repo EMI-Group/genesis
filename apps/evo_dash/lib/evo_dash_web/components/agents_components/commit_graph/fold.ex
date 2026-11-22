@@ -122,7 +122,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Fold do
       phx-value-fold_key={fold_key(@node)}
     >
       <.icon name={fold_icon(@node)} class="size-3.5 shrink-0" />
-      <span class="cg-gap-label inline-flex items-center gap-1 rounded border border-dashed border-base-300 px-1.5 py-0.5 text-[10px] font-mono whitespace-nowrap">
+      <span class="cg-gap-label inline-flex items-center gap-1 rounded border border-dashed border-base-300 px-1.5 py-0.5 text-2xs font-mono whitespace-nowrap">
         <span aria-hidden="true">…</span>
         <span>{hidden_label(@node)}</span>
       </span>
@@ -207,7 +207,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Fold do
       <button
         id={"cg-fold-" <> @dom <> "-expand-all"}
         type="button"
-        class="btn btn-ghost btn-xs"
+        class="btn btn-ghost btn-sm"
         title={gettext("Expand all")}
         phx-click="expand_all_commit_folds"
       >
@@ -217,7 +217,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Fold do
       <button
         id={"cg-fold-" <> @dom <> "-collapse-all"}
         type="button"
-        class="btn btn-ghost btn-xs"
+        class="btn btn-ghost btn-sm"
         title={gettext("Collapse all")}
         phx-click="collapse_all_commit_folds"
       >
@@ -250,7 +250,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Fold do
         :key={"start-" <> dom_key(id)}
         id={"commit-agent-tag-" <> @dom <> "-" <> dom_key(Map.get(@node, :sha)) <> "-start-" <> dom_key(id)}
         type="button"
-        class="cg-agent-tag cg-agent-tag-start inline-flex items-center gap-1 rounded border border-solid px-1.5 py-0.5 text-[10px] font-mono"
+        class="cg-agent-tag cg-agent-tag-start inline-flex items-center gap-1 rounded border border-solid px-1.5 py-0.5 text-2xs font-mono"
         style={"border-color: #{agent_color(@agents_index, id)}; color: #{agent_color(@agents_index, id)}"}
         title={agent_tag_title(@agents_index, id, "start")}
         phx-click="select_agent"
@@ -265,7 +265,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Fold do
         :key={"end-" <> dom_key(id)}
         id={"commit-agent-tag-" <> @dom <> "-" <> dom_key(Map.get(@node, :sha)) <> "-end-" <> dom_key(id)}
         type="button"
-        class="cg-agent-tag cg-agent-tag-end inline-flex items-center gap-1 rounded border border-dashed px-1.5 py-0.5 text-[10px] font-mono"
+        class="cg-agent-tag cg-agent-tag-end inline-flex items-center gap-1 rounded border border-dashed px-1.5 py-0.5 text-2xs font-mono"
         style={"border-color: #{agent_color(@agents_index, id)}; color: #{agent_color(@agents_index, id)}"}
         title={agent_tag_title(@agents_index, id, "end")}
         phx-click="select_agent"
@@ -279,7 +279,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Fold do
         :for={ref <- ref_list(Map.get(@node, :refs))}
         :key={"ref-" <> ref}
         id={"commit-ref-tag-" <> @dom <> "-" <> dom_key(Map.get(@node, :sha)) <> "-" <> dom_key(ref)}
-        class="cg-ref-tag inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono bg-base-200 text-base-content/70"
+        class="cg-ref-tag inline-flex items-center rounded px-1.5 py-0.5 text-2xs font-mono bg-base-200 text-base-content/70"
         title={ref}
       >
         {ref}

@@ -77,15 +77,15 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Row do
             >
               {@account_name}
             </span>
-            <code class="font-mono text-[11px] text-base-content/60">{@id}</code>
+            <code class="font-mono text-xs text-base-content/60">{@id}</code>
           </span>
           <span class="mt-2 flex flex-wrap items-center gap-1.5">
             <span :for={chip <- @chips} class={chip_class(chip)}>
               {chip.model}<span :if={chip.default?} class="ml-1 text-base-content/50">*</span>
             </span>
-            <span class="text-[11px] text-base-content/60">{@slots}</span>
-            <span class="text-[11px] text-base-content/40" aria-hidden="true">·</span>
-            <span class="text-[11px] text-base-content/60">{@schedule}</span>
+            <span class="text-xs text-base-content/60">{@slots}</span>
+            <span class="text-xs text-base-content/40" aria-hidden="true">·</span>
+            <span class="text-xs text-base-content/60">{@schedule}</span>
           </span>
         </button>
         <div class="flex flex-wrap items-center gap-1">
@@ -95,7 +95,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Row do
             phx-click="set_default_provider_profile"
             phx-value-profile_id={@id}
             disabled={@disabled}
-            class="btn btn-ghost btn-xs"
+            class="btn btn-ghost btn-sm"
           >
             {gettext("Make default")}
           </button>
@@ -104,7 +104,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Row do
             phx-click="start_add_provider_model"
             phx-value-profile_id={@id}
             disabled={@disabled}
-            class="btn btn-ghost btn-xs"
+            class="btn btn-ghost btn-sm"
           >
             {gettext("Add model")}
           </button>
@@ -113,7 +113,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Row do
             phx-click="edit_provider_profile"
             phx-value-profile_id={@id}
             disabled={@disabled}
-            class="btn btn-ghost btn-xs gap-1"
+            class="btn btn-ghost btn-sm gap-1"
           >
             <.icon name="hero-pencil-square" class="size-3.5" />{gettext("Edit")}
           </button>
@@ -124,7 +124,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Row do
             disabled={@disabled}
             data-confirm={gettext("Delete this provider account?")}
             aria-label={gettext("Delete account %{name}", name: @provider_name)}
-            class="btn btn-ghost btn-xs text-error"
+            class="btn btn-ghost btn-sm btn-square text-error"
           >
             <.icon name="hero-trash" class="size-3.5" />
           </button>

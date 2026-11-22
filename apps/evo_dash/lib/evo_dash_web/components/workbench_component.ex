@@ -307,7 +307,7 @@ defmodule EvoDashWeb.WorkbenchComponent do
     >
       <div class="workbench-section-heading">
         <%!-- zh_CN: 最近项目 — 仅作为快捷入口，不列出每个项目的历史任务 --%>
-        <span class="sidebar-label">{gettext("Recent projects")}</span>
+        <span class="sidebar-label text-sm font-semibold">{gettext("Recent projects")}</span>
         <div class="workbench-project-actions">
           <.link
             navigate={navigation_path("/projects", @node_id, project: @project, wb_open: "1")}
@@ -367,7 +367,7 @@ defmodule EvoDashWeb.WorkbenchComponent do
               data-workbench-node={host.id || ""}
             >
               <.icon name="hero-folder" class="size-4 shrink-0" />
-              <span class="min-w-0 truncate">{project.name}</span>
+              <span class="min-w-0 truncate text-sm">{project.name}</span>
               <span class="workbench-project-server" title={host.name}>{host.name}</span>
             </.link>
           </div>
@@ -516,8 +516,8 @@ defmodule EvoDashWeb.WorkbenchComponent do
               class="size-4 shrink-0"
             />
             <div class="workbench-history-label">
-              <span class="truncate">{row.title}</span>
-              <span class="workbench-history-meta">
+              <span class="truncate text-sm">{row.title}</span>
+              <span class="workbench-history-meta text-xs">
                 <span
                   class={["workbench-status", task_status_dot_class(row.status)]}
                   aria-hidden="true"

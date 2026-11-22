@@ -49,7 +49,7 @@ defmodule EvoDashWeb.TaskCardComponents.Session do
 
         <button
           type="button"
-          class="btn btn-ghost btn-sm rounded-md shrink-0"
+          class="btn btn-ghost btn-sm rounded-lg shrink-0"
           phx-click="open_close_session_modal"
           phx-value-task_id={@task.id}
           title={
@@ -69,7 +69,7 @@ defmodule EvoDashWeb.TaskCardComponents.Session do
       >
         <label
           for={"task-#{@task.id}-session-message"}
-          class="block text-xs font-medium text-base-content/70"
+          class="block text-sm font-medium text-base-content/70"
         >
           <%!-- zh_CN: 会话消息（发送给交互式智能体的回复） --%>{gettext("Message")}
         </label>
@@ -77,12 +77,12 @@ defmodule EvoDashWeb.TaskCardComponents.Session do
           id={"task-#{@task.id}-session-message"}
           name="message"
           rows="3"
-          class="textarea textarea-bordered w-full rounded-md bg-base-100 text-sm"
+          class="textarea textarea-bordered w-full rounded-lg bg-base-100 text-sm"
           placeholder={gettext("Reply to this session…")}
         ></textarea>
 
         <div class="flex justify-end">
-          <button type="submit" class="btn btn-primary btn-sm rounded-md px-4">
+          <button type="submit" class="btn btn-primary btn-sm rounded-lg px-4">
             <.icon name="hero-paper-airplane" class="size-4 mr-1.5" /> {gettext("Send")}
           </button>
         </div>

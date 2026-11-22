@@ -39,7 +39,7 @@ defmodule EvoDashWeb.AgentsComponents do
         <% end %>
 
         <!-- This Node's Content Row -->
-        <div class="relative z-10 flex flex-col xl:flex-row xl:items-start gap-3 py-1">
+        <div class="relative z-10 flex min-h-[var(--row-h-sm)] flex-col xl:flex-row xl:items-start gap-3 py-1">
           <%= if length(node.children) > 0 do %>
             <!-- Vertical trunk from this node's folder down to the children container.
                  Anchored to the full content row (not the 28px path-info div) so it
@@ -56,7 +56,7 @@ defmodule EvoDashWeb.AgentsComponents do
               name="hero-folder"
               class="size-5 text-base-content/70 shrink-0 relative z-10 bg-base-100/50 rounded"
             />
-            <span class="font-semibold text-base-content truncate min-w-0" title={node.name}>{node.name}</span>
+            <span class="text-sm font-semibold text-base-content truncate min-w-0" title={node.name}>{node.name}</span>
             <%= if length(node.agents) > 0 do %>
               <div class="grow border-b-2 border-dotted border-base-content/20 mx-2 hidden xl:block">
               </div>
@@ -100,7 +100,7 @@ defmodule EvoDashWeb.AgentsComponents do
                       <span class="font-bold text-sm">#{agent.task_local_id || agent.id}</span>
                     </span>
                     <span class={[
-                      "text-[10px] px-1.5 py-0.5 rounded uppercase font-bold transition-colors duration-500",
+                      "text-2xs px-1.5 py-0.5 rounded uppercase font-bold transition-colors duration-500",
                       agent_status_color(agent.status),
                       agent_status_bg(agent.status)
                     ]}>

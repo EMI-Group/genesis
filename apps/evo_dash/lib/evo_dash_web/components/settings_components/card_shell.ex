@@ -22,10 +22,10 @@ defmodule EvoDashWeb.SettingsComponents.CardShell do
 
   def card_shell(assigns) do
     ~H"""
-    <div class={"rounded-lg border border-base-200 bg-base-100 p-5 #{@class}"}>
+    <div class={"rounded-xl border border-base-200 bg-base-100 p-4 #{@class}"}>
       <div class="flex items-center justify-between mb-4">
         <div>
-          <h3 class="text-lg font-bold text-base-content mb-0.5">{@title}</h3>
+          <h3 class="text-lg font-semibold text-base-content mb-0.5">{@title}</h3>
           <%= if @description do %>
             <p class="text-sm text-base-content/80">{@description}</p>
           <% end %>

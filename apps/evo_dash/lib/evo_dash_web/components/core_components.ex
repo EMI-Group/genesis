@@ -259,7 +259,7 @@ defmodule EvoDashWeb.CoreComponents do
     ~H"""
     <div class="fieldset mb-2">
       <label>
-        <span :if={@label} class="label mb-1 text-base-content/70">{@label}</span>
+        <span :if={@label} class="label mb-1 text-sm text-base-content/70">{@label}</span>
         <select
           id={@id}
           name={@name}
@@ -280,7 +280,7 @@ defmodule EvoDashWeb.CoreComponents do
     ~H"""
     <div class="fieldset mb-2">
       <label>
-        <span :if={@label} class="label mb-1 text-base-content/70">{@label}</span>
+        <span :if={@label} class="label mb-1 text-sm text-base-content/70">{@label}</span>
         <textarea
           id={@id}
           name={@name}
@@ -301,7 +301,7 @@ defmodule EvoDashWeb.CoreComponents do
     ~H"""
     <div class="fieldset mb-2">
       <label>
-        <span :if={@label} class="label mb-1 text-base-content/70">{@label}</span>
+        <span :if={@label} class="label mb-1 text-sm text-base-content/70">{@label}</span>
         <input
           type={@type}
           name={@name}
@@ -340,7 +340,7 @@ defmodule EvoDashWeb.CoreComponents do
     ~H"""
     <header class={[@actions != [] && "flex items-center justify-between gap-6", "pb-4"]}>
       <div>
-        <h1 class="text-lg font-semibold leading-8">
+        <h1 class="text-lg font-semibold">
           {render_slot(@inner_block)}
         </h1>
         <p :if={@subtitle != []} class="text-sm text-base-content/70">
@@ -386,7 +386,7 @@ defmodule EvoDashWeb.CoreComponents do
 
     ~H"""
     <div class="overflow-x-auto">
-      <table class="table table-zebra">
+      <table class="table table-zebra text-sm">
         <thead>
           <tr>
             <th :for={col <- @col}>{col[:label]}</th>
@@ -434,10 +434,10 @@ defmodule EvoDashWeb.CoreComponents do
 
   def list(assigns) do
     ~H"""
-    <ul class="list">
+    <ul class="list text-sm">
       <li :for={item <- @item} class="list-row">
         <div class="list-col-grow">
-          <div class="font-bold">{item.title}</div>
+          <div class="font-semibold">{item.title}</div>
           <div>{render_slot(item)}</div>
         </div>
       </li>
@@ -522,7 +522,7 @@ defmodule EvoDashWeb.CoreComponents do
           phx-click={@phx_click}
           phx-value-id={tab.id}
           class={[
-            "px-4 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone",
+            "px-4 py-2 min-h-[var(--row-h)] rounded-md text-sm font-medium cursor-pointer transition-colors whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone",
             @active == tab.id && "bg-base-100 shadow-sm text-base-content",
             @active != tab.id && "hover:bg-base-200/80 text-base-content/70 hover:text-base-content"
           ]}
@@ -572,9 +572,9 @@ defmodule EvoDashWeb.CoreComponents do
   def collapsible_card(assigns) do
     ~H"""
     <details id={@id} open={@open} class="overflow-hidden group border-b border-base-300">
-      <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-base-200 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone">
+      <summary class="px-4 py-3 min-h-[var(--row-h)] cursor-pointer select-none flex items-center gap-3 list-none hover:bg-base-200 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone">
         <.icon :if={@icon} name={@icon} class="size-5 shrink-0 text-base-content/70" />
-        <span class="font-semibold flex-1">{@title}</span>
+        <span class="text-sm font-semibold flex-1">{@title}</span>
         <.icon
           name="hero-chevron-down"
           class="size-5 shrink-0 text-base-content/70 transition-transform duration-200 group-open:rotate-180"

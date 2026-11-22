@@ -48,7 +48,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelSelectionEditor do
         <div class="mb-4 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
           <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
           <div class="min-w-0">
-            <h4 class="font-bold text-sm text-error mb-1">{gettext("Script error")}</h4>
+            <h4 class="font-semibold text-sm text-error mb-1">{gettext("Script error")}</h4>
             <pre class="text-xs text-error/80 font-mono whitespace-pre-wrap break-all"><%= compile_error %></pre>
           </div>
         </div>
@@ -58,7 +58,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelSelectionEditor do
         <div class="mb-4 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
           <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
           <div class="min-w-0">
-            <h4 class="font-bold text-sm text-error mb-1">{gettext("Script error")}</h4>
+            <h4 class="font-semibold text-sm text-error mb-1">{gettext("Script error")}</h4>
             <pre class="text-xs text-error/80 font-mono whitespace-pre-wrap break-all"><%= @script_save_error %></pre>
           </div>
         </div>
@@ -108,14 +108,14 @@ defmodule EvoDashWeb.SettingsComponents.ModelSelectionEditor do
       <%!-- Example box --%>
       <div class="mt-4 rounded-lg border border-base-200 bg-base-200/50 p-3">
         <div class="flex items-center justify-between mb-2">
-          <span class="text-xs font-bold uppercase tracking-wider text-base-content/60">
+          <span class="text-xs font-semibold uppercase tracking-wider text-base-content/60">
             {gettext("Example")}
           </span>
           <button
             id="model-script-example-copy"
             phx-hook="ClipboardCopy"
             data-content={example_script()}
-            class="btn btn-ghost btn-xs gap-1"
+            class="btn btn-ghost btn-sm gap-1"
           >
             <.icon name="hero-clipboard-document" class="size-3.5" />
             {gettext("Copy")}
@@ -127,7 +127,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelSelectionEditor do
       <%!-- Test results --%>
       <%= if @test_results != [] do %>
         <div class="mt-4">
-          <h4 class="text-xs font-bold uppercase tracking-wider text-base-content/60 mb-2">
+          <h4 class="text-xs font-semibold uppercase tracking-wider text-base-content/60 mb-2">
             {gettext("Test Results")}
           </h4>
           <div class="space-y-2">
