@@ -204,10 +204,10 @@
   gap: .45rem;
   width: 100%;
   min-width: 0;
-  min-height: var(--row-h-sm);
+  min-height: var(--row-h);
   padding: .22rem .5rem;
   border-radius: .4rem;
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   text-align: start;
 }
 .workbench-row.is-current {
@@ -805,6 +805,12 @@
   font-size: var(--text-2xs);
 }
 .workbench-git-file, .workbench-git-branch { text-align: start; }
+/* Dense inspector lists (a file tree and a branch list, not primary nav rows):
+   they keep the compact row the base `.workbench-row` used to be. */
+.workbench-git-file, .workbench-git-branch {
+  min-height: var(--row-h-sm);
+  font-size: var(--text-xs);
+}
 .workbench-git-file[aria-pressed="true"], .workbench-git-branch[aria-pressed="true"] {
   background: var(--workbench-selected);
   color: var(--color-primary-standalone);
