@@ -218,7 +218,7 @@ defmodule EvoDashWeb.ReviewComponents do
     ~H"""
     <div class="rounded-xl border border-base-300 bg-base-100 overflow-hidden">
       <!-- Header -->
-      <div class="flex items-center justify-between gap-3 p-5 md:p-6 border-b border-base-200/50 bg-base-200/20">
+      <div class="flex items-center justify-between gap-3 p-4 sm:p-5 border-b border-base-200/50 bg-base-200/20">
         <div class="flex items-center gap-3">
           <.icon name="hero-archive-box-arrow-down" class="size-5 text-base-content/60" />
           <div>
@@ -249,7 +249,7 @@ defmodule EvoDashWeb.ReviewComponents do
       </div>
 
       <!-- Agent tree -->
-      <div class="p-4 sm:p-6 space-y-3">
+      <div class="p-4 space-y-3">
         <%= if @archive_truncated? do %>
           <p class="text-xs text-base-content/60">
             <%!-- zh_CN: “records” → “条智能体记录”；export JSON → 导出 JSON 以查看完整归档 --%>
@@ -329,7 +329,7 @@ defmodule EvoDashWeb.ReviewComponents do
 
     ~H"""
     <div class="ml-0">
-      <div class="rounded-lg border border-base-200/80 bg-base-200/30 p-4 sm:p-5">
+      <div class="rounded-lg border border-base-200/80 bg-base-200/30 p-4">
         <!-- Agent header -->
         <div class="flex flex-wrap items-center gap-2 mb-3">
           <span class="font-mono font-bold text-sm text-base-content">{@agent[:agent_id]}</span>
@@ -347,7 +347,7 @@ defmodule EvoDashWeb.ReviewComponents do
         <!-- Objective -->
         <%= if @objective_preview.text != "" do %>
           <div class="mb-3">
-            <p class="text-xs font-medium text-base-content/60 uppercase tracking-wide mb-1">
+            <p class="text-2xs font-medium text-base-content/60 uppercase tracking-wide mb-1">
               {gettext("Objective")}
             </p>
             <p class="text-sm text-base-content/80 leading-relaxed">{@objective_preview.text}</p>
@@ -368,7 +368,7 @@ defmodule EvoDashWeb.ReviewComponents do
           <% :ok -> %>
             <%= if @result_preview.text != "" do %>
               <div class="mb-3">
-                <p class="text-xs font-medium text-base-content/60 uppercase tracking-wide mb-1">
+                <p class="text-2xs font-medium text-base-content/60 uppercase tracking-wide mb-1">
                   {gettext("Result")}
                 </p>
                 <p class="text-sm text-base-content/80 leading-relaxed">{@result_preview.text}</p>
@@ -400,7 +400,7 @@ defmodule EvoDashWeb.ReviewComponents do
                 type="button"
                 phx-click="load_archive_agent_result"
                 phx-value-agent_id={@agent_id}
-                class="btn btn-ghost btn-xs mt-1 gap-1"
+                class="btn btn-ghost btn-sm mt-1 gap-1"
               >
                 <.icon name="hero-arrow-path" class="size-3.5" /> {gettext("Retry")}
               </button>
@@ -411,7 +411,7 @@ defmodule EvoDashWeb.ReviewComponents do
                 type="button"
                 phx-click="load_archive_agent_result"
                 phx-value-agent_id={@agent_id}
-                class="btn btn-ghost btn-xs gap-1"
+                class="btn btn-ghost btn-sm gap-1"
               >
                 <.icon name="hero-eye" class="size-3.5" />
                 <%!-- zh_CN: 懒加载该智能体的完整结果 --%>
@@ -477,7 +477,7 @@ defmodule EvoDashWeb.ReviewComponents do
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
             <div class="rounded-lg bg-base-200/40 p-2.5 text-center">
               <%!-- zh_CN: Token → "词元" --%>
-              <p class="text-[11px] text-base-content/70 uppercase tracking-wide">
+              <p class="text-2xs text-base-content/70 uppercase tracking-wide">
                 {gettext("Input Tokens")}
               </p>
               <p class="text-sm font-mono font-semibold text-base-content/80">
@@ -486,7 +486,7 @@ defmodule EvoDashWeb.ReviewComponents do
             </div>
             <div class="rounded-lg bg-base-200/40 p-2.5 text-center">
               <%!-- zh_CN: Token → "词元" --%>
-              <p class="text-[11px] text-base-content/70 uppercase tracking-wide">
+              <p class="text-2xs text-base-content/70 uppercase tracking-wide">
                 {gettext("Output Tokens")}
               </p>
               <p class="text-sm font-mono font-semibold text-base-content/80">
@@ -495,7 +495,7 @@ defmodule EvoDashWeb.ReviewComponents do
             </div>
             <div class="rounded-lg bg-base-200/40 p-2.5 text-center">
               <%!-- zh_CN: Token → "词元" --%>
-              <p class="text-[11px] text-base-content/70 uppercase tracking-wide">
+              <p class="text-2xs text-base-content/70 uppercase tracking-wide">
                 {gettext("Total Tokens")}
               </p>
               <p class="text-sm font-mono font-semibold text-base-content/80">
@@ -503,7 +503,7 @@ defmodule EvoDashWeb.ReviewComponents do
               </p>
             </div>
             <div class="rounded-lg bg-base-200/40 p-2.5 text-center">
-              <p class="text-[11px] text-base-content/70 uppercase tracking-wide">
+              <p class="text-2xs text-base-content/70 uppercase tracking-wide">
                 {gettext("Cost")}
               </p>
               <p class="text-sm font-mono font-semibold text-base-content/80">

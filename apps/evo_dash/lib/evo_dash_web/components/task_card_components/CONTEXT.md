@@ -144,3 +144,11 @@ The branch-name badge appears at three sites: the per-repo badge in `result_repo
 They truncate on narrow viewports via the shared `ResultRender.branch_badge_class/0` (`min-w-0 max-w-[10rem] sm:max-w-[14rem] md:max-w-none`) plus an inner `<span class="truncate min-w-0">`.
 daisyUI's `.badge` is `inline-flex` with no wrapping, so the ellipsis must live on a blockified inner span, and flex parents need `min-w-0` to shrink.
 Reuse the helper for any NEW branch-badge site and keep the class string a literal so the Tailwind v4 scanner picks it up; the full branch name always shows at `md`+.
+
+## Notes for Agents — density & type scale
+
+Markup in this subtree follows the dashboard's ONE density/type scale (`docs/ui-density.md`, skill `ui-density`); no file here writes an arbitrary font size.
+The uppercase section headings in `result_render.ex` (`Error`/`Crashed`/`No Changes`/`Agent Message`/`Repositories`) are `text-2xs font-semibold … uppercase tracking-wide` — all-caps micro labels, never `text-xs font-bold`.
+Reading bodies use `text-base` (the Objective in `options.ex`), dense message/preview bodies `text-sm`, and ids/paths/badges/helper lines `text-xs` (13 px is the metadata floor; stacktraces stay `text-xs` mono).
+Bordered message/notice panels and inset wells are `rounded-xl` — `p-3` inside a card, `p-4` for a modal/zoomed body — while controls and chips are `rounded-lg`; the session panel (`session.ex`) is a card-like panel (`rounded-xl p-4`) whose actions are `btn-sm`.
+`errors.ex` and `archive.ex` render no markup (pure total readers); the class strings they feed live in the parent `task_card_components.ex`, as do the pinned collapsed-strip and expanded-error class lists in `task_card_components_test.exs`.

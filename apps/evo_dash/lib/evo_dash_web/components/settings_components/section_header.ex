@@ -21,7 +21,7 @@ defmodule EvoDashWeb.SettingsComponents.SectionHeader do
         <div class="text-primary-standalone/60">
           <.icon name={@icon} class="size-5" />
         </div>
-        <h2 class="text-lg font-bold tracking-tight text-base-content">
+        <h2 class="text-lg font-semibold tracking-tight text-base-content">
           {@title}
         </h2>
       </div>

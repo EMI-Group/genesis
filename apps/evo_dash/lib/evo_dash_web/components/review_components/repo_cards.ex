@@ -153,11 +153,11 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
     <% state = resolution_state(@resolution) %>
     <% target = @default_merge_target || List.first(@merge_targets) %>
     <div id={"repo-card-" <> @repo_id} class="rounded-xl border border-base-300 bg-base-100">
-      <div class="p-3 sm:p-4 border-b border-base-300 bg-base-200/30 rounded-t-xl flex flex-wrap items-center gap-3">
+      <div class="p-4 border-b border-base-300 bg-base-200/30 rounded-t-xl flex flex-wrap items-center gap-3">
         <div class="flex items-center gap-2 min-w-0">
           <%!-- heroicons has no folder-stack glyph; rectangle-stack is the closest stacked-repositories icon --%>
           <.icon name="hero-rectangle-stack" class="size-4 shrink-0 text-base-content/50" />
-          <span class="text-sm font-semibold text-base-content/80 whitespace-nowrap">
+          <span class="text-base font-semibold text-base-content/80 whitespace-nowrap">
             <%= if @repo_id == "primary" do %>
               <%!-- zh_CN: 主仓库（任务的主项目仓库） --%>
               {gettext("Primary repository")}
@@ -192,7 +192,7 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
             </span>
           <% end %>
           <button
-            class="btn btn-ghost btn-xs rounded-lg gap-1"
+            class="btn btn-ghost btn-sm rounded-lg gap-1"
             phx-click="open_repo_diff"
             phx-value-repo_id={@repo_id}
           >
@@ -203,7 +203,7 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
         </div>
       </div>
 
-      <div class="p-4 sm:p-5">
+      <div class="p-4">
         <%= cond do %>
           <% state in [:merged, :rejected, :handled] -> %>
             <div class="flex items-center gap-2 text-sm text-base-content/70">
@@ -421,7 +421,7 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
             </span>
           </div>
           <button
-            class="btn btn-warning rounded-lg px-6 gap-2 shrink-0 sm:ml-auto"
+            class="btn btn-warning btn-sm rounded-lg px-4 gap-1.5 shrink-0 sm:ml-auto"
             phx-click="auto_resolve"
             data-confirm={
               gettext(

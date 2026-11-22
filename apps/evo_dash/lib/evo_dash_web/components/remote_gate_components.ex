@@ -73,16 +73,16 @@ defmodule EvoDashWeb.RemoteGateComponents do
             <div class="flex items-start gap-3">
               <.icon name="hero-exclamation-triangle" class="size-5 shrink-0 mt-0.5" />
               <div class="flex-1 min-w-0">
-                <p class="font-semibold text-sm">
+                <p class="font-semibold text-base">
                   {gettext("Cannot connect to %{name}", name: @name)}
                 </p>
-                <p class="text-xs opacity-90 mt-0.5">
+                <p class="text-sm opacity-90 mt-0.5">
                   {@remote_status[:last_error] || gettext("Connection lost or failed")}
                 </p>
               </div>
             </div>
             <div class="flex flex-wrap items-center gap-3">
-              <button phx-click="retry_remote_connection" class="btn btn-primary btn-sm">
+              <button phx-click="retry_remote_connection" class="btn btn-primary">
                 <.icon name="hero-arrow-path" class="size-4 mr-1" /> {gettext("Retry")}
               </button>
               <.link

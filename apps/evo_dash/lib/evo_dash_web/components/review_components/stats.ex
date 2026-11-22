@@ -17,21 +17,21 @@ defmodule EvoDashWeb.ReviewComponents.Stats do
   def diff_stats_bar(assigns) do
     ~H"""
     <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-      <span class="flex items-center gap-1.5">
+      <span class="flex items-center gap-1.5 text-xs">
         <.icon name="hero-clock" class="size-4 text-base-content/70" />
         <%!-- zh_CN: commit → "提交" --%>
         {ngettext("%{count} commit", "%{count} commits", @commits_count, count: @commits_count)}
       </span>
-      <span class="flex items-center gap-1.5">
+      <span class="flex items-center gap-1.5 text-xs">
         <.icon name="hero-document-text" class="size-4 text-base-content/70" />
         {gettext("%{count} files changed", count: @files_count)}
       </span>
-      <span class="text-success font-semibold flex items-center gap-1">
+      <span class="text-success font-bold flex items-center gap-1">
         <%!-- zh_CN: +新增行数 --%>
         <.icon name="hero-arrow-up" class="size-3.5" />
         {@additions}
       </span>
-      <span class="text-error font-semibold flex items-center gap-1">
+      <span class="text-error font-bold flex items-center gap-1">
         <%!-- zh_CN: −删除行数 --%>
         <.icon name="hero-arrow-down" class="size-3.5" />
         {@deletions}
@@ -102,7 +102,7 @@ defmodule EvoDashWeb.ReviewComponents.Stats do
           <li :for={commit <- @commits}>
             <.link
               patch={commit_path(@task_id, commit.sha, @node_id, @active_repo_id)}
-              class="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 text-left min-h-12 w-full hover:bg-base-200/50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone transition-colors"
+              class="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 text-left min-h-[var(--row-h-tall)] w-full hover:bg-base-200/50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone transition-colors"
             >
               <span class="badge badge-sm bg-base-200 border-0 font-mono rounded-md shrink-0">
                 {commit.short_sha}

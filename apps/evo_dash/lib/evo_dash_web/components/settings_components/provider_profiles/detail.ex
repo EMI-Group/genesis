@@ -97,7 +97,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Detail do
 
       <p class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
         <span class="text-sm font-semibold text-base-content">{@provider_name}</span>
-        <code class="font-mono text-[11px] text-base-content/60">{value(@fields, "id")}</code>
+        <code class="font-mono text-xs text-base-content/60">{value(@fields, "id")}</code>
       </p>
 
       <div
@@ -411,7 +411,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Detail do
           type="button"
           phx-click="remove_provider_model"
           phx-value-index={@index}
-          class="btn btn-ghost btn-sm shrink-0 text-error"
+          class="btn btn-ghost btn-sm btn-square shrink-0 text-error"
           aria-label={gettext("Remove model %{number}", number: index_number(@index))}
           title={gettext("Remove model")}
         >

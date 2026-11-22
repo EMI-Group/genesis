@@ -33,8 +33,8 @@ defmodule EvoDashWeb.TaskCardComponents.ResultRender do
 
     wrapper_class =
       if truncate,
-        do: "bg-error/10 border border-error/20 p-3 rounded-lg",
-        else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+        do: "bg-error/10 border border-error/20 p-3 rounded-xl",
+        else: "bg-error/10 border border-error/20 rounded-xl p-4 max-h-[70vh] overflow-y-auto"
 
     assigns = %{
       reason: TaskCardComponents.text_preview(inspect(reason, limit: :infinity), truncate),
@@ -45,7 +45,7 @@ defmodule EvoDashWeb.TaskCardComponents.ResultRender do
 
     ~H"""
     <div class={@wrapper_class}>
-      <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
+      <h5 class="text-2xs font-semibold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
         <.icon name="hero-x-circle" class="size-3" /> {gettext("Error")}
       </h5>
       <pre class={["whitespace-pre-wrap break-words", @size_class, @scroll_class]}><%= @reason.text %></pre>
@@ -64,8 +64,8 @@ defmodule EvoDashWeb.TaskCardComponents.ResultRender do
 
     wrapper_class =
       if truncate,
-        do: "bg-error/10 border border-error/20 p-3 rounded-lg",
-        else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+        do: "bg-error/10 border border-error/20 p-3 rounded-xl",
+        else: "bg-error/10 border border-error/20 rounded-xl p-4 max-h-[70vh] overflow-y-auto"
 
     assigns = %{
       reason: TaskCardComponents.text_preview(inspect(reason, limit: :infinity), truncate),
@@ -76,7 +76,7 @@ defmodule EvoDashWeb.TaskCardComponents.ResultRender do
 
     ~H"""
     <div class={@wrapper_class}>
-      <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
+      <h5 class="text-2xs font-semibold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
         <.icon name="hero-x-circle" class="size-3" /> {gettext("Crashed")}
       </h5>
       <pre class={["whitespace-pre-wrap break-words", @size_class, @scroll_class]}><%= @reason.text %></pre>
@@ -97,14 +97,14 @@ defmodule EvoDashWeb.TaskCardComponents.ResultRender do
     ~H"""
     <div class={if @truncate, do: "space-y-3", else: "space-y-4"}>
       <%= if @truncate do %>
-        <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
+        <div class="bg-base-100 p-3 rounded-xl border border-base-200 shadow-inner">
           <div class="text-sm whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
             {@result.text}
           </div>
           <EvoDashWeb.TaskCardComponents.preview_limit_note preview={@result} />
         </div>
-        <div class="bg-warning/10 border border-warning/20 p-3 rounded-lg">
-          <h5 class="text-xs font-bold text-warning mb-2 uppercase tracking-wide flex items-center gap-1.5">
+        <div class="bg-warning/10 border border-warning/20 p-3 rounded-xl">
+          <h5 class="text-2xs font-semibold text-warning mb-2 uppercase tracking-wide flex items-center gap-1.5">
             <.icon name="hero-information-circle" class="size-3" /> {gettext("No Changes")}
           </h5>
           <p class="text-sm text-warning">
@@ -114,8 +114,8 @@ defmodule EvoDashWeb.TaskCardComponents.ResultRender do
           </p>
         </div>
       <% else %>
-        <div class="bg-warning/10 border border-warning/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-          <h5 class="text-xs font-bold text-warning mb-2 uppercase tracking-wide flex items-center gap-1.5">
+        <div class="bg-warning/10 border border-warning/20 rounded-xl p-4 max-h-[70vh] overflow-y-auto">
+          <h5 class="text-2xs font-semibold text-warning mb-2 uppercase tracking-wide flex items-center gap-1.5">
             <.icon name="hero-information-circle" class="size-3" /> {gettext("No Changes")}
           </h5>
           <p class="text-sm text-warning">
@@ -124,8 +124,8 @@ defmodule EvoDashWeb.TaskCardComponents.ResultRender do
             )}
           </p>
         </div>
-        <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-          <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+        <div class="bg-success/10 border border-success/20 rounded-xl p-4 max-h-[70vh] overflow-y-auto">
+          <h5 class="text-2xs font-semibold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
             <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" />
             <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agent Message")}
           </h5>
@@ -134,7 +134,7 @@ defmodule EvoDashWeb.TaskCardComponents.ResultRender do
       <% end %>
       <%= if @repos do %>
         <div>
-          <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+          <h5 class="text-2xs font-semibold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
             <.icon name="hero-server-stack" class="size-3" />
             <%!-- zh_CN: 各仓库（主仓库与可写外部仓库）的提交与分支 --%>{gettext(
               "Repositories"
@@ -199,7 +199,7 @@ defmodule EvoDashWeb.TaskCardComponents.ResultRender do
         </div>
         <%= if @repos do %>
           <div class="mb-4">
-            <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+            <h5 class="text-2xs font-semibold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
               <.icon name="hero-server-stack" class="size-3" />
               <%!-- zh_CN: 各仓库（主仓库与可写外部仓库）的提交与分支 --%>{gettext(
                 "Repositories"
@@ -211,11 +211,11 @@ defmodule EvoDashWeb.TaskCardComponents.ResultRender do
       <% end %>
       <div class={
         if @truncate,
-          do: "bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner",
-          else: "bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+          do: "bg-base-100 p-3 rounded-xl border border-base-200 shadow-inner",
+          else: "bg-success/10 border border-success/20 rounded-xl p-4 max-h-[70vh] overflow-y-auto"
       }>
         <%= if !@truncate do %>
-          <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+          <h5 class="text-2xs font-semibold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
             <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Agent Message")}
           </h5>
         <% end %>
@@ -261,7 +261,7 @@ defmodule EvoDashWeb.TaskCardComponents.ResultRender do
         </div>
         <%= if @repos do %>
           <div>
-            <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+            <h5 class="text-2xs font-semibold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
               <.icon name="hero-server-stack" class="size-3" />
               <%!-- zh_CN: 各仓库（主仓库与可写外部仓库）的提交与分支 --%>{gettext(
                 "Repositories"
@@ -282,8 +282,8 @@ defmodule EvoDashWeb.TaskCardComponents.ResultRender do
 
     wrapper_class =
       if truncate,
-        do: "bg-base-100 p-3 rounded-lg border border-base-200",
-        else: "bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+        do: "bg-base-100 p-3 rounded-xl border border-base-200",
+        else: "bg-success/10 border border-success/20 rounded-xl p-4 max-h-[70vh] overflow-y-auto"
 
     assigns = %{
       result:
@@ -306,8 +306,8 @@ defmodule EvoDashWeb.TaskCardComponents.ResultRender do
 
     wrapper_class =
       if truncate,
-        do: "bg-base-100 p-3 rounded-lg border border-base-200 overflow-x-auto shadow-inner",
-        else: "bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+        do: "bg-base-100 p-3 rounded-xl border border-base-200 overflow-x-auto shadow-inner",
+        else: "bg-base-200 rounded-xl p-4 max-h-[70vh] overflow-y-auto"
 
     assigns = %{
       result:

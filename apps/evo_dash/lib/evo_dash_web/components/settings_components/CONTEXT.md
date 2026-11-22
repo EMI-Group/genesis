@@ -114,7 +114,11 @@ Error status and entry maps accept atom or string keys, and non-map error entrie
 
 Every module here writes tokens only (`base-*`, `primary`, `error`, `warning`), never a raw color and never a hex.
 Borders are hairlines (`border border-base-300`), radii stay at or below `rounded-xl`, and decoration is limited to subtle tints (`bg-base-200/20`, `error/5`).
+Type follows the ONE dashboard ladder (`docs/ui-density.md` / skill `ui-density`): `text-sm` is the UI default (labels, buttons, list rows, field copy), `text-xs` metadata (ids, helper lines, schedule/slot meta), `text-2xs` only all-caps micro badges/chips/counts.
+No arbitrary font size (`text-[…]`) and no 700 weight outside numeric metrics, badge text and `<strong>` — headings, card titles and status lines are `font-semibold`.
+Controls: secondary/row actions are `btn-sm`, every icon-only action is `btn-sm btn-square`, and a pane's primary submit is a default `btn`; card/panel bodies are `p-4` (wizard shell `p-5`) on `rounded-xl` containers with `rounded-lg` controls.
 Rows are compact and dense: one line per account summary, grids inside the detail, no hero boxes, gradients or decorative blurs.
+The Settings page PANE GUTTERS are owned by the live-page wave: `px-8 py-8` (`search_results.ex`), `px-8 py-6` (`section_header.ex`) and `px-8 py-2.5` (`save_bar.ex`) are deliberately left in the components.
 Interactive affordances that must not submit carry `type="button"`, and `summary` toggles are plain clicks.
 
 ## SettingCard and generic category cards

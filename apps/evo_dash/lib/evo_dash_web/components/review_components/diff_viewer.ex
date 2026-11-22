@@ -75,13 +75,13 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           <button
             type="button"
             phx-click="collapse_all_dirs"
-            class="btn btn-ghost btn-xs rounded-md gap-1"
+            class="btn btn-ghost btn-sm rounded-lg gap-1"
           >
             <.icon name="hero-chevron-up-down" class="size-3" />
             {gettext("Collapse all")}
           </button>
           <%!-- zh_CN: "Expand all" → 全部展开（展开所有目录） --%>
-          <button type="button" phx-click="expand_all_dirs" class="btn btn-ghost btn-xs rounded-md">
+          <button type="button" phx-click="expand_all_dirs" class="btn btn-ghost btn-sm rounded-lg">
             {gettext("Expand all")}
           </button>
         </div>
@@ -192,7 +192,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
         <span class="font-mono truncate flex-1 min-w-0 text-left" title={@node.path}>
           {@node.name}
         </span>
-        <span class="shrink-0 flex items-center gap-1 font-mono text-[10px] leading-none text-base-content/60">
+        <span class="shrink-0 flex items-center gap-1 font-mono text-2xs leading-none text-base-content/60">
           {ngettext("%{count} file", "%{count} files", @node.file_count, count: @node.file_count)}
           <span class="text-success">+{@node.additions}</span>
           <span class="text-error">-{@node.deletions}</span>
@@ -245,7 +245,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
       aria-current={if @selected_file == @path, do: "true"}
       title={@path}
       class={[
-        "w-full min-h-8 flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone",
+        "w-full min-h-8 flex items-center gap-1.5 px-2 py-1.5 rounded-md text-sm transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone",
         (@selected_file == @path && "bg-primary/10 text-primary-standalone") || "hover:bg-base-200/60"
       ]}
       style={"padding-left: #{0.75 + min(@depth, 6) * 0.65}rem"}
@@ -257,8 +257,8 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
       <span class="font-mono truncate flex-1 min-w-0 text-left" title={@path}>
         {@name}
       </span>
-      <span class="shrink-0 font-mono text-[10px] leading-none text-success">+{@additions}</span>
-      <span class="shrink-0 font-mono text-[10px] leading-none text-error">-{@deletions}</span>
+      <span class="shrink-0 font-mono text-2xs leading-none text-success">+{@additions}</span>
+      <span class="shrink-0 font-mono text-2xs leading-none text-error">-{@deletions}</span>
     </button>
     """
   end
@@ -430,7 +430,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     <header class="rounded-xl border border-base-300 bg-base-100 p-4 mb-3">
       <.link
         patch={@back_url}
-        class="inline-flex min-h-9 items-center gap-2 -ml-2 rounded-md px-2 text-sm text-base-content/75 hover:bg-base-200 hover:text-base-content"
+        class="inline-flex min-h-[var(--row-h-sm)] items-center gap-2 -ml-2 rounded-md px-2 text-sm text-base-content/75 hover:bg-base-200 hover:text-base-content"
       >
         <.icon name="hero-arrow-left" class="size-4" />
         {gettext("Back to review")}
@@ -438,7 +438,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
       <h1 class="mt-1 text-lg font-semibold leading-snug [overflow-wrap:anywhere]">
         {if @unavailable, do: gettext("Commit unavailable"), else: @commit.message}
       </h1>
-      <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm min-w-0">
+      <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs min-w-0">
         <span
           :if={@commit.sha}
           class="badge badge-sm badge-ghost font-mono shrink-0"
@@ -503,7 +503,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     ~H"""
     <div
       id="review-empty-diff"
-      class="rounded-xl border border-base-300 bg-base-100 p-6 text-center text-sm text-base-content/75"
+      class="rounded-xl border border-base-300 bg-base-100 p-5 text-center text-sm text-base-content/75"
     >
       <.icon name="hero-document-magnifying-glass" class="size-6 mx-auto mb-2" />
       <p>

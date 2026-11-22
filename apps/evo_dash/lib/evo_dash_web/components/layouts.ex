@@ -272,7 +272,7 @@ defmodule EvoDashWeb.Layouts do
             >
               <summary class="workbench-row">
                 <.icon name="hero-ellipsis-horizontal" class="size-5 shrink-0" />
-                <span class="sidebar-label">{gettext("Tools")}</span>
+                <span class="sidebar-label text-sm font-medium">{gettext("Tools")}</span>
                 <.icon
                   name="hero-chevron-right"
                   class="ml-auto size-3.5 shrink-0 text-base-content/50 transition-transform duration-[var(--motion-base)] ease-[var(--motion-ease-out)] group-open:rotate-90"
@@ -310,7 +310,7 @@ defmodule EvoDashWeb.Layouts do
             >
               <summary class="workbench-row">
                 <.icon name="hero-chat-bubble-left-right" class="size-5 shrink-0" />
-                <span class="sidebar-label">{gettext("Conversations")}</span>
+                <span class="sidebar-label text-sm font-medium">{gettext("Conversations")}</span>
                 <.icon
                   name="hero-chevron-right"
                   class="ml-auto size-3.5 shrink-0 text-base-content/50 transition-transform duration-[var(--motion-base)] ease-[var(--motion-ease-out)] group-open:rotate-90"
@@ -333,7 +333,7 @@ defmodule EvoDashWeb.Layouts do
                 title={gettext("Settings")}
               >
                 <.icon name="hero-cog-6-tooth" class="size-5 shrink-0" />
-                <span class="sidebar-label">{gettext("Settings")}</span>
+                <span class="sidebar-label text-sm font-medium">{gettext("Settings")}</span>
                 <span
                   :if={@config_status && !@config_status.ok?}
                   class="workbench-settings-indicator"
@@ -520,7 +520,7 @@ defmodule EvoDashWeb.Layouts do
           hidden
         >
           <div class="workbench-section-heading">
-            <div>{gettext("Project history")}</div>
+            <div class="text-sm font-semibold">{gettext("Project history")}</div>
             <div class="flex items-center gap-1">
               <button
                 type="button"
@@ -639,10 +639,10 @@ defmodule EvoDashWeb.Layouts do
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="desktop_quit_cancelled">
           </div>
-          <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-6 md:p-8">
+          <div class="relative bg-base-100 rounded-xl shadow-2xl border border-base-300 max-w-lg w-full p-5 sm:p-6">
             <div class="flex items-center gap-3 mb-4">
               <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
-              <h3 class="text-lg font-bold">{gettext("Quit Genesis?")}</h3>
+              <h3 class="text-lg font-semibold">{gettext("Quit Genesis?")}</h3>
             </div>
 
             <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
@@ -750,7 +750,7 @@ defmodule EvoDashWeb.Layouts do
     <.link
       navigate={@navigate}
       class={[
-        "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 w-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone",
+        "flex items-center gap-3 px-3 py-2 min-h-[var(--row-h)] rounded-lg text-sm font-medium transition-colors duration-200 w-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone",
         @current && "bg-primary/10 text-primary-standalone",
         !@current &&
           "text-base-content/80 hover:bg-base-300/70 hover:text-base-content"

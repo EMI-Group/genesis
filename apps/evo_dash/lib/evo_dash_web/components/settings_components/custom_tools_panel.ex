@@ -68,7 +68,7 @@ defmodule EvoDashWeb.SettingsComponents.CustomToolsPanel do
         <div class="mb-4 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
           <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
           <div class="min-w-0">
-            <h3 class="font-bold text-sm text-error mb-2">
+            <h3 class="font-semibold text-sm text-error mb-2">
               {gettext("Custom Tools Unavailable")} <%!-- zh_CN: 自定义工具不可用 --%>
             </h3>
             <pre class="text-xs text-error/80 font-mono whitespace-pre-wrap break-all"><%= inspect(reason) %></pre>

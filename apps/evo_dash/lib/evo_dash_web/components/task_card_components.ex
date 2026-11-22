@@ -239,7 +239,7 @@ defmodule EvoDashWeb.TaskCardComponents do
     finished_label = if finished_at, do: relative_time(finished_at)
     agent_count = Map.get(@task, :agent_count) %>
     <div class={[
-      "min-w-0 bg-base-100 rounded-lg border relative z-10 group has-[[open]]:z-30",
+      "min-w-0 bg-base-100 rounded-xl border relative z-10 group has-[[open]]:z-30",
       if(@focused,
         do: "border-base-300",
         else: [
@@ -249,7 +249,7 @@ defmodule EvoDashWeb.TaskCardComponents do
       )
     ]}>
       <!-- Accent Top Border — clipped by inner wrapper so it respects rounded corners -->
-      <div :if={!@focused} class="absolute inset-0 rounded-lg overflow-hidden pointer-events-none">
+      <div :if={!@focused} class="absolute inset-0 rounded-xl overflow-hidden pointer-events-none">
         <div class={["absolute top-0 left-0 right-0 h-1 opacity-80", accent]}></div>
       </div>
 
@@ -257,7 +257,7 @@ defmodule EvoDashWeb.TaskCardComponents do
         <!-- Top row: Metatags & Status -->
         <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
           <div class="flex flex-wrap items-center gap-2.5 mt-1">
-            <span class="text-xs font-bold tracking-widest uppercase text-base-content/70">{@task.type}</span>
+            <span class="text-2xs font-semibold tracking-widest uppercase text-base-content/70">{@task.type}</span>
             <span :if={@task.opts[:mode]} class="text-xs text-base-content/70">
               {@task.opts[:mode]}
             </span>
@@ -598,7 +598,7 @@ defmodule EvoDashWeb.TaskCardComponents do
               <%= if error do %>
                 <div class="bg-error/10 border border-error/20 rounded-lg p-4">
                   <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 mb-3">
-                    <span class="inline-flex items-center gap-1.5 text-xs font-bold text-error uppercase tracking-wide">
+                    <span class="inline-flex items-center gap-1.5 text-2xs font-semibold text-error uppercase tracking-wide">
                       <.icon name="hero-x-circle" class="size-4" />
                       {task_error_kind_label(error_field(error, :kind))}
                     </span>
@@ -616,7 +616,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                   <% frames = error_stacktrace(error) %>
                   <%= if frames do %>
                     <div class="mt-3 bg-base-100 border border-error/20 rounded-md p-3 overflow-x-auto">
-                      <div class="text-xs font-bold uppercase tracking-wide text-error mb-1.5">
+                      <div class="text-2xs font-semibold uppercase tracking-wide text-error mb-1.5">
                         <%!-- zh_CN: 堆栈跟踪 --%>{gettext("Stacktrace")}
                       </div>
                       <pre class="text-xs font-mono leading-relaxed whitespace-pre-wrap break-words"><%= Enum.join(frames, "\n") %></pre>
@@ -626,9 +626,9 @@ defmodule EvoDashWeb.TaskCardComponents do
               <% end %>
               <div class={["grid grid-cols-1 gap-4", !@focused && "lg:grid-cols-2"]}>
                 <!-- Objective card — full objective text (scrollable) + mode/path badges -->
-                <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+                <div class="bg-base-200/30 p-4 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                   <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-                    <h4 class="text-sm font-bold flex items-center gap-2">
+                    <h4 class="text-sm font-semibold flex items-center gap-2">
                       <.icon
                         name="hero-chat-bubble-left-ellipsis"
                         class="size-4.5 shrink-0 text-primary-standalone"
@@ -642,13 +642,13 @@ defmodule EvoDashWeb.TaskCardComponents do
                         phx-hook="ClipboardCopy"
                         data-content={objective_copy.text}
                         title={copy_payload_title(objective_copy)}
-                        class="btn btn-xs btn-ghost rounded-md"
+                        class="btn btn-sm btn-ghost rounded-md"
                       >
                         <.icon name="hero-clipboard-document" class="size-3.5 mr-1" />
                         <%!-- zh_CN: 复制按钮 --%>{gettext("Copy")}
                       </button>
                       <button
-                        class="btn btn-xs btn-ghost rounded-md"
+                        class="btn btn-sm btn-ghost rounded-md"
                         phx-click="view_full_options"
                         phx-value-task_id={@task.id}
                       >
@@ -666,9 +666,9 @@ defmodule EvoDashWeb.TaskCardComponents do
                 <% card_result = if lite, do: Map.get(lite, :result), else: nil %>
                 <%= if card_result do %>
                   <!-- Agent Message card — full result content (scrollable) + badges -->
-                  <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+                  <div class="bg-base-200/30 p-4 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                     <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-                      <h4 class="text-sm font-bold flex items-center gap-2">
+                      <h4 class="text-sm font-semibold flex items-center gap-2">
                         <.icon
                           name="hero-chat-bubble-left-ellipsis"
                           class="size-4.5 shrink-0 text-success"
@@ -682,13 +682,13 @@ defmodule EvoDashWeb.TaskCardComponents do
                           phx-hook="ClipboardCopy"
                           data-content={result_copy.text}
                           title={copy_payload_title(result_copy)}
-                          class="btn btn-xs btn-ghost rounded-md"
+                          class="btn btn-sm btn-ghost rounded-md"
                         >
                           <.icon name="hero-clipboard-document" class="size-3.5 mr-1" />
                           <%!-- zh_CN: 复制按钮 --%>{gettext("Copy")}
                         </button>
                         <button
-                          class="btn btn-xs btn-ghost rounded-md"
+                          class="btn btn-sm btn-ghost rounded-md"
                           phx-click="view_full_result"
                           phx-value-task_id={@task.id}
                         >
@@ -719,7 +719,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                       {gettext("Could not load task details.")}
                     </span>
                     <button
-                      class="btn btn-xs btn-ghost rounded-md ml-auto shrink-0"
+                      class="btn btn-sm btn-ghost rounded-md ml-auto shrink-0"
                       phx-click="retry_task_detail"
                       phx-value-task_id={@task.id}
                     >
@@ -743,8 +743,8 @@ defmodule EvoDashWeb.TaskCardComponents do
                 <% true -> %>
                   <% usage = Map.get(lite, :usage) %>
                   <%= if usage do %>
-                    <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
-                      <h4 class="text-sm font-bold flex items-center gap-2 mb-4">
+                    <div class="bg-base-200/30 p-4 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+                      <h4 class="text-sm font-semibold flex items-center gap-2 mb-4">
                         <.icon name="hero-currency-dollar" class="size-4.5 text-primary-standalone" />
                         <%!-- zh_CN: Token → "词元" --%>{gettext("Token & Cost Usage")}
                       </h4>
@@ -842,8 +842,8 @@ defmodule EvoDashWeb.TaskCardComponents do
                   <% end %>
 
                   <%= if agent_count do %>
-                    <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
-                      <h4 class="text-sm font-bold flex items-center justify-between gap-2 mb-4">
+                    <div class="bg-base-200/30 p-4 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+                      <h4 class="text-sm font-semibold flex items-center justify-between gap-2 mb-4">
                         <span class="flex items-center gap-2">
                           <.icon name="hero-user-group" class="size-4.5 text-primary-standalone" />
                           <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agents Spawned")}
@@ -876,10 +876,10 @@ defmodule EvoDashWeb.TaskCardComponents do
                     <% log_count = logs_preview.total %>
                     <details
                       id={"task-#{@task.id}-logs"}
-                      class="motion-disclosure bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors group/logs"
+                      class="motion-disclosure bg-base-200/30 p-4 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors group/logs"
                       phx-hook="DisclosureMotion"
                     >
-                      <summary class="cursor-pointer text-sm font-bold flex items-center gap-2 select-none outline-none">
+                      <summary class="cursor-pointer text-sm font-semibold flex items-center gap-2 select-none outline-none">
                         <.icon
                           name="hero-command-line"
                           class="size-4.5 text-base-content/70 group-hover/logs:text-primary-standalone transition-colors"
@@ -939,15 +939,15 @@ defmodule EvoDashWeb.TaskCardComponents do
                     ArchiveComponents' own markup.
                   --%>
                   <%= if archive_opt?(@task.opts) or archive != nil do %>
-                    <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+                    <div class="bg-base-200/30 p-4 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                       <div class="flex items-center justify-between gap-2">
-                        <h4 class="text-sm font-bold flex items-center gap-2">
+                        <h4 class="text-sm font-semibold flex items-center gap-2">
                           <.icon name="hero-archive-box" class="size-4.5 text-base-content/70" />
                           <%!-- zh_CN: Agent → "智能体" --%>{gettext("Archived Agent Details")}
                         </h4>
                         <%= if archive == nil do %>
                           <button
-                            class="btn btn-xs btn-ghost rounded-md"
+                            class="btn btn-sm btn-ghost rounded-md"
                             phx-click="load_task_archive"
                             phx-value-task_id={@task.id}
                           >
@@ -984,7 +984,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                               {gettext("Could not load the task archive.")}
                             </span>
                             <button
-                              class="btn btn-xs btn-ghost rounded-md ml-auto shrink-0"
+                              class="btn btn-sm btn-ghost rounded-md ml-auto shrink-0"
                               phx-click="load_task_archive"
                               phx-value-task_id={@task.id}
                             >

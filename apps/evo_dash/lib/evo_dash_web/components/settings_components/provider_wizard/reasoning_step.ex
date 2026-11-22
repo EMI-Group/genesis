@@ -89,18 +89,18 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard.ReasoningStep do
               type="button"
               phx-click={@preset_apply_event}
               phx-value-preset_id={preset.id}
-              class="btn btn-ghost btn-xs"
+              class="btn btn-ghost btn-sm"
             >
               {gettext("Re-apply")}
             </button>
-            <button type="button" phx-click={@preset_undo_event} class="btn btn-ghost btn-xs">
+            <button type="button" phx-click={@preset_undo_event} class="btn btn-ghost btn-sm">
               {gettext("Undo")}
             </button>
             <button
               :if={@preset_dismiss_event}
               type="button"
               phx-click={@preset_dismiss_event}
-              class="btn btn-ghost btn-xs btn-square"
+              class="btn btn-ghost btn-sm btn-square"
               aria-label={gettext("Dismiss")}
             >
               <.icon name="hero-x-mark" class="size-4" />
@@ -118,7 +118,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard.ReasoningStep do
               type="button"
               phx-click={@preset_apply_event}
               phx-value-preset_id={preset.id}
-              class="btn btn-outline btn-xs"
+              class="btn btn-outline btn-sm"
               title={preset.note}
             >
               {preset.label}

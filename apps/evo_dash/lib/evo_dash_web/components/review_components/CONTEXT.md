@@ -76,7 +76,7 @@ Rendered in states 2 and 3: a `flex flex-wrap items-center gap-3` row holding th
 
 #### `merge_status_block/1` — private
 
-Attrs: `status` (`:map`, required). `%{state: :checking}` → spinner + "Checking if merge is clean…"; `%{state: :clean}` → green success strip "Merge check passed — clean merge."; `%{state: :conflict, files: files}` → amber strip with the `ngettext` "Merge conflict detected in %{count} files: %{files}" (files via the public `EvoDashWeb.ReviewComponents.Actions.conflict_files_summary/1`) + the PRIMARY-scoped **`auto_resolve`** button (`btn-warning`, `phx-click="auto_resolve"`, NO `repo_id`, `phx-confirm` explaining the new merge-agent task); any other shape (incl. `state: :error`) → the `_ ->` catch-all renders NOTHING. `merge_status.target` is NOT read by the component (the LiveView uses it for the merge call). Wrapped in a `rounded-lg border border-base-300 bg-base-200/30 p-3` well by its caller.
+Attrs: `status` (`:map`, required). `%{state: :checking}` → spinner + "Checking if merge is clean…"; `%{state: :clean}` → green success strip "Merge check passed — clean merge."; `%{state: :conflict, files: files}` → amber strip with the `ngettext` "Merge conflict detected in %{count} files: %{files}" (files via the public `EvoDashWeb.ReviewComponents.Actions.conflict_files_summary/1`) + the PRIMARY-scoped **`auto_resolve`** button (`btn btn-warning btn-sm rounded-lg px-4 gap-1.5`, `phx-click="auto_resolve"`, NO `repo_id`, `phx-confirm` explaining the new merge-agent task); any other shape (incl. `state: :error`) → the `_ ->` catch-all renders NOTHING. `merge_status.target` is NOT read by the component (the LiveView uses it for the merge call). Wrapped in a `rounded-lg border border-base-300 bg-base-200/30 p-3` well by its caller.
 
 #### Element ids emitted by this subtree
 
@@ -104,7 +104,7 @@ First ~4 conflicting file names joined with `", "`, with a trailing `"…"` when
 
 #### `extract_skills_modal/1`
 
-Attrs: `show` (`:boolean`, default `false`) — the only attr; renders nothing when false. Fixed overlay + backdrop (`bg-black/50 backdrop-blur-sm`) + modal card with an academic-cap tile, explanatory copy, and a `<.form phx-submit="confirm_extract_skills">` carrying a `user_note` textarea. Events: **`confirm_extract_skills`** (form submit, param `user_note`), **`cancel_extract_skills`** (backdrop click + Cancel button).
+Attrs: `show` (`:boolean`, default `false`) — the only attr; renders nothing when false. Fixed overlay + backdrop (`bg-black/50 backdrop-blur-sm`) + modal card (`rounded-xl`, `p-5 sm:p-6`) with an academic-cap tile, an `text-lg font-semibold` heading, `text-sm` explanatory copy, and a `<.form phx-submit="confirm_extract_skills">` carrying a `user_note` textarea. Events: **`confirm_extract_skills`** (form submit, param `user_note`), **`cancel_extract_skills`** (backdrop click + Cancel button). The footer pairs a default-size primary submit (`btn btn-secondary`) with a `btn btn-ghost btn-sm` Cancel.
 
 ### `Header` (`header.ex`)
 
@@ -254,6 +254,16 @@ Never hand a multi-MB string to `EvoDash.MarkdownRender.render/1` — preview th
 - `file_tree_sidebar/1` (and its filtered matches list): at most `500` rendered entries via `list_preview/2` + "Showing %{shown} of %{total} files".
 - The ONLY uncapped payload paths are explicit user actions: the Full Result / Full Options modal bodies (`truncate: false`), the public copy-text helpers and the `TaskExportController` JSON export.
 - Msgids owned here (keep verbatim for the release-time extraction pass): "%{count} more lines not shown", "Showing %{shown} of %{total} files", and the review copy hint "… open the Full view for the complete text" — DISTINCT from the task card's "… open Full for the complete text"; do not merge them.
+
+## Density & Type Scale
+
+This subtree follows the dashboard's ONE scale (`docs/ui-density.md`, skill `ui-density`); the governing contract lives in `apps/evo_dash/assets/css/density.css` — no arbitrary font sizes, weights 400/500/600 only (`font-bold` only for numbers), tokens for row heights.
+- `page_header/1`: header card `p-4 sm:p-5`; the `h1` stays `text-lg font-semibold` (pinned by `review_live_test.exs`'s `h1.text-lg` lookup; the page-title `text-xl` upgrade belongs to the live page); meta line `text-sm` with machine values (repo path, branch/merge-target/commit chips, `task_id`, `model_id`) at `text-xs font-mono`; chips keep their tight `px-1.5 py-0.5` (they are not rows).
+- Repo/agent/objective cards: `rounded-xl`, body `p-4`; card labels (`Primary repository`, `Agent Report`, `Objective`) are `text-base font-semibold`; markdown prose bodies are `text-base leading-relaxed`, raw `<pre>` bodies `text-sm font-mono`.
+- Rows & controls: diff/file-tree rows stay 32 px dense (`min-h-8`, `text-sm` labels with `text-2xs` count/stat markers); commit rows `min-h-[var(--row-h-tall)]` (48 px); every row action is `btn-sm` (View diff, Merge, Reject, Auto-resolve, Merge all, Collapse/Expand all) — no `btn-xs` remains; merge-target select and file filter are `select-sm`/`input-sm`.
+- Diff content: the render wrapper is `text-xs font-mono` with the 20 px line rhythm (`.diff-split-table` in `app.css` pins the rendered cell font-size to `var(--text-2xs)`), unchanged per-file 2000-line bound and grid.
+- `diff_stats_bar/1` + the header's stat row: metadata labels `text-xs`, additions/deletions numbers `font-bold`.
+- Modals (`extract_skills_modal/1`): `rounded-xl`, `p-5 sm:p-6` max, `text-lg font-semibold` heading, `text-sm` body, default-size primary + `btn-sm` secondary.
 
 ## Constraints
 

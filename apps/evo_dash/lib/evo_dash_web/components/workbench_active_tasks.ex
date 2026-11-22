@@ -120,10 +120,10 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
         title={@row.status_title}
       ></span>
       <div class="min-w-0 flex-1 sidebar-label">
-        <span class="block truncate group-hover:text-base-content transition-colors">
+        <span class="block truncate text-sm group-hover:text-base-content transition-colors">
           {@row.label}
         </span>
-        <span class="block text-xs text-base-content/60 mt-0.5">
+        <span class="block text-xs text-base-content/60 mt-1">
           {@row.sub_line}
         </span>
       </div>
