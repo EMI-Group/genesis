@@ -47,7 +47,7 @@ defmodule EvoDashWeb.WelcomeLive.Steps do
           type="button"
           phx-click="select_wizard_variant"
           phx-value-variant={variant["id"]}
-          class={"btn btn-sm " <> if(variant["selected"], do: "btn-primary", else: "btn-outline")}
+          class={"btn " <> if(variant["selected"], do: "btn-primary", else: "btn-outline")}
         >
           {variant["label"]}
         </button>
@@ -126,7 +126,7 @@ defmodule EvoDashWeb.WelcomeLive.Steps do
         type="password"
         label={gettext("API key")}
         autocomplete="off"
-        class="input input-sm w-full"
+        class="input w-full"
         placeholder={@key_placeholder}
         phx-debounce="300"
       />
@@ -183,14 +183,14 @@ defmodule EvoDashWeb.WelcomeLive.Steps do
         custom_model_value={@draft["custom_model"]}
         allow_custom_model={not @chatgpt}
       />
-      <details :if={@all_model_rows != []} class="rounded-lg border border-base-300 p-3">
+      <details :if={@all_model_rows != []} class="rounded-lg border border-base-300 p-4">
         <summary class="cursor-pointer text-sm font-medium">
           {gettext("Add another model")}
         </summary>
         <div class="mt-3 flex flex-wrap gap-2">
           <label
             :for={row <- @all_model_rows}
-            class="flex items-center gap-2 rounded-lg border border-base-300 px-2 py-1 text-xs"
+            class="flex min-h-[var(--row-h)] items-center gap-2 rounded-lg border border-base-300 px-3 text-sm"
           >
             <input
               type="checkbox"
@@ -247,7 +247,7 @@ defmodule EvoDashWeb.WelcomeLive.Steps do
           <span class="truncate">{row["label"]}</span>
           <select
             name={"model_reasoning[#{row["id"]}]"}
-            class="select select-sm w-40"
+            class="select w-40"
             aria-label={gettext("Default reasoning effort")}
           >
             <option value="">{gettext("Provider default")}</option>
