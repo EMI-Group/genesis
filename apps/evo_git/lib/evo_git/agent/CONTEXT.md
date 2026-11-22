@@ -122,7 +122,8 @@ Cross-cutting restart/idle semantics live in `../CONTEXT.md` and `../task_regist
 
 ## Live Activity Integration
 The worker sink supplies chunk callbacks independently of watchers (only public delta publication is watcher-gated, and every emission is inert without a sink); `Session` owns a separate `Activity.new/0` projection, accepts `{:activity, worker_pid, event}` only from its current worker, and feeds only returned public events to the 75 ms batcher.
-Checkpoints share the identity guard and retire covered activity with transcript adoption; `Session.finalize/1` sends watchers ONE `{:agent_stream_closed, agent_id, snapshot, seq}` via `Session.TerminalHandoff` after flush and before final publication, never on yield/terminate/force-cancel/abnormal down.
+Checkpoints share the identity guard and retire covered activity with transcript adoption, EXCEPT the batch-start checkpoint: it retains the tracked call and marks it `checkpointed: true` (via `{:call_checkpointed, id}`), because the assistant message that call describes is already in that adopted transcript.
+`Session.finalize/1` sends watchers ONE `{:agent_stream_closed, agent_id, snapshot, seq}` via `Session.TerminalHandoff` after flush and before final publication, never on yield/terminate/force-cancel/abnormal down.
 Phase emissions: each LLM attempt starts a call before slot queueing and settles to `:llm_complete`, `:retry_wait` or `:idle`; only a nonempty tool/subagent batch enters `:tools`; `:compressing` only in `compress_if_needed/2`'s compressible branch; `:preparing` FIRST in `Exchange.continue_loop/3` and again after `Sink.start_turn/1` — shapes: `stream/CONTEXT.md`.
 
 ## LLM Request Assembly (what actually reaches ReqLLM)

@@ -5,6 +5,10 @@ defmodule EvoGit.Agent.Stream.Activity do
   A call keeps only its current text and thinking, never a replay of earlier attempts.
   Phase changes publish a replacement `{:activity, projection}`; matching chunks append to
   the projection and publish the existing text/thinking delta vocabulary instead.
+
+  `current_call.checkpointed` is the ONE authoritative "this live call is already in the
+  checkpointed transcript" marker: it starts `false` for every fresh call and is flipped by an
+  explicit `{:call_checkpointed, id}` event, so a consumer never has to guess by content.
   """
 
   @phases [
@@ -32,7 +36,8 @@ defmodule EvoGit.Agent.Stream.Activity do
           turn: non_neg_integer(),
           attempt: non_neg_integer(),
           text: String.t(),
-          thinking: String.t()
+          thinking: String.t(),
+          checkpointed: boolean()
         }
   @type t :: %{phase: phase(), current_call: call() | nil}
 
@@ -48,7 +53,14 @@ defmodule EvoGit.Agent.Stream.Activity do
     replace(%{
       activity
       | phase: :llm_waiting,
-        current_call: %{id: id, turn: turn, attempt: attempt, text: "", thinking: ""}
+        current_call: %{
+          id: id,
+          turn: turn,
+          attempt: attempt,
+          text: "",
+          thinking: "",
+          checkpointed: false
+        }
     })
   end
 
@@ -76,6 +88,16 @@ defmodule EvoGit.Agent.Stream.Activity do
     call = Map.update!(call, kind, &(&1 <> chunk))
     {%{activity | current_call: call}, [{kind, chunk}]}
   end
+
+  def apply(
+        %{current_call: %{id: id, checkpointed: false} = call} = activity,
+        {:call_checkpointed, id}
+      ) do
+    replace(%{activity | current_call: %{call | checkpointed: true}})
+  end
+
+  # Already marked, or no matching current call: an idempotent no-op that publishes nothing.
+  def apply(activity, {:call_checkpointed, _id}), do: {activity, []}
 
   def apply(_activity, :reset), do: replace(new())
   def apply(activity, _event), do: {activity, []}
