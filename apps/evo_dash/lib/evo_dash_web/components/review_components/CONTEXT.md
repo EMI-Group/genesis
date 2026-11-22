@@ -76,7 +76,7 @@ Rendered in states 2 and 3: a `flex flex-wrap items-center gap-3` row holding th
 
 #### `merge_status_block/1` — private
 
-Attrs: `status` (`:map`, required). `%{state: :checking}` → spinner + "Checking if merge is clean…"; `%{state: :clean}` → green success strip "Merge check passed — clean merge."; `%{state: :conflict, files: files}` → amber strip with the `ngettext` "Merge conflict detected in %{count} files: %{files}" (files via the public `EvoDashWeb.ReviewComponents.Actions.conflict_files_summary/1`) + the PRIMARY-scoped **`auto_resolve`** button (`btn-warning`, `phx-click="auto_resolve"`, NO `repo_id`, `phx-confirm` explaining the new merge-agent task); any other shape (incl. `state: :error`) → the `_ ->` catch-all renders NOTHING. `merge_status.target` is NOT read by the component (the LiveView uses it for the merge call). Wrapped in a `rounded-lg border border-base-300 bg-base-200/30 p-3` well by its caller.
+Attrs: `status` (`:map`, required). `%{state: :checking}` → spinner + "Checking if merge is clean…"; `%{state: :clean}` → green success strip "Merge check passed — clean merge."; `%{state: :conflict, files: files}` → amber strip with the `ngettext` "Merge conflict detected in %{count} files: %{files}" (files via the public `EvoDashWeb.ReviewComponents.Actions.conflict_files_summary/1`) + the PRIMARY-scoped **`auto_resolve`** button (`btn btn-warning btn-sm rounded-lg px-4 gap-1.5`, `phx-click="auto_resolve"`, NO `repo_id`, `phx-confirm` explaining the new merge-agent task); any other shape (incl. `state: :error`) → the `_ ->` catch-all renders NOTHING. `merge_status.target` is NOT read by the component (the LiveView uses it for the merge call). Wrapped in a `rounded-lg border border-base-300 bg-base-200/30 p-3` well by its caller.
 
 #### Element ids emitted by this subtree
 
@@ -104,7 +104,7 @@ First ~4 conflicting file names joined with `", "`, with a trailing `"…"` when
 
 #### `extract_skills_modal/1`
 
-Attrs: `show` (`:boolean`, default `false`) — the only attr; renders nothing when false. Fixed overlay + backdrop (`bg-black/50 backdrop-blur-sm`) + modal card with an academic-cap tile, explanatory copy, and a `<.form phx-submit="confirm_extract_skills">` carrying a `user_note` textarea. Events: **`confirm_extract_skills`** (form submit, param `user_note`), **`cancel_extract_skills`** (backdrop click + Cancel button).
+Attrs: `show` (`:boolean`, default `false`) — the only attr; renders nothing when false. Fixed overlay + backdrop (`bg-black/50 backdrop-blur-sm`) + modal card (`rounded-xl`, `p-5 sm:p-6`) with an academic-cap tile, an `text-lg font-semibold` heading, `text-sm` explanatory copy, and a `<.form phx-submit="confirm_extract_skills">` carrying a `user_note` textarea. Events: **`confirm_extract_skills`** (form submit, param `user_note`), **`cancel_extract_skills`** (backdrop click + Cancel button). The footer pairs a default-size primary submit (`btn btn-secondary`) with a `btn btn-ghost btn-sm` Cancel.
 
 ### `Header` (`header.ex`)
 
