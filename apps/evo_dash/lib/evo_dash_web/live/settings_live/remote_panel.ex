@@ -113,7 +113,7 @@ defmodule EvoDashWeb.SettingsLive.RemotePanel do
         description={gettext("Manage SSH connections to remote Genesis daemons.")}
       />
 
-      <div class="px-8 py-8 space-y-5">
+      <div class="px-4 sm:px-6 py-4 sm:py-6 space-y-5">
         <%!-- 远程运行 Genesis 分两步：先在服务器上安装远程守护进程（Install），再连接（Connect）；连接后任务在服务器上运行，即使本地应用关闭也会继续 --%>
         <div class="rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-3">
           <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
@@ -161,7 +161,7 @@ defmodule EvoDashWeb.SettingsLive.RemotePanel do
 
             <div class="flex items-center gap-1 mt-3 flex-wrap">
               <button
-                class="btn btn-xs btn-ghost gap-1"
+                class="btn btn-sm btn-ghost gap-1"
                 phx-click="edit_remote_target"
                 phx-value-id={target.id}
               >
@@ -169,7 +169,7 @@ defmodule EvoDashWeb.SettingsLive.RemotePanel do
                 {gettext("Edit")}
               </button>
               <button
-                class="btn btn-xs btn-ghost gap-1"
+                class="btn btn-sm btn-ghost gap-1"
                 phx-click="delete_remote_target"
                 phx-value-id={target.id}
               >
@@ -179,7 +179,7 @@ defmodule EvoDashWeb.SettingsLive.RemotePanel do
               <div class="flex-1"></div>
               <%= if remote_connected?(target.id, @remote_statuses) do %>
                 <button
-                  class="btn btn-xs btn-ghost gap-1 text-warning"
+                  class="btn btn-sm btn-ghost gap-1 text-warning"
                   phx-click="disconnect_remote_target"
                   phx-value-id={target.id}
                 >
@@ -225,7 +225,7 @@ defmodule EvoDashWeb.SettingsLive.RemotePanel do
                       </p>
                       <div class="flex items-center gap-1 flex-wrap">
                         <button
-                          class="btn btn-xs btn-ghost gap-1"
+                          class="btn btn-sm btn-ghost gap-1"
                           phx-click="bootstrap_remote_target"
                           phx-value-id={target.id}
                         >
@@ -239,7 +239,7 @@ defmodule EvoDashWeb.SettingsLive.RemotePanel do
                     <%= if bootstrap_status == :success do %>
                       <div class="flex items-center gap-1 flex-wrap">
                         <button
-                          class="btn btn-xs btn-ghost gap-1"
+                          class="btn btn-sm btn-ghost gap-1"
                           phx-click="bootstrap_remote_target"
                           phx-value-id={target.id}
                         >
@@ -247,7 +247,7 @@ defmodule EvoDashWeb.SettingsLive.RemotePanel do
                           {gettext("Install")}
                         </button>
                         <button
-                          class="btn btn-xs btn-primary gap-1"
+                          class="btn btn-sm btn-primary gap-1"
                           phx-click="connect_remote_target"
                           phx-value-id={target.id}
                         >
@@ -262,7 +262,7 @@ defmodule EvoDashWeb.SettingsLive.RemotePanel do
                   </div>
                 <% else %>
                   <button
-                    class="btn btn-xs btn-ghost gap-1"
+                    class="btn btn-sm btn-ghost gap-1"
                     phx-click="bootstrap_remote_target"
                     phx-value-id={target.id}
                   >
@@ -270,7 +270,7 @@ defmodule EvoDashWeb.SettingsLive.RemotePanel do
                     {gettext("Install")}
                   </button>
                   <button
-                    class="btn btn-xs btn-primary gap-1"
+                    class="btn btn-sm btn-primary gap-1"
                     phx-click="connect_remote_target"
                     phx-value-id={target.id}
                   >
@@ -358,7 +358,7 @@ defmodule EvoDashWeb.SettingsLive.RemotePanel do
                 <div class="col-span-2 flex">
                   <button
                     type="button"
-                    class="btn btn-ghost btn-xs gap-1 -mt-1 text-base-content/70"
+                    class="btn btn-ghost btn-sm gap-1 -mt-1 text-base-content/70"
                     phx-click="toggle_remote_advanced"
                   >
                     <.icon
@@ -483,10 +483,10 @@ defmodule EvoDashWeb.SettingsLive.RemotePanel do
           phx-value-target_id={@bootstrap_restart_confirm.id}
         >
         </div>
-        <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-6 md:p-8">
+        <div class="relative bg-base-100 rounded-xl shadow-2xl border border-base-300 max-w-lg w-full p-5 sm:p-6">
           <div class="flex items-center gap-3 mb-4">
             <.icon name="hero-exclamation-triangle" class="size-5 text-warning" />
-            <h3 class="text-lg font-bold">
+            <h3 class="text-lg font-semibold">
               {gettext("Remote node already connected")}
             </h3>
           </div>

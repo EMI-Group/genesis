@@ -76,7 +76,7 @@ defmodule EvoDashWeb.SettingsLive do
       accent_color={assigns[:accent_color] || "blue"}
     >
       <header :if={@live_action == :window} class="workbench-window-header">
-        <h1 class="min-w-0 flex-1 text-sm font-semibold">{gettext("Settings")}</h1>
+        <h1 class="min-w-0 flex-1 text-lg font-semibold">{gettext("Settings")}</h1>
         <.form
           :if={!Navigation.client_category?(@active_category)}
           for={@settings_server_form}
@@ -123,7 +123,7 @@ defmodule EvoDashWeb.SettingsLive do
             <div class="mb-4 shrink-0 rounded-lg border border-warning/30 bg-warning/5 p-3 flex items-start gap-3">
               <.icon name="hero-exclamation-triangle" class="size-5 text-warning shrink-0 mt-0.5" />
               <div>
-                <h3 class="font-bold text-sm text-warning mb-2">
+                <h3 class="font-semibold text-sm text-warning mb-2">
                   {gettext("Missing Configuration")}
                 </h3>
                 <ul class="space-y-1.5 mb-3">
@@ -155,7 +155,7 @@ defmodule EvoDashWeb.SettingsLive do
             <div class="mb-4 shrink-0 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
               <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
               <div>
-                <h3 class="font-bold text-sm text-error mb-2">
+                <h3 class="font-semibold text-sm text-error mb-2">
                   {gettext("Remote Configuration Unavailable")}
                 </h3>
                 <p class="text-sm font-medium text-error/80 leading-relaxed max-w-3xl">
@@ -172,7 +172,7 @@ defmodule EvoDashWeb.SettingsLive do
             <div class="mb-4 shrink-0 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
               <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
               <div>
-                <h3 class="font-bold text-sm text-error mb-2">
+                <h3 class="font-semibold text-sm text-error mb-2">
                   {gettext("No LLM Model Configured")}
                 </h3>
                 <p class="text-sm font-medium text-error/80 mb-3 leading-relaxed max-w-3xl">
@@ -227,7 +227,7 @@ defmodule EvoDashWeb.SettingsLive do
              root `<div class="flex-1 flex flex-col min-w-0 min-h-0
              bg-base-100" id="category-<cat>">` → `.section_header` top
              sibling → a scroll body `<div class="flex-1 overflow-y-auto
-             px-8 py-8 relative">` that owns the pane scroll and holds all
+             px-4 sm:px-6 py-4 sm:py-6 relative">` that owns the pane scroll and holds all
              config content → ONE minimal pinned bottom-right save bar
              (`.save_bar`: `shrink-0 sticky bottom-0 z-10` container,
              `btn btn-primary rounded-md min-w-32 font-bold` +
@@ -338,7 +338,7 @@ defmodule EvoDashWeb.SettingsLive do
                         }
                       />
 
-                      <div class="px-8 py-8 space-y-5">
+                      <div class="px-4 sm:px-6 py-4 sm:py-6 space-y-5">
                         <%!-- Note about the separate TOML file --%>
                         <div class="rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-3">
                           <.icon
