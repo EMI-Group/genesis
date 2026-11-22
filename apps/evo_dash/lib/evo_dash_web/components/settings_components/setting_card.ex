@@ -88,7 +88,7 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
             type="button"
             phx-click="reset_key"
             phx-value-key_path={Enum.join(@schema.key_path, ".")}
-            class="opacity-0 group-hover:opacity-100 btn btn-ghost btn-xs text-base-content/70 hover:text-primary-standalone transition-opacity"
+            class="opacity-0 group-hover:opacity-100 btn btn-ghost btn-sm text-base-content/70 hover:text-primary-standalone transition-opacity"
             title={gettext("Reset to default")}
           >
             <.icon name="hero-arrow-path" class="size-3.5" />
@@ -100,7 +100,7 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
         >
           {Gettext.gettext(EvoDashWeb.Gettext, @schema.description)}
         </p>
-        <p class="text-[11px] text-base-content/70 mt-0.5">
+        <p class="text-xs text-base-content/70 mt-0.5">
           <span class="uppercase tracking-wider">{gettext("Default")}</span>
           <span class="font-mono">{default_label(@schema.default)}</span>
         </p>
@@ -271,7 +271,7 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                       placeholder={gettext("e.g. anthropic:claude-opus-5-5 or openai:gpt-5.6-terra")}
                       class="input input-bordered input-sm rounded-md w-full font-mono text-base"
                     />
-                    <p class="text-[11px] text-base-content/70 mt-1">
+                    <p class="text-xs text-base-content/70 mt-1">
                       <%!-- zh_CN: provider profiles → "服务商配置" --%>
                       {gettext(
                         "Type a model string, or configure provider profiles in the LLM settings"
@@ -299,7 +299,7 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                       <.icon name="hero-cpu-chip" class="size-3" />
                       {gettext("%{count} model profiles", count: length(profiles))}
                     </span>
-                    <p class="text-[11px] text-base-content/70 mt-1">
+                    <p class="text-xs text-base-content/70 mt-1">
                       {gettext("Configure via the editor below")}
                     </p>
                   </div>
@@ -308,7 +308,7 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                   <% entries = list_entries(@value) %>
                   <div class="w-full sm:w-96">
                     <%= if entries == nil do %>
-                      <p class="text-[11px] text-base-content/70 flex items-start gap-1.5">
+                      <p class="text-xs text-base-content/70 flex items-start gap-1.5">
                         <.icon name="hero-information-circle" class="size-3.5 shrink-0 mt-0.5" />
                         {gettext("Not set — platform default writable paths are used.")}
                       </p>
@@ -334,7 +334,7 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                               phx-click="remove_list_entry"
                               phx-value-key_path={key}
                               phx-value-index={idx}
-                              class="btn btn-ghost btn-xs btn-square text-base-content/60 hover:text-error shrink-0"
+                              class="btn btn-ghost btn-sm btn-square text-base-content/60 hover:text-error shrink-0"
                               title={gettext("Remove entry")}
                             >
                               <.icon name="hero-x-mark" class="size-4" />
@@ -347,7 +347,7 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                       type="button"
                       phx-click="add_list_entry"
                       phx-value-key_path={key}
-                      class="btn btn-ghost btn-xs gap-1 mt-1.5 text-primary-standalone hover:bg-primary/10"
+                      class="btn btn-ghost btn-sm gap-1 mt-1.5 text-primary-standalone hover:bg-primary/10"
                     >
                       <.icon name="hero-plus" class="size-3.5" />
                       {gettext("Add path")}
