@@ -119,8 +119,18 @@
     .project-picker-list .workbench-row,
     .assistant-quick-action,
     .assistant-menu-item,
-    .assistant-context-button
+    .assistant-context-button,
+    #chat-session-list > a
   ) {
+    min-height: var(--touch-target);
+  }
+  /* Compact controls would otherwise stay at the dial's 35 px on touch, so
+     every real control gets the same 44 px floor (`min-height` beats daisyUI's
+     `height`, no `!important` needed). `.btn-xs` / `.input-xs` / `.select-xs`
+     are excluded on purpose: they are inline adornments inside an
+     already-large clickable row and are never the sole way to act. */
+  :is(#app-layout, #workbench-window-content)
+    :is(.btn, .btn-sm, .btn-square, .input, .input-sm, .select, .select-sm):not(.btn-xs, .input-xs, .select-xs) {
     min-height: var(--touch-target);
   }
 }

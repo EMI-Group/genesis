@@ -11,7 +11,8 @@
 //   * DaisyUI's dial is restored to 0.25rem in BOTH theme blocks (40/32/24 px).
 //   * no `font-size` in px or rem may fall below 0.75rem (12 px).
 //   * the right panel is a flex column whose LIST alone scrolls.
-//   * a coarse pointer gets >= 16 px text inputs and a 44 px row floor.
+//   * a coarse pointer gets >= 16 px text inputs, a 44 px row floor and a
+//     44 px floor on real controls (the -xs adornments excepted).
 //
 // Pure source text, no browser and no npm dependencies: the shipped CSS is read
 // with `fs.readFileSync`, exactly like motion.test.cjs / workbench_motion.test.cjs.
@@ -288,20 +289,34 @@ test("a coarse pointer gets 16px inputs and a 44px row floor", () => {
   assert.equal(inputs.length, 1, "expected ONE input/select/textarea rule");
   assert.equal(values(inputs[0].body)["font-size"], "1rem");
 
-  // Finger targets: the row/nav classes clear var(--touch-target).
-  const rows = leafRules(coarse).filter(rule =>
+  // Finger targets: ONE row/nav floor plus ONE real-control floor, both at
+  // var(--touch-target).
+  const floors = leafRules(coarse).filter(rule =>
     rule.body.includes("min-height: var(--touch-target)"));
+  assert.equal(floors.length, 2, "expected the row floor and the control floor");
+  const rows = floors.filter(rule => rule.selectorText.includes(".workbench-row"));
   assert.equal(rows.length, 1, "expected ONE row-floor rule");
   for (const selector of [
     ".workbench-row",
     ".workbench-history-row > a",
     ".workbench-tab",
     ".project-picker-list .workbench-row",
-    ".assistant-menu-item"
+    ".assistant-menu-item",
+    "#chat-session-list > a"
   ]) {
     assert.ok(rows[0].selectorText.includes(selector),
       `the coarse row floor is missing ${selector}`);
   }
+  // Real controls clear 44px too; `.btn-xs` / `.input-xs` / `.select-xs` are
+  // inline adornments and stay out of it.
+  const controls = floors.filter(rule => rule.selectorText.includes(".btn"));
+  assert.equal(controls.length, 1, "expected ONE real-control floor rule");
+  for (const selector of [".btn", ".btn-sm", ".btn-square", ".input", ".input-sm", ".select", ".select-sm"]) {
+    assert.ok(controls[0].selectorText.includes(selector),
+      `the coarse control floor is missing ${selector}`);
+  }
+  assert.match(controls[0].selectorText, /:not\(\.btn-xs, \.input-xs, \.select-xs\)/,
+    "the control floor must leave the -xs adornments alone");
 
   // ...and the DaisyUI dial reaches 44px default / 35px compact there.
   const dial = values(leafRules(coarse).find(rule => rule.selectors.includes(":root")).body);

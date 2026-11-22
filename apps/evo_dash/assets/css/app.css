@@ -1201,12 +1201,16 @@ button, a, input, textarea, select, summary,
 }
 
 .diff-file-header {
-  @apply sticky top-0 z-10 px-4 py-2 bg-base-200/80 backdrop-blur-sm flex items-center gap-3 text-sm font-mono border-b border-base-200;
+  @apply sticky top-0 z-10 px-4 py-2 bg-base-200/80 backdrop-blur-sm flex items-center gap-3 font-mono border-b border-base-200;
+  font-size: var(--text-xs);
+  line-height: 20px;
 }
 
 /* Diff line layout */
 .diff-line {
-  @apply flex items-center text-xs font-mono leading-[20px];
+  @apply flex items-center font-mono;
+  font-size: var(--text-xs);
+  line-height: 20px;
   min-height: 20px;
 }
 
@@ -1220,6 +1224,7 @@ button, a, input, textarea, select, summary,
 
 .diff-line-content {
   @apply whitespace-pre flex-1;
+  font-size: var(--text-xs);
   line-height: 20px !important;
 }
 
@@ -1322,7 +1327,7 @@ button, a, input, textarea, select, summary,
   grid-template-columns: 50px calc(50% - 50px) 50px calc(50% - 50px);
   width: 100%;
   font-family: monospace;
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
 }
 
 .diff-split-row {
@@ -1388,7 +1393,7 @@ button, a, input, textarea, select, summary,
   color: oklch(0.5 0.18 255 / 0.7);
   padding: 0 8px;
   line-height: 20px;
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
   white-space: pre-wrap;
   word-break: break-all;
 }
