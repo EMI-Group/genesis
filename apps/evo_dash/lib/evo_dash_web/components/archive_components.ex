@@ -135,9 +135,9 @@ defmodule EvoDashWeb.ArchiveComponents do
 
     ~H"""
     <%= if @entries != [] do %>
-      <div class="animate-detail-enter bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+      <div class="animate-detail-enter bg-base-200/30 p-4 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
         <div class="flex items-center justify-between mb-4">
-          <h4 class="text-sm font-bold flex items-center gap-2">
+          <h4 class="text-sm font-semibold flex items-center gap-2">
             <.icon name="hero-archive-box" class="size-4.5 text-primary-standalone" />
             <%!-- zh_CN: Agent → "智能体" --%>{gettext("Archived Agent Details")}
           </h4>
@@ -293,7 +293,7 @@ defmodule EvoDashWeb.ArchiveComponents do
       <div class="p-4 space-y-3">
         <!-- Agent ID + depth badge -->
         <div class="flex items-center gap-2 flex-wrap">
-          <span class="font-bold font-mono text-sm text-base-content">{@agent_id}</span>
+          <span class="font-mono font-bold text-sm text-base-content">{@agent_id}</span>
           <%= if ArchiveHelpers.agent_key(@agent, :depth) do %>
             <span class="badge badge-ghost badge-sm font-mono">{gettext("Depth")}: {ArchiveHelpers.agent_key(
               @agent,
@@ -365,7 +365,7 @@ defmodule EvoDashWeb.ArchiveComponents do
               </p>
             </div>
           <% {:error, _reason} -> %>
-            <div class="flex items-center gap-2 min-w-0">
+            <div class="flex min-h-[var(--row-h-sm)] items-center gap-2 min-w-0">
               <span class="text-xs font-medium text-error truncate min-w-0">
                 {gettext("Could not load this agent's result.")}
               </span>
@@ -379,7 +379,7 @@ defmodule EvoDashWeb.ArchiveComponents do
               </button>
             </div>
           <% :not_loaded -> %>
-            <div>
+            <div class="flex min-h-[var(--row-h-sm)] items-center">
               <button
                 class="btn btn-xs btn-ghost rounded-md"
                 phx-click="load_task_archive_agent_result"
@@ -449,27 +449,27 @@ defmodule EvoDashWeb.ArchiveComponents do
             <div>
               <%!-- zh_CN: Token → "词元" --%>
               <div class="text-xs text-base-content/60">{gettext("Input Tokens")}</div>
-              <div class="text-sm font-semibold">
+              <div class="text-sm font-bold">
                 {format_number(usage[:input_tokens] || 0)}
               </div>
             </div>
             <div>
               <%!-- zh_CN: Token → "词元" --%>
               <div class="text-xs text-base-content/60">{gettext("Output Tokens")}</div>
-              <div class="text-sm font-semibold">
+              <div class="text-sm font-bold">
                 {format_number(usage[:output_tokens] || 0)}
               </div>
             </div>
             <div>
               <%!-- zh_CN: Token → "词元" --%>
               <div class="text-xs text-base-content/60">{gettext("Total Tokens")}</div>
-              <div class="text-sm font-semibold">
+              <div class="text-sm font-bold">
                 {format_number(usage[:total_tokens] || 0)}
               </div>
             </div>
             <div>
               <div class="text-xs text-base-content/60">{gettext("Cost")}</div>
-              <div class="text-sm font-semibold">
+              <div class="text-sm font-bold">
                 ${format_cost(usage[:total_cost] || 0)}
               </div>
             </div>

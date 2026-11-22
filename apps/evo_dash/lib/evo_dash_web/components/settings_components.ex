@@ -316,14 +316,14 @@ defmodule EvoDashWeb.SettingsComponents do
                 <div class="mb-8 rounded-lg border border-base-200 overflow-hidden">
                   <%= case @sandbox_backend do %>
                     <% :systemd_run -> %>
-                      <div class="flex items-start gap-4 p-5 bg-success/5 border-success/20">
+                      <div class="flex items-start gap-4 p-4 bg-success/5 border-success/20">
                         <div class="text-success mt-0.5">
                           <.icon name="hero-check-badge" class="size-5" />
                         </div>
                         <div>
-                          <h3 class="font-bold text-success mb-1 flex items-center gap-2">
+                          <h3 class="font-semibold text-success mb-1 flex items-center gap-2">
                             systemd-run
-                            <span class="badge badge-success badge-sm text-[10px] uppercase tracking-wider font-bold">Active</span>
+                            <span class="badge badge-success badge-sm text-2xs uppercase tracking-wider font-bold">Active</span>
                           </h3>
                           <p class="text-sm font-medium text-success/90 leading-relaxed">
                             <%!-- zh_CN: sandbox → "沙箱" --%>{gettext(
@@ -333,14 +333,14 @@ defmodule EvoDashWeb.SettingsComponents do
                         </div>
                       </div>
                     <% :sandbox_exec -> %>
-                      <div class="flex items-start gap-4 p-5 bg-warning/5 border-warning/20">
+                      <div class="flex items-start gap-4 p-4 bg-warning/5 border-warning/20">
                         <div class="text-warning mt-0.5">
                           <.icon name="hero-shield-exclamation" class="size-5" />
                         </div>
                         <div>
-                          <h3 class="font-bold text-warning mb-1 flex items-center gap-2">
+                          <h3 class="font-semibold text-warning mb-1 flex items-center gap-2">
                             sandbox-exec
-                            <span class="badge badge-warning badge-sm text-[10px] uppercase tracking-wider font-bold">Active</span>
+                            <span class="badge badge-warning badge-sm text-2xs uppercase tracking-wider font-bold">Active</span>
                           </h3>
                           <p class="text-sm font-medium text-warning/90 leading-relaxed">
                             {gettext(
@@ -350,14 +350,14 @@ defmodule EvoDashWeb.SettingsComponents do
                         </div>
                       </div>
                     <% :bwrap -> %>
-                      <div class="flex items-start gap-4 p-5 bg-warning/5 border-warning/20">
+                      <div class="flex items-start gap-4 p-4 bg-warning/5 border-warning/20">
                         <div class="text-warning mt-0.5">
                           <.icon name="hero-shield-exclamation" class="size-5" />
                         </div>
                         <div>
-                          <h3 class="font-bold text-warning mb-1 flex items-center gap-2">
+                          <h3 class="font-semibold text-warning mb-1 flex items-center gap-2">
                             bwrap
-                            <span class="badge badge-warning badge-sm text-[10px] uppercase tracking-wider font-bold">Active</span>
+                            <span class="badge badge-warning badge-sm text-2xs uppercase tracking-wider font-bold">Active</span>
                           </h3>
                           <p class="text-sm font-medium text-warning/90 leading-relaxed">
                             <%!-- zh_CN: 沙箱后端 bwrap：仅文件系统隔离可用，无资源限制/系统调用过滤 --%>{gettext(
@@ -367,14 +367,14 @@ defmodule EvoDashWeb.SettingsComponents do
                         </div>
                       </div>
                     <% _ -> %>
-                      <div class="flex items-start gap-4 p-5 bg-error/5 border-error/20">
+                      <div class="flex items-start gap-4 p-4 bg-error/5 border-error/20">
                         <div class="text-error mt-0.5">
                           <.icon name="hero-x-circle" class="size-5" />
                         </div>
                         <div>
-                          <h3 class="font-bold text-error mb-1 flex items-center gap-2">
+                          <h3 class="font-semibold text-error mb-1 flex items-center gap-2">
                             {gettext("Not Available")}
-                            <span class="badge badge-error badge-sm text-[10px] uppercase tracking-wider font-bold">Disabled</span>
+                            <span class="badge badge-error badge-sm text-2xs uppercase tracking-wider font-bold">Disabled</span>
                           </h3>
                           <p class="text-sm font-medium text-error/90 leading-relaxed">
                             <%!-- zh_CN: sandbox → "沙箱" --%>{gettext(
@@ -409,7 +409,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 <%= if resources_schemas != [] do %>
                   <div class="flex items-center gap-4 mb-6 mt-10">
                     <div class="h-px bg-base-200 flex-1"></div>
-                    <h3 class="text-xs font-black uppercase tracking-widest text-base-content/70">
+                    <h3 class="text-2xs font-semibold uppercase tracking-widest text-base-content/70">
                       {gettext("Resources")}
                     </h3>
                     <div class="h-px bg-base-200 flex-1"></div>
@@ -441,7 +441,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 <%= if process_schemas != [] do %>
                   <div class="flex items-center gap-4 mb-6 mt-10">
                     <div class="h-px bg-base-200 flex-1"></div>
-                    <h3 class="text-xs font-black uppercase tracking-widest text-base-content/70">
+                    <h3 class="text-2xs font-semibold uppercase tracking-widest text-base-content/70">
                       {gettext("Process Limits")}
                     </h3>
                     <div class="h-px bg-base-200 flex-1"></div>
@@ -473,7 +473,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 <%= if linux_schemas != [] do %>
                   <div class="flex items-center gap-4 mb-6 mt-10">
                     <div class="h-px bg-base-200 flex-1"></div>
-                    <h3 class="text-xs font-black uppercase tracking-widest text-base-content/70">
+                    <h3 class="text-2xs font-semibold uppercase tracking-widest text-base-content/70">
                       {gettext("Linux Security")}
                     </h3>
                     <div class="h-px bg-base-200 flex-1"></div>
