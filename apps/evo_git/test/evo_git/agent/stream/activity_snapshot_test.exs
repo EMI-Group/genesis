@@ -151,7 +151,14 @@ defmodule EvoGit.Agent.Stream.ActivitySnapshotTest do
   defp activity(id, text, thinking) do
     %{
       phase: :llm,
-      current_call: %{id: id, turn: 0, attempt: 0, text: text, thinking: thinking}
+      current_call: %{
+        id: id,
+        turn: 0,
+        attempt: 0,
+        text: text,
+        thinking: thinking,
+        checkpointed: false
+      }
     }
   end
 
