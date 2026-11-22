@@ -33,13 +33,13 @@ defmodule EvoDashWeb.NodeSelectorComponent do
           </span>
         </summary>
         <div class={[
-          "dropdown-content z-50 w-72 rounded-xl border border-base-300 bg-base-100/95 backdrop-blur-md shadow-xl p-2",
+          "dropdown-content z-50 w-72 rounded-lg border border-base-300 bg-base-100/95 backdrop-blur-md shadow-xl p-2",
           (@drop_up && "mb-2") || "mt-2"
         ]}>
           <div class="flex flex-col gap-0.5">
             <button
               class={[
-                "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
+                "flex items-center gap-3 w-full px-3 py-2 min-h-[var(--row-h)] rounded-lg text-sm font-medium transition-colors cursor-pointer",
                 is_nil(@current_node_id) && "bg-primary/10 text-primary-standalone",
                 not is_nil(@current_node_id) && "hover:bg-base-200 text-base-content/70"
               ]}
@@ -63,7 +63,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
             <button
               :for={target <- @remote_targets}
               class={[
-                "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
+                "flex items-center gap-3 w-full px-3 py-2 min-h-[var(--row-h)] rounded-lg text-sm font-medium transition-colors cursor-pointer",
                 @current_node_id == target.id && "bg-primary/10 text-primary-standalone",
                 @current_node_id != target.id && "hover:bg-base-200 text-base-content/70"
               ]}
@@ -88,7 +88,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
 
             <.link
               navigate={~p"/settings?category=remote_connections" <> (if @current_node_id, do: "&node=#{@current_node_id}", else: "")}
-              class="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-base-200 text-base-content/70"
+              class="flex items-center gap-3 w-full px-3 py-2 min-h-[var(--row-h)] rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-base-200 text-base-content/70"
             >
               <.icon name="hero-server-stack" class="size-4 shrink-0" />
               <span class="flex-1 text-left">{gettext("Manage Connections...")}</span>
