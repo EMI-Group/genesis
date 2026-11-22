@@ -68,8 +68,8 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
            Tasks feed as the project rows. --%>
         <%= if @sessions != [] do %>
           <%!-- Sessions group header --%>
-          <div class="px-3 pt-2 pb-1 first:pt-0">
-            <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/70 sidebar-label">
+          <div class="workbench-task-group-header">
+            <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/60 sidebar-label">
               <%!-- zh_CN: 会话 — 指可交互的智能体会话（等待用户输入），不是一次性任务 --%>
               <.icon name="hero-chat-bubble-left-right" class="w-3 h-3 shrink-0" />
               {gettext("Sessions")}
@@ -81,8 +81,8 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
         <% end %>
         <%= for {project_name, rows} <- @groups do %>
           <%!-- Project group header --%>
-          <div class="px-3 pt-2 pb-1 first:pt-0">
-            <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/70 sidebar-label">
+          <div class="workbench-task-group-header">
+            <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/60 sidebar-label">
               <.icon name="hero-folder" class="w-3 h-3 shrink-0" />
               {project_name}
             </span>

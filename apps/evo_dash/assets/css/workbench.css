@@ -180,11 +180,27 @@
 .workbench-create-menu > .workbench-row { min-height: var(--row-h-sm); cursor: pointer; }
 
 .workbench-sidebar-nav { display: flex; flex-direction: column; scrollbar-gutter: stable; }
-.workbench-sidebar-utilities { margin-top: auto; padding-top: 1rem; }
+/* The always-visible destination block (Agents/Tasks/Processes/System) plus the
+   Conversations disclosure: one group, separated from the shortcuts above by a
+   hairline so the four direct links read as a set instead of loose rows. */
+.workbench-sidebar-utilities {
+  display: flex;
+  flex-direction: column;
+  gap: .1rem;
+  margin-top: auto;
+  padding-top: .85rem;
+  border-block-start: 1px solid var(--color-base-300);
+}
 .workbench-tools > summary { padding: .5rem .75rem; color: var(--workbench-text-muted); }
 .workbench-tools > summary::-webkit-details-marker { display: none; }
 .workbench-tools .workbench-row, .workbench-icon-button, .workbench-tab-close,
 .workbench-dialog button, .workbench-segmented button { cursor: pointer; }
+
+/* A per-project group label in the Active Tasks list: muted micro-type that is
+   separated from the first task row of its group by real padding, so the label
+   never borders the row below it. */
+.workbench-task-group-header { padding: .6rem .75rem .4rem; }
+.workbench-task-group-header:first-child { padding-block-start: .15rem; }
 
 .workbench-section-heading {
   display: flex;
@@ -217,12 +233,34 @@
 }
 
 #sidebar[data-sidebar-collapsed="true"] #workbench-projects { display: none; }
+/* The shortcut list is a titled LIST: a hairline plus real gaps separate the
+   section heading from the first row and every row from the next one, so a
+   project name never fuses with the row below it. */
 .workbench-project-list {
   display: grid;
-  gap: .3rem;
-  padding-block-start: .15rem;
+  gap: .45rem;
+  margin-block-start: .4rem;
+  padding-block-start: .5rem;
+  border-block-start: 1px solid var(--color-base-300);
 }
-.workbench-project-link { min-height: var(--row-h); }
+.workbench-project-entry { display: block; min-width: 0; }
+.workbench-project-heading { display: flex; min-width: 0; }
+.workbench-project-link {
+  min-height: var(--row-h-tall);
+  padding-block: .4rem;
+}
+/* A recent project is a TITLE, never a sub-label of the tasks under it: same
+   ladder step as a task label, one weight step stronger, full-strength ink.
+   The host badge beside it stays muted micro-type (`.workbench-project-server`). */
+.workbench-project-name {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-base-content);
+}
+.workbench-project-link.is-current .workbench-project-name {
+  font-weight: 600;
+  color: inherit;
+}
 .workbench-project-server {
   flex: 0 1 auto;
   min-width: 0;
@@ -445,7 +483,9 @@
 @media (max-width: 1023.98px) {
   #sidebar-mobile-toggle[aria-expanded="true"] { visibility: hidden; }
   #sidebar #sidebar-mobile-close { display: inline-flex; inline-size: var(--touch-target); block-size: var(--touch-target); }
-  .workbench-project-link { min-height: var(--touch-target); }
+  /* The shortcut row is already `--row-h-tall`; never let the coarse-pointer
+     floor collapse it back down. */
+  .workbench-project-link { min-height: max(var(--touch-target), var(--row-h-tall)); }
 }
 .workbench-project-actions {
   display: flex;

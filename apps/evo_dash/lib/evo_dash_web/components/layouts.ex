@@ -231,8 +231,9 @@ defmodule EvoDashWeb.Layouts do
 
         <%!-- Navigation Links --%>
         <nav class="workbench-sidebar-nav flex-1 px-2 py-2 overflow-y-auto">
-          <%!-- Active Tasks — a first-class section, never nested in Tools, so a
-             running task stays reachable from every sidebar page. --%>
+          <%!-- Active Tasks — a first-class section, never nested in a
+             disclosure, so a running task stays reachable from every sidebar
+             page. --%>
           <EvoDashWeb.WorkbenchActiveTasks.active_tasks
             running_tasks={@running_tasks}
             pending_tasks={@pending_tasks}
@@ -254,6 +255,33 @@ defmodule EvoDashWeb.Layouts do
             project={@workbench_project}
           />
           <div class="workbench-sidebar-utilities">
+            <%!-- The four destinations are always visible: four rows do not earn
+               a disclosure, and a collapsed disclosure would hide the only route
+               to Tasks/Processes/System. The label hides in the collapsed rail
+               (`.sidebar-label`), the icons stay. --%>
+            <.sidebar_nav_link
+              navigate={with_node_param(~p"/agents", @current_node_id)}
+              current={@current_page == :agents}
+              icon="hero-server"
+            >{gettext("Agents")}</.sidebar_nav_link>
+            <.sidebar_nav_link
+              navigate={with_node_param(~p"/tasks", @current_node_id)}
+              current={@current_page == :tasks}
+              icon="hero-clipboard-document-list"
+            >{gettext("Tasks")}</.sidebar_nav_link>
+            <%!-- zh_CN: "进程" — 指 Genesis 跟踪的操作系统进程（智能体工具调用与后台任务），不是 Erlang 进程 --%>
+            <.sidebar_nav_link
+              navigate={with_node_param(current_page(:processes), @current_node_id)}
+              current={@current_page == :processes}
+              icon="hero-cpu-chip"
+              data_nav="processes"
+            ><span class="sidebar-label">{gettext("Processes")}</span></.sidebar_nav_link>
+            <.sidebar_nav_link
+              navigate={with_node_param(~p"/system", @current_node_id)}
+              current={@current_page == :system}
+              icon="hero-server-stack"
+              notification={update_status_notification(@update_status)}
+            >{gettext("System")}</.sidebar_nav_link>
             <%!-- `motion-disclosure` + the DisclosureMotion hook smooth BOTH
                directions: a native <details> snaps open and shut, and the hook
                only defers the `open` removal so motion.css can play the exit.
@@ -261,47 +289,6 @@ defmodule EvoDashWeb.Layouts do
                rotation (motion.css has no rule for it, and the global
                reduced-motion backstop already neutralizes the transition).
                The id is required by LiveView on any element carrying phx-hook. --%>
-            <details
-              id="workbench-tools"
-              class="workbench-tools motion-disclosure group"
-              phx-hook="DisclosureMotion"
-              open={
-                is_nil(@workbench_task) and
-                  @current_page in [:agents, :tasks, :processes, :settings, :system]
-              }
-            >
-              <summary class="workbench-row">
-                <.icon name="hero-ellipsis-horizontal" class="size-5 shrink-0" />
-                <span class="sidebar-label text-sm font-medium">{gettext("Tools")}</span>
-                <.icon
-                  name="hero-chevron-right"
-                  class="ml-auto size-3.5 shrink-0 text-base-content/50 transition-transform duration-[var(--motion-base)] ease-[var(--motion-ease-out)] group-open:rotate-90"
-                />
-              </summary>
-              <.sidebar_nav_link
-                navigate={with_node_param(~p"/agents", @current_node_id)}
-                current={@current_page == :agents}
-                icon="hero-server"
-              >{gettext("Agents")}</.sidebar_nav_link>
-              <.sidebar_nav_link
-                navigate={with_node_param(~p"/tasks", @current_node_id)}
-                current={@current_page == :tasks}
-                icon="hero-clipboard-document-list"
-              >{gettext("Tasks")}</.sidebar_nav_link>
-              <%!-- zh_CN: "进程" — 指 Genesis 跟踪的操作系统进程（智能体工具调用与后台任务），不是 Erlang 进程 --%>
-              <.sidebar_nav_link
-                navigate={with_node_param(current_page(:processes), @current_node_id)}
-                current={@current_page == :processes}
-                icon="hero-cpu-chip"
-                data_nav="processes"
-              ><span class="sidebar-label">{gettext("Processes")}</span></.sidebar_nav_link>
-              <.sidebar_nav_link
-                navigate={with_node_param(~p"/system", @current_node_id)}
-                current={@current_page == :system}
-                icon="hero-server-stack"
-                notification={update_status_notification(@update_status)}
-              >{gettext("System")}</.sidebar_nav_link>
-            </details>
             <details
               id="workbench-conversations"
               class="workbench-tools motion-disclosure group"

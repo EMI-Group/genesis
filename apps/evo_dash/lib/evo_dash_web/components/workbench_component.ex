@@ -366,8 +366,8 @@ defmodule EvoDashWeb.WorkbenchComponent do
               data-workbench-project-name={project.name}
               data-workbench-node={host.id || ""}
             >
-              <.icon name="hero-folder" class="size-4 shrink-0" />
-              <span class="min-w-0 truncate text-sm">{project.name}</span>
+              <.icon name="hero-folder" class="size-4 shrink-0 text-base-content/50" />
+              <span class="workbench-project-name min-w-0 truncate">{project.name}</span>
               <span class="workbench-project-server" title={host.name}>{host.name}</span>
             </.link>
           </div>

@@ -542,11 +542,11 @@ defmodule EvoDashWeb.LayoutsTest do
   end
 
   describe "app/1 — Active Tasks is a first-class sidebar section" do
-    # Active Tasks is its OWN sidebar section, never a child of the Tools (or
-    # Conversations) disclosure: a running task stays reachable from every
-    # sidebar page. Asserted structurally (ancestor walk), because "the text
-    # appears somewhere" would also pass for a nested Tools row.
-    test "sits in the sidebar nav, outside the Tools, Conversations and utilities" do
+    # Active Tasks is its OWN sidebar section, never a child of a disclosure: a
+    # running task stays reachable from every sidebar page. Asserted
+    # structurally (ancestor walk), because "the text appears somewhere" would
+    # also pass for a row nested inside the Conversations disclosure.
+    test "sits in the sidebar nav, outside every disclosure and the utilities" do
       html =
         render_app(
           current_page: :dashboard,
@@ -572,7 +572,7 @@ defmodule EvoDashWeb.LayoutsTest do
 
       ancestors = ancestors_where(tree, &has_id?(&1, "workbench-active-tasks"))
 
-      refute Enum.any?(ancestors, &tools_details?/1)
+      refute Enum.any?(ancestors, &match?({"details", _, _}, &1))
       refute Enum.any?(ancestors, &has_id?(&1, "workbench-conversations"))
       refute Enum.any?(ancestors, &has_class?(&1, "workbench-sidebar-utilities"))
 
@@ -587,11 +587,29 @@ defmodule EvoDashWeb.LayoutsTest do
       assert has_id?(projects, "workbench-projects")
       assert has_class?(utilities, "workbench-sidebar-utilities")
 
-      # Tools (Agents/Tasks/Processes/System) AND Conversations live inside the
-      # utilities wrapper, i.e. BELOW the shortcuts.
-      assert [tools, conversations] = element_children(utilities)
-      assert tools_details?(tools)
-      assert Floki.find(tools, "a[href='/tasks']") != []
+      # The four destinations are ALWAYS-VISIBLE direct links inside the
+      # utilities wrapper — no disclosure, no summary, no caret, no open state —
+      # followed by the Conversations disclosure as the wrapper's last child.
+      assert [agents, tasks, processes, system, conversations] = element_children(utilities)
+      assert [agents, tasks, processes, system] |> Enum.all?(&match?({"a", _, _}, &1))
+      assert Floki.attribute(agents, "href") == ["/agents"]
+      assert Floki.attribute(tasks, "href") == ["/tasks"]
+      assert Floki.attribute(processes, "href") == ["/processes"]
+      assert Floki.attribute(system, "href") == ["/system"]
+      assert Floki.attribute(processes, "data-nav") == ["processes"]
+      assert contains?(processes, ".hero-cpu-chip")
+
+      # The icons stay visible in the collapsed rail while the labels hide:
+      # every direct link carries BOTH an icon and a `.sidebar-label` span.
+      for link <- [agents, tasks, processes, system] do
+        assert [icon] = Floki.find(link, "span[class^='hero-']")
+        assert contains?(link, "span.sidebar-label")
+        assert Floki.attribute(icon, "class") != []
+      end
+
+      # The old Tools disclosure is GONE — no element carries that id.
+      assert Floki.find(tree, "#workbench-tools") == []
+
       assert has_id?(conversations, "workbench-conversations")
       assert contains?(conversations, "#chat-session-list")
 
@@ -603,6 +621,14 @@ defmodule EvoDashWeb.LayoutsTest do
 
       assert Enum.find_index(aside_children, &(&1 == brand)) <
                Enum.find_index(aside_children, &(&1 == nav))
+    end
+
+    test "the System direct link keeps its update notification dot" do
+      html = render_app(current_page: :dashboard, update_status: %{phase: :available})
+      tree = parse(html)
+
+      assert [system] = Floki.find(tree, ".workbench-sidebar-utilities > a[href='/system']")
+      assert [_dot] = Floki.find(system, "span.bg-warning")
     end
   end
 
@@ -624,9 +650,9 @@ defmodule EvoDashWeb.LayoutsTest do
       assert Floki.attribute(section, "aria-label") == ["Recent projects"]
       assert Floki.attribute(section, "data-workbench-projects-loading") == ["false"]
 
-      # Shortcuts are first-class: not nested in the utilities disclosures.
+      # Shortcuts are first-class: not nested in a disclosure or the utilities.
       ancestors = ancestors_where(tree, &has_id?(&1, "workbench-projects"))
-      refute Enum.any?(ancestors, &tools_details?/1)
+      refute Enum.any?(ancestors, &match?({"details", _, _}, &1))
       refute Enum.any?(ancestors, &has_id?(&1, "workbench-conversations"))
       refute Enum.any?(ancestors, &has_class?(&1, "workbench-sidebar-utilities"))
 
@@ -1125,7 +1151,7 @@ defmodule EvoDashWeb.LayoutsTest do
 
   # Ancestor chain (root first) of the FIRST node matching `fun`, found by an
   # explicit tree walk because Floki exposes no parent accessor. This is what
-  # turns "not nested in Tools" into a structural claim instead of a text check.
+  # turns "not nested in a disclosure" into a structural claim instead of a text check.
   defp ancestors_where(tree, fun) do
     case walk_to_match(tree, fun, []) do
       {:ok, ancestors} -> ancestors
@@ -1169,14 +1195,6 @@ defmodule EvoDashWeb.LayoutsTest do
   end
 
   defp sidebar_aside?(node), do: match?({"aside", _, _}, node) and has_id?(node, "sidebar")
-
-  # The Tools `<details>`: the `.workbench-tools` disclosure that owns the
-  # Agents/Tasks/Processes/System links. The Conversations disclosure carries
-  # the same class, so it is identified by its own id and by having no links.
-  defp tools_details?(node) do
-    match?({"details", _, _}, node) and has_class?(node, "workbench-tools") and
-      contains?(node, "a[href^='/agents']")
-  end
 
   # Task labels in sidebar order (the truncated label span inside each link).
   defp sidebar_task_labels(html) do
