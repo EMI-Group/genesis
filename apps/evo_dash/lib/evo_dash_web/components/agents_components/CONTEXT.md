@@ -181,6 +181,6 @@ The `CommitGraph` hook (see `assets/js/hooks/commit_graph.js`) owns three behavi
 
 ## Narrow-width (mobile) — agent-tree indent
 
-`path_tree/1`'s per-level agents-row wrapper carries `pl-7 xl:pl-0`.
+`path_tree/1`'s per-level agents-row wrapper carries the LOGICAL `ps-7 xl:ps-0` (not `pl-7 xl:pl-0`).
 Below `xl` the row stacks (`flex-col`), and the 28px indent (folder icon `size-5` + `gap-2`) puts the first agent box and every wrapped line exactly at that level's directory-text left edge, clear of the children trunk (`absolute left-2.5`).
 Do NOT remove the indent — wrapped boxes overlap the trunk on mobile; `xl:pl-0` keeps the desktop two-column layout byte-identical.
