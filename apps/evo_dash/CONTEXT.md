@@ -1,3 +1,7 @@
+---
+skill:
+  - ui-density
+---
 # EvoDash — Phoenix LiveView Dashboard
 
 ## Intent
