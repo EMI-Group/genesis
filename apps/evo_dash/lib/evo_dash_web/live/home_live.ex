@@ -149,7 +149,7 @@ defmodule EvoDashWeb.HomeLive do
             <button
               type="button"
               phx-click="retry_chat_stream"
-              class="btn btn-ghost btn-xs"
+              class="btn btn-ghost btn-sm"
             >
               {gettext("Retry")}
             </button>
@@ -218,7 +218,7 @@ defmodule EvoDashWeb.HomeLive do
                 <button
                   type="button"
                   data-enable-notifications
-                  class="btn btn-ghost btn-xs btn-square"
+                  class="btn btn-ghost btn-sm btn-square"
                   aria-label={gettext("Enable notifications")}
                   title={gettext("Enable notifications")}
                 >
@@ -228,7 +228,7 @@ defmodule EvoDashWeb.HomeLive do
                   data-notification-status
                   role="status"
                   aria-label={gettext("Notification permission status")}
-                  class="max-w-16 truncate text-[10px] text-base-content/60 sm:max-w-24"
+                  class="max-w-16 truncate text-2xs text-base-content/60 sm:max-w-24"
                 >
                   {gettext("Notifications not enabled")}
                 </span>
@@ -241,10 +241,11 @@ defmodule EvoDashWeb.HomeLive do
           <!-- Interrupt affordance: sits with the composer while a turn runs.
              It NEVER halts a chunk — the draft is delivered at the next turn
              boundary (gettext("Send now (interrupt turn)")). The slot keeps a
-             CONSTANT height so the affordance disappearing at the end of a turn
-             cannot reflow the column. -->
+             CONSTANT height (32 px — the compact control height, so the
+             `btn-sm` interrupt button fits) so the affordance disappearing at
+             the end of a turn cannot reflow the column. -->
           <div class={[
-            "shrink-0 flex h-7 items-center justify-between gap-2 px-3 sm:px-4",
+            "shrink-0 flex h-8 items-center justify-between gap-2 px-3 sm:px-4",
             @transcript == [] and @pending_approvals == [] and "hidden!"
           ]}>
             <div class="min-w-0 flex-1">

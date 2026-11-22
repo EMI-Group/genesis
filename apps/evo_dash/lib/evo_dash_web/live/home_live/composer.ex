@@ -202,11 +202,11 @@ defmodule EvoDashWeb.HomeLive.Composer do
       phx-remove={
         JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})
       }
-      class="btn btn-ghost btn-xs shrink-0 gap-1 rounded-full text-base-content/80"
+      class="btn btn-ghost btn-sm shrink-0 gap-1 rounded-full text-base-content/80"
     >
       <.icon name="hero-bolt" class="size-3.5" />
       <%!-- zh_CN: 立即发送：把草稿插到下一条消息，当前回合跑完才生效，不会中途打断 --%>
-      <span class="text-[11px]">{gettext("Queue for the next turn")}</span>
+      <span class="text-xs">{gettext("Queue for the next turn")}</span>
     </button>
     """
   end
@@ -241,7 +241,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
       <span
         :for={{name, index} <- @chip_entries}
         id={"chat-attachment-#{index}"}
-        class="inline-flex max-w-[14rem] items-center gap-1 rounded-full border border-base-300 bg-base-200/60 px-2 py-0.5 text-[11px] text-base-content/80"
+        class="inline-flex max-w-[14rem] items-center gap-1 rounded-full border border-base-300 bg-base-200/60 px-2 py-0.5 text-2xs text-base-content/80"
       >
         <span class="min-w-0 truncate">{name}</span>
         <button
@@ -255,7 +255,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
           <.icon name="hero-x-mark" class="size-3" />
         </button>
       </span>
-      <span class="text-[11px] text-base-content/50">
+      <span class="text-xs text-base-content/50">
         <%!-- zh_CN: 附件数量 / 上限 --%>{gettext("%{count}/%{max} attachments",
           count: @chip_count,
           max: @chip_max
@@ -331,7 +331,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
             <.icon name="hero-arrow-up-tray" class="size-4" />
             <span>{gettext("Upload files from this computer")}</span>
           </button>
-          <p class="px-3 pb-2 text-[11px] text-base-content/50">
+          <p class="px-3 pb-2 text-xs text-base-content/50">
             {gettext("Up to 4 files, 15 MiB each. Text, PDF, Word, images and audio.")}
           </p>
           <details
@@ -458,7 +458,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
         }
       >
         <p class="whitespace-pre-wrap break-words">{echo.text}</p>
-        <p class="mt-0.5 text-[11px] text-base-content/50">
+        <p class="mt-0.5 text-xs text-base-content/50">
           <%!-- zh_CN: 已排队——会在下一回合开始前发送 --%>{gettext(
             "Queued — sent at the next turn boundary"
           )}

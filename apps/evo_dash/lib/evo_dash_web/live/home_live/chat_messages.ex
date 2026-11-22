@@ -119,7 +119,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
       <h2 class="text-xl sm:text-2xl font-semibold tracking-tight text-base-content">
         {gettext("This session has ended.")}
       </h2>
-      <p class="max-w-md text-sm leading-relaxed text-base-content/70">
+      <p class="max-w-md text-xs leading-relaxed text-base-content/70">
         {gettext("Start a new chat to continue.")}
       </p>
       <button

@@ -66,7 +66,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
           id="approval-review-button"
           type="button"
           phx-click="open_approval_dialog"
-          class="btn btn-warning btn-xs shrink-0"
+          class="btn btn-warning btn-sm shrink-0"
         >
           {gettext("Review")}
         </button>
@@ -85,7 +85,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
           type="button"
           phx-click="retry_approvals"
           disabled={@approval_recovering}
-          class="btn btn-warning btn-xs shrink-0"
+          class="btn btn-warning btn-sm shrink-0"
         >
           {gettext("Retry approvals")}
         </button>
@@ -156,12 +156,12 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
         data-dialog-return-focus="approval-review-button"
       >
         <div class="modal-box w-11/12 max-w-2xl overflow-hidden p-0">
-          <header class="flex items-start gap-3 border-b border-base-300 px-5 py-3.5">
+          <header class="flex items-start gap-3 border-b border-base-300 px-5 py-3 sm:px-6">
             <span class={"mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full " <> badge_class(@request)}>
               <.icon name={icon_name(@request)} class={"size-4 " <> icon_class(@request)} />
             </span>
             <div class="min-w-0 flex-1">
-              <p class="text-[11px] font-semibold uppercase tracking-wide text-base-content/50">
+              <p class="text-2xs font-semibold uppercase tracking-wide text-base-content/50">
                 {gettext("Approval required")}
               </p>
               <h2
@@ -191,7 +191,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
             </button>
           </header>
 
-          <div class="max-h-[min(60vh,32rem)] overflow-y-auto overscroll-contain px-5 py-4 scrollbar-thin">
+          <div class="max-h-[min(60vh,32rem)] overflow-y-auto overscroll-contain px-5 py-4 scrollbar-thin sm:px-6">
             <p id="approval-dialog-summary" class="text-sm font-medium leading-snug text-base-content">
               {summary_text(@request)}
             </p>
@@ -284,7 +284,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
             <% end %>
           </div>
 
-          <div aria-live="polite" aria-atomic="true" class="px-5">
+          <div aria-live="polite" aria-atomic="true" class="px-5 sm:px-6">
             <%= if @busy do %>
               <p id="approval-dialog-busy" role="status" class="pb-3 text-xs text-base-content/70">
                 {gettext("Sending your decision…")}
@@ -297,7 +297,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
             <% end %>
           </div>
 
-          <footer class="flex flex-wrap items-center gap-2 border-t border-base-300 px-5 py-3">
+          <footer class="flex flex-wrap items-center gap-2 border-t border-base-300 px-5 py-3 sm:px-6">
             <%= if @count > 1 do %>
               <div class="flex items-center gap-1">
                 <button

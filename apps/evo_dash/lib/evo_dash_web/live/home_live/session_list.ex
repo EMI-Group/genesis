@@ -442,7 +442,7 @@ defmodule EvoDashWeb.HomeLive.SessionList do
           aria-current={if row.id == assigns[:current_session_id], do: "page", else: nil}
           title={row.title}
           class={[
-            "flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-colors group",
+            "flex min-h-[var(--row-h)] items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors group",
             if(row.id == assigns[:current_session_id],
               do: "bg-primary/10 text-primary-standalone",
               else: "text-base-content/80 hover:bg-base-300/70 hover:text-base-content"

@@ -110,7 +110,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
               :if={entry_text(@entry) != ""}
               phx-no-format
               data-disconnected-partial
-              class="whitespace-pre-wrap break-words text-[15px] leading-relaxed"
+              class="whitespace-pre-wrap break-words text-base leading-relaxed"
             >{entry_text(@entry)}</p>
           <% else %>
             <%= if streaming?(@entry) and entry_text(@entry) == "" do %>
@@ -139,7 +139,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                  after finalization, so only the inner node is replaced when a
                  turn ends — the block's own line-box metrics never change, so
                  the transcript column cannot resize mid-stream or at turn end. -->
-              <div class="py-2 text-[15px] leading-relaxed break-words text-base-content">
+              <div class="py-2 text-base leading-relaxed break-words text-base-content">
                 <%= if streaming?(@entry) do %>
                   <!-- In-progress stream: raw partial text + blinking caret.
                      Streaming text is NEVER markdown-rendered (a half-rendered
@@ -176,7 +176,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                        (see Transcript.with_html/1), so a transcript re-render
                        on every ~75 ms delta batch never re-parses Markdown;
                        the fallback keeps hand-built entries working. -->
-                    <div class="motion-panel motion-panel-open md-content min-w-0 break-words text-[15px] leading-relaxed text-base-content">
+                    <div class="motion-panel motion-panel-open md-content min-w-0 break-words text-base leading-relaxed text-base-content">
                       {raw(rendered_html(@entry))}
                     </div>
                   <% end %>
@@ -259,7 +259,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
           </div>
           <%= if stream_meta?(@stream_meta) do %>
             <%!-- zh_CN: 这两个是气泡下方的短数字标签（第 N 轮 / N 个 token），供翻译者参考 --%>
-            <div class="mt-1 flex items-center gap-2 font-mono text-[11px] text-base-content/50">
+            <div class="mt-1 flex items-center gap-2 font-mono text-xs text-base-content/50">
               <%= if is_integer(Map.get(@stream_meta, :turn)) do %>
                 <span>{gettext("Turn %{turn}", turn: Map.get(@stream_meta, :turn))}</span>
               <% end %>
