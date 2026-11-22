@@ -127,10 +127,10 @@ A scroller never gets `scroll-behavior: smooth`, and it keeps `overscroll-behavi
 | `/tasks` | `h1 text-xl`; filter bar `p-3 sm:p-4`; card `p-4 gap-4`; title `text-base`; meta `text-xs` (never smaller); actions `btn-sm`, coarse 44 px. |
 | `/agents` | Page `h1 text-xl`; tree rows 32–36 px, lane chips `text-2xs`, commit rows keep 44 px; inspector body 14 px, mono 13 px; panels `p-4`; coarse-pointer rows 44 px. |
 | `/processes` | Page `h1 text-xl`; row min-height 40 px desktop / 44 px coarse; command `text-sm`, meta `text-xs`; expand control and square actions ≥ 36 px (44 px coarse). |
-| `/projects` workbench | Composer unchanged in character (`text-base`, 16 px radius); capsule trigger + send 36 px desktop / 44 px coarse; panel rows `--row-h-sm`; palette rows 40 px. |
+| `/projects` workbench | Composer unchanged in character (`text-base`, 16 px radius); capsule trigger + send 36 px desktop / 44 px coarse; panel rows 40 px (`--row-h`), file-tree/picker rows 36 px (`--row-h-sm`). |
 | `/assistant` | Reading body stays 15 px / 1.6; sidebar rows 40 px (`--row-h`), 44 px coarse; composer 16 px; actions 32 px desktop / 44 px coarse; no `btn-xs` for interrupt/approve. |
 | `/review/:task_id` | Header card `p-4 sm:p-5`; tabs 40 px; file-tree rows 32 px (44 coarse); diff mono 13 px / 20 px line; commit rows keep 48 px. |
-| Left sidebar | Nav links 40 px (`px-3 py-2 text-sm`); `.workbench-row` 36 px / 13→14 px label; active-task rows 44–56 px; all nav rows 44 px coarse. |
+| Left sidebar | Nav links 40 px (`px-3 py-2 text-sm`); `.workbench-row` 40 px / 14 px label (36 px only for the settings-group, project-picker and Create-menu lists); active-task rows 44–56 px; all nav rows 44 px coarse. |
 | `/welcome` | Column `max-w-3xl`; `space-y-5`; controls 40 px default (`btn`/`input`), `btn-sm` only for secondary; step bodies `space-y-4`. |
 
 ## Rules for agents
