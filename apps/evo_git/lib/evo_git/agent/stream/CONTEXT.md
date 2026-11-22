@@ -37,16 +37,20 @@ The handoff consumes no sequence number and never publishes the full transcript 
 `Activity.new/0` returns `%{phase: :idle, current_call: nil}`.
 `Activity.apply(activity, event)` returns `{new_activity, public_events}` with no process, timer, publication or replay state.
 Valid phases are `:idle`, `:llm_waiting`, `:llm`, `:llm_complete`, `:retry_wait`, `:tools`, `:compressing` and `:preparing`.
-`{:start_call, id, turn, attempt}` replaces the call with `%{id: id, turn: turn, attempt: attempt, text: "", thinking: ""}` and sets `:llm_waiting`.
-`{:call_phase, id, phase}` changes only a matching current call, clearing it for `:retry_wait`, `:idle`, `:compressing` or `:preparing` and retaining it for `:llm_waiting`, `:llm`, `:llm_complete` and `:tools`.
+`{:start_call, id, turn, attempt}` replaces the call with `%{id: id, turn: turn, attempt: attempt, text: "", thinking: "", checkpointed: false}` and sets `:llm_waiting`.
+`{:call_phase, id, phase}` changes only a matching current call, clearing it for `:retry_wait`, `:idle`, `:compressing` or `:preparing` and retaining it — `checkpointed` included — for `:llm_waiting`, `:llm`, `:llm_complete` and `:tools`.
 `{:phase, phase}` changes the phase and preserves the current call except that `:idle`, `:compressing` and `:preparing` clear it.
+`{:call_checkpointed, id}` flips `checkpointed` to `true` on the MATCHING current call only and emits ONE `{:activity, new_projection}` replacement event.
+An already-marked call, a call already retired and a stale id are no-ops that publish nothing, so applying the marker twice is idempotent.
 `:compressing` and `:preparing` are non-call phases: they describe work outside an LLM request, so they retire the call exactly like `:idle`, and a late `{:call_phase, old_id, _}` or `{:chunk, old_id, …}` after that retirement is an ordinary no-op because no current call remains.
 `:reset` replaces the projection with idle and no call.
 Start, valid phase and reset events emit `{:activity, new_projection}` replacement public events.
-`{:chunk, id, :text | :thinking, binary}` appends only to the matching current call and emits the existing `{:text | :thinking, binary}` public append event, not a replacement.
+`{:chunk, id, :text | :thinking, binary}` appends only to the matching current call, PRESERVES its `checkpointed` marker, and emits the existing `{:text | :thinking, binary}` public append event, not a replacement.
 Stale call identities, invalid phases, malformed chunks and unknown events are no-ops.
 Start-call validation checks only that the id is binary, not that it is nonempty or that turn/attempt are nonnegative integers; matching chunks are accepted in every phase while a current call remains, including `:llm_complete` and `:tools`.
 Unkeyed `{:phase, phase}` and `:reset` events have no call-id validation, so stale-worker rejection belongs to the session rather than this projection.
+`current_call.checkpointed` is the ONE authoritative "this live call is already in the checkpointed transcript" signal a consumer renders against: `false` for a fresh call, `true` only after an explicit `{:call_checkpointed, id}`, never inferred from content, turn or bytes.
+The session raises it when the batch-START checkpoint is adopted (see `../session/CONTEXT.md`), and every retirement path (`:reset`, a fresh call id, `:retry_wait`/`:idle`/`:compressing`/`:preparing`) clears it by retiring the call.
 Retained call text and thinking cover one current attempt only, never a replay of earlier attempts.
 
 ### Sink
@@ -81,10 +85,11 @@ Once the pending batch settles, no flush timer remains; there is no idle TTL or 
 
 ## Activity Timeline — every busy window has a name
 
-`Activity.t()` carries NO timestamp — only `%{phase: …, current_call: %{id, turn, attempt, text, thinking} | nil}` — so a consumer cannot distinguish a fresh `:idle` from a 60-second-old one and must not invent a staleness rule.
+`Activity.t()` carries NO timestamp — only `%{phase: …, current_call: %{id, turn, attempt, text, thinking, checkpointed} | nil}` — so a consumer cannot distinguish a fresh `:idle` from a 60-second-old one and must not invent a staleness rule.
 The session's initial `data.activity` is `Activity.new/0`, and a crash-retry wait publishes `:retry_wait` from the start task through the session (accepted only from the current start task), so a consumer attached during `:starting` can observe `:retry_wait` rather than a stale `:idle`.
-Per-turn publication sequence: `:idle` at `Sink.start_turn/1` → `:preparing` published in `EvoGit.Agent.ToolDispatch.do_turn/6` immediately after that reset and BEFORE the synchronous `EvoGit.Agent.Session.Worker.boundary(state, :llm)` gate → `:llm_waiting` at `Sink.start_call/1` → `:llm` INSIDE `with_llm_slot/2` and before `ReqLLM.stream_text/3` → `:llm_complete` → the batch-start checkpoint keeps it (`pending_tool_batch != nil`) → `:tools` → `:llm_complete` → the boundary checkpoint RESETS it to `:idle`.
+Per-turn publication sequence: `:idle` at `Sink.start_turn/1` → `:preparing` published in `EvoGit.Agent.ToolDispatch.do_turn/6` immediately after that reset and BEFORE the synchronous `EvoGit.Agent.Session.Worker.boundary(state, :llm)` gate → `:llm_waiting` at `Sink.start_call/1` → `:llm` INSIDE `with_llm_slot/2` and before `ReqLLM.stream_text/3` → `:llm_complete` → the batch-start checkpoint keeps it (`pending_tool_batch != nil`) and marks it `checkpointed: true` → `:tools` → `:llm_complete` → the boundary checkpoint RESETS it to `:idle`.
 That reset is `keep_activity?/2` comparing `current_call.turn` with the adopted `state.turn`: `advance_turn_context/2` makes the state turn `current_call.turn + 1`, so every post-BATCH and post-FINISH checkpoint resets.
+The batch-start adoption is also where the retained call is marked `checkpointed: true`, because the assistant message it describes is already in that adopted transcript.
 At the TOP of the NEXT loop iteration `EvoGit.Agent.ContextCompression.compress_if_needed/2` publishes `:compressing`, but ONLY when the window-relative `Threshold.exceeded?/2` gate opens; it covers stage-1 model-free pruning and the whole stage-2 summarising call, including that call's slot wait and its retries.
 That same iteration then publishes `:preparing` at the top of `EvoGit.Agent.Exchange.continue_loop/3`, which covers the pending-input drain, the background-job notices, the cancel-grace check and the pause probe.
 The cycle then repeats: `:idle` (the next `start_turn` reset) → `:preparing` → `:llm_waiting`.

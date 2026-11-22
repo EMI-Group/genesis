@@ -12,6 +12,7 @@ defmodule EvoGit.Agent.Session.ActivityProjectionTest do
 
   alias EvoGit.Agent.Session.Summary
   alias EvoGit.Agent.Stream.Activity
+  alias EvoGit.Agent.ToolBatch
 
   @deadline 30_000
 
@@ -190,6 +191,89 @@ defmodule EvoGit.Agent.Session.ActivityProjectionTest do
       refute Map.has_key?(summary, :activity)
       refute Map.has_key?(summary, :context)
     end
+  end
+
+  test "adopting a batch-start checkpoint marks the retained live call checkpointed and announces it",
+       fixture do
+    {session, worker, _context} = parked_session(fixture)
+    agent_id = fixture.agent_id
+    {call_id, callbacks} = begin_call(worker, 1)
+    assert {:ok, _, 0} = Stream.watch(session)
+    # The batch-start boundary is the FIRST adoption that carries the assistant
+    # message this live call describes — the duplication precondition.
+    assert {:ok, live, 1} =
+             pending_cut(worker, {:snapshot}, fn -> callbacks[:on_result].("in flight") end)
+
+    assert_receive {:agent_delta, ^agent_id, 1, [{:text, "in flight"}]}, @deadline
+    assert live.activity == activity(call_id, 1, "in flight", "")
+    refute live.activity.current_call.checkpointed
+    batch = marker_batch(1)
+    checkpoint = batch_checkpoint(session_data(session).state, 1, "tool-calling turn", batch)
+    run(worker, fn -> send(session, {:checkpoint, self(), checkpoint}) end)
+    # The flip rides the ORDINARY activity path: exactly ONE public replacement.
+    assert_receive {:agent_delta, ^agent_id, 2, [{:activity, projection}]}, @deadline
+    assert projection.phase == :llm
+    assert projection.current_call.id == call_id
+    assert projection.current_call.text == "in flight"
+    assert projection.current_call.checkpointed
+
+    assert {:ok, during, 2} = Stream.snapshot(session)
+    assert during.activity == projection
+    assert during.messages == checkpoint.context.messages
+    assert Enum.any?(during.messages, &(text_of(&1) == "tool-calling turn"))
+    data = session_data(session)
+    assert data.state.turn == 1
+    assert data.state.pending_tool_batch == batch
+    assert data.activity == projection
+    refute_received {:agent_delta, ^agent_id, _, _}
+  end
+
+  test "re-adopting a batch-start checkpoint emits no second marker and the marker never outlives its call",
+       fixture do
+    {session, worker, _context} = parked_session(fixture)
+    agent_id = fixture.agent_id
+    {call_id, callbacks} = begin_call(worker, 1)
+    assert {:ok, _, 0} = Stream.watch(session)
+    {:ok, _, 1} = pending_cut(worker, {:snapshot}, fn -> callbacks[:on_result].("in flight") end)
+    assert_receive {:agent_delta, ^agent_id, 1, [{:text, "in flight"}]}, @deadline
+    first = batch_checkpoint(session_data(session).state, 1, "tool-calling turn", marker_batch(1))
+    run(worker, fn -> send(session, {:checkpoint, self(), first}) end)
+    assert_receive {:agent_delta, ^agent_id, 2, [{:activity, marked}]}, @deadline
+    assert marked.current_call.id == call_id
+    assert marked.current_call.checkpointed
+    # A duplicate of that SAME boundary is not adoptable at all: no state, no
+    # projection and no sequence change.
+    data_before = session_data(session)
+    run(worker, fn -> send(session, {:checkpoint, self(), first}) end)
+    assert session_data(session) == data_before
+    # Closing the batch (marker CLEARED, same turn, transcript grown) IS adoptable
+    # and keeps the live call — and because the incoming marker is gone there is
+    # no new `{:activity, _}` replacement.
+    closing = %{checkpoint(data_before.state, 1, "tool results turn") | pending_tool_batch: nil}
+    run(worker, fn -> send(session, {:checkpoint, self(), closing}) end)
+    closed = session_data(session)
+    assert closed.state.pending_tool_batch == nil
+    assert closed.state.turn == 1
+    assert closed.activity == marked
+    assert closed.event_seq == 2
+    refute_received {:agent_delta, ^agent_id, _, _}
+    # An ADVANCING batch-start adoption retains the call, but re-marking an
+    # ALREADY marked call is an idempotent no-op: nothing is published.
+    second = batch_checkpoint(closed.state, 2, "next tool turn", marker_batch(2))
+    run(worker, fn -> send(session, {:checkpoint, self(), second}) end)
+    adopted = session_data(session)
+    assert adopted.state.turn == 2
+    assert adopted.activity == marked
+    assert adopted.event_seq == 2
+    refute_received {:agent_delta, ^agent_id, _, _}
+    # The marker never outlives its call: the next turn's fresh call is
+    # uncheckpointed by definition.
+    {next_id, _callbacks} = begin_call(worker, 3)
+    assert {:ok, fresh, _seq} = Stream.snapshot(session)
+    assert fresh.activity.current_call.id == next_id
+    refute next_id == call_id
+    refute fresh.activity.current_call.checkpointed
+    assert Session.watching?(session)
   end
 
   test "duplicate, older and identity-free checkpoints change neither projection, transcript nor summary",
@@ -372,10 +456,29 @@ defmodule EvoGit.Agent.Session.ActivityProjectionTest do
     }
   end
 
+  # A real tool-batch marker for `turn`: `pending_tool_batch != nil` is exactly
+  # the state a batch-START checkpoint carries.
+  defp marker_batch(turn) do
+    ToolBatch.build([%{id: "batch-call-#{turn}", name: "read"}], turn, [])
+  end
+
+  # The batch-START boundary: the assistant message the live call describes is
+  # ALREADY in this transcript, which is why the call is marked checkpointed.
+  defp batch_checkpoint(state, turn, text, batch) do
+    %{checkpoint(state, turn, text) | pending_tool_batch: batch}
+  end
+
   defp activity(id, turn, text, thinking) do
     %{
       phase: :llm,
-      current_call: %{id: id, turn: turn, attempt: 1, text: text, thinking: thinking}
+      current_call: %{
+        id: id,
+        turn: turn,
+        attempt: 1,
+        text: text,
+        thinking: thinking,
+        checkpointed: false
+      }
     }
   end
 

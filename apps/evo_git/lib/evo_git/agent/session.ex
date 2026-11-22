@@ -1322,7 +1322,7 @@ defmodule EvoGit.Agent.Session do
 
       data =
         if keep_activity?(data.activity.current_call, state) do
-          data
+          mark_call_checkpointed(data, state)
         else
           reset_activity(data)
         end
@@ -1366,6 +1366,19 @@ defmodule EvoGit.Agent.Session do
 
   defp keep_activity?(%{turn: turn}, %State{} = state) when turn >= state.turn, do: true
   defp keep_activity?(_current_call, _state), do: false
+
+  # The batch-START checkpoint is the only adoption that RETAINS the live call, and the assistant
+  # message it carries is already in the adopted transcript — so the retained call is marked
+  # `checkpointed: true` through the ordinary activity path. That is an explicit core signal (never
+  # content/turn matching), it is idempotent, and every retiring path clears it by retiring the call.
+  defp mark_call_checkpointed(data, %State{pending_tool_batch: batch}) when not is_nil(batch) do
+    case data.activity.current_call do
+      %{id: id} -> apply_activity(data, {:call_checkpointed, id})
+      _ -> data
+    end
+  end
+
+  defp mark_call_checkpointed(data, _state), do: data
 
   defp closes_tool_batch?(%State{pending_tool_batch: nil}, _state), do: false
 
