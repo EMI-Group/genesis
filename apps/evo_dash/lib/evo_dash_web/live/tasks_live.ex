@@ -76,7 +76,7 @@ defmodule EvoDashWeb.TasksLive do
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
-        <h1 :if={!@focused_task_id} class="text-lg font-semibold mb-3">
+        <h1 :if={!@focused_task_id} class="text-xl font-semibold mb-4">
           {gettext("Task History")}
         </h1>
         <div
@@ -339,7 +339,7 @@ defmodule EvoDashWeb.TasksLive do
           <div
             id="tasks-refresh-error"
             role="alert"
-            class="mb-3 flex items-center justify-between gap-3 rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-sm text-error"
+            class="mb-4 flex items-center justify-between gap-3 rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-sm text-error"
           >
             <span class="flex items-center gap-2">
               <.icon name="hero-exclamation-triangle" class="size-4" />
@@ -361,7 +361,7 @@ defmodule EvoDashWeb.TasksLive do
           id="tasks-refreshing"
           role="status"
           aria-live="polite"
-          class="mb-3 flex items-center gap-2 text-xs text-base-content/60"
+          class="mb-4 flex items-center gap-2 text-xs text-base-content/60"
         >
           <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
           {gettext("Refreshing tasks…")}
@@ -380,7 +380,7 @@ defmodule EvoDashWeb.TasksLive do
             <%!-- FIRST load only (nothing on screen yet): daisyUI skeleton rows
                  stand in for the cards. The "Loading tasks..." text stays as the
                  accessible label (and the suite's load-finished marker). --%>
-            <div id="tasks-loading" role="status" aria-live="polite" class="space-y-4 lg:space-y-5">
+            <div id="tasks-loading" role="status" aria-live="polite" class="space-y-4">
               <span class="sr-only">{gettext("Loading tasks...")}</span>
               <%= for _ <- 1..3 do %>
                 <div class="rounded-lg border border-base-300 bg-base-100 p-4">
@@ -437,7 +437,7 @@ defmodule EvoDashWeb.TasksLive do
                    actually changed instead of re-rendering the whole list. A
                    `reset` happens ONLY on a landed page load (first load, filter,
                    page, node switch, refresh) — never on a push or a mutation. --%>
-              <div id="tasks-stream" phx-update="stream" class="space-y-4 lg:space-y-5">
+              <div id="tasks-stream" phx-update="stream" class="space-y-4">
                 <div
                   :for={{dom_id, task} <- @streams.tasks}
                   id={dom_id}
@@ -597,10 +597,10 @@ defmodule EvoDashWeb.TasksLive do
           <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="close_cancel_modal">
             </div>
-            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-6 md:p-8">
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-5 sm:p-6">
               <div class="flex items-center gap-3 mb-4">
                 <.icon name="hero-exclamation-triangle" class="size-5 text-warning" />
-                <h3 class="text-lg font-bold">{gettext("Cancel Task?")}</h3>
+                <h3 class="text-lg font-semibold">{gettext("Cancel Task?")}</h3>
               </div>
 
               <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
@@ -647,10 +647,10 @@ defmodule EvoDashWeb.TasksLive do
           <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="close_force_kill_modal">
             </div>
-            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-6 md:p-8">
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-5 sm:p-6">
               <div class="flex items-center gap-3 mb-4">
                 <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
-                <h3 class="text-lg font-bold">{gettext("Force Kill Task?")}</h3>
+                <h3 class="text-lg font-semibold">{gettext("Force Kill Task?")}</h3>
               </div>
 
               <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
@@ -707,10 +707,10 @@ defmodule EvoDashWeb.TasksLive do
           <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="close_pause_modal">
             </div>
-            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-6 md:p-8">
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-5 sm:p-6">
               <div class="flex items-center gap-3 mb-4">
                 <.icon name="hero-pause-circle" class="size-5 text-primary-standalone" />
-                <h3 class="text-lg font-bold">{gettext("Pause task?")}</h3>
+                <h3 class="text-lg font-semibold">{gettext("Pause task?")}</h3>
               </div>
 
               <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
