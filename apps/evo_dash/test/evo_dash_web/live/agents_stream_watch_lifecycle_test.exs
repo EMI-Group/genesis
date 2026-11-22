@@ -3,7 +3,9 @@ defmodule EvoDashWeb.AgentsStreamWatchLifecycleTest do
   # are BEAM-global RPC seams, shared with every real StreamWatch worker.
   use ExUnit.Case, async: false
 
-  alias EvoDashWeb.AgentsLive.StreamWatch
+  import Phoenix.LiveViewTest, only: [render_component: 2]
+
+  alias EvoDashWeb.AgentsLive.{HistoryEntry, Inspector, StreamPanel, StreamWatch}
   alias EvoGit.Agent.Stream.Snapshot
 
   @timeout 30_000
@@ -312,6 +314,101 @@ defmodule EvoDashWeb.AgentsStreamWatchLifecycleTest do
     refute_receive {:rpc, _, _, _, _, _, _}, 0
   end
 
+  test "checkpoint adoption reconciles once and a repeated marker never resyncs again", %{
+    consumer: consumer
+  } do
+    id = unique_id()
+    selected = select(consumer, id)
+    worker = selected.inspector_stream_worker
+    token = selected.inspector_stream.token
+    response = "ADOPTION-RESPONSE-TOKEN"
+    live_call = %{id: "adopt-call", text: response, thinking: "Reason", turn: 1, attempt: 1}
+    adopted_call = Map.put(live_call, :checkpointed, true)
+    messages = [%ReqLLM.Message{role: :assistant, content: [%{type: :text, text: response}]}]
+
+    initial = %Snapshot{
+      agent_id: id,
+      seq: 5,
+      phase: :running,
+      messages: [],
+      activity: %{phase: :llm, current_call: live_call}
+    }
+
+    release(expect_rpc(:watch, @old_node, id, consumer, worker), {:ok, initial, 5})
+    ready = expect_ready(token)
+
+    # Pre-checkpoint: the call renders as live content, no message is checkpointed.
+    assert ready.inspector_stream.state.response == response
+    assert ready.inspector_stream.state.messages == []
+    assert [%{checkpointed: false}] = ready.inspector_stream.state.projections
+
+    boundary = [{:activity, %{phase: :llm_complete, current_call: adopted_call}}]
+    frozen = command(consumer, {:push, 6, boundary})
+
+    # Adoption freezes the whole batch and requests ONE atomic snapshot through
+    # the SAME serial watch worker (no unwatch/register gap).
+    assert frozen.inspector_stream.state.response == response
+    assert frozen.inspector_stream.state.messages == []
+    assert frozen.inspector_stream.seq == 5
+    assert frozen.inspector_stream.reconciling
+    assert frozen.inspector_stream.required_seq == 6
+    assert frozen.inspector_stream.pending == [{6, boundary}]
+
+    refresh = expect_rpc(:watch, @old_node, id, consumer, worker)
+
+    checkpoint = %{
+      initial
+      | seq: 6,
+        messages: messages,
+        activity: %{phase: :llm_complete, current_call: adopted_call}
+    }
+
+    release(refresh, {:ok, checkpoint, 6})
+    admitted = expect_reconciled(1).inspector_stream
+
+    assert admitted.snapshot == checkpoint
+    assert admitted.state.messages == messages
+    assert admitted.pending == []
+    assert admitted.reconciling == false
+    assert admitted.seq == 6
+
+    assert [%{identity: %{id: "adopt-call"}, checkpointed: true, response: response}] =
+             admitted.state.projections
+
+    # The checkpoint row is the ONLY rendered copy of that text: the admitted
+    # tail row keeps the activity label and contributes no content of its own.
+    tail =
+      render_component(&StreamPanel.stream_panel/1, %{stream: admitted})
+      |> Floki.parse_document!()
+
+    rows =
+      admitted.state.messages
+      |> Inspector.messages_to_history_entries()
+      |> Enum.map(fn entry ->
+        render_component(&HistoryEntry.history_entry_body/1, entry: entry, surface: :row)
+      end)
+
+    assert length(Floki.find(tail, "article[data-inspector-checkpointed='true']")) == 1
+    assert text(tail, "#inspector-activity") == "Response generated"
+    refute Floki.text(tail) =~ response
+    assert occurrences(Enum.join(rows), response) == 1
+    assert occurrences(Enum.join(rows) <> Floki.text(tail), response) == 1
+
+    # A repeated marker on the already adopted call is not a new boundary: the
+    # batch applies directly, so no second reconcile request can loop.
+    repeated = command(consumer, {:push, 7, boundary})
+    assert repeated.inspector_stream.reconciling == false
+    assert repeated.inspector_stream.seq == 7
+    assert repeated.inspector_stream.pending == []
+    assert [%{checkpointed: true}] = repeated.inspector_stream.state.projections
+    refute_receive {:rpc, _, _, _, _, _, _}, 0
+
+    command(consumer, :detach)
+    release(expect_rpc(:unwatch, @old_node, id, consumer, worker), :ok)
+    stop_and_await(consumer, worker)
+    refute_receive {:rpc, _, _, _, _, _, _}, 0
+  end
+
   defp socket do
     %Phoenix.LiveView.Socket{
       transport_pid: self(),
@@ -431,6 +528,14 @@ defmodule EvoDashWeb.AgentsStreamWatchLifecycleTest do
     assert_receive {:reconciled_applied, ^request, assigns}, @timeout
     assigns
   end
+
+  # A duplicated render is only caught by counting a unique token in the WHOLE
+  # rendered surface: the same text would otherwise look "present" either way.
+  defp occurrences(html, token) do
+    html |> Floki.text() |> String.split(token) |> length() |> Kernel.-(1)
+  end
+
+  defp text(html, selector), do: html |> Floki.find(selector) |> Floki.text() |> String.trim()
 
   defp expect_ready(token) do
     assert_receive {:ready_applied, ^token, assigns}, @timeout
