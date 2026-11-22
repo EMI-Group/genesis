@@ -1330,6 +1330,15 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       assert has_element?(view, "#workbench-history-project", "Workbench project")
 
+      # The filter block is ONE labelled control row: each select sits in its
+      # own `.workbench-history-field` on the dashboard control grammar.
+      assert has_element?(
+               view,
+               "#workbench-history-filters .workbench-history-filters .workbench-history-field"
+             )
+
+      assert has_element?(view, "label[for=workbench-history-status-filter]", "Status")
+
       assert has_element?(
                view,
                "#workbench-idle [data-workbench-idle-window]:not([hidden])",

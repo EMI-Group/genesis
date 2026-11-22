@@ -357,6 +357,51 @@
   overscroll-behavior: contain;
 }
 .workbench-history-controls { padding: .25rem .25rem .6rem; }
+/* The two filter selects sit in ONE two-column row under the full-width
+   search box, each with its own micro label, so the block reads as a single
+   control system instead of stray native form debris. */
+.workbench-history-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .5rem;
+  margin-top: .5rem;
+}
+.workbench-history-field {
+  display: grid;
+  gap: .2rem;
+  min-width: 0;
+}
+.workbench-history-field-label {
+  color: var(--workbench-text-muted);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.workbench-history-filter {
+  min-width: 0;
+  height: var(--control-h);
+  min-height: var(--control-h);
+  padding-inline: .625rem;
+  border: 1px solid var(--color-base-300);
+  border-radius: .5rem;
+  background: var(--color-base-100);
+  color: var(--color-base-content);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The kind switch closes the filter block as its last row. */
+#workbench-history-filters .workbench-segmented { margin-top: .5rem; }
+#workbench-history-filters .workbench-segmented button {
+  min-height: var(--control-h-sm);
+  border-radius: .35rem;
+  font-size: var(--text-xs);
+}
+@media (pointer: coarse) {
+  .workbench-history-filter,
+  #workbench-history-filters .workbench-segmented button { min-height: var(--touch-target); }
+}
 .workbench-segmented {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -386,7 +431,6 @@
   font-size: var(--text-xs);
 }
 .workbench-history-select { margin-top: .45rem; }
-.workbench-history-row { display: flex; align-items: center; gap: .1rem; }
 .workbench-history-row[hidden] { display: none; }
 .workbench-history-row > button { padding: .25rem; border-radius: .35rem; }
 .workbench-status { flex: none; inline-size: .42rem; block-size: .42rem; border-radius: 50%; margin-inline-start: auto; }
@@ -680,6 +724,7 @@
 }
 .workbench-section-heading { padding-block: .52rem; }
 .workbench-section-heading button:focus-visible,
+.workbench-history-filter:focus-visible,
 .workbench-query:focus-within {
   outline: 2px solid var(--color-primary-standalone);
   outline-offset: -2px;
@@ -899,20 +944,50 @@
   .workbench-git-toggle { min-block-size: var(--touch-target); }
   .workbench-git-file, .workbench-git-branch { min-block-size: var(--touch-target); }
 }
+/* A history row is a comfortable two-line card: the kind icon in a tinted
+   square, a title clamped to two lines and a muted meta line underneath.
+   Rows carry no dividers — the list separates them with whitespace and a
+   hover/selected fill. */
 .workbench-history-row {
-  padding-block: .12rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-base-300) 68%, transparent);
+  display: flex;
+  align-items: stretch;
+  border-radius: .5rem;
 }
-.workbench-history-row > .workbench-row { align-items: flex-start; padding-block: .48rem; }
-.workbench-history-row > .workbench-row > .hero-clipboard-document,
-.workbench-history-row > .workbench-row > .hero-chat-bubble-left { margin-top: .12rem; color: var(--workbench-text-muted); }
+.workbench-history-row + .workbench-history-row { margin-block-start: .5rem; }
+.workbench-history-row > .workbench-row {
+  align-items: flex-start;
+  gap: .6rem;
+  min-height: var(--row-h-tall);
+  padding: .5rem;
+  border-radius: .5rem;
+}
+.workbench-history-row > .workbench-row:hover,
+.workbench-history-row > .workbench-row.is-current,
+.workbench-history-row[data-item-active="true"] > .workbench-row {
+  background: var(--workbench-hover);
+}
+.workbench-history-kind {
+  display: grid;
+  flex: none;
+  place-items: center;
+  inline-size: var(--control-h-sm);
+  block-size: var(--control-h-sm);
+  border-radius: .4rem;
+  background: color-mix(in srgb, var(--color-base-content) 7%, transparent);
+  color: var(--workbench-text-muted);
+}
 .workbench-history-label { display: grid; min-width: 0; gap: .18rem; flex: 1; }
+.workbench-history-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-base-content);
+}
 .workbench-history-meta {
   display: flex;
   align-items: center;
   gap: .35rem;
   color: var(--workbench-text-muted);
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
 }
 .workbench-history-meta .workbench-status { margin-inline-start: 0; }
 .workbench-history-meta time { margin-inline-start: auto; white-space: nowrap; }

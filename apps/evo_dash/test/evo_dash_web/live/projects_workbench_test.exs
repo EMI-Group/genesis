@@ -115,6 +115,24 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
       assert has_element?(view, "[data-workbench-kind='task'][aria-pressed=true]")
       assert has_element?(view, "[data-workbench-kind='chat'][aria-pressed=false]")
 
+      # Both selects are LABELLED controls on the dashboard control grammar:
+      # one two-column field row under the full-width search box, each select a
+      # `.workbench-history-filter` with its own micro label.
+      assert has_element?(
+               view,
+               "label.workbench-history-field[for='workbench-history-project-filter']",
+               "Project"
+             )
+
+      assert has_element?(
+               view,
+               "label.workbench-history-field[for='workbench-history-status-filter']",
+               "Status"
+             )
+
+      assert has_element?(view, "#workbench-history-project-filter.workbench-history-filter")
+      assert has_element?(view, "#workbench-history-status-filter.workbench-history-filter")
+
       # The scope label is server-rendered text. No mount was registered, so the
       # label is the panel's own basename fallback for the selected path.
       assert has_element?(view, "#workbench-history-project", Path.basename(tmp_dir))
@@ -265,8 +283,36 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
       # in-flight states, so its absence is the contract here.
       refute has_element?(view, "[data-item-id='#{id}'][data-item-active]")
 
-      # "Load more tasks" only exists past the first 50-row page.
+      # "Load more tasks" only exists past the first 15-row page.
       refute has_element?(view, "[data-workbench-more]")
+    end
+
+    test "the first page holds 15 rows and Load more appends the rest", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      prefix = unique_phrase("page")
+
+      for index <- 1..17 do
+        seed_task!(path: tmp_dir, objective: "#{prefix} #{index}", status: :completed)
+      end
+
+      {view, _html} = mount_project_page!(conn, tmp_dir)
+
+      view
+      |> element("#workbench-history-filters")
+      |> render_change(%{"query" => prefix})
+
+      # The default page is 15 comfortable entries, and paging stays available.
+      wait_for(view, fn ->
+        length(history_row_ids(view)) == 15 and has_element?(view, "[data-workbench-more]")
+      end)
+
+      view |> element("[data-workbench-more]") |> render_click()
+
+      wait_for(view, fn ->
+        length(history_row_ids(view)) == 17 and not has_element?(view, "[data-workbench-more]")
+      end)
     end
   end
 
@@ -357,6 +403,14 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
 
   defp row_selector(id), do: "[data-workbench-item][data-item-id='#{id}']"
 
+  defp history_row_ids(view) do
+    view
+    |> render()
+    |> Floki.parse_document!()
+    |> Floki.find("[data-workbench-item][data-item-id]")
+    |> Floki.attribute("data-item-id")
+  end
+
   # Floki's document parser drops `<option>` children of a fragment-level
   # `<select>`, so the rendered select is parsed as a FRAGMENT first.
   defp select_options(select_html) do
@@ -400,7 +454,9 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
   end
 
   defp history_panel_html(view) do
-    case Floki.find(render(view), "#workbench-history-content") do
+    document = view |> render() |> Floki.parse_document!()
+
+    case Floki.find(document, "#workbench-history-content") do
       [] -> "(no #workbench-history-content in the render)"
       nodes -> Floki.raw_html(nodes)
     end

@@ -17,7 +17,7 @@ defmodule EvoDashWeb.WorkbenchComponent do
   alias EvoDash.{ChatHistory, NodeContext, WorkbenchSidebarCache}
   alias EvoDashWeb.HomeLive.{SessionList, Workspace}
 
-  @history_limit 50
+  @history_limit 15
   @recent_project_limit 5
 
   @history_statuses ~w(pending running finalizing awaiting_input cancelling pausing paused completed failed cancelled)
@@ -435,36 +435,44 @@ defmodule EvoDashWeb.WorkbenchComponent do
           />
         </label>
         <div class="workbench-history-filters">
-          <select
-            id="workbench-history-project-filter"
-            name="project"
-            aria-label={gettext("Filter by project")}
-          >
-            <%!-- zh_CN: 所有项目 — 项目筛选里表示不过滤项目 --%>
-            <option value="">{gettext("All projects")}</option>
-            <option
-              :for={option <- @filter_options}
-              value={option.path}
-              selected={option.path == @history_project}
+          <label class="workbench-history-field" for="workbench-history-project-filter">
+            <span class="workbench-history-field-label">{gettext("Project")}</span>
+            <select
+              id="workbench-history-project-filter"
+              class="workbench-history-filter"
+              name="project"
+              aria-label={gettext("Filter by project")}
             >
-              {option.name}
-            </option>
-          </select>
-          <select
-            id="workbench-history-status-filter"
-            name="status"
-            aria-label={gettext("Filter by status")}
-          >
-            <%!-- zh_CN: 任意状态 — 状态筛选里表示不过滤状态 --%>
-            <option value="">{gettext("Any status")}</option>
-            <option
-              :for={status <- @status_options}
-              value={status}
-              selected={status == @history_status}
+              <%!-- zh_CN: 所有项目 — 项目筛选里表示不过滤项目 --%>
+              <option value="">{gettext("All projects")}</option>
+              <option
+                :for={option <- @filter_options}
+                value={option.path}
+                selected={option.path == @history_project}
+              >
+                {option.name}
+              </option>
+            </select>
+          </label>
+          <label class="workbench-history-field" for="workbench-history-status-filter">
+            <span class="workbench-history-field-label">{gettext("Status")}</span>
+            <select
+              id="workbench-history-status-filter"
+              class="workbench-history-filter"
+              name="status"
+              aria-label={gettext("Filter by status")}
             >
-              {status_label(status)}
-            </option>
-          </select>
+              <%!-- zh_CN: 任意状态 — 状态筛选里表示不过滤状态 --%>
+              <option value="">{gettext("Any status")}</option>
+              <option
+                :for={status <- @status_options}
+                value={status}
+                selected={status == @history_status}
+              >
+                {status_label(status)}
+              </option>
+            </select>
+          </label>
         </div>
         <div class="workbench-segmented" role="group" aria-label={gettext("History type")}>
           <button
@@ -509,14 +517,16 @@ defmodule EvoDashWeb.WorkbenchComponent do
           data-item-state={status_label(row.status)}
         >
           <.link navigate={row.href} class="workbench-row" title={row.title} data-workbench-open>
-            <.icon
-              name={
-                if row.kind == "task", do: "hero-clipboard-document", else: "hero-chat-bubble-left"
-              }
-              class="size-4 shrink-0"
-            />
+            <span class="workbench-history-kind" aria-hidden="true">
+              <.icon
+                name={
+                  if row.kind == "task", do: "hero-clipboard-document", else: "hero-chat-bubble-left"
+                }
+                class="size-4"
+              />
+            </span>
             <div class="workbench-history-label">
-              <span class="truncate text-sm">{row.title}</span>
+              <span class="workbench-history-title line-clamp-2 text-sm">{row.title}</span>
               <span class="workbench-history-meta text-xs">
                 <span
                   class={["workbench-status", task_status_dot_class(row.status)]}
