@@ -370,7 +370,7 @@ defmodule EvoDashWeb.ArchiveComponents do
                 {gettext("Could not load this agent's result.")}
               </span>
               <button
-                class="btn btn-xs btn-ghost rounded-md shrink-0"
+                class="btn btn-sm btn-ghost rounded-lg shrink-0"
                 phx-click="load_task_archive_agent_result"
                 phx-value-task_id={@task_id}
                 phx-value-agent_id={@agent_id}
@@ -381,7 +381,7 @@ defmodule EvoDashWeb.ArchiveComponents do
           <% :not_loaded -> %>
             <div class="flex min-h-[var(--row-h-sm)] items-center">
               <button
-                class="btn btn-xs btn-ghost rounded-md"
+                class="btn btn-sm btn-ghost rounded-lg"
                 phx-click="load_task_archive_agent_result"
                 phx-value-task_id={@task_id}
                 phx-value-agent_id={@agent_id}

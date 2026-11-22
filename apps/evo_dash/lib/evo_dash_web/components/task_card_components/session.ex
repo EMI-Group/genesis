@@ -32,7 +32,7 @@ defmodule EvoDashWeb.TaskCardComponents.Session do
     ~H"""
     <div
       id={"task-#{@task.id}-session"}
-      class="rounded-xl border border-violet-500/30 bg-violet-500/5 p-4"
+      class="rounded-lg border border-violet-500/30 bg-violet-500/5 p-3"
     >
       <div class="flex flex-wrap items-start justify-between gap-2">
         <div class="min-w-0">
