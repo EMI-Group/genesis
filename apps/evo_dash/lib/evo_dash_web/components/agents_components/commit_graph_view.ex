@@ -536,7 +536,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       <%!-- zh_CN：中性泳道（任务开始前的“前置提交”）标签 --%>
       <span
         id={"cg-lane-" <> @dom <> "-" <> Integer.to_string(@chip.lane)}
-        class="cg-lane-chip cg-lane-chip-neutral inline-flex items-center gap-1 rounded bg-base-200 px-1.5 py-0.5 text-[10px] font-mono text-base-content/70 whitespace-nowrap"
+        class="cg-lane-chip cg-lane-chip-neutral inline-flex items-center gap-1 rounded bg-base-200 px-1.5 py-0.5 text-2xs font-mono text-base-content/70 whitespace-nowrap"
         style={"position: absolute; left: #{@chip.x}px; transform: translateX(-50%)"}
         title={gettext("Pre-task")}
       >
@@ -548,7 +548,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       <button
         id={"cg-lane-" <> @dom <> "-" <> Integer.to_string(@chip.lane)}
         type="button"
-        class="cg-lane-chip inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-mono whitespace-nowrap"
+        class="cg-lane-chip inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-2xs font-mono whitespace-nowrap"
         style={"position: absolute; left: #{@chip.x}px; transform: translateX(-50%); border-color: #{color}; color: #{color}; opacity: #{if Fold.agent_ended?(agent), do: "0.5", else: "1"}"}
         title={lane_chip_title(agent)}
         phx-click="select_agent"
@@ -790,7 +790,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
         </span>
         <%= if stub_kind(@node) do %>
           <%!-- zh_CN：合成桩节点（智能体的分叉起点/虚拟落点，无提交信息/日期） --%>
-          <span class="cg-base-label inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono bg-base-200 text-base-content/60 shrink-0">
+          <span class="cg-base-label inline-flex items-center rounded px-1.5 py-0.5 text-2xs font-mono bg-base-200 text-base-content/60 shrink-0">
             {stub_label(@node)}
           </span>
         <% else %>
@@ -800,14 +800,14 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
         <% end %>
         <span
           :if={v.start?}
-          class="cg-row-marker shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono bg-primary/15 text-primary"
+          class="cg-row-marker shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-2xs font-mono bg-primary/15 text-primary"
         >
           <%!-- zh_CN：选中智能体的“起始提交”行标记 --%>
           {gettext("start")}
         </span>
         <span
           :if={v.end?}
-          class="cg-row-marker shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono bg-primary/15 text-primary"
+          class="cg-row-marker shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-2xs font-mono bg-primary/15 text-primary"
         >
           <%!-- zh_CN：选中智能体的“结束提交”行标记 --%>
           {gettext("end")}
