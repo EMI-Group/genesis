@@ -36,6 +36,10 @@ defmodule EvoGit.Agent.Session.Setup do
   # The default crash-retry wait per attempt (`:agent_retry_backoff_ms` overrides it).
   @retry_backoff_default_ms 30_000
 
+  # The process-dictionary key `EvoGit.Agents.Custom` resolves its definition
+  # from (the same literal that module's own attribute carries).
+  @custom_agent_id_key :custom_agent_id
+
   @doc """
   Installs the identity prefix and provisions the agent's worktree.
 
@@ -306,12 +310,25 @@ defmodule EvoGit.Agent.Session.Setup do
   Builds the initial `%EvoGit.Agent.State{}` for `agent_module` running
   `objective`, reading every value from `ctx` (a keyword list or a map).
 
+  For the DURATION of construction it temporarily installs the ctx's
+  `:custom_agent_id` on the process dictionary — or removes the key when that
+  ctx value is absent/blank — and restores the previous process-dictionary
+  value afterwards (on every exit path, including a raise), so zero-arity
+  `agent_module` callbacks that resolve a custom definition
+  (`EvoGit.Agents.Custom.system_prompt/0`, `.delegation_level/0`) work BEFORE
+  the per-exchange worker installs the runtime context
+  (`install_process_context/3`). An unknown id still raises from
+  `EvoGit.Agents.Custom`.
+
   Returns `{:error, :path_not_exist}` (after logging) when the agent's assigned
   node path does not exist and the agent is not repo-less. Performs NO ETS
-  writes and installs nothing on the process dictionary — the caller owns those
-  side effects.
+  writes.
   """
   def build_initial_state(agent_module, objective, ctx) do
+    with_custom_agent_id(ctx, fn -> do_build_initial_state(agent_module, objective, ctx) end)
+  end
+
+  defp do_build_initial_state(agent_module, objective, ctx) do
     agent_id = fetch_field!(ctx, :agent_id)
     repo_less = get_field(ctx, :repo_less) == true
 
@@ -519,6 +536,70 @@ defmodule EvoGit.Agent.Session.Setup do
       {state, restored?} = maybe_restore_state(state, ctx)
       {:ok, %{state | resume_info: resume_info(ctx, restored?)}}
     end
+  end
+
+  # --- transient `:custom_agent_id` scoping ---
+
+  # Scopes the process-dictionary `:custom_agent_id` for the WHOLE duration of
+  # one state construction. The ctx value is installed (or the key REMOVED when
+  # it is absent/blank, so a stale value can never resolve the WRONG custom
+  # definition and a missing id keeps failing loudly) and the previous
+  # process-dictionary state is restored on every exit path.
+  #
+  # `try/after` is justified here: restoring process-dictionary state is cleanup
+  # that must run on EVERY exit path, including a raise out of an `agent_module`
+  # callback (`EvoGit.Agents.Custom.definition!/0` raises for a missing/unknown
+  # id).
+  defp with_custom_agent_id(ctx, fun) when is_function(fun, 0) do
+    previous = custom_agent_id_pd_state()
+
+    install_custom_agent_id(get_field(ctx, :custom_agent_id))
+
+    try do
+      fun.()
+    after
+      restore_custom_agent_id(previous)
+    end
+  end
+
+  # A non-blank binary id (the only shape `EvoGit.CustomAgents.get/1` can
+  # resolve) always wins over whatever this process held before; anything else
+  # removes the key rather than installing a `nil` that would let a stale value
+  # masquerade as the selection.
+  defp install_custom_agent_id(id) when is_binary(id) do
+    if EvoGit.Util.Strings.present?(id) do
+      Process.put(@custom_agent_id_key, id)
+    else
+      Process.delete(@custom_agent_id_key)
+    end
+
+    :ok
+  end
+
+  defp install_custom_agent_id(_other) do
+    Process.delete(@custom_agent_id_key)
+    :ok
+  end
+
+  # "Previously absent" and "previously present but `nil`" are DIFFERENT states
+  # and `Process.get/1` cannot tell them apart, so presence is checked against
+  # `Process.get_keys/0`.
+  defp custom_agent_id_pd_state do
+    if @custom_agent_id_key in Process.get_keys() do
+      {:present, Process.get(@custom_agent_id_key)}
+    else
+      :absent
+    end
+  end
+
+  defp restore_custom_agent_id(:absent) do
+    Process.delete(@custom_agent_id_key)
+    :ok
+  end
+
+  defp restore_custom_agent_id({:present, value}) do
+    Process.put(@custom_agent_id_key, value)
+    :ok
   end
 
   # A CRASH RETRY or a TASK-LEVEL PAUSE RESUME of the SAME agent_id asks the

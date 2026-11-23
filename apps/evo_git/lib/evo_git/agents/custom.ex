@@ -183,9 +183,12 @@ defmodule EvoGit.Agents.Custom do
   # Resolves the custom agent definition for the CURRENT process. The definition id
   # is read from the process dictionary (`:custom_agent_id`), which
   # `EvoGit.Agent.Session.Setup.install_process_context/3` populates from
-  # `spec.opts[:custom_agent_id]`. Missing id / unknown definition raise loudly:
-  # this code runs in the agent process, and a broken spec must not run silently
-  # with a wrong (or absent) definition.
+  # `spec.opts[:custom_agent_id]` before each exchange; it is ALSO installed
+  # transiently by `EvoGit.Agent.Session.Setup.build_initial_state/3` for the
+  # duration of initial-state construction, so `system_prompt/0` and
+  # `delegation_level/0` resolve before any exchange worker exists. Missing id /
+  # unknown definition raise loudly: this code runs in the agent process, and a
+  # broken spec must not run silently with a wrong (or absent) definition.
   defp definition! do
     id = Process.get(@custom_agent_id_key)
 
