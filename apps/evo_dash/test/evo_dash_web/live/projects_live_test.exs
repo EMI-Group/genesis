@@ -702,6 +702,45 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
     end)
   end
 
+  # `install_projects_async_load_runner/1` PLUS a per-spawn report to the test
+  # process (`{:batch_started, task_pid, callers}`), so a test can COUNT the
+  # batches a page actually started instead of inferring a spawn from its
+  # effects. `batch_fun` is the 0-arity batch body, resolved (and run) inside
+  # the supervised task like the real loader.
+  #
+  # The report carries the child's `$callers` because the seam is BEAM-global:
+  # another concurrently running async module's mounted page invokes it too, so
+  # a caller-aware wait (`await_view_batch/2`) is what attributes a spawn to the
+  # page under test.
+  def install_reporting_async_load_runner(batch_fun) when is_function(batch_fun, 0) do
+    test_pid = self()
+
+    install_projects_async_load_runner(fn ->
+      send(test_pid, {:batch_started, self(), Process.get(:"$callers") || []})
+      batch_fun.()
+    end)
+  end
+
+  # Bounded wait for the next async-batch spawn attributable to `view_pid`
+  # (a mounted view's pid, or `self()` for a directly driven socket), returning
+  # the batch task's pid. A report from another page sharing the app-env seam is
+  # skipped instead of failing the wait.
+  def await_view_batch(view_pid, timeout_ms \\ @async_wait_budget_ms) do
+    await_view_batch_until(view_pid, System.monotonic_time(:millisecond) + timeout_ms)
+  end
+
+  defp await_view_batch_until(view_pid, deadline) do
+    receive do
+      {:batch_started, task_pid, callers} ->
+        if view_pid in callers,
+          do: task_pid,
+          else: await_view_batch_until(view_pid, deadline)
+    after
+      max(deadline - System.monotonic_time(:millisecond), 0) ->
+        flunk("await_view_batch timed out waiting for a batch spawned by #{inspect(view_pid)}")
+    end
+  end
+
   # These URL fixtures keep a genuinely distinct BEAM identity throughout the
   # real supervised activation, resume read and batch delivery paths. No runner
   # reads local config, task storage or the filesystem on the remote's behalf.
@@ -5240,6 +5279,339 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       )
 
       assert assigns(view)[:selected_model_spec] == %{}
+    end
+  end
+
+  describe "config-change driven model picker reload" do
+    setup do
+      clear_projects()
+      :ok
+    end
+
+    # REGRESSION: a config written by Settings/CLI/MCP/another tab used to be
+    # invisible to an already-mounted task form — the picker stayed in
+    # "Loading models…" (`ready? == false` with no error) until a remount. The
+    # page now subscribes to the core's `"config"` topic and re-runs the SAME
+    # scoped batch, so the write reaches the live page.
+    test "a config reload on the viewed node refreshes the picker without a remount", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      # The per-test isolated config dir holds NO provider profile yet: the
+      # picker loads successfully but has nothing to offer.
+      {:ok, view, _html} = live(conn, ~p"/projects?#{[project: tmp_dir]}")
+      await_async_loads(view)
+
+      assert assigns(view)[:model_selection_ready?] == true
+      assert assigns(view)[:model_selection_error] == nil
+      assert assigns(view)[:model_selections] == []
+      assert assigns(view)[:provider_profiles] == []
+      assert assigns(view)[:config_generation] == nil
+      assert has_element?(view, "#task-model-setup")
+      refute has_element?(view, "#model-selection-loading")
+
+      # Write the account the way a Settings save does, then raise the SAME
+      # event the core raises on a content-fingerprint change: the snapshot is
+      # re-read from disk and `{:config_reloaded, node, dir, generation}` is
+      # broadcast on `"config"` (the mount's read built snapshot generation 1).
+      write_provider_profile_config()
+      config_dir = EvoGit.Config.config_dir()
+      assert %{generation: generation} = EvoGit.Config.Cache.reload()
+      assert generation > 1
+
+      # No remount: the broadcast alone re-runs the batch and re-renders.
+      wait_assigns(view, fn assigns ->
+        assigns[:config_generation] == {config_dir, generation}
+      end)
+
+      wait_assigns(view, fn assigns -> assigns[:model_selections] != [] end)
+
+      assert [
+               %{
+                 provider_profile_id: "account-a",
+                 provider: "anthropic",
+                 model: "claude-sonnet-5"
+               }
+               | _
+             ] = assigns(view)[:model_selections]
+
+      assert [%{"id" => "account-a", "provider" => "anthropic"} | _] =
+               assigns(view)[:provider_profiles]
+
+      assert assigns(view)[:model_selection_ready?] == true
+      assert assigns(view)[:model_selection_error] == nil
+      assert assigns(view)[:model_selection_scope] == {nil, node()}
+
+      # The launchable bundle the task form submits from now carries the new
+      # account's inventory. The picker STATE stays the Auto snapshot the
+      # mount reconciled to (there was no inventory to select from then) — a
+      # refresh never overwrites a live selection.
+      assert {:ok, bundle} = EvoDashWeb.ProjectsLive.ModelSelectionScope.bundle(assigns(view))
+      assert [%{provider_profile_id: "account-a"} | _] = bundle.model_selections
+      assert assigns(view)[:selected_model_spec] == %{}
+
+      # The form left its "no model configured" state without a remount.
+      refute has_element?(view, "#model-selection-loading")
+      refute has_element?(view, "#task-model-setup")
+      await_async_loads(view)
+    end
+
+    # The guards around the reload: a repeat/older generation, a foreign BEAM
+    # node and a pending remote target must NOT pile up loads. Driven through
+    # the public `handle_info/2` on a hand-built LOCAL socket so no other
+    # mounted page can observe the message (the topic is globally broadcast, a
+    # direct call is not), and proven structurally: a spawn ALWAYS bumps
+    # `projects_load_seq` (and records `config_generation`), so an unchanged
+    # socket is conclusive evidence that nothing was started.
+    test "a config reload is ignored for a repeat or older generation and for another node" do
+      config_dir = EvoGit.Config.config_dir()
+      bundle = EvoDashWeb.ProjectsLive.Project.load_model_selection_from_config(%{}, false)
+
+      test_pid = self()
+
+      install_reporting_async_load_runner(fn ->
+        if test_pid in (Process.get(:"$callers") || []) do
+          send(test_pid, {:config_batch_ran, self()})
+        end
+
+        %{
+          custom_agents: [],
+          projects: [],
+          terminal_ids: nil,
+          auto_activate?: false,
+          model_selection: bundle
+        }
+      end)
+
+      socket = %Phoenix.LiveView.Socket{
+        assigns: %{
+          __changed__: nil,
+          current_node: node(),
+          current_node_id: nil,
+          active_project_path: "/repo/a",
+          remote?: false,
+          projects: [],
+          projects_load_seq: 4,
+          notified_task_ids_ready?: true,
+          auto_activate_candidate?: false,
+          config_generation: {config_dir, 4},
+          model_selection: bundle,
+          model_selection_scope: {nil, node()},
+          model_selection_ready?: true,
+          model_selection_error: nil,
+          selected_model_spec: %{}
+        },
+        transport_pid: self()
+      }
+
+      for message <- [
+            # A repeat of the generation already handled.
+            {:config_reloaded, node(), config_dir, 4},
+            # An older generation for the same dir.
+            {:config_reloaded, node(), config_dir, 3},
+            # A broadcast from another BEAM (a remote target's own config).
+            {:config_reloaded, :"genesis_remote@127.0.0.1", config_dir, 5}
+          ] do
+        assert {:noreply, ^socket} = EvoDashWeb.ProjectsLive.handle_info(message, socket)
+      end
+
+      # A strictly NEWER generation spawns exactly one batch and records it, so
+      # a repeat of that same generation can never spawn again.
+      assert {:noreply, updated} =
+               EvoDashWeb.ProjectsLive.handle_info(
+                 {:config_reloaded, node(), config_dir, 5},
+                 socket
+               )
+
+      assert updated.assigns.config_generation == {config_dir, 5}
+      assert updated.assigns.projects_load_seq > socket.assigns.projects_load_seq
+      assert updated.assigns.model_selection_ready? == false
+      assert updated.assigns.model_selection_error == nil
+      assert_receive :load_config_status, async_wait_budget()
+      assert is_pid(await_view_batch(self()))
+
+      assert_receive {:async_project_load, local, nil, "/repo/a",
+                      %{load_scope: %{seq: seq, node_id: nil}}},
+                     async_wait_budget()
+
+      assert local == node()
+      assert seq == updated.assigns.projects_load_seq
+      assert_receive {:config_batch_ran, _task}, async_wait_budget()
+
+      # The repeat of the accepted generation is dropped by the unchanged
+      # `config_generation` — no second batch starts. (`^updated` above is the
+      # conclusive witness; the refute is caller-scoped so another async
+      # module's page sharing the seam can never make it flake.)
+      assert {:noreply, ^updated} =
+               EvoDashWeb.ProjectsLive.handle_info(
+                 {:config_reloaded, node(), config_dir, 5},
+                 updated
+               )
+
+      refute_received {:config_batch_ran, _task}
+    end
+
+    # A connecting/disconnected remote target (and an unresolved connection
+    # gate) owns its own UX: a batch spawned then would be dropped by the
+    # pending guard anyway, so the reload must not consume the saved picker.
+    test "a pending remote target never lets the reload consume its saved picker" do
+      config_dir = EvoGit.Config.config_dir()
+      bundle = EvoDashWeb.ProjectsLive.Project.load_model_selection_from_config(%{}, false)
+
+      socket = %Phoenix.LiveView.Socket{
+        assigns: %{
+          __changed__: nil,
+          current_node: node(),
+          current_node_id: "target-a",
+          remote_status: %{phase: :connecting},
+          active_project_path: "/remote/repo",
+          remote?: false,
+          projects: [],
+          projects_load_seq: 4,
+          notified_task_ids_ready?: true,
+          auto_activate_candidate?: false,
+          config_generation: nil,
+          model_selection: bundle,
+          model_selection_scope: {nil, node()},
+          model_selection_ready?: true,
+          model_selection_error: nil,
+          selected_model_spec: %{}
+        },
+        transport_pid: self()
+      }
+
+      assert {:noreply, ^socket} =
+               EvoDashWeb.ProjectsLive.handle_info(
+                 {:config_reloaded, node(), config_dir, 2},
+                 socket
+               )
+    end
+
+    # A batch that is still running is what makes the form render the
+    # "Loading models…" status. That status must offer a retry (a lost batch is
+    # not the only reason the form can sit there) and the retry must re-run the
+    # batch instead of being refused while loading.
+    test "the loading state offers a retry that re-runs the batch", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      test_pid = self()
+
+      install_reporting_async_load_runner(fn ->
+        receive do
+          :release -> :ok
+        after
+          5_000 -> :ok
+        end
+
+        EvoDashWeb.ProjectsLive.AsyncLoad.default_batch(node(), false, nil, nil, true, false)
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/projects?#{[project: tmp_dir]}")
+
+      first_task = await_view_batch(view.pid)
+      assert first_task != view.pid
+      assert first_task != test_pid
+
+      assert assigns(view)[:model_selection_ready?] == false
+      assert assigns(view)[:model_selection_error] == nil
+
+      html = render(view)
+      assert html =~ ~s(id="model-selection-loading")
+      assert html =~ "Loading models…"
+
+      assert has_element?(view, "#model-selection-loading-retry[phx-click=retry_model_selection]")
+
+      # The retry is NOT refused while the first batch is still running.
+      render_click(element(view, "#model-selection-loading-retry"))
+
+      second_task = await_view_batch(view.pid)
+      assert second_task != first_task
+
+      # Still loading (both batches are blocked), still retryable.
+      assert assigns(view)[:model_selection_ready?] == false
+      assert has_element?(view, "#model-selection-loading")
+
+      # Release both: whichever result lands last settles the picker. The
+      # stale one is either applied first (then superseded by the newer scope)
+      # or dropped against an already-applied bundle, which keeps it usable —
+      # so the settled state is always launchable with no recorded error.
+      send(first_task, :release)
+      send(second_task, :release)
+
+      # Drain BOTH children before reading: `wait_assigns` alone can return on
+      # the first applied result while the other is still in flight.
+      await_async_loads(view)
+
+      assert assigns(view)[:model_selection_ready?] == true
+      assert assigns(view)[:model_selection_error] == nil
+      refute has_element?(view, "#model-selection-loading")
+      refute has_element?(view, "#model-selection-loading-retry")
+      # An empty (but loaded) inventory renders the explicit setup action.
+      assert has_element?(view, "#task-model-setup")
+    end
+
+    # `handle_params/3` skips its batch while `workbench_project_selection` is
+    # set (the activation owns it), so the `{:registered, ...}` continuation
+    # must spawn the batch ITSELF — and keep the selection in place for the
+    # render's project fallback.
+    test "an async project registration spawns the batch while its selection is pending" do
+      selection = %{target: node(), requested_path: "/repo/a", path: "/repo/a"}
+
+      install_reporting_async_load_runner(fn ->
+        %{
+          custom_agents: [],
+          projects: [],
+          terminal_ids: nil,
+          auto_activate?: false,
+          model_selection:
+            EvoDashWeb.ProjectsLive.Project.load_model_selection_from_config(%{}, false)
+        }
+      end)
+
+      socket = %Phoenix.LiveView.Socket{
+        assigns: %{
+          __changed__: nil,
+          current_node: node(),
+          current_node_id: nil,
+          active_project_path: "/repo/a",
+          remote?: false,
+          projects: [],
+          projects_load_seq: 4,
+          notified_task_ids_ready?: true,
+          auto_activate_candidate?: false,
+          workbench_project_selection: selection,
+          model_selection: nil,
+          model_selection_ready?: true,
+          model_selection_error: nil,
+          selected_model_spec: nil
+        },
+        transport_pid: self()
+      }
+
+      assert {:noreply, updated} =
+               EvoDashWeb.ProjectsLive.handle_async(
+                 :workbench_project_selection,
+                 {:ok, {:registered, []}},
+                 socket
+               )
+
+      # The selection STAYS set: the render's workbench project fallback reads
+      # its `.path`, and a later handle_params run clears it on a mismatch.
+      assert updated.assigns.workbench_project_selection == selection
+      assert updated.assigns.projects == []
+      assert updated.assigns.projects_load_seq > socket.assigns.projects_load_seq
+      assert updated.assigns.model_selection_ready? == false
+
+      task_pid = await_view_batch(self())
+      assert task_pid != self()
+
+      assert_receive {:async_project_load, local, nil, "/repo/a", %{load_scope: scope}},
+                     async_wait_budget()
+
+      assert local == node()
+      assert scope.seq == updated.assigns.projects_load_seq
+      assert scope.node_id == nil
     end
   end
 

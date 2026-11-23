@@ -49,6 +49,19 @@ defmodule EvoDashWeb.ProjectsLive.ModelSelectionScope do
 
   def bundle?(_), do: false
 
+  @doc """
+  Settles a DROPPED batch result: a valid bundle already applied at the
+  owning scope stays launchable (a superseded or pending-remote drop must never
+  revoke a usable picker), otherwise `reason` is recorded so the task form
+  shows its retryable error instead of an endless "Loading models…" state.
+  """
+  def settle_dropped(socket, reason) do
+    case bundle(socket.assigns) do
+      {:ok, _bundle} -> socket
+      {:error, _reason} -> invalidate(socket, reason)
+    end
+  end
+
   @doc "Invalidates launch readiness while preserving selected and pending choices."
   def invalidate(socket, reason) do
     assign(socket,

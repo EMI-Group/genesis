@@ -278,10 +278,19 @@ const Workbench = {
     }
     this.onSettingsClose = () => {
       this.settingsFrame?.removeAttribute("src")
-      if (this.reloadTaskModels && this.el.querySelector("#task-model-setup")) {
+      // Every close edge of the settings window (the close button, a backdrop
+      // click, Escape and the iframe's `genesis:close-settings-window`
+      // postMessage) releases the <dialog> through closeAnimated -> its own
+      // close(), so this ONE listener sees them all. A config save made in the
+      // window is the only edge that also covers a REMOTE target (a remote
+      // write never reaches this BEAM's config PubSub), so the Projects task
+      // page re-runs its model-selection load whenever the previewed page
+      // carries `[data-task-draft-scope]` — the marker every Projects render
+      // mounts on `#dashboard-root` and no other page renders, so the event can
+      // never land as an unhandled one.
+      if (this.el.querySelector("[data-task-draft-scope]")) {
         this.pushEvent("retry_model_selection", {})
       }
-      this.reloadTaskModels = false
     }
     this.settingsWindow?.addEventListener("close", this.onSettingsClose)
     window.addEventListener("message", this.onWindowMessage)
@@ -933,7 +942,6 @@ const Workbench = {
     if (trigger.dataset.workbenchSettings && this.settingsWindow && !this.settingsWindow.open &&
         !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
       event.preventDefault()
-      this.reloadTaskModels = trigger.id === "task-model-setup"
       this.settingsFrame.src = trigger.dataset.workbenchSettings
       this.settingsWindow.showModal()
     }
