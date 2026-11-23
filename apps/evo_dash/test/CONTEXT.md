@@ -129,6 +129,7 @@ The settle reads are deterministic: `assigns/1` is a `:sys.get_state` round-trip
 ### Push-based event contract testing
 Events are injected by hand: `send(view.pid, {:task_updated, id, status, node()})`, `{:task_deleted, id, node()}`, `{:agent_updated, id, changed_fields, node}` (the `:agent_updated` payload `changed_fields` is a KEYWORD LIST — guard with `is_list`/`Keyword.has_key?`), `{:system_sample, node, seq, sample}`, `{:remote_connection_status, id, status_map}`.
 Foreign-node events (`node != node()`) must be asserted ignored.
+The `"config"` topic is a real ProjectsLive subscription: the strongest test writes the isolated `config.toml` and lets `EvoGit.Config.Cache.reload/0` broadcast `{:config_reloaded, node, dir, generation}`, while the repeat/older-generation and foreign-node guards are driven through `handle_info/2` on a hand-built socket (a global broadcast cannot serve as a "nothing spawned" probe — count batches with `install_reporting_async_load_runner/1` instead).
 Stale-guard paths are driven by injecting the pages' own result messages: `{:tasks_page_loaded, seq, node, result}`, `{:agents_data_loaded, ...}`, `{:agents_refresh_result, seq, node, result}`, `{:system_checks_result, result}`, `{:system_samples_seeded, seq, node, result}`, `{:chat_history_loaded, node, seq, id, msgs}`, `{:chat_task_loaded, node, seq, id, result}`.
 The event table itself: `apps/evo_dash/CONTEXT.md` → "Push-based event contract".
 
