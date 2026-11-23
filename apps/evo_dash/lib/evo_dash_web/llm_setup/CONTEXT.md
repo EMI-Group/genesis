@@ -18,6 +18,7 @@ The four fact modules are PURE and TOTAL: no I/O, no catalog lookup at render ti
 | `EvoDashWeb.LLMSetup.Schedule` | `schedule.ex` | Provider schedule presets (apply/undo/snapshot) + off-peak holiday calendars. |
 | `EvoDashWeb.LLMSetup.Wizard` | `wizard.ex` | The pure wizard step model shared by both pages (order, navigation, gating). |
 | `EvoDashWeb.LLMSetup.ChatGPTSignIn` | `chatgpt_signin.ex` | The shared Sign in with ChatGPT state/vocabulary: flow-module resolver, `begin`/`submit`/`cancel`/`status`, the off-process poll, and the friendly message mapping. |
+| `EvoDashWeb.LLMSetup.ChatGPT` | `chatgpt.ex` | ChatGPT account selection + model metadata: `provider?/1` (`:openai_codex`), `accounts/1` (local `Store.accounts/0`, remote `NodeContext.call_remote` → `%{}` on failure), `account_name/1` (blank → `Store.default_account/0`), `model_entries/2` (the account's cached `models` as `%{id:, display_name:}`), `available_model?/3`. |
 
 ### `Reasoning`
 
