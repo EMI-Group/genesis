@@ -29,13 +29,15 @@ https://github.com/user-attachments/assets/d7f3d520-e39f-45cd-a525-77e5e8d00a75
 
 ## Use from a coding agent
 
-The [local MCP endpoint](docs/agent-mcp.md) exposes task submission, progress, messaging and cancellation to compatible coding agents. Genesis runs the development work with its own configured models; the caller supplies context and checks the returned changes. Build this revision from source and follow the guide to configure a local credential and connect your MCP host.
+The [local MCP endpoint](docs/agent-mcp.md) exposes task submission, progress, messaging, pause/resume, and cancellation to compatible coding agents. Genesis runs the development work with its own configured models; the caller supplies context and checks the returned changes. Use a current [desktop or headless release](https://github.com/EMI-Group/genesis/releases/latest) (v0.14.3 includes MCP), or [build from source](#run-from-source), then follow the guide to configure a local credential and connect your MCP host.
 
 ## See development unfold
 
 - **Set an objective.** Start a new project or bring an existing repository. Describe the outcome and constraints; Genesis decomposes the work as needed.
-- **Follow the work.** Watch the recursive agent tree, inspect tasks and model usage, and review diffs in the desktop dashboard.
+- **Follow the work.** Watch the recursive agent tree, inspect tasks and model usage, review diffs, and monitor running processes in the dashboard.
 - **Keep developing.** Continue from accepted results, refine the objective, or move execution to a server while keeping your local dashboard.
+
+The current main branch also brings project history and Git changes, branches, and commits into the project workbench, with GitHub Issues accessible from its Git panel. These latest interface changes follow the v0.14.3 release.
 
 [New projects](https://genesis.evox.group/usage/new-project/) · [Existing repositories](https://genesis.evox.group/usage/existing-repo/) · [Remote development](https://genesis.evox.group/usage/remote-ssh/)
 
@@ -57,7 +59,7 @@ Latest evidence: [EvoX Compiler](https://genesis.evox.group/evidence/evoxc) · 2
 
 <!-- evidence:end -->
 
-## The world persists. Agents do not.
+## The world persists. Development continues.
 
 <p align="center">
   <picture>
@@ -74,7 +76,7 @@ Latest evidence: [EvoX Compiler](https://genesis.evox.group/evidence/evoxc) · 2
 
 **Each task has a place.** An accepted software version records what has been built; a repository path defines context, responsibility, and scope. `CONTEXT.md` files make these local contracts explicit.
 
-**Accepted results carry forward.** The hierarchy unfolds as development proceeds. Agents finish their episodes; software versions and project history remain as the starting point for subsequent work.
+**Accepted results carry forward.** The hierarchy unfolds as development proceeds. Software versions and project history remain as the starting point for subsequent work. Resumable tasks also preserve agent checkpoints so an interrupted run can continue with its saved context.
 
 [Explore the architecture →](https://genesis.evox.group/developer/architecture/high-level-design/)
 
@@ -94,7 +96,7 @@ For example:
 
 [Installation guide](https://genesis.evox.group/getting-started/installation/) · [Model configuration](https://genesis.evox.group/config/)
 
-Open **Assistant** (`/assistant`) to ask about Genesis, inspect runtime state, or manage tasks and settings in your language. It reads source and runtime state directly; task, scheduler, and configuration changes require approval of the specific action. See the [Genesis Assistant guide](docs/genesis-assistant.md).
+Open **Assistant** (`/assistant`) to select a project, describe development work, attach supporting files, and follow tasks in conversation. You can send additional requirements to a running task, inspect runtime state, and ask about Genesis; task, scheduler, and configuration changes require approval of the specific action. See the [Genesis Assistant guide](docs/genesis-assistant.md) for task controls, attachments, and conversation limits.
 
 ### Headless server
 
@@ -117,6 +119,9 @@ Open **http://127.0.0.1:9999** and configure your model provider in **Settings**
 A **provider profile** represents an account: its models share authentication, endpoint, concurrency, peak-hour schedules, and rate-limit backoff. Separate account IDs keep separate resource pools, even when they use the same provider and model.
 
 In the task form, select **Provider profile → Model → Reasoning effort**; reasoning is a model-specific slider shown only when supported. An explicit choice locks that concrete selection for the task and its agents. **Auto (by rules)** leaves selection to your configured rules and defaults.
+
+<details>
+<summary>Example provider configuration</summary>
 
 For example, in `~/.config/genesis/config.toml`:
 
@@ -152,6 +157,8 @@ context_window = 128000
 
 Set `OPENAI_API_KEY` on the node running the task. Keep credentials in the provider profile; model entries customize generation, context window, and reasoning settings. Set `default_reasoning_effort` explicitly. For OAuth setup, see [subscription authentication](docs/llm-oauth.md).
 
+</details>
+
 MCP task submission supports the same provider, model, and reasoning selection.
 
 Use provider profiles for new configurations. Existing `[[llm.models]]` configurations remain supported.
@@ -172,6 +179,12 @@ Keep the desktop dashboard on your laptop and run agents on a server through an 
 </picture>
 
 Git records software versions; SQLite stores runtime and task data. Candidate changes run in isolated worktrees, with platform-specific execution controls described in the [sandbox documentation](https://genesis.evox.group/features/sandbox/).
+
+### Pause and resume
+
+Since v0.14.3, development tasks can pause after their in-flight tool batch finishes and resume under the same task ID, restoring saved agent conversations and checkpointed work. Durable agent state is enabled by default; after a crash or restart, eligible tasks can recover from their saved checkpoints, with repair handling for interrupted tool calls.
+
+Pause/resume requires durable state and does not apply to interactive sessions. Recovery is bounded by the saved checkpoints; uncheckpointed work and partially executed external actions are not guaranteed to be recovered or undone. See [task pause and resume](docs/task-pause.md) for the lifecycle and limits.
 
 ### Run from source
 
