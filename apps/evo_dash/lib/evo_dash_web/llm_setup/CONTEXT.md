@@ -18,6 +18,7 @@ Two modules are the deliberate I/O exceptions, and neither raises into a LiveVie
 | `EvoDashWeb.LLMSetup.Schedule` | `schedule.ex` | Provider schedule presets (apply/undo/snapshot) + off-peak holiday calendars. |
 | `EvoDashWeb.LLMSetup.Wizard` | `wizard.ex` | The pure wizard step model shared by both pages (order, navigation, gating). |
 | `EvoDashWeb.LLMSetup.ChatGPTSignIn` | `chatgpt_signin.ex` | The shared Sign in with ChatGPT state/vocabulary: flow-module resolver, `begin`/`submit`/`cancel`/`status`, the off-process poll, and the friendly message mapping. |
+| `EvoDashWeb.LLMSetup.ChatGPT` | `chatgpt.ex` | The ChatGPT (`:openai_codex`) account/model adapter over the core registration store: `provider?/1`, `accounts/1`, `account_name/1`, `model_entries/2`, `available_model?/3`. |
 
 ### `Reasoning`
 
