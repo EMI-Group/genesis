@@ -18,6 +18,7 @@ The four fact modules are PURE and TOTAL: no I/O, no catalog lookup at render ti
 | `EvoDashWeb.LLMSetup.Schedule` | `schedule.ex` | Provider schedule presets (apply/undo/snapshot) + off-peak holiday calendars. |
 | `EvoDashWeb.LLMSetup.Wizard` | `wizard.ex` | The pure wizard step model shared by both pages (order, navigation, gating). |
 | `EvoDashWeb.LLMSetup.ChatGPTSignIn` | `chatgpt_signin.ex` | The shared Sign in with ChatGPT state/vocabulary: flow-module resolver, `begin`/`submit`/`cancel`/`status`, the off-process poll, and the friendly message mapping. |
+| `EvoDashWeb.LLMSetup.ChatGPT` | `chatgpt.ex` | ChatGPT account selection + model metadata: `provider?/1` (`:openai_codex`), `accounts/1` (local `Store.accounts/0`, remote `NodeContext.call_remote` → `%{}` on failure), `account_name/1` (blank → `Store.default_account/0`), `model_entries/2` (the account's cached `models` as `%{id:, display_name:}`), `available_model?/3`. |
 
 ### `Reasoning`
 
@@ -70,13 +71,12 @@ No persisted state and no config access: the caller owns the draft and its persi
 
 ## Test Strategy
 
-Coverage is module-level ExUnit in the `apps/evo_dash/test` node (`test/evo_dash_web/llm_setup/{reasoning,identity,schedule,wizard}_test.exs`), `async: true` because none of these modules touch global state — that suite does not exist yet.
+Coverage is module-level ExUnit in the `apps/evo_dash/test` node (`test/evo_dash_web/llm_setup/{reasoning,identity,schedule,wizard,chatgpt_signin}_test.exs`), `async: true` because these modules touch no global state (the sign-in suite injects the flow module per process).
 The pins it must hold: `efforts/0` contains exactly the canonical six and never `"max"`; `options/0` appends `"default"`; `canonical/1` returns strings and reads `"max"` as `"xhigh"`; `normalize_inventory/1` dedups, canonicalizes and keeps unknown values.
 `Identity` pins provider-derived naming (two accounts of one provider differ by a `-2` suffix on BOTH id and name), collision suffixes, case-insensitive comparison, the `profile-N` blank-base scheme and the unknown/`nil` fallbacks.
 `Schedule` pins the deepseek preset's applied schedule keys, `snapshot/1` returning only pre-existing keys, `undo/2` restoring them and removing preset-introduced ones, `changed?/2` clearing after undo, and the holiday calendar list/options/label/year range.
 `Wizard` pins the six-step order with and without `auth_choice?: false`, clamped `next/2`/`back/2`, `index/2`, the `progress/2` tuples (`{4, 6, 67}`, `{6, 6, 100}`, `{0, total, 0}` for an unknown step) and every `validate/2` gate and reason.
 
-`Wizard` pins the six-step order with and without `auth_choice?: false`, clamped `next/2`/`back/2`, `index/2`, the `progress/2` tuples (`{4, 6, 67}`, `{6, 6, 100}`, `{0, total, 0}` for an unknown step) and every `validate/2` gate and reason.
 ### `ChatGPTSignIn`
 `login_module/0` resolves the sign-in flow module AT CALL TIME — `Process.get(:chatgpt_login_module)` → the same key on a `:"$callers"` ancestor → `Application.get_env(:evo_dash, :chatgpt_login, EvoDash.ChatGPTLogin)` — and the default is a bare ATOM, so this module compiles before the flow module exists and a test can stub the flow per process.
 `begin/1` → `{:ok, %{id: binary, url: binary, port: nil | pos_integer, mode: nil | :loopback | :manual}} | {:error, reason}` (atom- or string-keyed module answers accepted, a blank id/url rejected, `port`/`mode` normalized and optional so a flow module that reports neither still works), `submit/2` → `:ok | {:error, reason}` (the MANUAL paste of a redirect URL or bare code: an ACK only — the terminal result still arrives through `status/1`/the poll, and a rejected paste leaves the attempt pending), `cancel/1` → `:ok | {:error, reason}`, `status/1` → `:pending | {:ok, map} | {:error, reason}`.
@@ -87,6 +87,16 @@ The resolved flow module and three call-time seams — the call budget (`:chatgp
 `message/1` is the ONE friendly vocabulary — `%{kind: :error | :info | :success, text: binary}` — total over every documented reason (`:authorization_denied`, `:plan_not_authorized`, `:reauthorization_required`, `:authorization_timeout`, `:cancelled`, `:superseded`, `:loopback_listener_unavailable`, `:sign_in_unavailable`, `:unreachable`, `:chatgpt_account_alias_in_use`, `:chatgpt_registration_already_installed`, the paste rejections `:invalid_callback`, `:no_code`, `:already_finished` and `:unknown_flow`, success) plus tuple/`nil`/unknown catch-alls that never render `inspect`.
 `phase/1` → `:ok | :error | :pending`.
 The owning LiveView keeps the state map (`:flow_id`, `:url`, `:phase`, `:reason`, `:port`, `:mode`, `:paste`, `:paste_error`) and drops any result whose `flow_id` is not the current one, which is what makes cancel, supersede and a dismissed wizard safe without a second process; the paste transitions themselves are shared (`SettingsLive.ChatGPTSignInState.put_paste/2` and `submit_paste/2`, reused by `/welcome`), so this module stays the thin boundary over the flow module.
+
+### What a sign-in writes (and what it does NOT)
+
+Nothing in this node writes credentials or config: `ChatGPTSignIn` only drives `EvoDash.ChatGPTLogin` and reports values.
+The registration lands as ONE JSON file per account, `<config_dir>/chatgpt/account-<alias>.json` (plus `host-id`), written by `EvoGit.Auth.ChatGPT.Store.install/2` inside the flow's exchange task — never `credentials.toml`, never `config.toml`, and with no `EvoGit.Config.Watcher.notify_change`, so no config reload/broadcast follows a sign-in.
+`credentials/0` reads the `EvoGit.Config.Cache` snapshot, which carries no SIWC data at all; the store reads its own files at call time, so freshness needs no reload.
+A usable provider profile still needs a SEPARATE save that writes `siwc_account` into `[[llm.providers]]`; validation checks only the alias FORMAT (`EvoGit.Config.ProviderProfileValidation.chatgpt_account_errors/2`), so a profile may reference a registration that does not exist yet.
+Model listing for an `:openai_codex` account comes from the cached `models` in that same JSON file (catalog `models: []`), so an absent file means no account AND no models — credentials.toml plays no part.
+The poll lives in the CALLER: a page reload drops the flow id (nothing here persists it, and there is no `active_for` wrapper) while the flow keeps waiting, so a fresh mount shows no result and must start again (which SUPERSEDES the old attempt).
+
 ## Routing Table
 
 - `../components/settings_components/provider_wizard.ex` → `EvoDashWeb.SettingsComponents.ProviderWizard`, the step components that render these facts.
