@@ -68,6 +68,7 @@ Every exit path (success, failure, timeout, cancel, supersede, facade `DOWN`) st
 `chatgpt_login/callback.ex` serves only `GET /auth/callback` on a loopback host, validates `state`, and returns a self-contained HTML page (no params/tokens echoed, `cache-control: no-store`, `referrer-policy: no-referrer`); `error=` denies (`{:error, :authorization_denied}`) WITHOUT calling the exchange.
 Call-time seams: `opts[:exchange] || Application.get_env(:evo_dash, :chatgpt_login_exchange, &EvoGit.Auth.ChatGPT.exchange/2)` and `opts[:store] || Application.get_env(:evo_dash, :chatgpt_login_store, EvoGit.Auth.ChatGPT.Store)`; a `:store` provides `path/1`, `registration/1`, `host_id/0`, `install/2`, `status/1`.
 The store's install lock owns persistence and cross-process serialization (CLI and a running dashboard cannot corrupt each other); `ensure_started/0` (`@doc false`) boots supervisor + facade on demand, so `mix genesis.chatgpt login` works from a checkout without an application boot.
+A successful sign-in is ONE side effect — the store's credential JSON under `<config_dir>/chatgpt/` — with no `config.toml`/`credentials.toml` write, no config-snapshot refresh and no PubSub broadcast; the resulting model list lives only in the terminal `%{models: …}` status map handed to `:caller`/`status/1` (detail: `chatgpt_login/CONTEXT.md`).
 
 ### `EvoDash.ChatGPTCLI` (`chatgpt_cli.ex`)
 

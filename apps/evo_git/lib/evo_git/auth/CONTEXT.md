@@ -46,6 +46,10 @@ A managed PATH that cannot even be READ (a path component is a regular file → 
 `:anthropic` consults `CLAUDE_CODE_OAUTH_TOKEN` then `ANTHROPIC_OAUTH_TOKEN` (`claude setup-token` emits the first); `:openai_codex` has NO env fallback.
 An env token is OAuth-without-refresh — ReqLLM uses it directly and cannot rotate it — and it is NEVER written to the managed file.
 
+## Routing Table
+- `./chatgpt/` → `EvoGit.Auth.ChatGPT.Store`: per-node protected SIWC registration FILES (`<config_dir>/chatgpt/account-<alias>.json`, `host-id`) plus a credential-free SQLite mutual-exclusion lock, with NO cache and NO change event — detail `./chatgpt/CONTEXT.md`.
+- `./oauth_import.ex` → the vendor-CLI import described in this file; `./chatgpt.ex` → the SIWC wire protocol (authorize/exchange/refresh/revoke/models).
+
 ## Test Seams
 All seams are default-inert and read at CALL time: `opts[:home]` (user home), `opts[:oauth_file]` (managed file), and the app env `:auth_home_fun` (0-arity fun, falling back to `System.user_home/0`).
 Tests are hermetic through those options (temp home + temp managed file); only the env-token coverage mutates real process env and is therefore `async: false` (`test/evo_git/auth/env_token_test.exs`).

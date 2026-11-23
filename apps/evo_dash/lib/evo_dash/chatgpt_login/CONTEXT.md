@@ -26,6 +26,8 @@ The pasted path always completes the SAME attempt: same PKCE verifier, same `sta
 - An in-flight exchange counts as terminal: further pastes answer `{:error, :already_finished}` and further callbacks get the already-finished page, so one attempt can never install twice.
 - Every exit path (success, failure, denial, timeout, cancel, supersede, facade `DOWN`, a dead listener) tears the listener down and notifies the facade at most once.
 - Only a store or authorization failure fails an attempt; a listener that cannot be bound degrades it to `:manual` instead.
+- The success side effect is ONE call, `store.install(account, record)` (`flow.ex:279`), which writes only `<config_dir>/chatgpt/account-<account>.json` in the core store: no `config.toml`/`credentials.toml` write, no `EvoGit.Config.Watcher.notify_change/1`, no RAM-snapshot generation bump and no PubSub broadcast — a provider profile referencing the account (`siwc_account`) and every surface that displays it are refreshed by their own save/read paths, never by this flow.
+- The post-install `store.status(account)` map (account label + the registration's cached `models`) reaches only the `:caller` message and `EvoDash.ChatGPTLogin.status/1` (retained `:retention_ms`), so a caller that needs the model list must consume that terminal result — nothing re-broadcasts it.
 
 ## Routing Table
 
