@@ -6,8 +6,8 @@ The PURE foundation of the dashboard's LLM-configuration UI, shared by `/welcome
 Four small modules own the facts both surfaces must agree on — the reasoning vocabulary, provider-derived account identity, provider schedule presets/holiday calendars, and the wizard step model — so neither page re-implements (and drifts from) them.
 A fifth module, `ChatGPTSignIn`, owns the ONE Sign in with ChatGPT state/vocabulary and its off-process status poll, so the in-browser sign-in behaves identically on both pages.
 Nothing here renders markup: the components live in `../components/settings_components/provider_wizard.ex`.
-The four fact modules are PURE and TOTAL: no I/O, no catalog lookup at render time beyond the core's own pure tables, no process, no clock, no `try/rescue`, and no raise on `nil`/wrongly-typed input.
-`ChatGPTSignIn` is the deliberate exception: it performs the only I/O here (it drives the flow module and spawns one supervised poll task) and still never raises into a LiveView.
+The five fact modules are PURE and TOTAL: no I/O, no catalog lookup at render time beyond the core's own pure tables, no process, no clock, no `try/rescue`, and no raise on `nil`/wrongly-typed input.
+Two modules are the deliberate I/O exceptions, and neither raises into a LiveView: `ChatGPTSignIn` (drives the flow module and spawns one supervised poll task) and `ChatGPT` (reads the ChatGPT registration store — a local file read, or a cross-node RPC for another node — and derives account/model entries from it).
 
 ## API Surface
 
