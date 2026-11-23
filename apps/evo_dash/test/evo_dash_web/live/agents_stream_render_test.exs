@@ -128,6 +128,24 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
     }
   end
 
+  # A checkpoint row converted from the same assistant message the core
+  # checkpoints: response text plus a real tool call carrying arguments.
+  defp checkpoint_with_tools(response, thinking, tool_calls) do
+    entry = checkpoint(response, thinking)
+    put_in(entry, [:data, :tool_calls], tool_calls)
+  end
+
+  defp tool_call(name, arguments) do
+    %{id: "call-#{name}", name: name, arguments: Jason.encode!(arguments)}
+  end
+
+  # A duplicated copy is only caught by counting across the WHOLE rendered page:
+  # the same text present in the checkpoint row AND in the live tail row would
+  # otherwise both look legitimately "present".
+  defp occurrences(dom, token) do
+    dom |> Floki.text() |> String.split(token) |> length() |> Kernel.-(1)
+  end
+
   defp text(dom, selector), do: dom |> Floki.find(selector) |> Floki.text() |> String.trim()
   defp words(dom, selector), do: dom |> text(selector) |> String.replace(~r/\s+/, " ")
   defp attr(dom, selector, name), do: dom |> Floki.find(selector) |> Floki.attribute(name)
@@ -539,7 +557,103 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
     assert Floki.find(page(nil), "#inspector-stream") == []
   end
 
-  test "checkpoint parts are never guessed away; explicit retirement leaves one authoritative copy" do
+  test "a checkpointed call renders its response exactly once and keeps only a status-only tail row" do
+    response = "ADOPTED-RESPONSE-TOKEN"
+    argument = "ADOPTED-ARGUMENT-TOKEN"
+    current = call(%{text: response, thinking: "", checkpointed: true})
+
+    stream =
+      watch(current, :tools)
+      |> batch([{:tool_call, "call-1", "read"}, {:tool_result, "call-1", :ok}])
+
+    entry =
+      checkpoint_with_tools(response, "Checkpoint reasoning", [
+        tool_call("read", %{path: argument})
+      ])
+
+    dom = page(stream, agent: %{history: [entry]})
+    row = "#agent-history-entry-41-0"
+    tail = "#inspector-live-message-0"
+
+    # The assistant message is already checkpointed: text and tool arguments
+    # exist ONCE across the whole rendered page, owned by the checkpoint row.
+    assert occurrences(dom, response) == 1
+    assert occurrences(dom, argument) == 1
+    assert words(dom, "#{row} .text-sm") == "Response " <> response
+
+    assert text(dom, "#{row} [data-inspector-reasoning] .whitespace-pre-wrap") ==
+             "Checkpoint reasoning"
+
+    # The adopted call keeps its tail placement, article, header and label.
+    assert length(Floki.find(dom, "#{@history} > #inspector-stream")) == 1
+
+    assert attr(dom, "#{@history} [data-inspector-message]", "id") |> List.last() ==
+             "inspector-live-message-0"
+
+    assert attr(dom, tail, "data-inspector-checkpointed") == ["true"]
+    assert text(dom, "#{tail} > header > span") == "assistant"
+    assert words(dom, "#{tail} > header .ml-auto") == "Turn 2 Executing tools"
+    assert length(Floki.find(dom, "#inspector-activity")) == 1
+
+    # Only the checkpoint row owns the content: the response block, thinking
+    # details, cursor, empty-thinking notice and omission notices are gone.
+    assert Floki.find(dom, "#{tail} > div") == []
+    assert Floki.find(dom, "#{tail} details") == []
+    assert Floki.find(dom, "#inspector-stream-cursor") == []
+    refute text(dom, tail) =~ @no_thinking
+    refute text(dom, tail) =~ "omitted"
+
+    # The known tool's live execution status survives as name + label only.
+    assert length(Floki.find(dom, "#{tail} ul[data-inspector-live-tool-status]")) == 1
+    assert live(dom) |> Floki.find("li > .font-mono") |> Enum.map(&Floki.text/1) == ["read"]
+    assert live(dom) |> Floki.find("li > .shrink-0") |> Enum.map(&Floki.text/1) == ["Completed"]
+    assert Floki.find(dom, "#{tail} li > p") == []
+    refute text(dom, "#{tail} ul") =~ argument
+  end
+
+  test "a checkpointed tail row without known tools keeps the activity label only" do
+    dom =
+      page(watch(call(%{checkpointed: true}), :llm_complete), agent: %{history: [checkpoint()]})
+
+    tail = "#inspector-live-message-0"
+
+    assert text(dom, "#{tail} > header #inspector-activity") == "Response generated"
+    assert attr(dom, tail, "data-inspector-checkpointed") == ["true"]
+    assert Floki.find(dom, "[data-inspector-live-tool-status]") == []
+    assert Floki.find(dom, "#{tail} ul, #{tail} li") == []
+    refute text(dom, tail) =~ "Live response"
+    assert occurrences(dom, "Checkpoint response") == 1
+  end
+
+  test "the same call before adoption still renders its live excerpts, notices and tool list" do
+    response = "PRE-ADOPTION-TOKEN"
+    cap = RuntimeStream.max_tool_name_bytes()
+    long = String.duplicate("o", cap + 4)
+    current = call(%{text: response, thinking: "Live reasoning", checkpointed: false})
+
+    stream =
+      watch(current, :llm)
+      |> batch([{:tool_call, "call-1", "read"}, {:tool_call, "call-2", long}])
+
+    # No assistant message yet: this is the real pre-checkpoint state.
+    dom = page(stream, agent: %{history: []})
+    tail = "#inspector-live-message-0"
+
+    assert attr(dom, tail, "data-inspector-checkpointed") == []
+    assert text(dom, "#{tail} > div pre") == response
+    assert occurrences(dom, response) == 1
+    assert text(dom, "#{tail} details pre") == "Live reasoning"
+    assert length(Floki.find(dom, "#{tail} > #inspector-stream-cursor")) == 1
+    assert Floki.find(dom, "[data-inspector-live-tool-status]") == []
+
+    assert live(dom) |> Floki.find("li > .font-mono") |> Enum.map(&Floki.text/1) ==
+             ["read", String.duplicate("o", cap)]
+
+    assert live(dom) |> Floki.find("li > p") |> Enum.map(&(Floki.text(&1) |> String.trim())) ==
+             ["4 bytes omitted from this live excerpt."]
+  end
+
+  test "guessed checkpoint metadata never suppresses; only the authoritative marker does" do
     current = call()
     stream = watch(current, :llm_complete)
     entry = checkpoint(current.text, current.thinking)
@@ -560,6 +674,9 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
       }
 
       dom = page(stream, agent: %{history: [candidate]})
+
+      # Metadata-only fixtures carry no authoritative marker, so nothing is adopted.
+      assert attr(dom, "#inspector-live-message-0", "data-inspector-checkpointed") == []
 
       assert Enum.sort(messages(dom)) == Enum.sort(["0-#{:erlang.phash2(candidate)}", "live-0"])
       assert text(dom, "#{row} [data-inspector-reasoning] .whitespace-pre-wrap") == thinking

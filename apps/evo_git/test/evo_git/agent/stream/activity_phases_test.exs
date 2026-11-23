@@ -108,7 +108,8 @@ defmodule EvoGit.Agent.Stream.ActivityPhasesTest do
         turn: 3,
         attempt: 1,
         text: "answer",
-        thinking: "thought"
+        thinking: "thought",
+        checkpointed: false
       }
     }
   end

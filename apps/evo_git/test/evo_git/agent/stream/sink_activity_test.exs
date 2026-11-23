@@ -140,7 +140,14 @@ defmodule EvoGit.Agent.Stream.SinkActivityTest do
 
     expected = %{
       phase: :llm_complete,
-      current_call: %{id: b, turn: 4, attempt: 1, text: "B text", thinking: "B thought"}
+      current_call: %{
+        id: b,
+        turn: 4,
+        attempt: 1,
+        text: "B text",
+        thinking: "B thought",
+        checkpointed: false
+      }
     }
 
     assert Activity.apply(current, event) == {expected, [{:activity, expected}]}

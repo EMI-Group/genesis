@@ -19,6 +19,11 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
   never read as generation completion or as an active call phase.
   Failure, retry, turn accounting and lifecycle finish do not prove completion.
 
+  Each projection also carries the core's authoritative `checkpointed` marker of
+  its current call: `true` means the batch-start checkpoint has adopted that call,
+  so its assistant message is already in `snapshot.messages` and the live excerpt
+  must not be rendered as fresh content. Only that marker decides adoption.
+
   Text retains independent UTF-8-safe byte prefixes. Replacement omission counts
   describe the replacement value, not repeated transmissions of the same bytes;
   later omitted chunks add to that count. Raw checkpoint messages are unchanged.
@@ -120,21 +125,26 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
   @doc """
   Whether an ordered batch crosses a checkpoint/live ownership boundary.
 
-  A current call's retirement or replacement requires an atomic snapshot before
-  ANY of this batch is rendered. Inspect every activity event, not just the final
-  call id: a batch can retire one call and start another. No text, turn, message
-  index, tool result or yield is evidence of checkpoint adoption.
+  A current call's retirement, its replacement, or the checkpoint ADOPTION of it
+  requires an atomic snapshot before ANY of this batch is rendered. Inspect every
+  activity event, not just the final call id: a batch can retire one call and
+  start another. The current call's authoritative `checkpointed` marker is the
+  ONLY evidence of adoption — no text, turn, message index, tool result or yield
+  proves it, and a repeated marker on an already checkpointed call is not a new
+  boundary.
   """
   def checkpoint_transition?(%__MODULE__{} = state, events) when is_list(events) do
     events
-    |> Enum.reduce_while(current_call_id(state), fn
-      {:activity, %{phase: phase, current_call: call}}, previous when phase in @phases ->
+    |> Enum.reduce_while(rendered_call(state), fn
+      {:activity, %{phase: phase, current_call: call}}, {id, checkpointed?}
+      when phase in @phases ->
         next = if is_map(call), do: Map.get(call, :id), else: nil
+        next_checkpointed? = field(call, :checkpointed) == true
 
-        if is_binary(previous) and next != previous do
-          {:halt, :transition}
-        else
-          {:cont, next}
+        cond do
+          is_binary(id) and next != id -> {:halt, :transition}
+          is_binary(next) and next_checkpointed? and not checkpointed? -> {:halt, :transition}
+          true -> {:cont, {next, next_checkpointed?}}
         end
 
       _event, previous ->
@@ -245,6 +255,7 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
             thinking: "",
             tool_calls: if(same?, do: previous.tool_calls, else: []),
             omitted_tools: if(same?, do: previous.omitted_tools, else: 0),
+            checkpointed: checkpointed(call, same?, previous),
             complete: generation_complete,
             generation_complete: generation_complete,
             capture_coverage:
@@ -260,6 +271,27 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
 
       _ ->
         retire(state)
+    end
+  end
+
+  # The rendered call id AND its authoritative checkpoint marker, the shared
+  # starting point of the ordered transition walk.
+  defp rendered_call(%__MODULE__{projections: [projection]}) when is_map(projection) do
+    case Map.get(projection, :identity) do
+      %{id: id} when is_binary(id) -> {id, field(projection, :checkpointed) == true}
+      _ -> {nil, false}
+    end
+  end
+
+  defp rendered_call(_state), do: {nil, false}
+
+  # A present marker always reads strictly; an absent one preserves a same-call
+  # replacement and resets a fresh attempt, so older maps cannot adopt a call.
+  defp checkpointed(call, same?, previous) do
+    cond do
+      has_field?(call, :checkpointed) -> field(call, :checkpointed) == true
+      same? and is_map(previous) -> Map.get(previous, :checkpointed) == true
+      true -> false
     end
   end
 

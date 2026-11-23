@@ -513,6 +513,131 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStreamTest do
     end
   end
 
+  describe "authoritative checkpoint adoption marker" do
+    test "seed carries the event-time checkpoint marker into the projection" do
+      adopted =
+        RuntimeStream.seed(
+          fresh(),
+          %Snapshot{activity: activity(:llm_complete, call("adopted", %{checkpointed: true}))},
+          1
+        )
+
+      assert [%{identity: %{id: "adopted"}, checkpointed: true}] = adopted.projections
+
+      # An absent key and an explicit false are both "not adopted".
+      for current <- [
+            call("fresh"),
+            call("fresh", %{checkpointed: false}),
+            %{"id" => "fresh", "checkpointed" => false}
+          ] do
+        state = RuntimeStream.seed(fresh(), %Snapshot{activity: activity(:llm, current)}, 1)
+        assert [%{checkpointed: false}] = state.projections
+      end
+    end
+
+    test "string-keyed markers read strictly and junk never adopts a call" do
+      adopted =
+        RuntimeStream.seed(
+          fresh(),
+          %Snapshot{activity: activity(:tools, %{"id" => "adopted", "checkpointed" => true})},
+          1
+        )
+
+      assert [%{checkpointed: true}] = adopted.projections
+
+      for junk <- ["yes", 1, nil, %{}, [true]] do
+        state =
+          RuntimeStream.seed(
+            fresh(),
+            %Snapshot{activity: activity(:llm, call("junk", %{checkpointed: junk}))},
+            1
+          )
+
+        assert [%{checkpointed: false}] = state.projections, "marker #{inspect(junk)}"
+      end
+    end
+
+    test "a same-id replacement preserves an absent marker and a fresh attempt resets it" do
+      live = started("live")
+
+      adopted =
+        batch(live, 2, {:activity, activity(:llm_complete, call("live", %{checkpointed: true}))})
+
+      assert [%{checkpointed: true, identity: %{id: "live"}}] = adopted.projections
+
+      # The SAME call id with an absent marker retains the earlier adoption.
+      preserved =
+        batch(adopted, 3, {:activity, activity(:tools, call("live", %{text: "tail"}))})
+
+      assert [%{checkpointed: true, response: "tail", identity: %{id: "live"}}] =
+               preserved.projections
+
+      # An explicit false on the same id is authoritative, not "absent".
+      reset =
+        batch(preserved, 4, {:activity, activity(:llm, call("live", %{checkpointed: false}))})
+
+      assert [%{checkpointed: false}] = reset.projections
+
+      # A fresh attempt id never inherits the previous call's adoption.
+      re_adopted =
+        batch(reset, 5, {:activity, activity(:llm_complete, call("live", %{checkpointed: true}))})
+
+      assert [%{checkpointed: true}] = re_adopted.projections
+
+      next = batch(re_adopted, 6, {:activity, activity(:llm_waiting, call("next"))})
+      assert [%{checkpointed: false, identity: %{id: "next"}}] = next.projections
+    end
+
+    test "adoption of the rendered call is a boundary while a repeated marker is not" do
+      live = started("live")
+      adopted_call = call("live", %{checkpointed: true})
+
+      # Not-yet-checkpointed -> checkpointed on the SAME call must resync.
+      assert RuntimeStream.checkpoint_transition?(live, [
+               {:activity, activity(:llm_complete, adopted_call)}
+             ])
+
+      # An unrelated event earlier in the same batch does not hide the flip.
+      assert RuntimeStream.checkpoint_transition?(live, [
+               {:text, " chunk"},
+               {:activity, activity(:tools, adopted_call)}
+             ])
+
+      # The boundary is the not-yet-checkpointed pair, never the marker itself.
+      adopted = batch(live, 2, {:activity, activity(:llm_complete, adopted_call)})
+      assert [%{checkpointed: true}] = adopted.projections
+
+      for events <- [
+            [{:activity, activity(:tools, adopted_call)}],
+            [
+              {:activity, activity(:tools, call("live", %{checkpointed: true, text: "replaced"}))}
+            ],
+            [{:text, " chunk"}, {:activity, activity(:llm_complete, adopted_call)}]
+          ] do
+        refute RuntimeStream.checkpoint_transition?(adopted, events)
+      end
+    end
+
+    test "a checkpointed call arriving with no rendered call is an adoption boundary" do
+      assert RuntimeStream.checkpoint_transition?(fresh(), [
+               {:activity, activity(:llm, call("adopted", %{checkpointed: true}))}
+             ])
+
+      retired = batch(started("live"), 2, {:activity, activity(:idle, nil)})
+      assert RuntimeStream.current_call_id(retired) == nil
+
+      # An unmarked new call is not adoption, but its later flip in one batch is.
+      refute RuntimeStream.checkpoint_transition?(retired, [
+               {:activity, activity(:llm_waiting, call("next"))}
+             ])
+
+      assert RuntimeStream.checkpoint_transition?(retired, [
+               {:activity, activity(:llm_waiting, call("next"))},
+               {:activity, activity(:llm_complete, call("next", %{checkpointed: true}))}
+             ])
+    end
+  end
+
   describe "bounded retention with honest omissions" do
     test "public retention budgets stay explicit and independent of checkpoint size" do
       assert RuntimeStream.max_projections() == 12

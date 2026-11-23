@@ -346,9 +346,18 @@ defmodule EvoGit.Agent.Stream.PureContractTest do
 
       activity = %{
         phase: :llm,
-        current_call: %{id: "live-call", turn: 4, attempt: 1, text: "partial", thinking: "why"}
+        current_call: %{
+          id: "live-call",
+          turn: 4,
+          attempt: 1,
+          text: "partial",
+          thinking: "why",
+          checkpointed: true
+        }
       }
 
+      # The live projection is copied VERBATIM, including the
+      # `current_call.checkpointed` marker — a snapshot never re-derives it.
       live_snapshot = Snapshot.from(state, :running, activity: activity)
       assert live_snapshot.activity == activity
       assert %{live_snapshot | activity: snapshot.activity} == snapshot

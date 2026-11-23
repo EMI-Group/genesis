@@ -24,6 +24,88 @@ defmodule EvoGit.Agent.Stream.ActivityTest do
     assert Activity.apply(expected, {:start_call, "nudge", 7, 0}) == replacement(nudged)
   end
 
+  test "every fresh call starts uncheckpointed, even right after a marked one" do
+    first = call_activity("first", 4, 0)
+    assert Activity.apply(Activity.new(), {:start_call, "first", 4, 0}) == replacement(first)
+    assert first.current_call.checkpointed == false
+
+    {marked, [{:activity, flipped}]} = Activity.apply(first, {:call_checkpointed, "first"})
+    assert flipped.current_call.checkpointed
+    assert marked.current_call.checkpointed
+
+    # A retry/nudge attempt is a NEW call: the marker never carries over.
+    retried = call_activity("retried", 4, 1)
+    assert Activity.apply(marked, {:start_call, "retried", 4, 1}) == replacement(retried)
+    assert retried.current_call.checkpointed == false
+  end
+
+  test "call checkpointed flips only the matching call and publishes exactly one replacement" do
+    initial = populated_call()
+    expected = put_in(initial.current_call.checkpointed, true)
+
+    assert Activity.apply(initial, {:call_checkpointed, "call"}) == replacement(expected)
+    assert expected.current_call.checkpointed
+
+    # A stale/previous id, a non-binary id and an absent call change nothing.
+    for id <- ["previous", nil, 42] do
+      assert Activity.apply(initial, {:call_checkpointed, id}) == {initial, []}
+    end
+
+    assert Activity.apply(Activity.new(), {:call_checkpointed, "call"}) == {Activity.new(), []}
+
+    # Re-applying an ALREADY marked call is an idempotent no-op.
+    assert Activity.apply(expected, {:call_checkpointed, "call"}) == {expected, []}
+  end
+
+  test "chunks and retained phases preserve the checkpointed marker" do
+    {marked, [{:activity, marked}]} =
+      Activity.apply(populated_call(), {:call_checkpointed, "call"})
+
+    assert marked.current_call.checkpointed
+
+    {chunked, [{:text, " tail"}]} = Activity.apply(marked, {:chunk, "call", :text, " tail"})
+    assert chunked.current_call.checkpointed
+    assert chunked.current_call.text == "answer tail"
+
+    # Keyed phases that keep the call keep the marker with it.
+    for phase <- [:llm_waiting, :llm, :llm_complete, :tools] do
+      expected = %{marked | phase: phase}
+      assert Activity.apply(marked, {:call_phase, "call", phase}) == replacement(expected)
+      assert expected.current_call.checkpointed
+    end
+
+    # An unkeyed retry wait retains the call (only idle retires unkeyed), so the
+    # marker survives it too.
+    for phase <- [:llm_waiting, :llm, :llm_complete, :tools, :retry_wait] do
+      expected = %{marked | phase: phase}
+      assert Activity.apply(marked, {:phase, phase}) == replacement(expected)
+      assert expected.current_call.checkpointed
+    end
+  end
+
+  test "retirement clears the checkpointed marker together with its call" do
+    {marked, [{:activity, marked}]} =
+      Activity.apply(populated_call(), {:call_checkpointed, "call"})
+
+    for event <- [
+          {:call_phase, "call", :idle},
+          {:call_phase, "call", :retry_wait},
+          {:call_phase, "call", :compressing},
+          {:call_phase, "call", :preparing},
+          {:phase, :idle},
+          {:phase, :compressing},
+          {:phase, :preparing},
+          :reset
+        ] do
+      {retired, [{:activity, retired}]} = Activity.apply(marked, event)
+      assert retired.current_call == nil
+
+      # No marker can survive, and a late chunk cannot resurrect either.
+      {again, []} = Activity.apply(retired, {:chunk, "call", :text, "late"})
+      assert again == retired
+    end
+  end
+
   test "matching text and thinking append separately and publish only the exact append event" do
     initial = call_activity("call", 2, 0)
 
@@ -152,14 +234,28 @@ defmodule EvoGit.Agent.Stream.ActivityTest do
   defp call_activity(id, turn, attempt) do
     %{
       phase: :llm_waiting,
-      current_call: %{id: id, turn: turn, attempt: attempt, text: "", thinking: ""}
+      current_call: %{
+        id: id,
+        turn: turn,
+        attempt: attempt,
+        text: "",
+        thinking: "",
+        checkpointed: false
+      }
     }
   end
 
   defp populated_call do
     %{
       call_activity("call", 3, 1)
-      | current_call: %{id: "call", turn: 3, attempt: 1, text: "answer", thinking: "thought"}
+      | current_call: %{
+          id: "call",
+          turn: 3,
+          attempt: 1,
+          text: "answer",
+          thinking: "thought",
+          checkpointed: false
+        }
     }
   end
 
