@@ -46,6 +46,10 @@ Canonical `Project.load_model_selection/1` loading is not directly tested here; 
 The canonical async-result suite does not directly pin failed/unavailable bundle application or recovery after a failed bundle.
 `LaunchOptionsTest` pins owned-ready remote explicit/Auto success and exact rejection reasons for pending remote, absent/stale target or BEAM ownership, false readiness, load error and pending canonical/legacy restore across normal/GitHub-shaped payloads and nil/explicit/Auto selections.
 Browser restore node validation, actual event routing into helpers, sessionStorage partial-merge preservation of prompt data and normal/GitHub callsite wiring require mounted or JavaScript coverage outside this directory.
+NO test in the whole `:evo_dash` suite drives `retry_model_selection` (`projects_live.ex:1094` → `AsyncLoad.maybe_spawn(socket, current_node_id)`), even though it is the only in-page recovery path for a failed picker load (`assets/js/hooks/workbench.js:282` pushes it too).
+No test asserts the picker's LOADING/ERROR render states — `"Loading models…"` (`projects_live.ex:266-271`) and the `#model-selection-error` banner with its `Retry` button (`projects_live.ex:158-177`); mounted tests read the `model_selection_ready?` / `model_selection_error` assigns instead.
+No mounted test writes `config.toml` (or calls `EvoGit.Config.save_user_config/1`) while ProjectsLive is mounted: the page subscribes only to `"tasks"`/`"vct"`, so the only refresh paths — a later `handle_params` batch, `retry_model_selection`, a node switch, a remount — have no test proving a provider-profile/home add becomes picker-visible.
+The task-form picker never renders an `:openai_codex` (Sign in with ChatGPT) profile in any test; `openai_codex`/`auth_mode` fixtures exist only in the Settings, Welcome and components suites (`chatgpt_stream_test.exs` covers streaming), so provider-model availability is never asserted to be credential-independent in the picker.
 
 ## Routing Table
 
