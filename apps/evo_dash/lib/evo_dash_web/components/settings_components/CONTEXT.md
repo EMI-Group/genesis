@@ -93,6 +93,16 @@ Add-model events: `provider_model_change`, `provider_model_save`, `provider_mode
 The wizard's schedule block uses its own draft (`wizard.schedule`), so a preset applied in the wizard never touches a saved account's editor state.
 The account preview (derived id/name) comes from `EvoDashWeb.LLMSetup.Identity`, and the wizard never renders a secret input.
 
+## Data sources — local catalog vs SIWC registration files
+
+- `WizardForm.model_choices/2` (`wizard_form.ex:385-401`) is the ONE model-list builder for both inline wizards: `:openai_codex` reads `LLMSetup.ChatGPT.model_entries(accounts, siwc_account)` over the page-supplied `wizard.chatgpt_accounts`, and every other provider reads `EvoGit.Config.LLMCatalog.provider_models/1` (`:390`); a blank/unknown provider yields `[]`, and client strings become atoms only through a whitelist scan of the catalog (`:414-418`).
+- The `:openai_codex` list is therefore derived from the SIWC REGISTRATION files — `EvoGit.Auth.ChatGPT.Store.status/1`'s cached `models` metadata — never from `LLMCatalog`, and the wizard has NO "registrations still loading" state: `chatgpt_accounts` normalizes to `%{}` (`wizard_form.ex:318`), so an unloaded and an empty registration map render identically.
+- An empty model list is a terminal empty state, never a spinner: `model_step.ex:74-81` renders the dashed paragraph ("No catalog model matches this search. Enter the model name below." when `allow_custom_model`, else "No available ChatGPT model matches this search."), while `models` is a plain `:list` attr defaulting to `[]` (`provider_wizard.ex:285`) and any non-list degrades to `[]` (`model_step.ex:146`).
+- The custom-model fallback input (`model_step.ex:83-89`) is withheld for ChatGPT (`allow_custom_model={not @chatgpt?}`, `wizard_form.ex:165,230`), so an empty registration model list dead-ends the model step: no rows, no free-text name, and `next_disabled?` keeps Continue off through `Wizard.validate(:model, draft)` (`wizard_form.ex:287-295`).
+- Render-time core reads here are all local, synchronous and non-network: `LLMDB.model/2` (`provider_profile_fields.ex:650`), `EvoGit.Config.LLMCatalog.*` (`provider_profile_fields.ex:666,669,684,785,793`; `wizard_form.ex:360,390,415`), the pure-regex `EvoGit.Auth.ChatGPT.Store.valid_account?/1` (`provider_profile_fields.ex:776`; `store.ex:268-271`), `EvoGit.Agent.Tools.schemas()` (`custom_agents_editor.ex:511`) and `EvoGit.CustomAgents.ModelSelector.describe_contract()` (`model_selection_editor.ex:105`).
+- No component in this subtree calls `ChatGPT.accounts/1` / `Store.accounts/0` (the credential-file read) or `NodeContext`: the account map always arrives as an assign, so a component can never trigger credential I/O or a cross-node RPC.
+- `ProviderProfiles.Detail`'s default-model options also come only from the account itself — `default_model`, the UI-only `default_model_name` helper and its `models[i][model]` rows (`detail.ex:497-506`) — with no catalog lookup.
+
 ## Reasoning vocabulary — ONE keyed chip list
 
 `ProviderProfileFields.reasoning_fields/1` renders the effort inventory as ONE stable, keyed chip list built over `EvoDashWeb.LLMSetup.Reasoning.efforts/0`: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` in canonical order.
