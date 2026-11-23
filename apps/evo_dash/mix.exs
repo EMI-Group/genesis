@@ -47,11 +47,16 @@ defmodule EvoDash.MixProject do
       {:evo_git, in_umbrella: true},
       # pure-BEAM PDF reader, zero runtime deps — used by the objective attach-file feature
       {:ex_pdf, "~> 1.0"},
-      {:phoenix, "~> 1.8.1"},
+      # >= 1.8.17 — EEF-CVE-2026-128361 (unsanitized presence key crashes the
+      # Presence tracker) and EEF-CVE-2026-129344 (client-selected V1 serializer
+      # crashes shared broadcast dispatch on binary payloads)
+      {:phoenix, "~> 1.8.17"},
       # >= 4.4.0 — EEF-CVE-2026-117645 (attribute-name injection in attributes_escape/1)
       {:phoenix_html, "~> 4.4"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
-      {:phoenix_live_view, "~> 1.2.0"},
+      # >= 1.2.14 — EEF-CVE-2026-126334 (joining a LiveView without "url" skips
+      # its live_session on_mount hooks)
+      {:phoenix_live_view, "~> 1.2.14"},
       {:phoenix_live_dashboard, "~> 0.8"},
       {:lazy_html, ">= 0.1.0", only: :test},
       {:esbuild, "~> 0.10", runtime: Mix.env() == :dev},
@@ -68,8 +73,10 @@ defmodule EvoDash.MixProject do
       {:jason, "~> 1.2"},
       {:gettext, "~> 1.0"},
       {:phoenix_pubsub, "~> 2.2"},
-      # >= 1.14.1 — EEF-CVE-2026-116078 (HTTP/2 1-byte DATA frame memory amplification)
-      {:bandit, "~> 1.14.1"},
+      # >= 1.14.1 — EEF-CVE-2026-116078 (HTTP/2 1-byte DATA frame memory amplification);
+      # 1.15 carries the RFC 9113 HTTP/2 hardening series (flattened response
+      # bodies for HTTP/2, CONNECT and :path/:method validation, stream-id regressions)
+      {:bandit, "~> 1.15.0"},
       {:mdex, "~> 0.1"},
       {:floki, "~> 0.38.0", only: :test}
     ]
