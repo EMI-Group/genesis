@@ -22,11 +22,11 @@ Registrations are FILES, not SQLite rows: `account-<alias>.json` (mode `0600`, a
 Lock contention answers `{:error, :chatgpt_account_busy}`; any other lock/IO failure answers `{:error, :chatgpt_store_unwritable}`.
 Plain reads (`status/1`, `accounts/0`, `registration/1`, an unexpired `token/2`) take NO lock and may race a writer — the atomic rename means they see either the previous or the new document, never a partial one.
 
-## Freshness (no cache, no event)
+## Freshness (no cache, one config-changed event)
 There is NO cache of any kind — no ETS, no `:persistent_term`, no GenServer state, no module attribute: every call re-reads the directory/file, so a freshly installed registration is visible to any process on the SAME node immediately.
 A remote dashboard reads it through an RPC (`EvoDash.NodeContext.call_remote/4` → `EvoGit.RemoteNode.call_remote/4`, a generic `apply/3`), so the execution node's own files are authoritative.
-An install, logout or model refresh publishes NOTHING: no `"config"`/`"scheduler_config"` PubSub broadcast, no `EvoGit.Config.Watcher.notify_change/1`, no `EvoGit.Config.Cache.reload/1`, and no write to `config.toml`/`credentials.toml`.
-The config snapshot fingerprint is `:erlang.phash2({config_bytes, credentials_bytes})` only (`config/config.ex` `build_snapshot/1`), so a chatgpt-directory change can NEVER make `{:config_reloaded, node, dir, generation}` fire.
+Every successful write through `atomic_write/2` (install, logout, model refresh, token refresh, first `host-id` creation) raises `EvoGit.Config.Watcher.notify_change(EvoGit.Config.config_dir())` — the SAME total, bounded event a `credentials.toml` save raises, with the guarded `Cache.reload_safely/1` fallback when no watcher is registered — so an unchanged rewrite stays a fingerprint no-op and a real change bumps the generation and broadcasts `{:config_reloaded, node, dir, generation}`.
+`EvoGit.Config.build_snapshot/1` folds a sorted `{basename, bytes-hash}` signature of `chatgpt/account-*.json` + `host-id` into the config fingerprint (`registrations.sqlite3` EXCLUDED), and `EvoGit.Config.Watcher` watches this directory and accepts those basenames, so a sign-in, logout or refresh ALSO lands from an out-of-process writer (`genesis chatgpt login`, a second node).
 
 ## Model List for `:openai_codex`
 The model inventory is ACCOUNT metadata, not a local catalog: `EvoGit.Config.LLMCatalog` declares `models: []` for the `:openai_codex` entry (auth_modes `[:oauth]`, `oauth_source: :chatgpt`).

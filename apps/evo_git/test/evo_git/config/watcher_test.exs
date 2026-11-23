@@ -101,6 +101,77 @@ defmodule EvoGit.Config.WatcherTest do
     assert depth(dir) == 3
   end
 
+  test "a SIWC registration write under chatgpt/ refreshes the snapshot", %{dir: dir, name: name} do
+    File.mkdir_p!(Path.join(dir, "chatgpt"))
+    watcher = start_supervised!({EvoGit.Config.Watcher, dir: dir, name: name})
+
+    # The init prime sees an empty chatgpt signature: generation 1.
+    assert Cache.get(dir).generation == 1
+
+    path = Path.join([dir, "chatgpt", "account-work.json"])
+    File.write!(path, ~s({"client_id":"oaiapp_test"}))
+
+    assert await_generation(dir, 2, fn -> File.write!(path, ~s({"client_id":"oaiapp_test"})) end) ==
+             2
+
+    assert Process.alive?(watcher)
+  end
+
+  test "the registrations lock database is not a config change", %{dir: dir, name: name} do
+    chatgpt = Path.join(dir, "chatgpt")
+    File.mkdir_p!(chatgpt)
+    _watcher = start_supervised!({EvoGit.Config.Watcher, dir: dir, name: name})
+    assert Cache.get(dir).generation == 1
+
+    # Lock churn is excluded from the fingerprint AND ignored by the event
+    # filter, so neither a reload nor a generation bump can result.
+    lock = Path.join(chatgpt, "registrations.sqlite3")
+    File.write!(lock, "lock")
+    File.write!(lock, "lock-churn")
+    Process.sleep(250)
+
+    assert Cache.get(dir).generation == 1
+  end
+
+  test "the watcher starts without a chatgpt directory", %{dir: dir, name: name} do
+    # Before the first sign-in there is no `chatgpt/` dir at all: only existing
+    # directories are watched, and the config watch must behave exactly as
+    # before.
+    refute File.exists?(Path.join(dir, "chatgpt"))
+    watcher = start_supervised!({EvoGit.Config.Watcher, dir: dir, name: name})
+    assert Process.alive?(watcher)
+
+    write_config!(dir, 4)
+    assert await_depth(dir, 4, fn -> write_config!(dir, 4) end) == 4
+    assert Process.alive?(watcher)
+  end
+
+  defp await_generation(dir, expected, nudge, timeout \\ 5_000) do
+    now = System.monotonic_time(:millisecond)
+    poll_generation(dir, expected, now + timeout, now + @nudge_ms, nudge, @max_nudges)
+  end
+
+  defp poll_generation(dir, expected, deadline, nudge_at, nudge, nudges_left) do
+    now = System.monotonic_time(:millisecond)
+    generation = Cache.get(dir).generation
+
+    cond do
+      generation == expected ->
+        expected
+
+      now >= deadline ->
+        flunk("""
+        the watcher never bumped #{dir} to generation #{expected}
+        (saw #{inspect(generation)})
+        """)
+
+      true ->
+        {nudge_at, nudges_left} = maybe_nudge(now, nudge_at, nudge, nudges_left)
+        Process.sleep(@poll_ms)
+        poll_generation(dir, expected, deadline, nudge_at, nudge, nudges_left)
+    end
+  end
+
   defp await_depth(dir, expected, nudge, timeout \\ 5_000) do
     now = System.monotonic_time(:millisecond)
     poll_depth(dir, expected, now + timeout, now + @nudge_ms, nudge, @max_nudges)

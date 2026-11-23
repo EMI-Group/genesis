@@ -99,6 +99,50 @@ defmodule EvoGit.Config.ReloadEventTest do
     assert Cache.get(dir).generation == 2
   end
 
+  test "a SIWC registration write raises ONE event and the account becomes visible",
+       %{dir: dir} do
+    # The suite never starts the watcher, so the store's event target is
+    # unregistered and the guarded inline reload performs the refresh.
+    assert Process.whereis(Watcher) == nil
+
+    # The snapshot is primed from a config dir WITHOUT the account...
+    assert Cache.get(dir).generation == 1
+    assert EvoGit.Config.Schema.provider_profiles(Config.resolve()) == []
+
+    # ...then `config.toml` gains the ChatGPT account's profile (no event yet:
+    # this is exactly the stale RAM snapshot the mounted page was reading).
+    write_siwc_config!(dir)
+    EvoGit.TestSupport.ChatGPTFixture.seed!("work", %{"scopes" => []})
+    assert EvoGit.Config.Schema.provider_profiles(Config.resolve()) == []
+
+    :ok = Phoenix.PubSub.subscribe(EvoGit.PubSub, @topic)
+    this_node = node()
+
+    # A registration write is a NON-transferable logout here, so it is a pure
+    # LOCAL file write — no network — through the same `save/2` every install,
+    # logout and model refresh goes through.
+    assert :ok = EvoGit.Auth.ChatGPT.Store.logout("work")
+
+    assert Cache.get(dir).generation == 2
+    assert_receive {:config_reloaded, ^this_node, ^dir, 2}, 1_000
+    assert depth(dir) == 8
+
+    resolved = Config.resolve()
+    assert [profile] = EvoGit.Config.Schema.provider_profiles(resolved)
+    assert profile["id"] == "work"
+    assert profile["siwc_account"] == "work"
+
+    assert [selection] = EvoGit.Config.Schema.model_selections(resolved)
+    assert selection.provider_profile_id == "work"
+    assert selection.model == "gpt-5-codex"
+
+    # Writing the SAME document again emits the event but changes nothing: the
+    # fingerprint short-circuit still holds, so there is no second broadcast.
+    assert :ok = EvoGit.Auth.ChatGPT.Store.logout("work")
+    assert Cache.get(dir).generation == 2
+    refute_receive {:config_reloaded, _node, ^dir, _generation}, 200
+  end
+
   test "a dead watcher registration falls back to a synchronous reload", %{dir: dir} do
     name = :"config_reload_event_dead_#{System.unique_integer([:positive])}"
 
@@ -154,6 +198,22 @@ defmodule EvoGit.Config.ReloadEventTest do
     File.write!(Path.join(dir, "config.toml"), """
     [scheduler]
     max_agent_depth = #{depth}
+    """)
+  end
+
+  # A canonical ChatGPT (SIWC) account referencing the `work` registration
+  # alias — the profile a completed sign-in makes usable.
+  defp write_siwc_config!(dir) do
+    File.write!(Path.join(dir, "config.toml"), """
+    [llm]
+    default_provider_profile = "work"
+
+    [[llm.providers]]
+    id = "work"
+    provider = "openai_codex"
+    auth_mode = "oauth"
+    siwc_account = "work"
+    models = ["gpt-5-codex"]
     """)
   end
 

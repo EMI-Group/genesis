@@ -10,12 +10,19 @@ defmodule EvoGit.Config.Watcher do
   (~150 ms, coalesced) of the directory snapshot; an `agents.toml` event
   refreshes the custom-agent cache (`EvoGit.CustomAgents.reload/0`).
 
+  A SIWC registration write is config-affecting state that lives ONLY in
+  `<config_dir>/chatgpt/` (`account-<alias>.json`, `host-id`) — the same
+  signature `EvoGit.Config.build_snapshot/1` folds into its fingerprint — so
+  the `chatgpt/` directory (when it exists) is watched too and those events run
+  the SAME debounced reload. A `genesis chatgpt login` run out of process, or a
+  second node writing the files, therefore converges on this one handler.
+
   The debounced file-event reload and the save event `notify_change/2` — which
-  `EvoGit.Config.save_user_config/1` and `save_credentials/1` raise — converge
-  on ONE handler, so both paths share a single snapshot-reload implementation.
-  `notify_change/2` is total and bounded: it falls back to that same reload
-  when no watcher is registered, and a dead, slow or absent watcher never
-  fails or indefinitely blocks a save.
+  `EvoGit.Config.save_user_config/1`, `save_credentials/1` and
+  `EvoGit.Auth.ChatGPT.Store` raise — converge on ONE handler, so both paths
+  share a single snapshot-reload implementation. `notify_change/2` is total and
+  bounded: it falls back to that same reload when no watcher is registered, and
+  a dead, slow or absent watcher never fails or indefinitely blocks a save.
 
   The watcher is a convenience, never a requirement: when the backend is
   unavailable (no `inotify-tools`, watch limit, a missing directory) it logs
@@ -32,6 +39,12 @@ defmodule EvoGit.Config.Watcher do
   @config_filename "config.toml"
   @credentials_filename "credentials.toml"
   @agents_filename "agents.toml"
+  # `EvoGit.Auth.ChatGPT.Store`'s registration files: `chatgpt/account-<alias>.json`
+  # and `chatgpt/host-id`. Its `registrations.sqlite3` lock DB is NOT one of
+  # them, so lock churn never looks like a config change.
+  @siwc_dirname "chatgpt"
+  @siwc_host_id "host-id"
+  @siwc_account_prefix "account-"
 
   @doc """
   Starts the watcher.
@@ -157,12 +170,20 @@ defmodule EvoGit.Config.Watcher do
         reload_custom_agents()
         {:noreply, state}
 
-      _other ->
-        {:noreply, state}
+      name ->
+        if siwc_registration_file?(name) do
+          {:noreply, schedule_reload(state)}
+        else
+          {:noreply, state}
+        end
     end
   end
 
   defp on_change(state, _path), do: {:noreply, state}
+
+  defp siwc_registration_file?(@siwc_host_id), do: true
+  defp siwc_registration_file?(@siwc_account_prefix <> rest), do: String.ends_with?(rest, ".json")
+  defp siwc_registration_file?(_name), do: false
 
   # Coalesced: one pending reload at a time, restarted by every event.
   defp schedule_reload(%{timer: timer} = state) do
@@ -218,7 +239,12 @@ defmodule EvoGit.Config.Watcher do
   # GenServer down with it and the supervisor restarts the watcher (re-priming
   # the snapshot and re-arm the watch).
   defp start_watcher(dir) do
-    attempts = if macOS?(), do: [[dirs: [dir], latency: 0], [dirs: [dir]]], else: [[dirs: [dir]]]
+    dirs = watch_dirs(dir)
+
+    attempts =
+      if macOS?(),
+        do: [[dirs: dirs, latency: 0], [dirs: dirs]],
+        else: [[dirs: dirs]]
 
     Enum.reduce_while(attempts, {:error, :no_attempt}, fn opts, _acc ->
       case try_start(opts) do
@@ -226,6 +252,15 @@ defmodule EvoGit.Config.Watcher do
         {:error, reason} -> {:cont, {:error, reason}}
       end
     end)
+  end
+
+  # `chatgpt/` is created by the FIRST sign-in, so it is usually absent at boot:
+  # only existing directories are handed to the backend, which keeps a
+  # pre-sign-in watch byte-identical to the config-dir-only one (and keeps a
+  # backend that rejects a missing dir from degrading the whole watch).
+  defp watch_dirs(dir) do
+    siwc_dir = Path.join(dir, @siwc_dirname)
+    if File.dir?(siwc_dir), do: [dir, siwc_dir], else: [dir]
   end
 
   defp try_start(opts) do
