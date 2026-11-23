@@ -145,3 +145,26 @@ test("the per-component reduced-motion guard stays alongside the global backstop
   assert.equal(guards.length, 1);
   assert.equal(values(guards[0].body).transition, "none");
 });
+
+test("a project entry's child window rows start below its title pill", () => {
+  // The project title row and its FIRST child window row are both
+  // `is-current` accent pills: with no block gap their two tints fuse into one
+  // continuous coloured shape. The shared child-row container owns that gap.
+  const containers = leafRules().filter(rule => {
+    const selectors = selectorsOf(rule);
+    return selectors.includes(".workbench-project-open-windows:not(:empty)") &&
+      selectors.includes(".workbench-project-activity");
+  });
+  assert.equal(containers.length, 1, "expected one shared child-row container rule");
+
+  const declared = values(containers[0].body);
+  const gap = declared["margin-block-start"];
+  assert.ok(gap, "the child-row container must declare margin-block-start");
+  assert.match(gap, /^\d*\.?\d+rem$/, `the gap stays on the rem rhythm, got: ${gap}`);
+  assert.ok(parseFloat(gap) > 0, `the gap must be non-zero, got: ${gap}`);
+
+  // The separation is not bought by dropping the accent pill: the `is-current`
+  // tint contract and its token stay untouched.
+  assert.match(workbenchCss, /\.workbench-row\.is-current\s*\{[^}]*background:\s*var\(--workbench-selected\)/);
+  assert.equal(declared["margin-inline-start"], "1.1rem", "the inline indent is the hierarchy, never the gap");
+});
