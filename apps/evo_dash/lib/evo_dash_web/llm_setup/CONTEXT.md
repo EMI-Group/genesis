@@ -60,6 +60,7 @@ An explicitly typed name/id is never re-derived: the caller keeps the last word.
 `first/1`, `next/2`, `back/2` (both CLAMPED: last/first step stays), `index/2` (nil when absent), `step_at/2`, `progress/2` → `{current, total, percent}` with `percent` a pure integer 1..100.
 `validate(step, draft)` → `:ok | {:error, reason}`: `:provider` needs a non-blank provider (`:missing_provider`), `:auth` needs `"api_key"`/`"oauth"` (`:invalid_auth_mode`), `:model` needs a catalog pick OR a custom model name (`:missing_model`); `:reasoning_schedule`, `:test`, `:done` and unknown steps never block.
 No persisted state and no config access: the caller owns the draft and its persistence.
+There is NO loading/`loading_models` flag and no async step here: the model step renders whatever list the caller passes and `validate(:model, draft)` only checks non-blank `model`/`custom_model`, so a model list can only be stale (or "Loading models…") in the CALLER's assigns — never wedged inside this module.
 
 ## Constraints
 
