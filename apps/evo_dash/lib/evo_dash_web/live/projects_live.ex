@@ -266,9 +266,24 @@ defmodule EvoDashWeb.ProjectsLive do
                       </button>
                       <span
                         :if={!@model_selection_ready? && is_nil(@model_selection_error)}
-                        class="text-xs text-base-content/70"
+                        id="model-selection-loading"
+                        class="flex items-center gap-2 shrink-0 text-xs text-base-content/70"
                         role="status"
-                      >{gettext("Loading models…")}</span>
+                      >
+                        <span>{gettext("Loading models…")}</span>
+                        <button
+                          id="model-selection-loading-retry"
+                          type="button"
+                          phx-click="retry_model_selection"
+                          disabled={
+                            ModelSelectionScope.pending_remote?(assigns) or
+                              EvoDashWeb.RemoteGateComponents.gate_active?(assigns)
+                          }
+                          class="btn btn-sm btn-outline"
+                        >
+                          {gettext("Retry")}
+                        </button>
+                      </span>
                       <span
                         :if={
                           git_task_draft?(@workbench_reconnect_params) &&
@@ -396,6 +411,10 @@ defmodule EvoDashWeb.ProjectsLive do
       if connected?(socket) do
         Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
         Phoenix.PubSub.subscribe(EvoGit.PubSub, "vct")
+        # Config changes (a Settings save, a CLI/MCP write, another tab) must
+        # refresh the canonical picker bundle — see the `{:config_reloaded, …}`
+        # handler.
+        Phoenix.PubSub.subscribe(EvoGit.PubSub, "config")
         send(self(), :load_config_status)
       end
 
@@ -566,6 +585,12 @@ defmodule EvoDashWeb.ProjectsLive do
           task_resume_from: "",
           task_build_system: nil,
           config_status: config_status,
+          # `{config_dir, generation}` of the last `{:config_reloaded, node,
+          # dir, generation}` broadcast that actually re-spawned the picker
+          # batch (nil before the first one): a repeat or older generation for
+          # the same config dir never spawns again, a different dir is a new
+          # identity.
+          config_generation: nil,
           config_tab: "task_options",
           remote?: false
         )
@@ -1952,7 +1977,14 @@ defmodule EvoDashWeb.ProjectsLive do
         {:noreply, socket}
 
       {_, {:ok, {:registered, projects}}} ->
-        {:noreply, assign(socket, :projects, projects)}
+        # `workbench_project_selection` deliberately STAYS set: the render's
+        # `workbench_project` fallback reads its `.path` and handle_params/3
+        # clears it on a project/node mismatch. Because its presence suppressed
+        # this run's batch (handle_params/3 skips maybe_spawn then), the batch
+        # is spawned HERE instead — the captured path is unchanged, so the
+        # result is not dropped as stale.
+        socket = assign(socket, :projects, projects)
+        {:noreply, AsyncLoad.maybe_spawn(socket, socket.assigns[:current_node_id])}
 
       {%{path: path}, {:ok, :unregistered}} ->
         {:noreply,
@@ -2370,6 +2402,40 @@ defmodule EvoDashWeb.ProjectsLive do
     end
   end
 
+  # A config change on THIS page's node invalidates the canonical picker
+  # bundle: the core broadcasts `{:config_reloaded, node, dir, generation}`
+  # once per content-fingerprint change on the `"config"` topic, so a Settings
+  # save (or any other writer) refreshes the provider/model inventory instead
+  # of leaving the task form in its "Loading models…" state until a remount.
+  # A remote target's config never arrives here (the broadcast comes from the
+  # publishing BEAM), and the connection gate owns the pending/connecting UX —
+  # a batch spawned then would be dropped by the pending guard.
+  @impl true
+  def handle_info({:config_reloaded, node, dir, generation}, socket) do
+    node_matches? = node == (socket.assigns[:current_node] || node())
+
+    if node_matches? and not ModelSelectionScope.pending_remote?(socket.assigns) and
+         not EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) do
+      if stale_config_generation?(socket.assigns[:config_generation], dir, generation) do
+        {:noreply, socket}
+      else
+        # The handled generation is stored only when a batch is ACTUALLY
+        # spawned, so repeated broadcasts cannot pile up loads.
+        socket =
+          socket
+          |> assign(:config_generation, {dir, generation})
+          |> AsyncLoad.maybe_spawn(socket.assigns[:current_node_id])
+
+        # Refresh the layout's config-warning banner from the same event.
+        send(self(), :load_config_status)
+
+        {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
   @impl true
   def handle_info(:load_config_status, socket) do
     # config_status/0 (imported from EvoDashWeb.Helpers) reads config.toml +
@@ -2650,6 +2716,12 @@ defmodule EvoDashWeb.ProjectsLive do
         end
     end
   end
+
+  # A repeat or OLDER generation for the same config dir is not a new change; a
+  # different dir is a new identity.
+  defp stale_config_generation?(nil, _dir, _generation), do: false
+  defp stale_config_generation?({dir, handled}, dir, generation), do: generation <= handled
+  defp stale_config_generation?(_handled, _dir, _generation), do: false
 
   # When a resume-aware remote activation (see
   # `ProjectFlow.spawn_remote_project_activation/3` — the URL-driven `?project=`
