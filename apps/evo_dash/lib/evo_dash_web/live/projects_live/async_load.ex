@@ -92,6 +92,10 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
         |> assign(:projects_load_seq, seq)
         |> assign(:workspaces_seq, workspaces_seq)
         |> assign(:model_selection_ready?, false)
+        # A new load generation retires the previous failure: readiness alone
+        # gates the form's "Loading models…" state, so a stale error would
+        # otherwise keep the error banner up while the fresh batch is running.
+        |> assign(:model_selection_error, nil)
 
       parent = self()
 
@@ -161,9 +165,16 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
 
   # A pending remote target still resolves to the dashboard's local BEAM node.
   # Do not read its agents/config or consume a pending remote model restore.
+  # The batch stays self-describing: the pending guard DROPS it downstream, and
+  # an applied-but-keyless map would otherwise look like a silent picker load.
   def default_batch(target_node, _remote?, current_node_id, _path, _seed?, _auto?)
       when not is_nil(current_node_id) and (is_nil(target_node) or target_node == node()) do
-    %{projects: [], terminal_ids: nil, auto_activate?: false}
+    %{
+      projects: [],
+      terminal_ids: nil,
+      auto_activate?: false,
+      model_selection: {:error, :model_selection_pending_remote}
+    }
   end
 
   def default_batch(node, remote?, current_node_id, path, seed_terminal_ids?, auto_activate?) do
@@ -217,9 +228,15 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
     pending_remote? = ModelSelectionScope.pending_remote?(socket.assigns)
 
     cond do
-      pending_remote? or node != current_node or path != active_path or
-          stale_scope?(socket, results) ->
-        {socket, false}
+      # A dropped result must never leave `ready? == false` with no error (the
+      # form would render "Loading models…" forever): `settle_dropped/2` keeps
+      # an already-applied valid bundle launchable and otherwise records a
+      # typed, retryable outcome.
+      pending_remote? ->
+        {ModelSelectionScope.settle_dropped(socket, :model_selection_pending_remote), false}
+
+      node != current_node or path != active_path or stale_scope?(socket, results) ->
+        {ModelSelectionScope.settle_dropped(socket, :model_selection_superseded), false}
 
       Map.has_key?(results, :batch_error) ->
         {ModelSelectionScope.invalidate(socket, results.batch_error), false}
@@ -550,7 +567,11 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
     |> assign(:selected_model_id, resolve_selected_model_id(socket, prev_node_id, results))
   end
 
-  defp apply_model_selection(socket, _prev_node_id, _results), do: socket
+  # A batch WITHOUT a `:model_selection` key is an explicit outcome, not a
+  # silent no-op: the picker records a retryable error instead of staying in
+  # `ready? == false` / no-error (the endless "Loading models…" state).
+  defp apply_model_selection(socket, _prev_node_id, _results),
+    do: ModelSelectionScope.invalidate(socket, :model_selection_missing)
 
   defp selection_candidate(assigns) do
     cond do
