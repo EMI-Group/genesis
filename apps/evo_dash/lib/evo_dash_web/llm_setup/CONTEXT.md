@@ -88,6 +88,16 @@ The resolved flow module and three call-time seams — the call budget (`:chatgp
 `message/1` is the ONE friendly vocabulary — `%{kind: :error | :info | :success, text: binary}` — total over every documented reason (`:authorization_denied`, `:plan_not_authorized`, `:reauthorization_required`, `:authorization_timeout`, `:cancelled`, `:superseded`, `:loopback_listener_unavailable`, `:sign_in_unavailable`, `:unreachable`, `:chatgpt_account_alias_in_use`, `:chatgpt_registration_already_installed`, the paste rejections `:invalid_callback`, `:no_code`, `:already_finished` and `:unknown_flow`, success) plus tuple/`nil`/unknown catch-alls that never render `inspect`.
 `phase/1` → `:ok | :error | :pending`.
 The owning LiveView keeps the state map (`:flow_id`, `:url`, `:phase`, `:reason`, `:port`, `:mode`, `:paste`, `:paste_error`) and drops any result whose `flow_id` is not the current one, which is what makes cancel, supersede and a dismissed wizard safe without a second process; the paste transitions themselves are shared (`SettingsLive.ChatGPTSignInState.put_paste/2` and `submit_paste/2`, reused by `/welcome`), so this module stays the thin boundary over the flow module.
+
+### What a sign-in writes (and what it does NOT)
+
+Nothing in this node writes credentials or config: `ChatGPTSignIn` only drives `EvoDash.ChatGPTLogin` and reports values.
+The registration lands as ONE JSON file per account, `<config_dir>/chatgpt/account-<alias>.json` (plus `host-id`), written by `EvoGit.Auth.ChatGPT.Store.install/2` inside the flow's exchange task — never `credentials.toml`, never `config.toml`, and with no `EvoGit.Config.Watcher.notify_change`, so no config reload/broadcast follows a sign-in.
+`credentials/0` reads the `EvoGit.Config.Cache` snapshot, which carries no SIWC data at all; the store reads its own files at call time, so freshness needs no reload.
+A usable provider profile still needs a SEPARATE save that writes `siwc_account` into `[[llm.providers]]`; validation checks only the alias FORMAT (`EvoGit.Config.ProviderProfileValidation.chatgpt_account_errors/2`), so a profile may reference a registration that does not exist yet.
+Model listing for an `:openai_codex` account comes from the cached `models` in that same JSON file (catalog `models: []`), so an absent file means no account AND no models — credentials.toml plays no part.
+The poll lives in the CALLER: a page reload drops the flow id (nothing here persists it, and there is no `active_for` wrapper) while the flow keeps waiting, so a fresh mount shows no result and must start again (which SUPERSEDES the old attempt).
+
 ## Routing Table
 
 - `../components/settings_components/provider_wizard.ex` → `EvoDashWeb.SettingsComponents.ProviderWizard`, the step components that render these facts.
