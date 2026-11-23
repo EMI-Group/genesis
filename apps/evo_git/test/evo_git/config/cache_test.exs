@@ -159,6 +159,51 @@ defmodule EvoGit.Config.CacheTest do
     refute_receive {:config_reloaded, _node, ^dir, _generation}, 100
   end
 
+  test "a SIWC registration write is part of the fingerprint", %{dir: dir} do
+    write_config!(dir, 3)
+    assert Cache.get(dir).generation == 1
+    :ok = Phoenix.PubSub.subscribe(EvoGit.PubSub, @topic)
+    this_node = node()
+
+    # No config.toml/credentials.toml byte changed: the signature of the
+    # registration files alone has to make the reload land.
+    path =
+      write_registration!(dir, "account-work.json", ~s({"client_id":"oaiapp_test","subject":"s"}))
+
+    assert Cache.reload(dir: dir).generation == 2
+    assert_receive {:config_reloaded, ^this_node, ^dir, 2}, 1_000
+
+    # Identical bytes on a second write are NOT a change — a re-install or a
+    # model-list refresh of the same document never bumps the generation.
+    File.write!(path, ~s({"client_id":"oaiapp_test","subject":"s"}))
+    assert Cache.reload(dir: dir).generation == 2
+    refute_receive {:config_reloaded, _node, ^dir, _generation}, 100
+
+    # A different document is.
+    File.write!(path, ~s({"client_id":"oaiapp_test","subject":"s","models":[]}))
+    assert Cache.reload(dir: dir).generation == 3
+    assert_receive {:config_reloaded, ^this_node, ^dir, 3}, 1_000
+  end
+
+  test "the SIWC host id is signed while the lock database is not", %{dir: dir} do
+    write_config!(dir, 3)
+    assert Cache.get(dir).generation == 1
+
+    # `registrations.sqlite3` is the credential-free cross-VM write lock: its
+    # churn must never look like a config change.
+    lock = write_registration!(dir, "registrations.sqlite3", "lock")
+    append!(lock, "lock-churn")
+    assert Cache.reload(dir: dir).generation == 1
+
+    # ...while `host-id` is part of this node's SIWC identity.
+    write_registration!(dir, "host-id", "urn:uuid:test-host")
+    assert Cache.reload(dir: dir).generation == 2
+
+    # A second, DIFFERENT registration document is signed too.
+    write_registration!(dir, "account-other.json", ~s({"client_id":"oaiapp_other"}))
+    assert Cache.reload(dir: dir).generation == 3
+  end
+
   test "a wrong value type is reported as validation errors without raising", %{dir: dir} do
     File.write!(Path.join(dir, "config.toml"), """
     [scheduler]
@@ -213,6 +258,18 @@ defmodule EvoGit.Config.CacheTest do
     max_agent_depth = #{depth}
     """)
   end
+
+  # Writes a file under the config dir's `chatgpt/` directory — the SIWC
+  # registration files `EvoGit.Auth.ChatGPT.Store` owns.
+  defp write_registration!(dir, name, content) do
+    chatgpt = Path.join(dir, "chatgpt")
+    File.mkdir_p!(chatgpt)
+    path = Path.join(chatgpt, name)
+    File.write!(path, content)
+    path
+  end
+
+  defp append!(path, content), do: File.write!(path, content, [:append])
 
   defp depth(resolved), do: get_in(resolved, [:scheduler, :max_agent_depth])
 end

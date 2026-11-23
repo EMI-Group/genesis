@@ -313,6 +313,14 @@ defmodule EvoGit.Auth.ChatGPT.Store do
            :ok <- File.chmod(temp, 0o600),
            :ok <- File.write(temp, content),
            :ok <- File.rename(temp, path) do
+        # A registration is config-affecting state that lives ONLY in these
+        # files (`EvoGit.Config.build_snapshot/1` folds their signature into the
+        # snapshot fingerprint), so the write raises the SAME config-changed
+        # event a `credentials.toml` save does. `notify_change/1` is total and
+        # bounded — an absent (`:test`), dead or slow watcher falls back to the
+        # same guarded reload — so it can never fail the sign-in flow, and an
+        # unchanged rewrite stays a fingerprint no-op.
+        EvoGit.Config.Watcher.notify_change(EvoGit.Config.config_dir())
         :ok
       else
         {:error, _} -> {:error, :chatgpt_store_unwritable}

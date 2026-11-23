@@ -157,6 +157,14 @@ defmodule EvoGit.Config do
   @config_filename "config.toml"
   @credentials_filename "credentials.toml"
 
+  # The SIWC registrations `EvoGit.Auth.ChatGPT.Store` keeps beside the config
+  # (`<config_dir>/chatgpt/`). They carry no config.toml/credentials.toml
+  # bytes, yet a login, logout or token refresh DOES change what the provider
+  # profiles can do, so their signature is part of the snapshot fingerprint.
+  @siwc_dirname "chatgpt"
+  @siwc_host_id "host-id"
+  @siwc_account_prefix "account-"
+
   # Optional extra keys a [[llm.models]] profile may carry beyond the schema's
   # key paths. Model profiles are untyped maps, so `safe_atomize/1`'s
   # `String.to_existing_atom/1` can only convert these TOML keys when the atom
@@ -308,8 +316,48 @@ defmodule EvoGit.Config do
       resolved: resolved,
       validation_errors: validation_errors,
       generation: 1,
-      fingerprint: :erlang.phash2({config_bytes, credentials_bytes})
+      fingerprint: :erlang.phash2({config_bytes, credentials_bytes, siwc_auth_signature(dir)})
     }
+  end
+
+  # A TOTAL, cheap signature of this node's SIWC registrations: for every
+  # `chatgpt/account-*.json` document and the `chatgpt/host-id` file, its
+  # basename plus a hash of its bytes, sorted by basename.
+  #
+  # The registration BYTES (not the mtime) are what the signature folds, so
+  # re-writing identical content — a model-list refresh, a re-install of the
+  # same record — is a fingerprint no-op and never bumps the snapshot
+  # generation. `registrations.sqlite3` is deliberately EXCLUDED: it is the
+  # credential-free cross-VM write lock, and its churn must never look like a
+  # config change.
+  #
+  # A missing/unreadable `chatgpt/` dir (the state before the first sign-in) is
+  # simply an empty signature. Snapshots are built on an event only — never per
+  # read — so this one `File.ls` + a couple of small reads cost nothing.
+  defp siwc_auth_signature(dir) do
+    case File.ls(Path.join(dir, @siwc_dirname)) do
+      {:ok, names} ->
+        names
+        |> Enum.filter(&siwc_registration_file?/1)
+        |> Enum.sort()
+        |> Enum.map(&siwc_signature_entry(Path.join([dir, @siwc_dirname, &1])))
+
+      {:error, _reason} ->
+        []
+    end
+  end
+
+  defp siwc_registration_file?(@siwc_host_id), do: true
+  defp siwc_registration_file?(@siwc_account_prefix <> rest), do: String.ends_with?(rest, ".json")
+  defp siwc_registration_file?(_name), do: false
+
+  defp siwc_signature_entry(path) do
+    name = Path.basename(path)
+
+    case File.read(path) do
+      {:ok, contents} -> {name, :erlang.phash2(contents)}
+      {:error, _reason} -> {name, :unreadable}
+    end
   end
 
   # Raw bytes of a config file, or `:missing` when it is absent/unreadable.

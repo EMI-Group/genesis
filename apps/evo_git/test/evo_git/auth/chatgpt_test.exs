@@ -177,6 +177,34 @@ defmodule EvoGit.Auth.ChatGPTTest do
     assert {:ok, "new-access"} = Task.await(next)
   end
 
+  test "a registration write raises the config-changed event with no watcher running" do
+    EvoGit.TestSupport.ConfigDir.isolate!("evogit-siwc-reload")
+    dir = EvoGit.Config.config_dir()
+    on_exit(fn -> EvoGit.Config.Cache.invalidate(dir) end)
+
+    # `:test` never starts the watcher, so this pins the event's TOTAL fallback
+    # path (the one a sign-in on an unwatched host takes).
+    assert Process.whereis(EvoGit.Config.Watcher) == nil
+
+    # `scopes: []` makes the record non-transferable, so `logout/1` performs a
+    # pure LOCAL write through the same `save/2` every install, token refresh
+    # and model refresh uses — no network in this test.
+    EvoGit.TestSupport.ChatGPTFixture.seed!("work", %{"scopes" => []})
+    assert EvoGit.Config.Cache.get(dir).generation == 1
+
+    :ok = Phoenix.PubSub.subscribe(EvoGit.PubSub, "config")
+    this_node = node()
+
+    assert :ok = ChatGPT.Store.logout("work")
+
+    # The registration files are part of the snapshot fingerprint, so the write
+    # alone bumps the generation and emits exactly ONE reload event.
+    assert EvoGit.Config.Cache.get(dir).generation == 2
+    assert_receive {:config_reloaded, ^this_node, ^dir, 2}, 1_000
+    refute_receive {:config_reloaded, _node, ^dir, _generation}, 200
+  end
+
   defp encoded_integer(n), do: Base.url_encode64(:binary.encode_unsigned(n), padding: false)
+
   defp segment(map), do: Base.url_encode64(Jason.encode!(map), padding: false)
 end
