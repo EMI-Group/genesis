@@ -2,9 +2,9 @@
 
 Genesis is a development engine accessed through MCP. A calling agent supplies a self-contained objective, follows background work and inspects the returned changes. The same tools and collaboration workflow apply across compatible hosts. Installation, model setup, task tracking and results can stay in the calling agent; the Genesis GUI is optional.
 
-Build and start this revision using [Run from source](../README.md#run-from-source). A development server listens at `http://127.0.0.1:4100`; a `genesis_server` release defaults to port 9999. Use the actual port of the instance you started. Configure its models using [LLM provider profiles](llm-profiles.md) and, when applicable, [OAuth authentication](llm-oauth.md).
+Install and start a current [desktop or headless release](https://github.com/EMI-Group/genesis/releases/latest), or use [Run from source](../README.md#run-from-source). The v0.14.3 release includes the MCP endpoint and task pause/resume tools. A development server listens at `http://127.0.0.1:4100`; a `genesis_server` release defaults to port 9999. Desktop ports may vary; use the actual port of the instance you started. Configure its models using [LLM provider profiles](llm-profiles.md) and, when applicable, [OAuth authentication](llm-oauth.md).
 
-The endpoint is part of the existing Phoenix server. It does not start a second listener or require a separate task daemon. A release must include these MCP changes; an older installed release will not acquire them from this source checkout.
+The endpoint is part of the existing Phoenix server. It does not start a second listener or require a separate task daemon. Upgrade older installations if the endpoint or required tools are unavailable; checking out newer source does not update an already installed release.
 
 ## Connection contract
 
