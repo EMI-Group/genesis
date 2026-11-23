@@ -163,3 +163,5 @@ The export is the full-fidelity consumer: `TaskExportController.fetch_page/3` pa
 - Task state and the VCT project registry are persisted via SQLite in the `:evo_git` app (`EvoGit.Store` — `tasks` and `vct_mounts` tables, with `EvoGit.VCT` owning the mount semantics); no persistence modules remain under `./evo_dash/`; project state also held in socket assigns
 - All EvoGit.PubSub subscriptions are conditional on `connected?(socket)` in LiveViews
 - EvoGit.PubSub is owned by the evo_git application; EvoDash subscribes as a consumer
+- Config freshness is PER PROCESS and never evented: nothing under `./` subscribes to the core's `"config"` topic or handles `{:config_reloaded, node, dir, generation}`, so a config.toml/credentials.toml write made elsewhere (the `/settings/window` iframe, the CLI, another tab, a ChatGPT registration) reaches a page only on its next mount/`handle_params`.
+- The `/settings/window` LiveView runs in an iframe inside the mounting page's shell (`components/layouts.ex`), so a save there cannot tell the parent page to reload — the only iframe→parent channel is the `genesis:close-settings-window` postMessage that closes the dialog.

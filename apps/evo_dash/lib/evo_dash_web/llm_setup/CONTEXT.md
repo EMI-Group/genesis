@@ -6,8 +6,8 @@ The PURE foundation of the dashboard's LLM-configuration UI, shared by `/welcome
 Four small modules own the facts both surfaces must agree on — the reasoning vocabulary, provider-derived account identity, provider schedule presets/holiday calendars, and the wizard step model — so neither page re-implements (and drifts from) them.
 A fifth module, `ChatGPTSignIn`, owns the ONE Sign in with ChatGPT state/vocabulary and its off-process status poll, so the in-browser sign-in behaves identically on both pages.
 Nothing here renders markup: the components live in `../components/settings_components/provider_wizard.ex`.
-The four fact modules are PURE and TOTAL: no I/O, no catalog lookup at render time beyond the core's own pure tables, no process, no clock, no `try/rescue`, and no raise on `nil`/wrongly-typed input.
-`ChatGPTSignIn` is the deliberate exception: it performs the only I/O here (it drives the flow module and spawns one supervised poll task) and still never raises into a LiveView.
+The five fact modules are PURE and TOTAL: no I/O, no catalog lookup at render time beyond the core's own pure tables, no process, no clock, no `try/rescue`, and no raise on `nil`/wrongly-typed input.
+Two modules are the deliberate I/O exceptions, and neither raises into a LiveView: `ChatGPTSignIn` (drives the flow module and spawns one supervised poll task) and `ChatGPT` (reads the ChatGPT registration store — a local file read, or a cross-node RPC for another node — and derives account/model entries from it).
 
 ## API Surface
 
@@ -18,6 +18,7 @@ The four fact modules are PURE and TOTAL: no I/O, no catalog lookup at render ti
 | `EvoDashWeb.LLMSetup.Schedule` | `schedule.ex` | Provider schedule presets (apply/undo/snapshot) + off-peak holiday calendars. |
 | `EvoDashWeb.LLMSetup.Wizard` | `wizard.ex` | The pure wizard step model shared by both pages (order, navigation, gating). |
 | `EvoDashWeb.LLMSetup.ChatGPTSignIn` | `chatgpt_signin.ex` | The shared Sign in with ChatGPT state/vocabulary: flow-module resolver, `begin`/`submit`/`cancel`/`status`, the off-process poll, and the friendly message mapping. |
+| `EvoDashWeb.LLMSetup.ChatGPT` | `chatgpt.ex` | The ChatGPT (`:openai_codex`) account/model adapter over the core registration store: `provider?/1`, `accounts/1`, `account_name/1`, `model_entries/2`, `available_model?/3`. |
 
 ### `Reasoning`
 
@@ -59,6 +60,7 @@ An explicitly typed name/id is never re-derived: the caller keeps the last word.
 `first/1`, `next/2`, `back/2` (both CLAMPED: last/first step stays), `index/2` (nil when absent), `step_at/2`, `progress/2` → `{current, total, percent}` with `percent` a pure integer 1..100.
 `validate(step, draft)` → `:ok | {:error, reason}`: `:provider` needs a non-blank provider (`:missing_provider`), `:auth` needs `"api_key"`/`"oauth"` (`:invalid_auth_mode`), `:model` needs a catalog pick OR a custom model name (`:missing_model`); `:reasoning_schedule`, `:test`, `:done` and unknown steps never block.
 No persisted state and no config access: the caller owns the draft and its persistence.
+There is NO loading/`loading_models` flag and no async step here: the model step renders whatever list the caller passes and `validate(:model, draft)` only checks non-blank `model`/`custom_model`, so a model list can only be stale (or "Loading models…") in the CALLER's assigns — never wedged inside this module.
 
 ## Constraints
 
@@ -76,8 +78,7 @@ The pins it must hold: `efforts/0` contains exactly the canonical six and never 
 `Schedule` pins the deepseek preset's applied schedule keys, `snapshot/1` returning only pre-existing keys, `undo/2` restoring them and removing preset-introduced ones, `changed?/2` clearing after undo, and the holiday calendar list/options/label/year range.
 `Wizard` pins the six-step order with and without `auth_choice?: false`, clamped `next/2`/`back/2`, `index/2`, the `progress/2` tuples (`{4, 6, 67}`, `{6, 6, 100}`, `{0, total, 0}` for an unknown step) and every `validate/2` gate and reason.
 
-`Wizard` pins the six-step order with and without `auth_choice?: false`, clamped `next/2`/`back/2`, `index/2`, the `progress/2` tuples (`{4, 6, 67}`, `{6, 6, 100}`, `{0, total, 0}` for an unknown step) and every `validate/2` gate and reason.
-### `ChatGPTSignIn`
+## Sign in with ChatGPT (`ChatGPTSignIn`)
 `login_module/0` resolves the sign-in flow module AT CALL TIME — `Process.get(:chatgpt_login_module)` → the same key on a `:"$callers"` ancestor → `Application.get_env(:evo_dash, :chatgpt_login, EvoDash.ChatGPTLogin)` — and the default is a bare ATOM, so this module compiles before the flow module exists and a test can stub the flow per process.
 `begin/1` → `{:ok, %{id: binary, url: binary, port: nil | pos_integer, mode: nil | :loopback | :manual}} | {:error, reason}` (atom- or string-keyed module answers accepted, a blank id/url rejected, `port`/`mode` normalized and optional so a flow module that reports neither still works), `submit/2` → `:ok | {:error, reason}` (the MANUAL paste of a redirect URL or bare code: an ACK only — the terminal result still arrives through `status/1`/the poll, and a rejected paste leaves the attempt pending), `cancel/1` → `:ok | {:error, reason}`, `status/1` → `:pending | {:ok, map} | {:error, reason}`.
 Each of those runs the resolved module under `EvoDash.SafeCall.run/1` PLUS a bounded window (`call_timeout_ms/0`, 15 s by default), so a raise/throw/exit/timeout degrades to `{:error, :sign_in_unavailable}` instead of reaching a LiveView.
@@ -87,8 +88,21 @@ The resolved flow module and three call-time seams — the call budget (`:chatgp
 `message/1` is the ONE friendly vocabulary — `%{kind: :error | :info | :success, text: binary}` — total over every documented reason (`:authorization_denied`, `:plan_not_authorized`, `:reauthorization_required`, `:authorization_timeout`, `:cancelled`, `:superseded`, `:loopback_listener_unavailable`, `:sign_in_unavailable`, `:unreachable`, `:chatgpt_account_alias_in_use`, `:chatgpt_registration_already_installed`, the paste rejections `:invalid_callback`, `:no_code`, `:already_finished` and `:unknown_flow`, success) plus tuple/`nil`/unknown catch-alls that never render `inspect`.
 `phase/1` → `:ok | :error | :pending`.
 The owning LiveView keeps the state map (`:flow_id`, `:url`, `:phase`, `:reason`, `:port`, `:mode`, `:paste`, `:paste_error`) and drops any result whose `flow_id` is not the current one, which is what makes cancel, supersede and a dismissed wizard safe without a second process; the paste transitions themselves are shared (`SettingsLive.ChatGPTSignInState.put_paste/2` and `submit_paste/2`, reused by `/welcome`), so this module stays the thin boundary over the flow module.
+The poll writes NOTHING: it is a read-only status loop — the registration file is written by the flow module (`EvoGit.Auth.ChatGPT.Store.install/2`), and this module only reports the outcome to the LiveView.
+
+## ChatGPT account/model adapter (`ChatGPT`)
+
+`provider?/1` — true for `:openai_codex`/`"openai_codex"` only.
+`accounts/1` — the registration map `%{alias => %{expires, account_id, models}}`: on the local node `EvoGit.Auth.ChatGPT.Store.accounts/0` (`File.ls` + one `File.read` of `<config_dir>/genesis/chatgpt/account-<alias>.json` on EVERY call, with no ETS/`:persistent_term`/module-attribute cache in the store), on another node `EvoDash.NodeContext.call_remote/4` (`:erpc`), degrading to `%{}` on any failure.
+`account_name/1` — a non-empty binary verbatim, else `Store.default_account/0` (`"default"`), so `nil` and `""` address the default registration.
+`model_entries/2` — the account's persisted `"models"` snapshot (`%{"slug", "display_name"}`) mapped to `%{id:, display_name:}`; unknown alias/account → `[]`.
+`available_model?/3` — membership over `model_entries/2`, used as the save-time gate for a ChatGPT model.
+No network call and no model discovery here: the models come from the registration file written by `Store.install/2` (one `GET /v1/models` at sign-in) and are refreshed only by `Store.models/1` (CLI-only; no dashboard caller).
+Nothing is cached in this module and the store emits NO event on install, so a freshly written registration is visible only to the next `accounts/1` call — a caller holding an earlier read (a socket/wizard assign) keeps the old or empty list until it re-reads on its own trigger (provider re-pick, "Check connection", its own sign-in result, remount).
+
 ## Routing Table
 
 - `../components/settings_components/provider_wizard.ex` → `EvoDashWeb.SettingsComponents.ProviderWizard`, the step components that render these facts.
-- `../live/welcome_live/` → onboarding that consumes this foundation (later rework step).
-- `../live/settings_live/` → the canonical provider editor that consumes it (later rework step).
+- `../components/settings_components/provider_profiles/wizard_form.ex` (`model_choices/2` → `ChatGPT.model_entries/2`), `../live/welcome_live/setup.ex` (`chatgpt_models/2`) and `../live/settings_live/chatgpt_sign_in_state.ex` (`accounts/1`) → the callers that turn `ChatGPT`'s snapshot into a rendered model list (each holds its OWN snapshot assign and re-reads only on its own trigger).
+- `../live/welcome_live/` → onboarding that consumes this foundation.
+- `../live/settings_live/` → the canonical provider editor that consumes it.
