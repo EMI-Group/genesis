@@ -96,6 +96,19 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest.Fixtures do
     account
   end
 
+  # A HALF-SAVED canonical account: the config carries `[[llm.providers]]` (so
+  # the schema selection snapshot IS installed), but the account's `models`
+  # inventory is empty and it has no `default_model`, so the DEFAULT selection
+  # cannot resolve at all — `{:model_not_found, "account", nil}`.
+  def half_saved_config do
+    %{
+      llm: %{
+        default_provider_profile: "account",
+        providers: [%{id: "account", provider: "openai", models: []}]
+      }
+    }
+  end
+
   def spec(opts \\ []) do
     %AgentSpec{
       context_node: nil,
@@ -751,6 +764,84 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
     assert Keyword.fetch!(state.llm_generation_params, :temperature) == 0.3
     assert state.model_concurrency == %{"legacy" => 4}
     assert state.default_llm_max_concurrency == 4
+  end
+
+  # A half-saved provider account makes the DEFAULT selection unresolvable.
+  # `from_model_profiles/2` runs inside `AgentScheduler.init/1` AND on every
+  # `{:update_config, _}`, so raising there crash-loops the scheduler and reaches
+  # the caller only as a swallowed `:exit` — it must degrade LOUDLY instead.
+  @tag capture_log: true
+  test "an unresolvable canonical default warns and degrades instead of raising" do
+    config = half_saved_config()
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        send(self(), {:degraded, State.from_config(config)})
+      end)
+
+    assert_received {:degraded, state}
+    # Loud: the reason, the offending account, and the explicit fallback fact.
+    assert log =~ "Default model selection is unresolvable"
+    assert log =~ ~s({:model_not_found, "account", nil})
+    assert log =~ ~s(provider account "account")
+    assert log =~ "falling back to NO default model"
+    # Degraded: no default model/params, everything else still usable.
+    assert state.llm_model == nil
+    assert state.llm_generation_params == []
+    assert state.provider_profiles == Schema.provider_profiles(config)
+    assert state.model_selection_config == config
+    assert state.model_concurrency == %{"account" => 3}
+    assert state.default_llm_max_concurrency == 3
+    assert State.holders_for(state, "account") == MapSet.new()
+    assert State.concurrency_for(state, "unknown") == 3
+    # The same half-saved account applied as a runtime update must not raise.
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:reply, :ok, updated} =
+                 State.do_update_config(ModelSelection.config_opts(config), state)
+
+        send(self(), {:updated, updated})
+      end)
+
+    assert_received {:updated, updated}
+    assert log =~ "Default model selection is unresolvable"
+    assert updated.llm_model == nil
+    assert updated.provider_profiles == Schema.provider_profiles(config)
+  end
+
+  # ...and the degradation must NOT weaken the fail-closed contract for EXPLICIT
+  # per-task canonical selections resolved against the very same state.
+  @tag capture_log: true
+  test "an unresolvable default leaves explicit selection errors unchanged" do
+    config = half_saved_config()
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        send(self(), {:degraded, State.from_config(config)})
+      end)
+
+    assert log =~ "Default model selection is unresolvable"
+    assert_received {:degraded, state}
+    # A model that does not exist on the half-saved account still fails closed...
+    assert ModelSelection.resolve(state, %{
+             "provider_profile_id" => "account",
+             "model" => "gpt-4o"
+           }) == {:error, {:model_not_found, "account", "gpt-4o"}}
+
+    # ...an unknown account too, and a nil model is never a default here.
+    assert ModelSelection.resolve(state, %{
+             "provider_profile_id" => "missing",
+             "model" => "gpt-4o"
+           }) == {:error, {:provider_profile_not_found, "missing"}}
+
+    # A selection naming only the (empty) account resolves that account's
+    # default and fails closed on the very same error the default hit.
+    assert ModelSelection.resolve(state, %{"provider_profile_id" => "account"}) ==
+             {:error, {:model_not_found, "account", nil}}
+
+    # Without the schema snapshot the pre-existing error identity is unchanged.
+    assert ModelSelection.resolve(%{state | model_selection_config: nil}, nil) ==
+             {:error, :model_spec_schema_unavailable}
   end
 end
 

@@ -274,19 +274,18 @@ defmodule EvoGit.AgentScheduler.State do
              Map.get(model_concurrency, resolved.provider_profile_id, 3)}
 
           {:error, reason} ->
-            raise ArgumentError, "invalid default model selection: #{inspect(reason)}"
+            # A half-saved provider account (empty `models` list and no
+            # `default_model`) leaves the default selection unresolvable. This
+            # runs inside `init/1` and on EVERY `{:update_config, _}`, so
+            # raising here crash-loops the whole scheduler and surfaces only as
+            # a swallowed `:exit` at the caller. Degrade exactly like the
+            # non-schema path below — a warning plus no default — so the
+            # scheduler stays up and the config can be completed.
+            warn_unresolvable_default(reason, default_profile)
+            fallback_default_tuple(default_profile, model_concurrency)
         end
       else
-        case default_profile do
-          nil ->
-            {nil, [], 3}
-
-          profile ->
-            {fallback_model, fallback_params} = fallback_default(profile)
-
-            {fallback_model, fallback_params,
-             Map.get(model_concurrency, ModelSelection.pool_id(profile), 3)}
-        end
+        fallback_default_tuple(default_profile, model_concurrency)
       end
 
     state = %__MODULE__{
@@ -710,6 +709,34 @@ defmodule EvoGit.AgentScheduler.State do
     else
       {Keys.get(profile, :model), EvoGit.Config.Schema.llm_generation_params(profile)}
     end
+  end
+
+  # The ONE default used when the schema path cannot resolve (and when there is no
+  # selection snapshot at all): no profile means no default; otherwise the
+  # profile's own fallback model/params (`fallback_default/1`, which itself
+  # degrades to `{nil, []}` with a warning when an account yields no model) with
+  # that profile's own pool concurrency.
+  defp fallback_default_tuple(nil, _model_concurrency), do: {nil, [], 3}
+
+  defp fallback_default_tuple(profile, model_concurrency) do
+    {fallback_model, fallback_params} = fallback_default(profile)
+
+    {fallback_model, fallback_params,
+     Map.get(model_concurrency, ModelSelection.pool_id(profile), 3)}
+  end
+
+  # LOUD degradation for an unresolvable canonical DEFAULT selection: names the
+  # offending account/selection and the schema reason, and states plainly that
+  # the scheduler now runs without a default model. Explicit per-task
+  # `model_spec` selections are unaffected — they still resolve (and fail
+  # closed) through `ModelSelection.resolve/2`.
+  defp warn_unresolvable_default(reason, default_profile) do
+    Logger.warning(
+      "Default model selection is unresolvable: #{inspect(reason)} " <>
+        "(provider account #{inspect(Keys.get(default_profile, :id))}); " <>
+        "the agent scheduler is falling back to NO default model, so agents that rely on " <>
+        "the configured default cannot resolve a model until that provider account is completed."
+    )
   end
 
   # The canonical account shape `ProviderProfiles.provider_profiles/1` emits:

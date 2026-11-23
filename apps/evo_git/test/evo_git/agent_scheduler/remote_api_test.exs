@@ -762,6 +762,64 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
     end
   end
 
+  # ── reload_config/0 ─────────────────────────────────────────────────
+  # The app-global scheduler IS running under `mix test`, so `reload_config/0`
+  # can be exercised end-to-end against an ISOLATED config directory (the
+  # per-process `EvoGit.TestSupport.ConfigDir` override is read by
+  # `EvoGit.Config.resolve/0` in THIS process). The block pins/restores the
+  # scheduler state and suspends `EvoGit.PeakHourEngine`, whose asynchronous
+  # `:model_concurrency` pushes would otherwise race the assertions.
+  describe "reload_config/0" do
+    setup do
+      ConfigDir.isolate!("remote-api-reload-config")
+      dir = EvoGit.Config.config_dir()
+      File.mkdir_p!(dir)
+      on_exit(fn -> EvoGit.Config.Cache.invalidate(dir) end)
+      engine = Process.whereis(EvoGit.PeakHourEngine)
+      :ok = :sys.suspend(engine)
+      original = :sys.get_state(EvoGit.AgentScheduler)
+
+      on_exit(fn ->
+        :sys.replace_state(EvoGit.AgentScheduler, fn _ -> original end)
+        :sys.resume(engine)
+      end)
+
+      :ok
+    end
+
+    # A half-saved provider account (`models = []`, no `default_model`) makes the
+    # canonical DEFAULT selection unresolvable. Applying it must not kill the
+    # scheduler — the previous behaviour raised from `init/1` and from every
+    # `{:update_config, _}`, i.e. a crash loop whose only symptom was a
+    # swallowed `:exit` at the caller.
+    @tag capture_log: true
+    test "survives a half-saved provider account with one loud degradation" do
+      dir = EvoGit.Config.config_dir()
+
+      File.write!(Path.join(dir, "config.toml"), """
+      [llm]
+      default_provider_profile = "account"
+
+      [[llm.providers]]
+      id = "account"
+      provider = "openai"
+      models = []
+      """)
+
+      scheduler = Process.whereis(EvoGit.AgentScheduler)
+      log = ExUnit.CaptureLog.capture_log(fn -> assert :ok = RemoteAPI.reload_config() end)
+      assert log =~ "Default model selection is unresolvable"
+      assert log =~ ~s(provider account "account")
+      # No crash loop: the SAME scheduler process kept running and applied it.
+      assert Process.whereis(EvoGit.AgentScheduler) == scheduler
+      assert Process.alive?(scheduler)
+      state = :sys.get_state(scheduler)
+      assert state.llm_model == nil
+      assert [%{"models" => [], "default_model" => nil}] = state.provider_profiles
+      assert is_map(state.model_selection_config)
+    end
+  end
+
   # ── get_config/0, reload_config/0, and paused?/0 ──────────────────
 
   # These functions delegate to `EvoGit.AgentScheduler.get_config/0`,
