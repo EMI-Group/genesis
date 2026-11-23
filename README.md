@@ -53,7 +53,7 @@ Selected software worlds developed with Genesis.
 | [MESA](https://genesis.evox.group/evidence/mesa) | 13 Fortran modules redeveloped in Rust | 1,052 / 1,052 (0 failures) Rust test suite |
 | [tbench-wasm](https://genesis.evox.group/evidence/tbench-wasm) | A software WebGL renderer in TypeScript | 2,017 / 2,019 (99.90%) Khronos WebGL CTS |
 
-Latest evidence: [EvoX Compiler](https://genesis.evox.group/evidence/evoxc) · 2026-10-28
+Latest evidence: [openJiuwen Agent Core: Python → Rust](https://genesis.evox.group/evidence/agent-core-rs) · 2026-11-20
 
 [Explore all evidence →](https://genesis.evox.group/evidence/)
 

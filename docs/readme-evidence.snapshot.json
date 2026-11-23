@@ -1,7 +1,32 @@
 {
   "schema_version": "1.0",
-  "count": 5,
+  "count": 6,
   "worlds": [
+    {
+      "slug": "agent-core-rs",
+      "id": "GW-000006",
+      "title": "openJiuwen Agent Core: Python → Rust",
+      "date": "2026-11-20",
+      "url": "https://genesis.evox.group/evidence/agent-core-rs",
+      "verification_results": [
+        {
+          "name": "Workspace gates",
+          "result": "Reported passing: fmt · Clippy · tests · rustdoc · 7 feature groups · examples"
+        },
+        {
+          "name": "Test inventory",
+          "result": "24,293 test functions; source count"
+        },
+        {
+          "name": "Prompt rendering",
+          "result": "0.356 µs Rust / 16.37 µs Python · ~46×"
+        },
+        {
+          "name": "Two-node graph execution",
+          "result": "7.23 µs Rust / 112.3 µs Python · ~15×"
+        }
+      ]
+    },
     {
       "slug": "c-compiler",
       "id": "GW-000001",
