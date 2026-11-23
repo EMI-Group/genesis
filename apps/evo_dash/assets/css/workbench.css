@@ -1278,9 +1278,16 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
-  margin-block-start: .3rem;
   margin-inline-start: 1.1rem;
   gap: .15rem;
+}
+/* The gap rides the FIRST row, never the container: the container is filled by
+   JS and HEEx renders it with a whitespace-only body even when it holds no
+   rows, so a container margin would reserve dead space under every entry
+   without open windows. `> :first-child` only exists when a row does. */
+.workbench-project-activity > :first-child,
+.workbench-project-open-windows > :first-child {
+  margin-block-start: .3rem;
 }
 .workbench-project-activity-link[hidden] { display: none; }
 .workbench-project-window-link {
