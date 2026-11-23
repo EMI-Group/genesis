@@ -71,7 +71,7 @@ No persisted state and no config access: the caller owns the draft and its persi
 
 ## Test Strategy
 
-Coverage is module-level ExUnit in the `apps/evo_dash/test` node (`test/evo_dash_web/llm_setup/{reasoning,identity,schedule,wizard}_test.exs`), `async: true` because none of these modules touch global state — that suite does not exist yet.
+Coverage is module-level ExUnit in the `apps/evo_dash/test` node (`test/evo_dash_web/llm_setup/{reasoning,identity,schedule,wizard,chatgpt_signin}_test.exs`), `async: true` because these modules touch no global state (the sign-in suite injects the flow module per process).
 The pins it must hold: `efforts/0` contains exactly the canonical six and never `"max"`; `options/0` appends `"default"`; `canonical/1` returns strings and reads `"max"` as `"xhigh"`; `normalize_inventory/1` dedups, canonicalizes and keeps unknown values.
 `Identity` pins provider-derived naming (two accounts of one provider differ by a `-2` suffix on BOTH id and name), collision suffixes, case-insensitive comparison, the `profile-N` blank-base scheme and the unknown/`nil` fallbacks.
 `Schedule` pins the deepseek preset's applied schedule keys, `snapshot/1` returning only pre-existing keys, `undo/2` restoring them and removing preset-introduced ones, `changed?/2` clearing after undo, and the holiday calendar list/options/label/year range.
