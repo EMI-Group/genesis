@@ -116,6 +116,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
   alias EvoGit.BackgroundJobs
+  alias EvoGit.BackgroundJobs.Retention
 
   # Statuses a wait keeps polling through.
   @live_statuses [:running, :stopping]
@@ -477,22 +478,15 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
   ## Evicted records (tombstones)
 
-  # TOMBSTONE detection belongs to the registry's retention policy — NEVER
-  # re-implemented here (`tombstone?/1` is true iff the record carries
-  # `:evicted_reason`). The `Code.ensure_loaded?/1` guard keeps this tool total on
-  # a build where that policy module is not compiled yet: a LIVE record then
-  # renders exactly as before instead of the whole read failing.
-  defp tombstone?(job) when is_map(job) do
-    Code.ensure_loaded?(BackgroundJobs.Retention) and BackgroundJobs.Retention.tombstone?(job)
-  end
-
-  defp tombstone?(_job), do: false
-
   # ONE extra line, placed AFTER the byte-identical status line and BEFORE the
   # wait marker and the inferred-id note (both of which keep their places). A
   # normal record renders nothing extra.
+  #
+  # TOMBSTONE detection belongs to the registry's retention policy — NEVER
+  # re-implemented here (`Retention.tombstone?/1` is true iff the record carries
+  # `:evicted_reason`, and is itself total).
   defp tombstone_suffix(job) do
-    if tombstone?(job), do: "\n" <> tombstone_note(job), else: ""
+    if Retention.tombstone?(job), do: "\n" <> tombstone_note(job), else: ""
   end
 
   defp tombstone_note(job) do

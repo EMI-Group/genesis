@@ -30,6 +30,7 @@ defmodule EvoGit.Agent.Tools.JobList do
   alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
   alias EvoGit.BackgroundJobs
+  alias EvoGit.BackgroundJobs.Retention
 
   @doc """
   Returns the tool schema for ReqLLM.
@@ -73,21 +74,14 @@ defmodule EvoGit.Agent.Tools.JobList do
       tombstone_marker(job)
   end
 
-  # TOMBSTONE detection belongs to the registry's retention policy — NEVER
-  # re-implemented here (`tombstone?/1` is true iff the record carries
-  # `:evicted_reason`). The `Code.ensure_loaded?/1` guard keeps the list total on
-  # a build where that policy module is not compiled yet: a LIVE row then renders
-  # exactly as before.
-  defp tombstone?(job) when is_map(job) do
-    Code.ensure_loaded?(BackgroundJobs.Retention) and BackgroundJobs.Retention.tombstone?(job)
-  end
-
-  defp tombstone?(_job), do: false
-
   # ONE trailing marker on an aged-out row, so a pruned record is never read as a
   # live one. A normal row renders nothing extra.
+  #
+  # TOMBSTONE detection belongs to the registry's retention policy — NEVER
+  # re-implemented here (`Retention.tombstone?/1` is true iff the record carries
+  # `:evicted_reason`, and is itself total).
   defp tombstone_marker(job) do
-    if tombstone?(job) do
+    if Retention.tombstone?(job) do
       " (aged out of retention" <> log_suffix(job) <> ")"
     else
       ""
