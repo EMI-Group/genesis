@@ -65,7 +65,8 @@ A retention-evicted record that a live owner has not observed never degrades int
 
 ## Design Decisions
 
-- Retention is OBSERVATION-AWARE because a finished record a live owner has not seen yet is not garbage: it is what that agent's next `job_output` / `job_list` and its pending completion notice depend on. One global oldest-first cap over all owners once deleted exactly that record — and its mirror row — while a long-run agent was mid-turn, so the agent was told "no background job with id … is known to this agent" about a job it had just started.
+- Retention is OBSERVATION-AWARE because a finished record a live owner has not seen yet is not garbage: it is what that agent's next `job_output` / `job_list` and its pending completion notice depend on.
+- One global oldest-first cap over all owners (the retired policy) deleted exactly that record — and its mirror row — while a long-run agent was mid-turn, so the agent was told "no background job with id … is known to this agent" about a job it had just started.
 - Eviction therefore splits by OWNERSHIP AND OBSERVATION instead of by raw age: dead owners are trimmed first (they can never read their records), live owners keep the announced history they might re-read, and unobserved live-owner records are protected outright.
 - A tombstone replaces a silent delete on the ONE path that may still hit protected records (the global valve): the id, status, exit code and log path survive, so the answer stays honest and the id can never be reissued to a different job.
 - A tombstoned record's notice-mirror row is deliberately LEFT INTACT: the owner has still not observed the outcome, so the normal per-turn notice is exactly the delivery the record was protected for; deleting the row would silently convert a protected record into a lost one.
