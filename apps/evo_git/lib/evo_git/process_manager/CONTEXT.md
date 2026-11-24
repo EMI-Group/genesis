@@ -90,7 +90,7 @@ It is never a claim that the work did not happen: the agent-facing answer for an
 ## Design Decisions
 
 - Locality: the roster is per-BEAM live state, so it is neither persisted, archived nor aggregated — a node restart legitimately starts empty, and cross-node answers come from RPC into each owning node's own registry.
-- Retention is a recent-actions list: operators need "what did this node just run", never a full audit trail, so terminal records are both time-bounded and count-bounded while live executions are always kept.
+- Retention is a recent-actions list: operators need "what did this node just run", never a full audit trail, so terminal records are both time-bounded and count-bounded while live executions are always kept; a LIVE owner's terminal background jobs are the exception, because its own agent may still need them, so they are bounded per owner instead of by age or by other agents' churn.
 - Owner monitors are keyed by owner pid and reaped with the records they protect, so the monitor map can never outgrow the retained roster.
 
 ## Known Issues
