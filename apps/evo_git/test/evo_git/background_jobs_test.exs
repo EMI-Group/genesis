@@ -1413,6 +1413,267 @@ defmodule EvoGit.BackgroundJobsTest do
     end
   end
 
+  describe "retention and tombstones" do
+    # Retention only ever lets a FINISHED record leave the authoritative map, and
+    # a finished record whose owner is ALIVE and has not observed the outcome is
+    # the ONE shape no ordinary cap may touch: the agent's next `job_output` /
+    # `job_list` and its pending completion notice both depend on it. The incident
+    # these tests pin is the opposite behaviour — a live agent's just-finished job
+    # was deleted while OTHER agents churned past the global cap, so the agent was
+    # told no such background job was known to it about a job it had started.
+    #
+    # The caps are PER-REGISTRY START OPTIONS (there is no app-env or TOML key),
+    # so each test starts an EXTRA isolated registry with tiny caps
+    # (`start_retention_registry!/2`) and points the
+    # `:evogit_background_jobs_server` seam at it; it reuses the SAME isolated
+    # `EvoGit.ProcessManager` instance as `setup`, so no job tracking reaches the
+    # app-global manager.
+    test "keeps a live owner's unobserved record when another owner churns past the cap", %{
+      tmp_dir: tmp_dir,
+      process_manager: manager
+    } do
+      # The dead-owner cap is raised ON PURPOSE: with `max_finished_total` as the
+      # only tight cap, the GLOBAL valve is the only thing that can evict here, so
+      # the survival below is the protection itself and not a per-owner side door.
+      _registry =
+        start_retention_registry!(manager, %{max_finished_total: 3, max_dead_per_owner: 50})
+
+      owner_a = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(owner_a, :kill) end)
+
+      mine = start_job!(%{command: "echo alive-owner", cwd: tmp_dir, owner_pid: owner_a})
+      completed = await_status!(mine.id, :completed)
+      assert completed.exit_code == 0
+
+      # Churn from records no LIVE owner can still read: each owner is dead by the
+      # time the NEXT start runs retention, which is what makes them evictable.
+      churn = for n <- 1..6, do: start_dead_owner_record!(tmp_dir, n)
+      churn_ids = Enum.map(churn, & &1.id)
+
+      # The incident: A's finished, still-unobserved record survives as a PLAIN
+      # record — not a tombstone, not `{:error, :not_found}`.
+      assert {:ok, kept} = BackgroundJobs.job(mine.id, owner_pid: owner_a)
+      assert kept.status == :completed
+      assert kept.exit_code == 0
+      refute EvoGit.BackgroundJobs.Retention.tombstone?(kept)
+
+      # ORDERING IS LOAD-BEARING: `claim_finished_notices/1`, `read/2` and
+      # `list/1` each mark a finished record announced AND delete its
+      # notice-mirror row, so the pending notice has to be claimed BEFORE this
+      # job is read or listed — afterwards there is nothing left to claim.
+      assert {:ok, [claimed]} = BackgroundJobs.claim_finished_notices(owner_pid: owner_a)
+      assert claimed.id == mine.id
+      assert claimed.status == :completed
+      # Exactly once: the claim took the mirror row.
+      assert {:ok, []} = BackgroundJobs.claim_finished_notices(owner_pid: owner_a)
+
+      # The output is still fully readable, which is what the protection exists for.
+      assert {:ok, %{text: text}} = BackgroundJobs.read(mine.id, owner_pid: owner_a)
+      assert text =~ "alive-owner"
+
+      # The churn really was evicted (otherwise the survival above would be
+      # vacuous): the oldest churn ids are gone …
+      assert {:error, :not_found} = BackgroundJobs.job(Enum.at(churn_ids, 0))
+      assert {:error, :not_found} = BackgroundJobs.job(Enum.at(churn_ids, 1))
+      # … while the newest one is still an ordinary record.
+      newest_id = List.last(churn_ids)
+      assert {:ok, newest} = BackgroundJobs.job(newest_id)
+      assert newest.id == newest_id
+      assert newest.status == :completed
+    end
+
+    test "tombstones a protected record at the global valve and answers honestly", %{
+      tmp_dir: tmp_dir,
+      process_manager: manager
+    } do
+      _registry = start_retention_registry!(manager, %{max_finished_total: 1})
+
+      original = start_job!(%{command: "echo tombstone-me", cwd: tmp_dir})
+      completed = await_status!(original.id, :completed)
+      assert completed.exit_code == 0
+      output_path = original.output_path
+
+      # ONE more finished record, owned by this (LIVE, still unobserved) test
+      # process. Both records are protected, so the valve's excess of one has no
+      # evictable record to spend itself on and must convert the OLDEST — the
+      # ascending-id tiebreak makes that deterministic — into a tombstone.
+      _sibling = start_terminal_unit_job!(tmp_dir, "valve")
+
+      assert {:ok, tombstone} = BackgroundJobs.job(original.id, owner_pid: self())
+      assert EvoGit.BackgroundJobs.Retention.tombstone?(tombstone)
+      assert tombstone.status == :completed
+      assert tombstone.exit_code == 0
+      assert tombstone.evicted_reason == :retention
+      assert %DateTime{} = tombstone.evicted_at
+      assert tombstone.output_path == output_path
+      # A tombstone is announced by construction; its notice-mirror row is what
+      # still carries the outcome to the owner (`claim` … `{:ok, [tombstone]}`).
+      assert tombstone.announced
+
+      # The log file normally OUTLIVES the record, so the tombstone serves it.
+      assert {:ok, %{text: "tombstone-me\n"}} =
+               BackgroundJobs.read(original.id, owner_pid: self())
+
+      # With the log gone the answer is honest prose about retention — never the
+      # "unknown job" sentence that once told an agent its own job never existed.
+      File.rm!(output_path)
+      assert {:error, message} = BackgroundJobs.read(original.id, owner_pid: self())
+      assert message =~ "aged out"
+      assert message =~ output_path
+      assert message =~ "exit code: 0"
+      refute message =~ "No background job with id"
+
+      # `list/1` shows the tombstone beside the ordinary records.
+      listed = BackgroundJobs.list(owner_pid: self())
+      assert length(listed) == 2
+      listed_tombstone = Enum.find(listed, &(&1.id == original.id))
+      assert EvoGit.BackgroundJobs.Retention.tombstone?(listed_tombstone)
+      assert listed_tombstone.evicted_reason == :retention
+
+      # A tombstone already reached its terminal status: killing it changes nothing.
+      assert {:error, {:already_finished, killed}} = BackgroundJobs.kill(original.id)
+      assert killed.evicted_reason == :retention
+
+      # `{:error, :not_found}` is reserved for an id this registry NEVER issued.
+      assert {:error, :not_found} = BackgroundJobs.job("bash-999", owner_pid: self())
+
+      # A tombstoned id is never REISSUED, even when the id counter is rewound to it.
+      :sys.replace_state(registry(), fn state -> %{state | next_id: 1} end)
+      fresh = start_live_unit_job!(tmp_dir, "no-reuse")
+      refute fresh.id == original.id
+      assert {:ok, plain} = BackgroundJobs.job(fresh.id)
+      assert plain.id == fresh.id
+      refute EvoGit.BackgroundJobs.Retention.tombstone?(plain)
+
+      assert {:ok, _} = quiet_kill(fresh)
+    end
+
+    test "the global valve tombstones oldest-first and a tombstone keeps its notice", %{
+      tmp_dir: tmp_dir,
+      process_manager: manager
+    } do
+      _registry = start_retention_registry!(manager, %{max_finished_total: 2})
+
+      oldest = start_terminal_unit_job!(tmp_dir, "valve-1")
+      second = start_terminal_unit_job!(tmp_dir, "valve-2")
+      third = start_terminal_unit_job!(tmp_dir, "valve-3")
+
+      # All three are live-owner UNOBSERVED records, so the third start's prune
+      # finds an excess of one and no deletion candidate: the oldest goes.
+      assert {:ok, tombstoned} = BackgroundJobs.job(oldest.id, owner_pid: self())
+      assert EvoGit.BackgroundJobs.Retention.tombstone?(tombstoned)
+      assert tombstoned.evicted_reason == :retention
+
+      for survivor <- [second, third] do
+        assert {:ok, job} = BackgroundJobs.job(survivor.id, owner_pid: self())
+        assert job.status == :completed
+        refute Map.has_key?(job, :evicted_reason)
+      end
+
+      # A tombstone deliberately KEEPS its notice-mirror row, so the owner still
+      # learns the outcome exactly once through the normal per-turn claim.
+      assert {:ok, claimed} = BackgroundJobs.claim_finished_notices(owner_pid: self())
+      assert Enum.count(claimed, &(&1.id == oldest.id)) == 1
+      assert {:ok, []} = BackgroundJobs.claim_finished_notices(owner_pid: self())
+
+      # The claim is also a retention event; the two survivors are now observed
+      # (inside the per-owner observed cap), and the rewound counter still cannot
+      # reissue the tombstoned id.
+      :sys.replace_state(registry(), fn state -> %{state | next_id: 1} end)
+      fresh = start_live_unit_job!(tmp_dir, "valve-no-reuse")
+      refute fresh.id == oldest.id
+
+      assert {:ok, _} = quiet_kill(fresh)
+    end
+
+    test "the valve deletes dead owners' records before touching a live owner's", %{
+      tmp_dir: tmp_dir,
+      process_manager: manager
+    } do
+      _registry =
+        start_retention_registry!(manager, %{max_finished_total: 2, max_dead_per_owner: 50})
+
+      mine = start_terminal_unit_job!(tmp_dir, "protected")
+
+      churn = for n <- 1..3, do: start_dead_owner_record!(tmp_dir, "dead-#{n}")
+      churn_ids = Enum.map(churn, & &1.id)
+
+      # The excess was spent on DELETIONS of dead owners' records, oldest first …
+      assert {:error, :not_found} = BackgroundJobs.job(Enum.at(churn_ids, 0))
+      assert {:error, :not_found} = BackgroundJobs.job(Enum.at(churn_ids, 1))
+      # … while the live owner's unobserved record is untouched: a plain record
+      # with no eviction field, i.e. the valve never had to reach it.
+      assert {:ok, kept} = BackgroundJobs.job(mine.id, owner_pid: self())
+      assert kept.status == :completed
+      refute Map.has_key?(kept, :evicted_reason)
+      # And the deletion assertions are not vacuous: the newest churn record is
+      # still there.
+      newest_id = List.last(churn_ids)
+      assert {:ok, newest} = BackgroundJobs.job(newest_id)
+      assert newest.id == newest_id
+    end
+
+    test "the per-owner observed cap trims the oldest observed records first", %{
+      tmp_dir: tmp_dir,
+      process_manager: manager
+    } do
+      _registry =
+        start_retention_registry!(manager, %{
+          max_observed_per_owner: 2,
+          max_finished_total: 100
+        })
+
+      ids =
+        for n <- 1..4 do
+          job = start_terminal_unit_job!(tmp_dir, "observed-#{n}")
+
+          # Announcing exactly this record is what makes it eligible for the
+          # per-owner OBSERVED cap; the claim's own retention pass runs before
+          # this process's next call (a cast is order-preserving behind a call,
+          # as `claim_finished_notices/1` documents).
+          assert {:ok, claimed} = BackgroundJobs.claim_finished_notices(owner_pid: self())
+          assert Enum.map(claimed, & &1.id) == [job.id]
+
+          job.id
+        end
+
+      # Only the two newest observed records remain; the older ones were DELETED
+      # (an observed record is never converted into a tombstone).
+      assert {:error, :not_found} = BackgroundJobs.job(Enum.at(ids, 0))
+      assert {:error, :not_found} = BackgroundJobs.job(Enum.at(ids, 1))
+
+      listed = BackgroundJobs.list(owner_pid: self())
+      assert Enum.sort(Enum.map(listed, & &1.id)) == Enum.sort([Enum.at(ids, 2), Enum.at(ids, 3)])
+      refute Enum.any?(listed, &EvoGit.BackgroundJobs.Retention.tombstone?/1)
+    end
+
+    test "from_opts/1 overlays per key and ignores garbage" do
+      defaults = EvoGit.BackgroundJobs.Retention.defaults()
+
+      assert EvoGit.BackgroundJobs.Retention.from_opts(%{max_finished_total: 3}) ==
+               %{defaults | max_finished_total: 3}
+
+      assert EvoGit.BackgroundJobs.Retention.from_opts(
+               max_tombstones: 2,
+               max_dead_per_owner: 1
+             ) == %{defaults | max_tombstones: 2, max_dead_per_owner: 1}
+
+      # A malformed option can never DISABLE the policy: every unrecognised key or
+      # value leaves that cap at its default.
+      for garbage <- [
+            nil,
+            %{max_finished_total: 0},
+            %{max_finished_total: -1},
+            %{max_finished_total: "3"},
+            %{bogus: 5},
+            [{:max_finished_total, :nope}]
+          ] do
+        assert EvoGit.BackgroundJobs.Retention.from_opts(garbage) == defaults,
+               "expected #{inspect(garbage)} to fall back to the retention defaults"
+      end
+    end
+  end
+
   ## Helpers
 
   defp start_job!(spec) do
@@ -1712,5 +1973,47 @@ defmodule EvoGit.BackgroundJobsTest do
   defp track_log!(%{output_path: path}) when is_binary(path) do
     on_exit(fn -> _ = File.rm(path) end)
     :ok
+  end
+
+  # An EXTRA isolated registry with tiny retention caps, which this test process
+  # is then pointed at. The caps are START OPTIONS (no app-env or TOML key exists
+  # for them), so a second instance is the only way to drive them, and the `id:`
+  # override is REQUIRED because `EvoGit.BackgroundJobs` has no custom
+  # `child_spec/1` — two children of one supervisor would otherwise share the
+  # module id. The caller passes the SAME isolated `EvoGit.ProcessManager` as
+  # `setup`, for the same no-app-global-tracking reason.
+  defp start_retention_registry!(process_manager, retention) do
+    name = :"bg_jobs_retention_#{System.unique_integer([:positive])}"
+
+    start_supervised!(
+      Supervisor.child_spec(
+        {EvoGit.BackgroundJobs,
+         [name: name, process_manager: process_manager, retention: retention]},
+        id: name
+      )
+    )
+
+    Process.put(:evogit_background_jobs_server, name)
+    name
+  end
+
+  # A FINISHED record whose owner is DEAD by the time the NEXT accepted start runs
+  # retention, i.e. an evictable record no owner can read or be notified about.
+  # The owner must be ALIVE at start time — the production start path refuses a
+  # spec whose `owner_pid` has already exited — so it is started, used for one
+  # terminal record and then killed.
+  defp start_dead_owner_record!(cwd, tag) do
+    owner = spawn(fn -> Process.sleep(:infinity) end)
+    job = start_terminal_unit_job!(cwd, tag, %{owner_pid: owner})
+
+    Process.exit(owner, :kill)
+
+    wait_until(
+      fn -> not Process.alive?(owner) end,
+      @deadline_ms,
+      "the throw-away owner #{inspect(owner)} of #{job.id} never exited"
+    )
+
+    job
   end
 end
