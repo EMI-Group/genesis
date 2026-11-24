@@ -54,7 +54,7 @@ Per-function detail lives in the child CONTEXT.md each row names.
 | `EvoGit.Agent.Tools.ElixirEval` | Assistant-only read/write/sudo evaluator, fresh bindings, current-node targeting, no auto-escalation |
 | `EvoGit.QualityLevel` | `values/0`, `default/0` `"balanced"`, `normalize/1`, `guidance/1` |
 | `EvoGit.TaskTmpdir` | per-task scratch dir + event-driven reclaim → § Tmpdir |
-| `EvoGit.BackgroundJobs` | `start_job/1`, `read/2`, `list/1`, `snapshot/1`, `claim_finished_notices/1`, `kill/3`, `reap_under/1`; 10 LIVE/owner, 100 finished → § Notices |
+| `EvoGit.BackgroundJobs` | `start_job/1`, `read/2`, `list/1`, `snapshot/1`, `claim_finished_notices/1`, `kill/3`, `reap_under/1`; 10 LIVE/owner, observation-aware finished retention + tombstones (`EvoGit.BackgroundJobs.Retention`, `:retention` start option) → § Notices + `./background_jobs/CONTEXT.md` |
 | `EvoGit.PeakHours` / `PeakHourEngine` | window math + flip engine → § Peak |
 | `EvoGit.ReqLLMPool` · `SystemSampler` · `Powershell` · `Executable` | §§ below |
 | `EvoGit.Store` / `Store.Codec` | § SQLite Store |
@@ -248,6 +248,7 @@ A message is a legacy `String.t()` OR `%{text:, attachments:}` via `AgentSchedul
 
 `announced` starts `false` and is never reset: `snapshot/1` (`owner_pid:` defaults to `current_owner_pid/0`) is the cheap per-turn read (one owner's jobs, newest first, capped at 20, no reconciliation, no output I/O), while `claim_finished_notices/1` is the exactly-once feed from the PUBLIC `NoticeMirror` ETS table (written ONLY by `put_job/2`; `:ets.take/2` is atomic, so it never calls the registry, cannot time out and never returns a job twice); `read/2`/`list/1` and a successful `kill/3` mark returned TERMINAL jobs announced (the `{:error, message}` backend-failure branch stays unannounced).
 **Consumer**: `Exchange.Pending.inject_background_job_notices/1,2` (after the drain, before the cancel-grace check and the LLM call) appends exactly ONE turn-tagged `:user` message from `Agent.BackgroundJobNotice.notice/1` — notification-only, exactly-once, SKIPPED during a grace period.
+**Retention**: `EvoGit.BackgroundJobs.Retention.prune/1` (on every accepted start and after a notice claim) never evicts a LIVE owner's unobserved record, trims dead owners (10) and observed records (20 per owner) first, keeps ≤ 500 finished records overall, and converts a still-unobserved record into a TOMBSTONE instead of deleting it, so `job/2`/`read/2`/`list/1` keep answering honestly; `:retention` is a START option overlaying the module defaults per key.
 **Compression**: the job snapshot rides ONLY the stage-2 path (`## Background Jobs`), and both rebuild paths drop EVERY earlier refresh via `ContextCompression.drop_stale_refreshes/1` before appending, so exactly ONE section survives; the summariser does NOT list job ids under `## Pending Jobs`. Detail: `./background_jobs/CONTEXT.md` + `./agent/CONTEXT.md`.
 
 ## Background Job Timers (test seam)
