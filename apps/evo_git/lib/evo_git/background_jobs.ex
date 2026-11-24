@@ -212,6 +212,7 @@ defmodule EvoGit.BackgroundJobs do
   Fetches one job by id, reconciling a live job against the backend first.
   `opts[:owner_pid]` fences ownership: when it is set, a job belonging to another owner yields `{:error, :not_owner}`; otherwise the lookup is unscoped.
   Returns `{:ok, job}`, `{:error, :not_found}` (an id the registry does not know), `{:error, :not_owner}` (the job belongs to a different owner) or `{:error, :registry_unavailable}` — the registry is not running, so NOTHING is known about the id; retry instead of treating it as missing.
+  An id whose record aged out of retention returns `{:ok, tombstone}` — a job-shaped map carrying the terminal status, exit code and log path plus `evicted_reason`/`evicted_at` and `announced: true` — so `{:error, :not_found}` is reserved for an id the registry never issued, and another owner's tombstone is `{:error, :not_owner}`.
   """
   @spec job(String.t(), keyword()) ::
           {:ok, job()} | {:error, :not_found | :not_owner | :registry_unavailable}
@@ -226,6 +227,7 @@ defmodule EvoGit.BackgroundJobs do
   Reads output produced since the previous read. The job's `:cursor` advances ONLY by the bytes actually returned, so a capped read never loses data: when more output is pending, the returned `:text` ends with `"[... more output pending; call job_output again]"`.
   Options: `:max_bytes` — maximum number of output bytes returned BY THIS CALL (positive integer, default `#{@default_max_bytes}`; bytes beyond the cap stay unread for the next call); `:owner_pid` — fences ownership (another owner's job is an error).
   Returns `{:ok, %{text: String.t(), job: job}}` or `{:error, message}` — one actionable prose sentence (unknown/foreign job, missing output file, bad `:max_bytes`, unreachable registry).
+  A tombstone serves the surviving log tail from its saved cursor (advancing it), and when the log file is gone it returns one honest `{:error, message}` naming the final status/exit code, the retention eviction and the former log path — never an "unknown job" message.
   """
   @spec read(String.t(), keyword()) ::
           {:ok, %{text: String.t(), job: job()}} | {:error, String.t()}
@@ -241,6 +243,7 @@ defmodule EvoGit.BackgroundJobs do
   @doc """
   Lists jobs, newest first, reconciling live jobs against the backend first.
   `opts[:owner_pid]` limits the result to one owner's jobs. Returns `[]` when the registry is unreachable (a list-shaped API never raises).
+  The result includes that owner's tombstones (all tombstones when `opts[:owner_pid]` is nil), newest first and unreconciled.
   """
   @spec list(keyword()) :: [job()]
   def list(opts \\ []) do
@@ -315,6 +318,7 @@ defmodule EvoGit.BackgroundJobs do
   Returns `{:ok, job}` (now `:killed`), `{:error, :not_found}` (an id the registry does not know), `{:error, :not_owner}` (`opts[:owner_pid]` fences a different owner's job), `{:error, {:already_finished, job}}` (the job already reached a terminal status; nothing was killed), `{:error, :registry_unavailable}` (the registry is not running, so the job is NOT known to be gone and may still be running — retry) or `{:error, message}` (the backend could not stop the process — one actionable prose sentence; the job is left in `:stopping`).
   The caller REQUESTED the kill, so both the `{:ok, job}` and `{:error, {:already_finished, job}}` replies come back with `announced: true` — no completion notice is raised for them (`job/2` afterwards returns a record with `announced: true`). The `{:error, message}` branch deliberately does NOT mark it: the process may still be running, so the agent should still learn the final status from a notice. A `read/2` after a kill still returns the output produced before it.
   `opts[:actor]` names who asked (defaults to `:operator`) and becomes the settled execution's terminal cause `{:killed_by, actor}`.
+  A tombstone already reached its terminal status, so killing one answers `{:error, {:already_finished, tombstone}}` with no state or notice-mirror change.
   """
   @spec kill(String.t(), term(), keyword()) ::
           {:ok, job()}
