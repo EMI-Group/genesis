@@ -49,8 +49,9 @@ A registry request has THREE possible outcomes and they are never conflated: a d
 | Module | Role |
 |---|---|
 | `EvoGit.ProcessManager` | Public facade: `track/3`, `attach/3`, `finish/3`, `list/1`, `get/2`, `sample/2`, `sample_all/1`, `signal/3`, `pause/2`, `resume/2`, `kill/2`, `subscribe/0`, `unsubscribe/0`, `server/0`, `start_link/1`, `child_spec/1`, plus the extra `prune/1` retention entry point |
-| `EvoGit.ProcessManager.Registry` | The GenServer: executions + handles + kill-intent maps, owner monitors, ONE sampling timer, `"proc-<n>"` counter, monotonic sample seq, retention (`prune/1`, `max_terminal_records/0`, `finished_retention_ms/0`) |
-| `EvoGit.ProcessManager.Execution` | FROZEN defstruct + `terminal?/1`, `live?/1`, `builtin?/1`, `external?/1`, `sampleable?/1`, `status_for_reason/1`, `control_entry/1` |
+| `EvoGit.ProcessManager.Registry` | The GenServer: executions + handles + kill-intent maps, owner monitors, ONE sampling timer, `"proc-<n>"` counter, monotonic sample seq, and the retention state surgery (`prune/1`, `max_terminal_records/0`, `finished_retention_ms/0`, `max_background_records_per_owner/0`) |
+| `EvoGit.ProcessManager.Retention` | The PURE retention policy: `doomed_ids/2` (aged-out + global-capped + per-owner overflow, never a live record), `protected?/2`, `owner_alive?/1`, and the call-time seams `finished_retention_ms/0`, `max_terminal_records/0`, `background_max_per_owner/0` |
+| `EvoGit.ProcessManager.Execution` | FROZEN defstruct + `terminal?/1`, `live?/1`, `builtin?/1`, `external?/1`, `sampleable?/1`, `status_for_reason/1`, `sort_key/1` (the ONE `{inserted_at, numeric id}` ordering), `control_entry/1` |
 | `EvoGit.ProcessManager.Handle` | Normalized OS handle (`:systemd_unit | :posix | :windows`) and `normalize/1` for legacy `%{kind: :unit | :port}` sandbox handles |
 | `EvoGit.ProcessManager.Control` | Behaviour (`stats/1`, `signal/2`, `kill/1`, `alive?/1`) + dispatcher on `Handle.kind`, the ONE signal normalization (backends receive the NAME), `kill_grace_ms/0`, the shared `kill_outcome/3` kill verdict and the `guarded/2` crash boundary |
 | `Control.Systemd` / `Control.Posix` / `Control.Windows` | Backend implementations (`systemctl --user`, `/proc` or one `ps` table, `tasklist`/`taskkill`); Systemd and Posix decide an escalating kill with the shared `Control.kill_outcome/3` |
