@@ -908,33 +908,28 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   # The load-bearing lifetime guarantee: one monitor per OWNER (agent) pid. Every way an agent can end funnels through this single `:DOWN` — normal completion, crash, graceful cancel, force kill.
+  # The dead owner's jobs are found by their `owner_pid` field: retention never removes a LIVE record, so the job map IS the complete live set (the owner bookkeeping stays one monitor ref, with no id list to grow).
   def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
     case Map.fetch(state.owners, pid) do
-      {:ok, %{ref: ^ref, ids: ids}} ->
+      {:ok, %{ref: ^ref}} ->
         state = %{state | owners: Map.delete(state.owners, pid)}
 
         state =
-          Enum.reduce(ids, state, fn id, acc ->
-            case Map.fetch(acc.jobs, id) do
-              {:ok, job} ->
-                if Notice.live?(job) do
-                  case stop_job(job, :owner_exited, :owner_died) do
-                    {:ok, job} ->
-                      put_job(acc, job)
+          Enum.reduce(state.jobs, state, fn {_id, job}, acc ->
+            if job.owner_pid == pid and Notice.live?(job) do
+              case stop_job(job, :owner_exited, :owner_died) do
+                {:ok, job} ->
+                  put_job(acc, job)
 
-                    {:error, message} ->
-                      Logger.warning(
-                        "BackgroundJobs: killing #{id} after owner #{inspect(pid)} exit failed: #{message}"
-                      )
+                {:error, message} ->
+                  Logger.warning(
+                    "BackgroundJobs: killing #{job.id} after owner #{inspect(pid)} exit failed: #{message}"
+                  )
 
-                      acc
-                  end
-                else
                   acc
-                end
-
-              :error ->
-                acc
+              end
+            else
+              acc
             end
           end)
 
@@ -1104,7 +1099,7 @@ defmodule EvoGit.BackgroundJobs do
         |> track_execution(spec, state.process_manager)
         |> settle_start_exit()
 
-      {:ok, job, put_job(add_owner_job(state, spec.owner_pid, id), job)}
+      {:ok, job, put_job(state, job)}
     end
   end
 
@@ -1280,6 +1275,7 @@ defmodule EvoGit.BackgroundJobs do
 
   ## Owner monitor bookkeeping
 
+  # ONE `Process.monitor/1` per owner, kept as `%{ref: ref}`: the monitor ref is the only fact the `:DOWN` handler needs (the dead owner's jobs are found by their `owner_pid`), so a long-lived owner costs ONE bounded entry no matter how many jobs it starts.
   defp ensure_owner_monitor(state, owner_pid) do
     case Map.fetch(state.owners, owner_pid) do
       {:ok, %{ref: ref}} ->
@@ -1287,21 +1283,7 @@ defmodule EvoGit.BackgroundJobs do
 
       :error ->
         ref = Process.monitor(owner_pid)
-        entry = %{ref: ref, ids: MapSet.new()}
-        {ref, %{state | owners: Map.put(state.owners, owner_pid, entry)}}
-    end
-  end
-
-  defp add_owner_job(state, owner_pid, id) do
-    case Map.fetch(state.owners, owner_pid) do
-      {:ok, entry} ->
-        %{
-          state
-          | owners: Map.put(state.owners, owner_pid, %{entry | ids: MapSet.put(entry.ids, id)})
-        }
-
-      :error ->
-        state
+        {ref, %{state | owners: Map.put(state.owners, owner_pid, %{ref: ref})}}
     end
   end
 
