@@ -42,6 +42,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   alias EvoGit.Agent.Tools.JobOutput
   alias EvoGit.Agent.Tools.ShellTool
   alias EvoGit.BackgroundJobs
+  alias EvoGit.BackgroundJobs.Retention
 
   @moduletag :tmp_dir
 
@@ -344,6 +345,100 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
     assert_receive {:DOWN, ^ref, :process, ^owner_pid, _reason}, 5_000
     await_dead(pid)
     refute pid_alive?(pid)
+  end
+
+  ## Retention tombstones
+
+  # A SECOND isolated registry inside one test, carrying its own retention
+  # policy: the caps are registry START OPTIONS (`EvoGit.BackgroundJobs.Retention.from_opts/1`),
+  # so the setup registry's 500-finished-record default can never evict anything
+  # here. `EvoGit.BackgroundJobs` ships no custom `child_spec/1`, so the child id
+  # MUST be overridden or `start_supervised!` clashes with the setup registry.
+  defp start_retention_registry!(retention) do
+    name = :"job_tools_retention_#{System.unique_integer([:positive])}"
+
+    start_supervised!(
+      Supervisor.child_spec({EvoGit.BackgroundJobs, [name: name, retention: retention]}, id: name)
+    )
+
+    name
+  end
+
+  # Ages the OLDEST finished job out of retention the HONEST way (no private call,
+  # no hand-built map): two finished real jobs owned by this still-live, still
+  # unobserving test process are both PROTECTED from the ordinary caps, so the
+  # third start's global valve converts the oldest protected record into a
+  # TOMBSTONE instead of silently deleting it. The third job is reaped, and the
+  # survivor is returned untouched so a caller can contrast the two rows.
+  defp age_out_oldest_job!(cwd) do
+    Process.put(
+      :evogit_background_jobs_server,
+      start_retention_registry!(%{max_finished_total: 1})
+    )
+
+    token = unique_token("tombstone")
+
+    oldest = start_job("echo #{token}", cwd)
+    assert await_terminal(oldest.id) == :completed
+
+    survivor = start_job("echo survivor-#{token}", cwd)
+    assert await_terminal(survivor.id) == :completed
+
+    # Starting the third job runs `Retention.prune/1` with TWO finished records
+    # and a cap of ONE: both are protected (live owner, unobserved), so the
+    # excess leaves as a tombstone — the oldest one.
+    trigger = start_job("echo trigger-#{token}", cwd)
+
+    tombstone = await_tombstone!(oldest.id)
+    survivor_record = await_job_status(survivor.id, :completed)
+
+    assert tombstone.evicted_reason == :retention
+    refute Retention.tombstone?(survivor_record)
+
+    kill_and_reap(trigger, cwd)
+
+    %{token: token, tombstone: tombstone, survivor: survivor_record}
+  end
+
+  defp await_tombstone!(id) do
+    wait_until(fn ->
+      case BackgroundJobs.job(id, owner_pid: self()) do
+        {:ok, job} -> Retention.tombstone?(job) && job
+        {:error, _reason} -> false
+      end
+    end)
+  end
+
+  # The `job_output` retention note, BUILT from the record (never a literal id,
+  # path or exit code): the eviction reason, the exit-code clause `job_output`
+  # omits when the record carries none, and the surviving log path.
+  defp retention_note(tombstone) do
+    clauses =
+      [
+        "this job's record aged out of retention (#{Atom.to_string(tombstone.evicted_reason)})",
+        if(is_integer(tombstone.exit_code), do: "finished with exit code #{tombstone.exit_code}"),
+        if(is_binary(tombstone.output_path) and tombstone.output_path != "",
+          do: "its log is at #{tombstone.output_path}"
+        )
+      ]
+      |> Enum.reject(&is_nil/1)
+
+    "[note: " <> Enum.join(clauses, "; ") <> "]"
+  end
+
+  # The `job_list` trailing marker, built the same way: it drops its
+  # `; log at <path>` clause when the record names no log path.
+  defp retention_marker(tombstone) do
+    log =
+      if is_binary(tombstone.output_path) and tombstone.output_path != "",
+        do: "; log at #{tombstone.output_path}",
+        else: ""
+
+    " (aged out of retention" <> log <> ")"
+  end
+
+  defp unique_token(prefix) do
+    "#{prefix}-#{System.unique_integer([:positive])}"
   end
 
   describe "schema/0 — the three background-job tools" do
@@ -1061,6 +1156,106 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
     test "an unreachable registry is list-shaped, never an error", %{tmp_dir: cwd} do
       Process.put(:evogit_background_jobs_server, :job_tools_missing_registry)
       assert JobList.execute(%{}, cwd, cwd) == "(no background jobs)"
+    end
+  end
+
+  # An aged-out record (a TOMBSTONE, `EvoGit.BackgroundJobs.Retention.tombstone?/1`)
+  # still answers honestly: the byte-identical status line, ONE retention note
+  # after it in `job_output`, and ONE trailing marker on the `job_list` row. A
+  # normal record renders EXACTLY as before, so the marker can never leak into a
+  # live job's row.
+  #
+  # Deliberately NOT covered: an aged-out record with no log path (the marker
+  # would degrade to ` (aged out of retention)`). Every record the registry
+  # issues carries an `output_path` and the tombstone copies it verbatim, so no
+  # public-API path can honestly produce that shape — `retention_marker/1` and
+  # `retention_note/1` above build the degraded form from the record anyway.
+  describe "retention tombstones (records that aged out)" do
+    test "a normal finished record keeps its byte-identical rendering", %{tmp_dir: cwd} do
+      token = unique_token("normal")
+      job = start_job("echo #{token}", cwd)
+      assert await_terminal(job.id) == :completed
+
+      # The WHOLE `job_output` result: the delta, the status line, and nothing
+      # else (no note line at all for an explicit id).
+      assert JobOutput.execute(%{"job_id" => job.id}, cwd, cwd) ==
+               "#{token}\n[status: completed, exit code: 0]"
+
+      # The WHOLE `job_list` row: no trailing marker.
+      assert JobList.execute(%{}, cwd, cwd) ==
+               "#{job.id} [bash] completed — echo #{token}"
+    end
+
+    test "job_output keeps the status line and appends ONE note after it", %{tmp_dir: cwd} do
+      %{token: token, tombstone: tombstone} = age_out_oldest_job!(cwd)
+
+      status_line = "[status: completed, exit code: 0]"
+      note = retention_note(tombstone)
+
+      text = JobOutput.execute(%{"job_id" => tombstone.id}, cwd, cwd)
+
+      # The surviving log tail is still served from the tombstone's saved
+      # cursor, and the note names the reason, the exit code and the log path.
+      assert text =~ token
+      assert text == "#{token}\n" <> status_line <> "\n" <> note
+
+      # Placement, asserted independently of the exact string above: the note
+      # comes AFTER the status line and is the LAST line.
+      {status_at, _} = :binary.match(text, status_line)
+      {note_at, _} = :binary.match(text, note)
+      assert status_at < note_at
+      assert String.ends_with?(text, note)
+      refute text =~ "[note: no job_id given"
+    end
+
+    test "an aged-out record whose log is gone renders the honest retention prose",
+         %{tmp_dir: cwd} do
+      %{tombstone: tombstone} = age_out_oldest_job!(cwd)
+
+      File.rm!(tombstone.output_path)
+
+      text = JobOutput.execute(%{"job_id" => tombstone.id}, cwd, cwd)
+
+      status = BackgroundJobs.status_string(tombstone.status) || "unknown"
+
+      prose =
+        "The background job #{inspect(tombstone.id)} aged out of the background-job retention " <>
+          "window, so its output log is no longer readable at #{tombstone.output_path}. Its final " <>
+          "status is still on file: status #{status}, exit code: #{tombstone.exit_code}. Start a new " <>
+          "background job if you need the command's output again."
+
+      assert text == "Error: " <> prose
+
+      # An id this registry genuinely issued is NEVER reported as unknown.
+      refute text =~ "No background job"
+      refute text =~ "unknown"
+    end
+
+    test "job_list marks the aged-out row and leaves a normal row untouched", %{tmp_dir: cwd} do
+      %{tombstone: tombstone, survivor: survivor} = age_out_oldest_job!(cwd)
+
+      text = JobList.execute(%{}, cwd, cwd)
+      lines = String.split(text, "\n")
+
+      aged_line =
+        "#{tombstone.id} [bash] completed — #{tombstone.label}" <> retention_marker(tombstone)
+
+      survivor_line = "#{survivor.id} [bash] completed — #{survivor.label}"
+
+      assert aged_line in lines
+      assert survivor_line in lines
+
+      # Exact marker text, and the marker belongs to the aged-out row ONLY.
+      assert String.ends_with?(
+               aged_line,
+               " (aged out of retention; log at #{tombstone.output_path})"
+             )
+
+      refute survivor_line =~ "aged out"
+
+      for line <- lines, line =~ survivor.id do
+        refute line =~ "aged out of retention"
+      end
     end
   end
 
