@@ -76,6 +76,17 @@ A registry request has THREE possible outcomes and they are never conflated: a d
 - Started unconditionally by `EvoGit.Application` AFTER `Phoenix.PubSub` and BEFORE `EvoGit.BackgroundJobs` (which registers its detached jobs here).
 - Every EXTERNAL execution carries a REAL OS identity on its backend path: `EvoGit.Sandbox.Helpers.run_task_with_partial/9` and `run_tracked_command/7` spawn the child through a directly owned port and attach its pid (`:posix`) as soon as `wait_for_os_pid/2` observes it, so the non-sandboxed Linux/bwrap/macOS paths, the macOS `sandbox-exec` path and the `None` Unix path are observable and controllable instead of pid-less; the systemd path attaches the transient unit instead.
 
+## Retention
+
+`EvoGit.ProcessManager.Retention` owns the ONE retention decision (`doomed_ids/2`) and `Registry.prune_state/1` only does the state surgery — the record, its `Handle` and its kill intent go together, then any owner monitor nobody needs is dropped.
+It runs on every `finish/3`, on `prune/1`, on an owner death and on every sampling tick; a live record is never doomed, and `prune/1`'s `{:ok, removed_count}` counts the DISTINCT records that pass dropped.
+A terminal `:background_job` whose `owner_pid` is STILL ALIVE is PROTECTED (`Retention.protected?/2`): a running agent may still ask `/processes` or an audit about a job it started minutes ago, so such a record is NEVER age-pruned — its lifetime follows its own owner, not other agents' churn.
+Protected records are bounded PER OWNER instead: the newest `:process_background_max_per_owner` (default 20) of that owner survive regardless of age, and only that owner's own overflow is dropped, oldest of that owner first.
+Every other terminal record — a DEAD owner's `:background_job` and EVERY `:tool_call` — keeps the unchanged historical rule: dropped once it is older than `:process_finished_retention_ms` (default 300_000) and the survivors capped at the newest `:process_finished_max_records` (default 200) GLOBALLY, so protected records never consume the global budget.
+`owner_pid` comes from execution meta (`"owner_pid"`/`:owner_pid`, coerced to a pid by `pid_or_nil/1`), and `Retention.owner_alive?/1` reads it defensively: a nil or non-pid owner (or a pid whose process has ended) counts as DEAD, so the record falls back to the ordinary age/global path.
+`get/2`/`lookup/2` answering `{:error, :not_found}` at THIS layer means only "not retained here" — the id was never tracked or its terminal record has already aged out.
+It is never a claim that the work did not happen: the agent-facing answer for an aged-out `:background_job` is the `EvoGit.BackgroundJobs` tombstone, which outlives this node-local roster.
+
 ## Design Decisions
 
 - Locality: the roster is per-BEAM live state, so it is neither persisted, archived nor aggregated — a node restart legitimately starts empty, and cross-node answers come from RPC into each owning node's own registry.
