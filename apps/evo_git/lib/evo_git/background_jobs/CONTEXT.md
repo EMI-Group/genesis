@@ -72,6 +72,11 @@ A retention-evicted record that a live owner has not observed never degrades int
 - A tombstoned record's notice-mirror row is deliberately LEFT INTACT: the owner has still not observed the outcome, so the normal per-turn notice is exactly the delivery the record was protected for; deleting the row would silently convert a protected record into a lost one.
 - `Notice` keeps the record-shape predicates so `terminal?/1` has ONE definition shared with `NoticeMirror`, while `Retention` owns the caps — the parent stays a process/state core rather than a policy bin.
 
+## Known Issues
+
+- A registry CRASH/RESTART is still destructive: `state.jobs`, `state.tombstones` and the notice mirror live in the registry process, so records (and pending notices) of the previous incarnation are gone and an id it handed out can answer `{:error, :not_found}` again until the restarted registry issues ids from 1.
+  The intended fix (not implemented) is a keeper process or ETS heir started before the registry in `application.ex` that owns the record/tombstone tables and lets a restarted registry adopt them, re-monitor live owners and settle every previously-live record terminally as `:failed` with reason `{:crashed, :registry_restart}` (an eviction reason `Retention` already reserves); isolated test registries must keep working through the existing `:name`/`:process_manager` seams.
+
 ## Routing Table
 
 No child directories — helper modules only.
