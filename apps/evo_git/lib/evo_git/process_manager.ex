@@ -82,10 +82,15 @@ defmodule EvoGit.ProcessManager do
     * `:process_manager_sample_interval_ms` — sampling tick (default `3_000`).
     * `:process_stats_enabled` — `false` disables OS probes entirely (default
       `true`).
-    * `:process_finished_retention_ms` — how long terminal records are kept
-      (default `300_000`).
-    * `:process_finished_max_records` — maximum retained TERMINAL records
-      (default `200`); live records are never pruned.
+    * `:process_finished_retention_ms` — how long the age-prunable terminal
+      records are kept (default `300_000`); it covers a DEAD owner's
+      `:background_job` and every `:tool_call`, never a live owner's job.
+    * `:process_finished_max_records` — maximum retained terminal records of
+      those same age-prunable ones (default `200`); live records are never
+      pruned.
+    * `:process_background_max_per_owner` — how many terminal `:background_job`
+      records ONE live `owner_pid` keeps (default `20`); such a record is never
+      age-pruned, so only that owner's own oldest overflow beyond N is dropped.
     * `:process_stats_probe_timeout_ms` — per-execution `sample_all/1` budget
       (default `2_000`).
     * `:process_kill_grace_ms` — TERM→KILL escalation grace (default `1_500`);
@@ -247,6 +252,12 @@ defmodule EvoGit.ProcessManager do
   `{:error, :not_found}`; a wedged or crashed registry yields
   `{:error, :timeout}` / `{:error, {:registry_exit, reason}}` instead — a stuck
   registry never reads as "no such execution".
+
+  `{:error, :not_found}` at THIS layer means "not retained here": the execution
+  was never tracked, or its terminal record has aged out of the in-memory
+  roster. It is never a claim that the work did not happen — for an aged-out
+  background job the agent-facing answer is the `EvoGit.BackgroundJobs`
+  tombstone.
   """
   @spec get(String.t(), keyword()) ::
           {:ok, Execution.t()} | {:error, :not_found | Registry.call_error()}
@@ -258,10 +269,14 @@ defmodule EvoGit.ProcessManager do
   @doc """
   Forces a retention pass and returns `{:ok, removed_count}`.
   Retention also runs on every `finish/3` and every sampling tick; this is the
-  explicit (operator/test) entry point. An unreachable registry answers
-  `{:ok, 0}`; a wedged one answers `{:error, :timeout}` (and
-  `{:error, {:registry_exit, reason}}` after a crash) rather than claiming a
-  clean pass that never ran.
+  explicit (operator/test) entry point. A pass ages out and globally caps the
+  age-prunable terminal records (a dead owner's `:background_job` and every
+  `:tool_call`) while keeping each LIVE owner's newest
+  `:process_background_max_per_owner` terminal `:background_job` records
+  regardless of age.
+  An unreachable registry answers `{:ok, 0}`; a wedged one answers
+  `{:error, :timeout}` (and `{:error, {:registry_exit, reason}}` after a crash)
+  rather than claiming a clean pass that never ran.
   """
   @spec prune(keyword()) :: {:ok, non_neg_integer()} | {:error, Registry.call_error()}
   def prune(opts \\ []), do: Registry.prune(server_from(opts))
