@@ -4,7 +4,8 @@ defmodule EvoGit.BackgroundJobs.NoticeMirror do
 
   The mirror exists so the per-turn notice claim is ONE `:ets` operation instead of a `GenServer.call`: a busy, blocked or slow registry can no longer stall an agent's turn start, and the claim can never time out because there is no reply to wait for.
   The registry's own `%{jobs: ...}` map stays AUTHORITATIVE — the mirror is only a read path for that claim.
-  It is written and deleted exclusively by `EvoGit.BackgroundJobs.put_job/2` (the ONE state writer) plus the explicit drops in `EvoGit.BackgroundJobs.Notice.prune_finished/1` and `EvoGit.BackgroundJobs.terminate/2`, so every transition of every job keeps it correct.
+  It is written and deleted exclusively by `EvoGit.BackgroundJobs.put_job/2` (the ONE state writer) plus the explicit drops in `EvoGit.BackgroundJobs.Retention.prune/1` and `EvoGit.BackgroundJobs.terminate/2`, so every transition of every job keeps it correct.
+  A record retention keeps as a TOMBSTONE (a live owner's still-unobserved finished record hitting the global valve) deliberately keeps its mirror row: the owner's pending notice must still be claimable.
   A row is `{{owner_pid, job_id}, job}` and carries the FULL job record, so a claim needs no registry state lookup.
   Rows exist EXACTLY for terminal, unannounced jobs: any other state deletes the row, which is what makes a second immediate claim empty.
   `:ets.take/2` is atomic per key, so two concurrent claimants can never both win one job — the loser's take answers `[]` and skips that job, which is the whole exactly-once guarantee (no lock, no registry round trip).

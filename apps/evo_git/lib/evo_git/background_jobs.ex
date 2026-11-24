@@ -9,6 +9,7 @@ defmodule EvoGit.BackgroundJobs do
   Completion notices — the per-turn `claim_finished_notices/1` is a PURE `:ets` read of the public mirror owned by `EvoGit.BackgroundJobs.NoticeMirror`: it never calls this GenServer, so a busy, blocked or slow registry cannot stall an agent's turn start and the claim cannot time out (there is no reply to wait for, therefore no "timed out means no notices" path). `%{jobs: ...}` here stays AUTHORITATIVE — the mirror is only that read path, kept correct by the ONE state writer `put_job/2` — and after a claim's atomic `:ets.take/2` the caller fires ONE `GenServer.cast/2` (`{:notices_claimed, owner_pid, ids}`) so the registry records the same `announced: true` marks.
   Error vocabulary — an unreachable registry is NEVER reported as a missing record: the ONE transport boundary (`EvoGit.BackgroundJobs.RegistryClient`) turns an exited call into `{:error, :registry_unavailable}`, and every public function maps that to its own documented answer in one visible place. `job/2` and `kill/3` return that atom verbatim (a dead registry is honestly "unavailable", not "no such job"); `start_job/1` and `read/2` keep their `{:error, message}` prose contract, so the availability failure becomes ONE actionable sentence; `list/1` and `snapshot/1` answer `[]` and `reap_under/1` always answers `:ok` (a list/admin-shaped API never raises). The ownership/finished probes in `job/2` and `kill/3` keep the small semantic tuples documented on those functions (`:not_found` is reserved for an id the registry really does not know) so a caller can branch on them before formatting prose. No input is ever converted with `String.to_atom/1`.
   Process registry — every job is ALSO recorded as ONE `:background_job` execution in `EvoGit.ProcessManager` (the single source of truth for what this node runs): the start path `track`s it with the agent-visible identity, `attach`es the normalized OS handle (`EvoGit.Sandbox.Background.normalize_handle/1`) and stores the returned `execution_id` on the job record, and ONE terminal funnel in `put_job/2` `finish`es that execution when the job reaches a terminal status (`:completed` / `:failed` / `:killed`, plus `:killed` on a registry shutdown). The registry resolves its manager ONCE at `start_link/1` (`:process_manager` opt, default `EvoGit.ProcessManager`) and passes it as `server:`; every call is total, so an unavailable manager never affects job bookkeeping. Because the manager routes a `:background_job` kill back to `kill/3`, killing through either door stops the process and settles both records.
+  Retention and tombstones — `EvoGit.BackgroundJobs.Retention` owns the finished-record policy (`prune/1`, run on every accepted start AND after a notice claim): a finished record a LIVE owner has not yet observed is never evicted by an ordinary cap, per-owner caps separate living from dead owners, and a global valve converts (never silently deletes) a still-unobserved record into a TOMBSTONE. A tombstone keeps the id, status, exit code and log path, so `job/2` answers it verbatim, `read/2` serves the surviving log tail, `list/1` includes it and `kill/3` answers `{:error, {:already_finished, tombstone}}` — an id this registry issued is never again reported as unknown, and `generate_id/2` never reuses it.
   """
 
   use GenServer
@@ -18,6 +19,7 @@ defmodule EvoGit.BackgroundJobs do
   alias EvoGit.BackgroundJobs.Notice
   alias EvoGit.BackgroundJobs.NoticeMirror
   alias EvoGit.BackgroundJobs.RegistryClient
+  alias EvoGit.BackgroundJobs.Retention
   alias EvoGit.BackgroundJobs.StatusProbe
   alias EvoGit.ProcessManager
   alias EvoGit.Platform
@@ -89,8 +91,8 @@ defmodule EvoGit.BackgroundJobs do
   # monotonically increasing counter (`bash-1`, `bash-2`, …) — because an agent
   # has to repeat one in `job_output`/`job_kill`. The counter lives in the
   # GenServer state and `generate_id/2` skips any candidate still held by
-  # `state.jobs` (finished records are retained, live ones are never pruned), so
-  # an id is never reused while a record carries it. `bash-<n>` is also safe as a
+  # `state.jobs` OR by a tombstone in `state.tombstones`, so an id is never
+  # reused while ANY answer for it exists. `bash-<n>` is also safe as a
   # systemd unit-name component (`Sandbox.Background.unit_name/1`).
   @id_prefix "bash-"
 
@@ -148,6 +150,7 @@ defmodule EvoGit.BackgroundJobs do
 
   @doc """
   Starts the registry. Honours `:name` (default `#{inspect(__MODULE__)}`) and `:process_manager` — the `EvoGit.ProcessManager` instance every execution is registered with (default `EvoGit.ProcessManager`), resolved ONCE here so an isolated manager is the suite's test-isolation seam.
+  Also honours `:retention` — a keyword list or map OVERLAYING `EvoGit.BackgroundJobs.Retention.defaults/0` per key (`:max_observed_per_owner`, `:max_dead_per_owner`, `:max_finished_total`, `:max_tombstones`), so an isolated registry can drive its retention caps without any app-env key.
   The registered name is handed to `init/1` as `:server_name` because it is ALSO the name of the public notice-mirror ETS table (`EvoGit.BackgroundJobs.NoticeMirror`), which an ETS table can carry without creating any atom.
   """
   def start_link(opts \\ []) do
@@ -615,6 +618,8 @@ defmodule EvoGit.BackgroundJobs do
        tick_timer: nil,
        unknown_since: %{},
        probes: %{},
+       tombstones: %{},
+       retention: retention_from(opts),
        next_id: 1,
        process_manager: process_manager_from(opts),
        notice_table: NoticeMirror.new(server_name_from(opts))
@@ -627,6 +632,16 @@ defmodule EvoGit.BackgroundJobs do
       name when is_atom(name) and not is_nil(name) -> name
       _other -> nil
     end
+  end
+
+  # The retention policy for THIS registry: the `:retention` start option
+  # overlays `EvoGit.BackgroundJobs.Retention.defaults/0` per key, and anything
+  # unrecognised falls back to the module default (never to "no policy").
+  defp retention_from(opts) do
+    configured =
+      if is_list(opts) and Keyword.keyword?(opts), do: Keyword.get(opts, :retention), else: nil
+
+    Retention.from_opts(configured)
   end
 
   # Resolved ONCE per registry (never per job) so every `EvoGit.ProcessManager`
@@ -656,8 +671,13 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   def handle_call({:job, id, owner_pid}, _from, state) do
-    case fetch_owned_job(state, id, owner_pid) do
-      {:ok, job} ->
+    case fetch_owned_record(state, id, owner_pid) do
+      {:ok, {:tombstone, tombstone}} ->
+        # A tombstoned record can never change status again, so it is answered VERBATIM: no
+        # reconcile and no `put_job/2` (which would recreate the record from a stale map).
+        {:reply, {:ok, tombstone}, state}
+
+      {:ok, {:job, job}} ->
         {job, state} = reconcile(job, state)
         {:reply, {:ok, job}, state}
 
@@ -667,11 +687,14 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   def handle_call({:read, id, owner_pid, max_bytes}, _from, state) do
-    case fetch_owned_job(state, id, owner_pid) do
+    case fetch_owned_record(state, id, owner_pid) do
       {:error, reason} ->
         {:reply, {:error, ownership_error(id, reason)}, state}
 
-      {:ok, job} ->
+      {:ok, {:tombstone, tombstone}} ->
+        handle_tombstone_read(tombstone, max_bytes, state)
+
+      {:ok, {:job, job}} ->
         {job, state} = reconcile(job, state)
 
         case read_delta(job, max_bytes) do
@@ -702,7 +725,15 @@ defmodule EvoGit.BackgroundJobs do
         {[job | acc], put_job(acc_state, job)}
       end)
 
-    {:reply, Enum.reverse(jobs), state}
+    # Tombstones are listed beside the live/recent records (same ownership fence, same newest-first
+    # order) but are NEVER reconciled or re-`put`: they are a read-only answer for an id we issued.
+    tombstones =
+      state.tombstones
+      |> Map.values()
+      |> filter_by_owner(owner_pid)
+      |> Notice.sort_newest_first()
+
+    {:reply, Notice.sort_newest_first(Enum.reverse(jobs) ++ tombstones), state}
   end
 
   def handle_call({:snapshot, owner_pid}, _from, state) do
@@ -718,11 +749,16 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   def handle_call({:kill, id, reason, owner_pid, actor}, _from, state) do
-    case fetch_owned_job(state, id, owner_pid) do
+    case fetch_owned_record(state, id, owner_pid) do
       {:error, err} ->
         {:reply, {:error, err}, state}
 
-      {:ok, job} ->
+      {:ok, {:tombstone, tombstone}} ->
+        # Already finished AND out of retention: the answer names the record, and nothing about the
+        # state or the notice mirror changes (there is no live process and no record to re-put).
+        {:reply, {:error, {:already_finished, tombstone}}, state}
+
+      {:ok, {:job, job}} ->
         if Notice.live?(job) do
           case stop_job(job, reason, {:killed_by, actor}) do
             {:ok, job} ->
@@ -780,7 +816,8 @@ defmodule EvoGit.BackgroundJobs do
 
   # The other half of the mirror claim (`claim_finished_notices/1`): the caller already TOOK those rows out of the ETS
   # mirror, so this records the same marks in the authoritative state. A job that is gone (or already announced) is a
-  # no-op; the cast never replies and therefore never blocks the claiming agent.
+  # no-op; the cast never replies and therefore never blocks the claiming agent. A claim is also a retention EVENT —
+  # observed records accumulate here (not on the start path), so the policy runs again right after the marks.
   @impl true
   def handle_cast({:notices_claimed, _owner_pid, ids}, state) when is_list(ids) do
     state =
@@ -791,7 +828,7 @@ defmodule EvoGit.BackgroundJobs do
         end
       end)
 
-    {:noreply, state}
+    {:noreply, Retention.prune(state)}
   end
 
   def handle_cast(_message, state), do: {:noreply, state}
@@ -994,7 +1031,7 @@ defmodule EvoGit.BackgroundJobs do
             # Spawn/tracking can block past the call budget or outlive the tool
             # task. Only this acceptance point detaches from the requester.
             if launch_valid?(spec) do
-              {:reply, {:ok, job}, arm_tick(Notice.prune_finished(state))}
+              {:reply, {:ok, job}, arm_tick(Retention.prune(state))}
             else
               case stop_job(job, :launch_abandoned, {:killed_by, :launch_abandoned}) do
                 {:ok, stopped} ->
@@ -1021,7 +1058,7 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   defp do_start_job(spec, handle_override, state) do
-    {id, next_id} = generate_id(state.jobs, state.next_id)
+    {id, next_id} = generate_id(state, state.next_id)
     output_path = Path.join(scratch_dir(), "genesis_job_#{id}.log")
 
     with :ok <- prepare_output_file(output_path),
@@ -1222,14 +1259,16 @@ defmodule EvoGit.BackgroundJobs do
 
   # Returns the next FREE id and the counter value that follows it. The counter is
   # monotonic per registry, so ids read `bash-1`, `bash-2`, … in start order; a
-  # candidate still present in `jobs` is skipped (retained finished records are
-  # capped, live ones never are), and the same loop finds a free id even if the
-  # counter starts at 0.
-  defp generate_id(jobs, counter) do
+  # candidate still present in `jobs` OR kept as a TOMBSTONE is skipped, because an
+  # id is never reused while ANY answer for it exists (a pruned id must not come
+  # back as a DIFFERENT job and silently reset an agent's cursor), and the same
+  # loop finds a free id even if the counter starts at 0.
+  defp generate_id(state, counter) do
     candidate = @id_prefix <> Integer.to_string(counter)
 
-    if Map.has_key?(jobs, candidate) do
-      generate_id(jobs, counter + 1)
+    if Map.has_key?(state.jobs, candidate) or
+         Map.has_key?(Map.get(state, :tombstones, %{}), candidate) do
+      generate_id(state, counter + 1)
     else
       {candidate, counter + 1}
     end
@@ -1269,19 +1308,25 @@ defmodule EvoGit.BackgroundJobs do
   defp filter_by_owner(jobs, nil), do: jobs
   defp filter_by_owner(jobs, owner_pid), do: Enum.filter(jobs, &(&1.owner_pid == owner_pid))
 
-  defp fetch_owned_job(state, id, owner_pid) do
+  # The ONE lookup all four id-addressed handlers share: the authoritative `jobs` map first, then
+  # the TOMBSTONES (a record that left retention but whose id must still answer), each behind the
+  # same ownership fence. An id in NEITHER is the only `:not_found`.
+  defp fetch_owned_record(state, id, owner_pid) do
     case Map.fetch(state.jobs, id) do
-      :error ->
-        {:error, :not_found}
-
       {:ok, job} ->
-        if is_nil(owner_pid) or job.owner_pid == owner_pid do
-          {:ok, job}
-        else
-          {:error, :not_owner}
+        check_owner(job, owner_pid, {:job, job})
+
+      :error ->
+        case Retention.fetch_tombstone(state, id) do
+          {:ok, tombstone} -> check_owner(tombstone, owner_pid, {:tombstone, tombstone})
+          :error -> {:error, :not_found}
         end
     end
   end
+
+  defp check_owner(_record, nil, tagged), do: {:ok, tagged}
+  defp check_owner(%{owner_pid: owner_pid}, owner_pid, tagged), do: {:ok, tagged}
+  defp check_owner(_record, _owner_pid, _tagged), do: {:error, :not_owner}
 
   ## Status reconciliation
 
@@ -1622,6 +1667,38 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   ## Output reading
+
+  # A tombstoned record's log file usually SURVIVES the record (retention drops the map entry, not the
+  # file), so the read serves the same delta shape from its saved cursor and persists the advance into
+  # `state.tombstones`. When the log is gone the answer is HONEST prose about retention — never the
+  # "unknown id" sentence, because this id was genuinely issued to this agent.
+  defp handle_tombstone_read(tombstone, max_bytes, state) do
+    case read_delta(tombstone, max_bytes) do
+      {:ok, text, tombstone} ->
+        {:reply, {:ok, %{text: text, job: tombstone}},
+         Retention.update_tombstone(state, tombstone)}
+
+      {:error, _message} ->
+        {:reply, {:error, tombstone_output_error(tombstone)}, state}
+    end
+  end
+
+  defp tombstone_output_error(tombstone) do
+    "The background job #{inspect(tombstone.id)} aged out of the background-job retention window, so its " <>
+      "output log is no longer readable at #{tombstone.output_path}. Its final status is still on file: " <>
+      "#{tombstone_status(tombstone)}. Start a new background job if you need the command's output again."
+  end
+
+  # The one-line final outcome a retention prose answer can still state: the public status vocabulary,
+  # plus the exit code when the record carried one (omitted when it was never known).
+  defp tombstone_status(tombstone) do
+    status = status_string(Map.get(tombstone, :status)) || "unknown"
+
+    case Map.get(tombstone, :exit_code) do
+      code when is_integer(code) -> "status #{status}, exit code: #{code}"
+      _other -> "status #{status}"
+    end
+  end
 
   defp read_delta(job, max_bytes) do
     path = job.output_path
