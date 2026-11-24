@@ -24,6 +24,21 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   (`exit code: N`, `killed (<reason>)`, …). The trailing note line appears ONLY
   when the id had to be inferred (see `job_id` below).
 
+  ## Evicted records (tombstones)
+
+  A job whose record aged out of retention (a TOMBSTONE) still answers honestly.
+  The status line renders normally and ONE extra note line follows it:
+
+      <the surviving log tail>
+      [status: completed, exit code: 0]
+      [note: this job's record aged out of retention (retention); finished with exit code 0; its log is at /path/to/genesis_job_bash-1.log]
+
+  The note names the eviction reason, the recorded exit code (that clause is
+  omitted when the job records none) and the logging path.
+  A tombstone whose log file is gone renders the registry's own error prose instead.
+  A normal record renders no note line, and the `[wait: …]` marker plus the
+  inferred-id note keep their places after it.
+
   ## `wait: true`
 
   A `wait: true` call blocks in THIS tool (never in the registry) by polling
@@ -456,8 +471,58 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
     body <>
       separator <>
-      status_line(job) <> marker_suffix(wait, job) <> note_suffix(source, job_id)
+      status_line(job) <>
+      tombstone_suffix(job) <> marker_suffix(wait, job) <> note_suffix(source, job_id)
   end
+
+  ## Evicted records (tombstones)
+
+  # TOMBSTONE detection belongs to the registry's retention policy — NEVER
+  # re-implemented here (`tombstone?/1` is true iff the record carries
+  # `:evicted_reason`). The `Code.ensure_loaded?/1` guard keeps this tool total on
+  # a build where that policy module is not compiled yet: a LIVE record then
+  # renders exactly as before instead of the whole read failing.
+  defp tombstone?(job) when is_map(job) do
+    Code.ensure_loaded?(BackgroundJobs.Retention) and BackgroundJobs.Retention.tombstone?(job)
+  end
+
+  defp tombstone?(_job), do: false
+
+  # ONE extra line, placed AFTER the byte-identical status line and BEFORE the
+  # wait marker and the inferred-id note (both of which keep their places). A
+  # normal record renders nothing extra.
+  defp tombstone_suffix(job) do
+    if tombstone?(job), do: "\n" <> tombstone_note(job), else: ""
+  end
+
+  defp tombstone_note(job) do
+    clauses =
+      [
+        "this job's record aged out of retention (#{evicted_reason_text(job)})",
+        exit_code_clause(job),
+        log_path_clause(job)
+      ]
+      |> Enum.reject(&is_nil/1)
+
+    "[note: " <> Enum.join(clauses, "; ") <> "]"
+  end
+
+  # The reason is an ATOM in the record (`Atom.to_string/1` — never
+  # `String.to_atom/1`, which would mint atoms from registry data).
+  defp evicted_reason_text(%{evicted_reason: reason}) when is_atom(reason) and not is_nil(reason),
+    do: Atom.to_string(reason)
+
+  defp evicted_reason_text(_job), do: "unknown"
+
+  defp exit_code_clause(%{exit_code: exit_code}) when is_integer(exit_code),
+    do: "finished with exit code #{exit_code}"
+
+  defp exit_code_clause(_job), do: nil
+
+  defp log_path_clause(%{output_path: path}) when is_binary(path) and path != "",
+    do: "its log is at #{path}"
+
+  defp log_path_clause(_job), do: nil
 
   # An INFERRED id (the schema requires `job_id`) is surfaced as the LAST line so
   # a silently-defaulted read can never be mistaken for an explicit one. It comes
