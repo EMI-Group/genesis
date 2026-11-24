@@ -717,8 +717,9 @@ end
 defmodule EvoGit.ProcessManagerSeamsTest do
   # sync: these tests mutate the SHARED app-env seams
   # (`:process_finished_retention_ms`, `:process_finished_max_records`,
-  # `:process_stats_enabled`, `:process_manager_sample_interval_ms`,
-  # `:process_kill_grace_ms`) that a concurrently running module could observe.
+  # `:process_background_max_per_owner`, `:process_stats_enabled`,
+  # `:process_manager_sample_interval_ms`, `:process_kill_grace_ms`) that a
+  # concurrently running module could observe.
   # Every seam is restored in `on_exit`.
   use ExUnit.Case, async: false
 
@@ -858,6 +859,165 @@ defmodule EvoGit.ProcessManagerSeamsTest do
     end
   end
 
+  ## Owner-aware retention
+  #
+  # A terminal `:background_job` whose `owner_pid` is STILL ALIVE is PROTECTED:
+  # neither the age window nor the GLOBAL `:process_finished_max_records` cap
+  # touches it, and it is bounded per owner instead (newest
+  # `:process_background_max_per_owner` of THAT owner survive, oldest of that
+  # owner first dropped). Every other terminal record — EVERY `:tool_call`, and a
+  # dead/nil owner's background job — keeps the historical age window plus the
+  # global cap. The policy lives in `EvoGit.ProcessManager.Retention.doomed_ids/2`;
+  # these tests pin it through the registry's public surface alone.
+  #
+  # Retention ALSO runs on every `finish/3` and on every sampling tick, and those
+  # passes discard their count — so each test asserts STATE (`get/2`, `list/1`),
+  # and a test whose subject IS the returned count creates its records while the
+  # bounds still permit retention and shrinks them only immediately before ONE
+  # explicit `prune/1`. The sampling seam is pinned to an hour wherever records
+  # are counted, so no tick can consume them mid-test.
+  describe "owner-aware retention" do
+    test "a live owner's terminal background job survives the age window while its tool calls age out",
+         %{srv: srv} do
+      pin_counting_seams()
+      Application.put_env(:evo_git, :process_finished_retention_ms, 300_000)
+
+      job = finished_background_job(srv, self())
+      tool = finished_tool_call(srv, self())
+      {:ok, live_tool} = ProcessManager.track(:tool_call, %{tool: "bash", owner_pid: self()}, srv)
+
+      Application.put_env(:evo_git, :process_finished_retention_ms, 0)
+
+      # Exactly ONE record ages out: the tool call. The protected background job
+      # is exempt from the age window and the live record is never terminal.
+      assert {:ok, 1} = ProcessManager.prune(srv)
+
+      assert {:ok, %Execution{status: :completed, kind: :background_job}} =
+               ProcessManager.get(job, srv)
+
+      assert {:error, :not_found} = ProcessManager.get(tool, srv)
+      assert {:ok, %Execution{status: :starting}} = ProcessManager.get(live_tool, srv)
+    end
+
+    test ":process_background_max_per_owner keeps the newest N of ONE live owner and leaves another owner alone",
+         %{srv: srv} do
+      pin_counting_seams()
+      Application.put_env(:evo_git, :process_finished_retention_ms, 300_000)
+      Application.put_env(:evo_git, :process_background_max_per_owner, 2)
+
+      owner_b = start_owner()
+      on_exit(fn -> Process.exit(owner_b, :kill) end)
+
+      jobs_a = Enum.map(1..4, fn _ -> finished_background_job(srv, self()) end)
+      jobs_b = Enum.map(1..3, fn _ -> finished_background_job(srv, owner_b) end)
+
+      [a_oldest, a_older, a_newer, a_newest] = jobs_a
+      [b_oldest, b_older, b_newest] = jobs_b
+
+      # Owner A's own overflow is trimmed oldest-first; the newest 2 survive even
+      # though they are identical in age terms to the ones dropped.
+      assert {:error, :not_found} = ProcessManager.get(a_oldest, srv)
+      assert {:error, :not_found} = ProcessManager.get(a_older, srv)
+
+      for id <- [a_newer, a_newest] do
+        assert {:ok, %Execution{status: :completed, kind: :background_job}} =
+                 ProcessManager.get(id, srv)
+      end
+
+      # The per-owner cap is applied PER OWNER, so owner B's roster is trimmed by
+      # its OWN overflow only (3 records > 2) — never by A's, and A's records are
+      # never trimmed on B's account.
+      assert {:error, :not_found} = ProcessManager.get(b_oldest, srv)
+
+      for id <- [b_older, b_newest] do
+        assert {:ok, %Execution{status: :completed, kind: :background_job}} =
+                 ProcessManager.get(id, srv)
+      end
+
+      listed = ProcessManager.list(srv) |> Enum.map(& &1.id)
+      assert listed == Enum.reverse([a_newer, a_newest] ++ [b_older, b_newest])
+      refute a_oldest in listed
+      refute a_older in listed
+      refute b_oldest in listed
+    end
+
+    test "protected records do not consume the global :process_finished_max_records", %{srv: srv} do
+      pin_counting_seams()
+      Application.put_env(:evo_git, :process_finished_retention_ms, 300_000)
+      Application.put_env(:evo_git, :process_finished_max_records, 3)
+
+      jobs = Enum.map(1..2, fn _ -> finished_background_job(srv, self()) end)
+      tool_calls = Enum.map(1..5, fn _ -> finished_tool_call(srv, self()) end)
+
+      # `finish/3` already ran the retention pass: the two protected background
+      # jobs neither age out nor count against the global cap, so all five tool
+      # calls compete for the cap of 3 on their own.
+      for id <- jobs do
+        assert {:ok, %Execution{status: :completed, kind: :background_job}} =
+                 ProcessManager.get(id, srv)
+      end
+
+      for id <- Enum.drop(tool_calls, 3) do
+        assert {:ok, %Execution{status: :completed, kind: :tool_call}} =
+                 ProcessManager.get(id, srv)
+      end
+
+      for id <- Enum.take(tool_calls, 2) do
+        assert {:error, :not_found} = ProcessManager.get(id, srv)
+      end
+
+      # Stable: the roster is already at its documented shape.
+      assert {:ok, 0} = ProcessManager.prune(srv)
+    end
+
+    test "a dead owner and a nil owner still age out", %{srv: srv} do
+      pin_counting_seams()
+      Application.put_env(:evo_git, :process_finished_retention_ms, 300_000)
+
+      dead_job = finished_background_job(srv, dead_owner())
+      nil_owner_job = finished_background_job(srv, nil)
+      live_job = finished_background_job(srv, self())
+
+      Application.put_env(:evo_git, :process_finished_retention_ms, 0)
+
+      # Only the two unprotected records age out; an owner that cannot vouch for
+      # its record any more puts it back on the ordinary path.
+      assert {:ok, 2} = ProcessManager.prune(srv)
+
+      assert {:error, :not_found} = ProcessManager.get(dead_job, srv)
+      assert {:error, :not_found} = ProcessManager.get(nil_owner_job, srv)
+
+      assert {:ok, %Execution{status: :completed, kind: :background_job}} =
+               ProcessManager.get(live_job, srv)
+    end
+
+    test "prune/1 reports the removed total on a mixed roster", %{srv: srv} do
+      pin_counting_seams()
+      Application.put_env(:evo_git, :process_finished_retention_ms, 300_000)
+
+      # Created while BOTH bounds still permit retention: `finish/3` runs its own
+      # pass (and discards the count), so the per-owner cap is shrunk only
+      # immediately before the ONE explicit prune whose count is the subject.
+      jobs = Enum.map(1..3, fn _ -> finished_background_job(srv, self()) end)
+      tool_calls = Enum.map(1..2, fn _ -> finished_tool_call(srv, self()) end)
+      dead_tool_call = finished_tool_call(srv, dead_owner())
+
+      Application.put_env(:evo_git, :process_background_max_per_owner, 2)
+      Application.put_env(:evo_git, :process_finished_retention_ms, 0)
+
+      # 1 protected-owner overflow + 2 aged tool calls + 1 aged dead-owner tool call.
+      assert {:ok, 4} = ProcessManager.prune(srv)
+
+      [oldest_job, newer_job, newest_job] = jobs
+
+      assert ProcessManager.list(srv) |> Enum.map(& &1.id) == [newest_job, newer_job]
+
+      for id <- [oldest_job | tool_calls] ++ [dead_tool_call] do
+        assert {:error, :not_found} = ProcessManager.get(id, srv)
+      end
+    end
+  end
+
   defp open_sleep do
     Port.open({:spawn_executable, System.find_executable("sleep")}, [
       :binary,
@@ -866,11 +1026,49 @@ defmodule EvoGit.ProcessManagerSeamsTest do
     ])
   end
 
+  # The counting tests must not let a sampling tick run (and discard) a
+  # retention pass mid-test; the age window itself is set per test.
+  defp pin_counting_seams do
+    Application.put_env(:evo_git, :process_manager_sample_interval_ms, 3_600_000)
+  end
+
+  # A terminal `:background_job` owned by `owner_pid` (`nil`/dead = unprotected).
+  defp finished_background_job(srv, owner_pid) do
+    {:ok, id} =
+      ProcessManager.track(:background_job, %{tool: "bash", owner_pid: owner_pid}, srv)
+
+    :ok = ProcessManager.finish(id, :completed, srv)
+    id
+  end
+
+  defp finished_tool_call(srv, owner_pid) do
+    {:ok, id} = ProcessManager.track(:tool_call, %{tool: "bash", owner_pid: owner_pid}, srv)
+    :ok = ProcessManager.finish(id, :completed, srv)
+    id
+  end
+
+  # An owner that is genuinely DEAD once this returns: the `:DOWN` reply is the
+  # ordering proof (never a sleep).
+  defp dead_owner do
+    pid = spawn(fn -> :ok end)
+    ref = Process.monitor(pid)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _reason} -> pid
+    after
+      1_000 -> flunk("the throwaway owner did not die")
+    end
+  end
+
+  # An owner that stays ALIVE for the whole test (killed by the caller's on_exit).
+  defp start_owner, do: spawn(fn -> Process.sleep(:infinity) end)
+
   defp restore_seams do
     Application.delete_env(:evo_git, :process_finished_retention_ms)
     Application.delete_env(:evo_git, :process_finished_max_records)
     Application.delete_env(:evo_git, :process_stats_enabled)
     Application.delete_env(:evo_git, :process_manager_sample_interval_ms)
+    Application.delete_env(:evo_git, :process_background_max_per_owner)
   end
 
   # Nil-aware restore for a seam whose ambient value is captured in `setup/0`
