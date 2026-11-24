@@ -70,17 +70,35 @@ defmodule EvoGit.ProcessManager.Registry do
   ## Retention
 
   Retention keeps a RECENT-ACTIONS list, not a full history. `finish/4`,
-  `prune/1`, an owner death and every sampling tick drop TERMINAL records older
-  than `finished_retention_ms/0` (app env `:process_finished_retention_ms`,
-  default `#{300_000}`) and cap the retained terminal records at the newest
-  `max_terminal_records/0` (app env `:process_finished_max_records`, default
-  `200`). Live records are NEVER pruned, so a running execution is always
-  observable and controllable.
+  `prune/1`, an owner death and every sampling tick run one pass
+  (`EvoGit.ProcessManager.Retention` owns the policy). Live records are NEVER
+  pruned, so a running execution is always observable and controllable.
+
+  A terminal `:background_job` whose `owner_pid` is STILL ALIVE is protected
+  from ageing: the owner may still ask about a job it started long ago, so such
+  a record survives regardless of its age and is bounded PER OWNER instead —
+  the newest `max_background_records_per_owner/0` (app env
+  `:process_background_max_per_owner`, default `20`) of that owner, oldest of
+  that owner dropped first. Its lifetime follows its own owner, never other
+  agents' churn.
+
+  Every other terminal record — a dead owner's `:background_job` (a nil or
+  non-pid owner counts as dead) and EVERY `:tool_call` — keeps the historical
+  behaviour: dropped once it is older than `finished_retention_ms/0` (app env
+  `:process_finished_retention_ms`, default `#{300_000}`) and the survivors
+  capped at the newest `max_terminal_records/0` GLOBALLY (app env
+  `:process_finished_max_records`, default `200`).
 
   `owner_refs` and `handles` are bounded by that same retained roster: a
   doomed record's handle is dropped with it, and an owner's monitor is
   demonitored once the owner has no retained record left (`track/4` re-installs
   it if that process records again).
+
+  Retention is a bounded WINDOW, so `get/2`'s `{:error, :not_found}` at THIS
+  layer means "not retained here": the id is unknown OR its record has already
+  aged out. It is never a claim that the work did not happen — the
+  agent-facing answer for an aged-out `:background_job` is the
+  `EvoGit.BackgroundJobs` tombstone, which outlives this node-local roster.
 
   ## Locality
 
@@ -112,19 +130,16 @@ defmodule EvoGit.ProcessManager.Registry do
   use GenServer
   require Logger
 
-  alias EvoGit.ProcessManager.{Control, Execution, Handle, Stats}
+  alias EvoGit.ProcessManager.{Control, Execution, Handle, Retention, Stats}
 
   @topic "processes"
   @call_timeout 5_000
   @terminal Execution.terminal_statuses()
   @live Execution.live_statuses()
-  # Retained terminal records (live ones are never pruned).
-  @default_max_terminal 200
   # Bounded history per execution — a pause/resume hammer must not grow a record.
   @max_control_log 50
 
   @default_sample_interval_ms 3_000
-  @default_finished_retention_ms 300_000
 
   @meta_keys %{
     "tool" => :tool,
@@ -188,7 +203,15 @@ defmodule EvoGit.ProcessManager.Registry do
     end
   end
 
-  @doc "Fetches one execution."
+  @doc """
+  Fetches one execution.
+
+  `{:error, :not_found}` means "not retained HERE" — the id was never tracked,
+  or its terminal record has already been dropped by retention (live records
+  are never pruned). It is not a claim that the work never happened: the
+  agent-facing answer for an aged-out `:background_job` is the
+  `EvoGit.BackgroundJobs` tombstone, which outlives this node-local roster.
+  """
   @spec get(GenServer.server(), String.t()) ::
           {:ok, Execution.t()} | {:error, :not_found | call_error()}
   def get(server, id), do: call(server, {:get, id}, {:error, :not_found})
@@ -197,8 +220,8 @@ defmodule EvoGit.ProcessManager.Registry do
   Resolves one execution TOGETHER with its OS handle — the read the facade needs
   before probing/signalling outside the registry.
   Returns `{:ok, execution, handle_or_nil}`, `{:error, :not_found}` (unknown id,
-  or a registry that is not running) or `{:error, call_error()}` for a wedged /
-  crashed registry.
+  a record retention already dropped, or a registry that is not running) or
+  `{:error, call_error()}` for a wedged / crashed registry.
   """
   @spec lookup(GenServer.server(), String.t()) ::
           {:ok, Execution.t(), Handle.t() | nil} | {:error, :not_found | call_error()}
@@ -240,7 +263,10 @@ defmodule EvoGit.ProcessManager.Registry do
   end
 
   @doc """
-  Runs retention now and returns `{:ok, removed_count}`.
+  Runs retention now and returns `{:ok, removed_count}` — the count of DISTINCT
+  records dropped by this pass (see "Retention" for the policy: aged-out
+  records, the global terminal cap, and each live owner's `:background_job`
+  overflow).
   Normally called internally on every `finish` and every sampling tick; exposed
   so an operator (or a suite testing retention) can force a pass. An
   unreachable registry answers `{:ok, 0}`; a wedged one answers
@@ -283,25 +309,18 @@ defmodule EvoGit.ProcessManager.Registry do
 
   @doc "Retention window (ms) for terminal records — app env `:process_finished_retention_ms`."
   @spec finished_retention_ms() :: non_neg_integer()
-  def finished_retention_ms do
-    case Application.get_env(
-           :evo_git,
-           :process_finished_retention_ms,
-           @default_finished_retention_ms
-         ) do
-      ms when is_integer(ms) and ms >= 0 -> ms
-      _other -> @default_finished_retention_ms
-    end
-  end
+  def finished_retention_ms, do: Retention.finished_retention_ms()
 
   @doc "Maximum retained terminal records — app env `:process_finished_max_records`."
   @spec max_terminal_records() :: non_neg_integer()
-  def max_terminal_records do
-    case Application.get_env(:evo_git, :process_finished_max_records, @default_max_terminal) do
-      count when is_integer(count) and count >= 0 -> count
-      _other -> @default_max_terminal
-    end
-  end
+  def max_terminal_records, do: Retention.max_terminal_records()
+
+  @doc """
+  Terminal `:background_job` records ONE live owner keeps — app env
+  `:process_background_max_per_owner` (see `EvoGit.ProcessManager.Retention`).
+  """
+  @spec max_background_records_per_owner() :: non_neg_integer()
+  def max_background_records_per_owner, do: Retention.background_max_per_owner()
 
   ## GenServer callbacks
 
@@ -816,49 +835,25 @@ defmodule EvoGit.ProcessManager.Registry do
 
   ## Retention
 
+  # The POLICY is `EvoGit.ProcessManager.Retention`'s (`doomed_ids/2`); this is
+  # the state surgery: the record, its handle and its kill intent go together,
+  # and an owner monitor nobody needs any more is dropped.
   defp prune_state(state) do
-    now = DateTime.utc_now()
-    retention = finished_retention_ms()
-    max_terminal = max_terminal_records()
+    doomed_ids = Retention.doomed_ids(Map.values(state.executions))
 
-    terminal =
-      state.executions
-      |> Map.values()
-      |> Enum.filter(&Execution.terminal?(&1.status))
+    case doomed_ids do
+      [] ->
+        {state, 0}
 
-    expired =
-      Enum.filter(terminal, fn execution ->
-        case execution.ended_at do
-          %DateTime{} = ended_at ->
-            DateTime.diff(now, ended_at, :millisecond) >= retention
-
-          _ ->
-            # A terminal record with no end time cannot age; keep it (it will be
-            # capped by the terminal count below).
-            false
-        end
-      end)
-
-    keep_newest =
-      terminal
-      |> Enum.reject(&(&1 in expired))
-      |> Enum.sort_by(&sort_key/1, :desc)
-      |> Enum.take(max_terminal)
-
-    doomed = MapSet.new(expired ++ (terminal -- keep_newest))
-    doomed_ids = doomed |> Enum.map(& &1.id) |> Enum.reject(&is_nil/1)
-
-    if doomed_ids == [] do
-      {state, 0}
-    else
-      %{
-        state
-        | executions: Map.drop(state.executions, doomed_ids),
-          handles: Map.drop(state.handles, doomed_ids),
-          kill_intents: Map.drop(state.kill_intents, doomed_ids)
-      }
-      |> drop_unused_owner_refs()
-      |> then(&{&1, length(doomed_ids)})
+      doomed_ids ->
+        %{
+          state
+          | executions: Map.drop(state.executions, doomed_ids),
+            handles: Map.drop(state.handles, doomed_ids),
+            kill_intents: Map.drop(state.kill_intents, doomed_ids)
+        }
+        |> drop_unused_owner_refs()
+        |> then(&{&1, length(doomed_ids)})
     end
   end
 
@@ -910,34 +905,12 @@ defmodule EvoGit.ProcessManager.Registry do
   end
 
   defp sort_newest_first(executions) do
-    Enum.sort_by(executions, &sort_key/1, :desc)
+    Enum.sort_by(executions, &Execution.sort_key/1, :desc)
   end
 
   defp sort_oldest_first(executions) do
-    Enum.sort_by(executions, &sort_key/1, :asc)
+    Enum.sort_by(executions, &Execution.sort_key/1, :asc)
   end
-
-  # `inserted_at` first, then the numeric id — so two records created inside the
-  # same microsecond still order by their monotonic id.
-  defp sort_key(%Execution{} = execution) do
-    {inserted, id} = {execution.inserted_at, execution.id}
-    {unix(inserted), id_number(id)}
-  end
-
-  defp sort_key(_execution), do: {0, 0}
-
-  defp unix(%DateTime{} = datetime), do: DateTime.to_unix(datetime, :microsecond)
-  defp unix(_datetime), do: 0
-
-  defp id_number(id) when is_binary(id) do
-    case Integer.parse(String.replace_prefix(id, "proc-", "")) do
-      {number, _} -> number
-      _ -> 0
-    end
-  end
-
-  defp id_number(id) when is_integer(id), do: id
-  defp id_number(_id), do: 0
 
   defp next_id(state), do: "proc-#{state.next_id + 1}"
 

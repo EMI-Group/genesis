@@ -208,6 +208,33 @@ defmodule EvoGit.ProcessManager.Execution do
   def status_for_reason(_reason), do: :failed
 
   @doc """
+  The ONE ordering key for a record: `inserted_at`, then the numeric id — so
+  two records created inside the same microsecond still order by their
+  monotonic id. Total (`{0, 0}` for a non-struct, `0` for an unparsable id or a
+  missing `inserted_at`), which is what lets the roster reads and the retention
+  policy share ONE ordering instead of two.
+  """
+  @spec sort_key(term()) :: {integer(), integer()}
+  def sort_key(%__MODULE__{inserted_at: inserted_at, id: id}) do
+    {unix(inserted_at), id_number(id)}
+  end
+
+  def sort_key(_execution), do: {0, 0}
+
+  defp unix(%DateTime{} = datetime), do: DateTime.to_unix(datetime, :microsecond)
+  defp unix(_datetime), do: 0
+
+  defp id_number(id) when is_binary(id) do
+    case Integer.parse(String.replace_prefix(id, "proc-", "")) do
+      {number, _} -> number
+      _ -> 0
+    end
+  end
+
+  defp id_number(id) when is_integer(id), do: id
+  defp id_number(_id), do: 0
+
+  @doc """
   The empty control-log entry shape (`EvoGit.ProcessManager.Control` fills it).
   """
   @spec control_entry(keyword() | map()) :: control_entry()
