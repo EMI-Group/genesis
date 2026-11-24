@@ -1,18 +1,16 @@
 defmodule EvoGit.BackgroundJobs.Notice do
   @moduledoc """
-  The notice/announce and retention rules for background-job records.
+  The notice/announce rules for background-job records.
 
   `announced` means "the owner already knows this job's outcome — no completion notice needed": it starts `false`, and is set by the per-turn claim (`EvoGit.BackgroundJobs.NoticeMirror`), by `read/2` / `list/1` for the terminal jobs they return, and by a successful `kill/3`.
-  This module owns the record-level marking (`mark_announced/1`, `suppress_notice/1`), the status predicates every marking and pruning decision branches on (`terminal?/1`, `live?/1` — the ONE source of those two vocabularies), the newest-first ordering of the state-only reads (`sort_newest_first/1`) and the retention pruning of the registry state (`prune_finished/1`, `prune_unknown_since/1`, `finished_key/1`).
-  Every function here is pure with respect to the process — no registry call and no file I/O; the ONE side effect is the notice-mirror row delete retention must perform so no row outlives the record it describes.
+  This module owns the record-level marking (`mark_announced/1`, `suppress_notice/1`), the status predicates every marking decision branches on (`terminal?/1`, `live?/1` — the ONE source of those two vocabularies), the newest-first ordering of the state-only reads (`sort_newest_first/1`) and the two ordering/bookkeeping helpers retention shares with it (`prune_unknown_since/1`, `finished_key/1`).
+  RETENTION itself — the caps, the observation rule and the tombstones — belongs to `EvoGit.BackgroundJobs.Retention`.
+  Every function here is pure with respect to the process — no registry call and no file I/O.
 
-  `prune_finished/1` / `prune_unknown_since/1` take and return the registry's state map and read exactly four of its keys: `:jobs`, `:probes`, `:unknown_since` and `:notice_table`.
+  `prune_unknown_since/1` takes the registry's state map (reading `:jobs` and `:unknown_since`).
   """
 
   alias EvoGit.BackgroundJobs.NoticeMirror
-
-  # Retention cap for FINISHED job records (live jobs are never pruned).
-  @max_finished_retained 100
 
   @doc """
   Terminal = the job can never change status again, so it is eligible for a (single) completion notice.
@@ -51,36 +49,6 @@ defmodule EvoGit.BackgroundJobs.Notice do
   @spec sort_newest_first([map()]) :: [map()]
   def sort_newest_first(jobs),
     do: Enum.sort_by(jobs, &NoticeMirror.started_microseconds/1, :desc)
-
-  @doc """
-  Applies the finished-record retention cap and drops the unknown-grace markers of jobs that are no longer live.
-
-  Finished records are retained so a caller can still read the tail after the process exits; the oldest are dropped past `#{@max_finished_retained}`. Live jobs are never pruned.
-  A dropped record also loses its notice-mirror row (the ONE explicit mirror delete outside `EvoGit.BackgroundJobs.put_job/2`) and its cached probe result: nothing may outlive the record it describes.
-  """
-  @spec prune_finished(map()) :: map()
-  def prune_finished(state) do
-    state = %{state | unknown_since: prune_unknown_since(state)}
-    finished = state.jobs |> Map.values() |> Enum.reject(&live?/1)
-    excess = length(finished) - @max_finished_retained
-
-    if excess > 0 do
-      finished
-      |> Enum.sort_by(&finished_key/1)
-      |> Enum.take(excess)
-      |> Enum.reduce(state, fn job, acc ->
-        NoticeMirror.delete(acc.notice_table, job)
-
-        %{
-          acc
-          | jobs: Map.delete(acc.jobs, job.id),
-            probes: Map.delete(acc.probes, job.id)
-        }
-      end)
-    else
-      state
-    end
-  end
 
   @doc """
   Drops the unknown-grace markers of jobs that are no longer live.
