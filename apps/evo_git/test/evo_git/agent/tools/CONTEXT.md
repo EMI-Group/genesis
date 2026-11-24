@@ -176,6 +176,14 @@ Refusals each pin a plain commit with the earlier commit untouched: merge-commit
 The `amend_message_fun` describe pins the builder boundary directly: one invocation with the sorted HEAD ∪ new path set (a `send/2` probe), its non-empty binary return REPLACING the commit body, no invocation at all on the plain path (`refute_received`), and an empty/non-binary return keeping the caller's message.
 `create_files`/`make_dir` stay one commit per call, so the squash remains a CONTEXT-tool opt-in.
 The module's config dir has no `config.toml`, so `[:git, :co_authored_by_enabled]` is `false` and the full-body assertions carry no co-author trailer.
+## Retention Tombstone Rendering Coverage
+`job_tools_test.exs`'s `describe "retention tombstones (records that aged out)"` (4 tests, `async: false` with the rest of the module) owns the aged-out rendering of the background-job tool surface.
+`job_output` keeps the byte-identical `[status: …]` line and appends ONE `[note: this job's record aged out of retention (<reason>); finished with exit code N; its log is at <path>]` line after it (last line, no inferred-id note), while still serving the surviving log tail from the tombstone's saved cursor.
+A tombstone whose log file is gone renders the registry's ONE honest retention sentence (`Error: The background job … aged out of the background-job retention window, so its output log is no longer readable at <path>. Its final status is still on file: status …, exit code: N. …`) and never an unknown-id message.
+`job_list` gains exactly ` (aged out of retention; log at <path>)` on that row and nothing on a normal row, which is additionally pinned byte-identically (full `job_output` result and full `job_list` row for a normal finished job).
+Tombstones are produced HONESTLY in-test by the `start_retention_registry!/1` helper: a SECOND supervised `EvoGit.BackgroundJobs` with `retention: %{max_finished_total: 1}` (a `Supervisor.child_spec/2` id override is REQUIRED — the module ships no custom `child_spec/1`), two finished unobserved jobs of the live test owner, and a third start whose `Retention.prune/1` global valve converts the oldest protected record.
+Every expected string is BUILT from the record (`retention_note/1`, `retention_marker/1` over `evicted_reason`/`exit_code`/`output_path`/`label`), never a literal path or id, and the third job is killed and reaped so no OS child leaks.
+The nil/empty-`output_path` tombstone degradation (` (aged out of retention)` with no log clause) is deliberately untested: every record the registry issues carries an `output_path` and the tombstone copies it verbatim, so no public-API path produces that shape.
 ## Notes for Agents
 
 - `reflect_tools_test.exs` spawns a live `Process.sleep(:infinity)` "wrapper" process on purpose — it is NOT a wait to reduce.
