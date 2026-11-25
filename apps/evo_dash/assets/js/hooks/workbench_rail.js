@@ -30,6 +30,16 @@ function markTab(el, tab, previous) {
   if (previous && tabGroup(previous.kind) !== group) el.dataset.tabGroupStart = "true"
 }
 
+function markPending(item, anchor, pending) {
+  if (pending) {
+    item.dataset.tabPending = "true"
+    anchor?.setAttribute("aria-busy", "true")
+  } else if (item.dataset.tabPending || anchor?.hasAttribute("aria-busy")) {
+    delete item.dataset.tabPending
+    anchor?.removeAttribute("aria-busy")
+  }
+}
+
 export const railMethods = {
   captureTab() {
     const data = this.el.dataset
@@ -49,6 +59,10 @@ export const railMethods = {
     tab.node = this.node
     const scope = tab.draftScope || tab.projectScope
     tab.key = tabKey(this.node, scope || "", tab.kind, tab.id)
+    if (this.navigation.isClosed(exactHref(url), tab.key)) {
+      this.currentTab = null
+      return
+    }
     const previous = this.tabs.find(entry => entry.key === tab.key)
     tab.projectPath = scope || this.project || previous?.projectPath || ""
     tab.project = this.projectName || previous?.project
@@ -191,14 +205,20 @@ export const railMethods = {
     for (const item of this.el.querySelectorAll("#workbench-tabs [data-tab-key], [data-workbench-tab-overflow-key]")) {
       const pending = key === (item.dataset.tabKey || item.dataset.workbenchTabOverflowKey)
       const anchor = item.dataset.tabKey ? item.querySelector("a.workbench-tab-link") : item
-      if (pending) {
-        item.dataset.tabPending = "true"
-        anchor?.setAttribute("aria-busy", "true")
-      } else if (item.dataset.tabPending) {
-        delete item.dataset.tabPending
-        anchor?.removeAttribute("aria-busy")
-      }
+      markPending(item, anchor, pending)
     }
+    this.paintHistoryPending()
+  },
+
+  paintHistoryPending(request = this.navigation.pending) {
+    // Keep only the clicked DOM row, not every history alias of the tab key.
+    if (!this.pendingHistory) return
+    const {row, anchor, activation} = this.pendingHistory
+    const pending = request === activation && this.el.contains(row) && row.contains(anchor) &&
+      historyKey(this.node, row.dataset) === activation.key && anchor.getAttribute("href") === activation.href
+    markPending(row, anchor, pending)
+    anchor.classList.toggle("cursor-progress", pending)
+    if (!pending) this.pendingHistory = null
   },
 
   syncTabRailHints() {
@@ -231,5 +251,6 @@ export const railMethods = {
       if (current) anchor?.setAttribute("aria-current", "page")
       else anchor?.removeAttribute("aria-current")
     }
+    this.paintHistoryPending()
   },
 }

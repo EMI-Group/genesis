@@ -94,6 +94,9 @@ export function defaultDraftHref(url, data, occupied) {
 export function navigationState({timeout = 10000, setTimer = setTimeout, clearTimer = clearTimeout} = {}) {
   let pending, moving, traversal, attempted, timer, revision = 0
   const superseded = new Set()
+  // A close can't abort LiveView's request. Keep its exact route suppressed
+  // across late commits and remounts, until a new user intent for that route.
+  const closed = new Map()
   const clear = () => {
     clearTimer(timer)
     pending = moving = null
@@ -110,15 +113,31 @@ export function navigationState({timeout = 10000, setTimer = setTimeout, clearTi
     get pending() { return pending },
     get moving() { return moving },
     get revision() { return revision },
+    isClosed(href, key) { return closed.get(href) === key },
+    reopenCurrent(href) {
+      if (!closed.delete(href)) return false
+      clear()
+      return true
+    },
+    cancelPending(key) {
+      if (!pending || pending.key !== key) return
+      closed.set(pending.href, key)
+      clear()
+    },
+    disconnect: clear,
     request(href, key, focus, repaint) {
+      const reopened = closed.delete(href)
       advance(href, repaint)
       pending = {href, key, focus}
+      return reopened
     },
     start(href, repaint, announced = false) {
-      if (moving === href || (!announced && superseded.has(href))) return
+      if (announced) closed.delete(href)
+      if (closed.has(href) || moving === href || (!announced && superseded.has(href))) return
       advance(href, repaint)
     },
     commit(href) {
+      if (closed.has(href)) return
       const target = moving || pending?.href
       if (target && href !== target) {
         if (superseded.has(href)) return
@@ -138,6 +157,7 @@ export function navigationState({timeout = 10000, setTimer = setTimeout, clearTi
     },
     traverse(href) {
       if (moving && moving !== href) superseded.add(moving)
+      closed.delete(href)
       clear()
       traversal = href
     },

@@ -57,9 +57,13 @@ function bindNavigation() {
     const href = exactHref(new URL(event.detail.href, location.href))
     const revision = navigation.revision
     queueMicrotask(() => {
-      if (!event.defaultPrevented && navigation.revision === revision && href !== currentHref()) {
+      if (event.defaultPrevented || navigation.revision !== revision) return
+      if (href !== currentHref()) {
         navigation.start(href, repaintPending, true)
         repaintPending()
+      } else if (navigation.reopenCurrent(href)) {
+        repaintPending()
+        mountedWorkbench?.onNavigation()
       }
     })
   })
@@ -311,9 +315,16 @@ const Workbench = {
   updated() {
     // Cheap probe FIRST: a CONTENT-only patch cannot change any sync input.
     if (workbenchSyncNeeded(this.syncState(), this.appliedSyncState)) this.sync()
+    else this.paintHistoryPending()
+  },
+
+  disconnected() {
+    if (mountedWorkbench === this) navigation.disconnect()
+    this.paintPending()
   },
 
   destroyed() {
+    this.paintHistoryPending(null)
     this.projectSidebarNav?.removeEventListener("scroll", this.onProjectSidebarScroll)
     this.settingsWindow?.removeEventListener("close", this.onSettingsClose)
     window.removeEventListener("message", this.onWindowMessage)
@@ -677,13 +688,16 @@ const Workbench = {
         trigger.closest("[data-tab-key]")?.dataset.tabKey)
       if (overflowKey) trigger.closest("#workbench-tabs-overflow").open = false
       if (key && safeHref(href)) {
-        if (tabLink && key === this.currentTab && href === currentHref() && !navigation.moving) {
-          event.preventDefault()
-          event.stopPropagation()
-          if (this.gitDiff) this.closeGitDiff()
-          else if (overflowKey) this.focusTab(key)
+        if (key === this.currentTab && href === currentHref() && !navigation.moving) {
+          if (tabLink) {
+            event.preventDefault()
+            event.stopPropagation()
+            if (this.gitDiff) this.closeGitDiff()
+            else if (overflowKey) this.focusTab(key)
+          }
         } else {
-          this.indicateActivation(href, key, tabLink && (event.detail === 0 || Boolean(overflowKey)))
+          this.indicateActivation(href, key, tabLink && (event.detail === 0 || Boolean(overflowKey)),
+            historyRow ? {row: historyRow, anchor: trigger} : null)
         }
       }
       return
@@ -771,6 +785,7 @@ const Workbench = {
     // The store decides everything about a close, including where attention goes.
     const {tabs, closed, focus} = closeTabIn(this.tabs, key)
     if (!closed) return
+    navigation.cancelPending(key)
     projectPreview.forget(closed)
     if (closed.kind === "draft") {
       this.pushEventTo("#workbench-projects", "discard_assistant_draft", {id: closed.id})
@@ -778,6 +793,7 @@ const Workbench = {
     this.tabs = tabs
     this.persistTabs()
     this.renderTabs()
+    this.paintHistoryPending()
 
     if (key === this.currentTab) {
       const blank = closed.projectPath ? {wb_home: "1", project: closed.projectPath} : {wb_home: "1"}
@@ -795,9 +811,17 @@ const Workbench = {
     control?.focus({preventScroll: true})
   },
 
-  indicateActivation(href, key, restoreFocus) {
-    navigation.request(href, key, restoreFocus ? document.activeElement : null, repaintPending)
+  indicateActivation(href, key, restoreFocus, history) {
+    const reopened = navigation.request(href, key, restoreFocus ? document.activeElement : null, repaintPending)
+    this.paintHistoryPending()
+    if (history) this.pendingHistory = {...history, activation: navigation.pending}
     this.paintPending()
+    // A late arrival may already be on screen. A new explicit click can
+    // reopen it even if LiveView emits no navigation for the current URL.
+    if (reopened && href === currentHref()) {
+      navigation.commit(href)
+      this.onNavigation()
+    }
   },
 
   settleActivation() {

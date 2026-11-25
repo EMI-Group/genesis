@@ -86,6 +86,23 @@ test('activation survives ignored events, rejects stale route updates and expire
   assert.equal(paints, 1);
 });
 
+test('a later announced navigation or traversal can reopen a closed exact route', () => {
+  const clock = timers();
+  const state = helpers.navigationState({setTimer: clock.setTimeout, clearTimer: clock.clearTimeout});
+  const key = taskKey('task-1', 'remote');
+  const repaint = () => {};
+  for (const reopen of [() => state.start(COMMIT, repaint, true), () => state.traverse(COMMIT)]) {
+    state.request(COMMIT, key, null, repaint);
+    state.cancelPending(key);
+    state.start(COMMIT, repaint);
+    state.commit(COMMIT);
+    assert.equal(state.isClosed(COMMIT, key), true);
+    assert.equal(state.isClosed(TASKS, key), false);
+    reopen();
+    assert.equal(state.isClosed(COMMIT, key), false);
+  }
+});
+
 test('Back cancels activation and suppresses default drafts; failed defaults are one-shot per entry', () => {
   const clock = timers();
   const state = helpers.navigationState({setTimer: clock.setTimeout, clearTimer: clock.clearTimeout});
@@ -145,7 +162,20 @@ function fixture({initial = OVERVIEW, defaultDraft, tabs = []} = {}) {
   const tabRail = element('div');
   const overflow = element('details');
   const list = element('div');
-  const history = element('a');
+  const historyRows = [];
+  function addHistory(kind, id, href) {
+    const row = element('div');
+    const anchor = element('a');
+    Object.assign(row.dataset, {workbenchItem: kind, itemId: id});
+    row.append(anchor);
+    row.querySelector = () => anchor;
+    anchor.href = href;
+    anchor.matches = selector => selector === 'a[data-workbench-open]';
+    anchor.closest = selector => ({'button, a': anchor, '[data-workbench-item]': row}[selector]);
+    historyRows.push(row);
+    return {row, anchor, click(overrides = {}) { hook.click({button: 0, target: anchor, detail: 1, ...overrides}); }};
+  }
+  const {anchor: history} = addHistory('task', 'task-1', '/tasks?task=task-1');
   const hook = Object.assign(Object.create(api.Workbench), {
     el: {
       isConnected: true,
@@ -154,17 +184,19 @@ function fixture({initial = OVERVIEW, defaultDraft, tabs = []} = {}) {
         return {'#workbench-tabs': tabRail, '#workbench-tabs-overflow': overflow, '#workbench-tabs-overflow-list': list}[selector];
       },
       querySelectorAll() { return [...tabRail.children, ...list.children]; },
+      contains(row) { return historyRows.includes(row); },
       append() {},
     },
     node: '', project: '/repo', tabs: store.restore(tabs), navigation: api.navigation,
-    rows: [{dataset: {workbenchItem: 'task', itemId: 'task-1'}, querySelector: () => history}],
+    rows: historyRows,
+    syncState() {},
     focusTab(key) { this.focused = key; },
     onNavigation() {
       this.captureTab(); this.renderTabs(); this.renderHistory(); this.settleActivation(); this.maybeOpenDefaultDraft();
     },
   });
   api.attach(hook);
-  return {hook, document, tabRail, list, history, navigated, frames, emit,
+  return {hook, document, tabRail, list, history, addHistory, navigated, frames, emit, expire: clock.expire,
     at(path) { actual = url(path); },
     flush() { while (microtasks.length) microtasks.shift()(); },
   };
@@ -260,6 +292,121 @@ test('Alt+Arrow stays within the rail, makes the destination pending, then focus
   document.activeElement = document.body;
   frames.shift()();
   assert.equal(hook.focused, taskKey('task-2'));
+});
+
+test('closing a pending tab survives late start, layout and repeated commits without stealing focus', () => {
+  const current = '/tasks?task=task-1&status=running';
+  const next = '/review/task-2/commit/abcd#file-1';
+  const {hook, at, emit, flush, frames, navigated, addHistory} = fixture({initial: current, tabs: [
+    saved('task', 'task-1', current), saved('task', 'task-2', next),
+  ]});
+  const key = taskKey('task-2');
+  Object.assign(hook.el.dataset, {workbenchPage: 'tasks', workbenchTask: 'task-1'});
+  hook.onNavigation();
+  hook.navigate(next, {key, restoreFocus: true});
+  emit('phx:before-navigate', {href: next});
+  hook.closeTab(key, true);
+  flush(); // The old before-navigate microtask cannot revive the request.
+  assert.equal(hook.focused, taskKey('task-1'));
+  assert.equal(hook.navigation.pending, null);
+  assert.deepEqual(navigated, [next], 'closing a background tab does not change the current route');
+  emit('phx:page-loading-start', {kind: 'redirect', to: next});
+  assert.equal(hook.navigation.moving, null);
+  assert.equal(hook.currentTab, taskKey('task-1'));
+  assert.equal(hook.tabs[0].href, current);
+
+  at(next);
+  emit('phx:navigate', {href: next}); // URL first, layout later.
+  Object.assign(hook.el.dataset, {workbenchPage: 'review', workbenchTask: 'task-2'});
+  hook.onNavigation();
+  emit('phx:navigate', {href: next});
+  assert.equal(hook.currentTab, null);
+  assert.equal(hook.tabs.some(tab => tab.key === key), false);
+  assert.equal(frames.length, 0);
+
+  addHistory('task', 'task-2', next).click(); // Already on the URL: no navigation events needed.
+  assert.equal(hook.currentTab, key);
+  assert.equal(hook.tabs.find(tab => tab.key === key).href, next);
+});
+
+test('a late closed route cannot settle a newer request for another exact route of the same tab', () => {
+  const old = '/review/task-2/commit/abcd#old';
+  const next = '/review/task-2/commit/abcd#new';
+  const {hook, at, emit, frames, addHistory} = fixture({tabs: [saved('task', 'task-2', old)]});
+  const key = taskKey('task-2');
+  hook.indicateActivation(old, key, true);
+  hook.closeTab(key, false);
+  const row = addHistory('task', 'task-2', next);
+  row.click();
+  Object.assign(hook.el.dataset, {workbenchPage: 'review', workbenchTask: 'task-2'});
+  at(old);
+  emit('phx:navigate', {href: old});
+  assert.equal(hook.navigation.pending.href, next);
+  assert.equal(row.row.dataset.tabPending, 'true');
+  assert.equal(hook.tabs.length, 0);
+  assert.equal(frames.length, 0);
+  at(next);
+  emit('phx:navigate', {href: next});
+  assert.equal(hook.tabs[0].href, next);
+  assert.equal(row.row.dataset.tabPending, undefined);
+  assert.equal(row.anchor.attrs['aria-current'], 'page');
+});
+
+test('only the clicked history row is busy and rapid clicks, patches, timeout and disconnect clean up', () => {
+  const current = '/tasks?task=task-1&status=running';
+  const {hook, at, emit, history, addHistory, tabRail, expire} = fixture({initial: current});
+  Object.assign(hook.el.dataset, {workbenchPage: 'tasks', workbenchTask: 'task-1'});
+  hook.onNavigation();
+  const task = addHistory('task', 'task-2', '/review/task-2');
+  const sibling = addHistory('task', 'task-2', '/review/task-2');
+  const chat = addHistory('chat', 'chat-1', '/assistant?session=chat-1');
+  const busy = ({row, anchor}, value) => {
+    assert.equal(row.dataset.tabPending, value ? 'true' : undefined);
+    assert.equal(anchor.attrs['aria-busy'], value ? 'true' : undefined);
+    assert.equal(Boolean(anchor['cursor-progress']), value);
+  };
+
+  task.click();
+  busy(task, true);
+  busy(sibling, false);
+  assert.equal(tabRail.children.length, 1, 'history feedback does not require a tab');
+  assert.equal(history.attrs['aria-current'], 'page');
+  assert.equal(task.anchor.attrs['aria-current'], undefined);
+  assert.equal(hook.tabs[0].href, current);
+  for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey']) chat.click({[modifier]: true});
+  chat.click({button: 1});
+  busy(chat, false);
+  busy(task, true);
+
+  delete task.row.dataset.tabPending;
+  delete task.anchor.attrs['aria-busy'];
+  hook.updated(); // A patch stripped the client attributes without changing the row.
+  busy(task, true);
+  chat.click();
+  busy(task, false);
+  busy(chat, true);
+  at('/review/task-2');
+  emit('phx:navigate', {href: '/review/task-2'}); // Superseded arrival.
+  busy(chat, true);
+  assert.equal(chat.anchor.attrs['aria-current'], undefined);
+  at(chat.anchor.href);
+  Object.assign(hook.el.dataset, {workbenchPage: 'assistant', workbenchTask: '', workbenchSession: 'chat-1'});
+  emit('phx:navigate', {href: chat.anchor.href});
+  busy(chat, false);
+  assert.equal(chat.anchor.attrs['aria-current'], 'page');
+
+  task.click();
+  task.anchor.href = '/review/task-2/commit/abcd'; // A reused DOM row now links elsewhere.
+  hook.updated();
+  busy(task, false);
+  task.click();
+  expire();
+  busy(task, false);
+  task.click();
+  hook.disconnected();
+  busy(task, false);
+  assert.equal(hook.navigation.pending, null);
+  assert.equal(chat.anchor.attrs['aria-current'], 'page');
 });
 
 test('closing the last tab takes the explicit home route without starting a new draft', () => {
