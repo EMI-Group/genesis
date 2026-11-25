@@ -116,6 +116,27 @@ defmodule EvoDashWeb.TaskCardComponents do
   `:pausing` is still work draining, so it pulses (amber, like `:running`);
   `:paused` is at rest and never pulses.
 
+  ## Surface chrome (CSS-owned)
+
+  The card's chrome is the three-layer surface system in
+  `assets/css/surfaces.css`, driven by class names and attributes on the
+  markup — never by utility-built elevation:
+
+    * the root carries `task-card` + `data-variant` (`"flat"` default = a LIST
+      ROW: canvas fill, hairline border, no shadow, no accent bar; `"raised"`
+      = the opt-in CARD treatment with the elevation token and the accent bar)
+      + `data-selected` (`@focused`);
+    * `task-card-accent` is the top accent bar wrapper (hidden by CSS for
+      `flat`, shown for `raised`);
+    * `task-card-status` marks the live status badge;
+    * every nested detail/options panel carries `task-card-panel` — a recessed
+      shell drawn by the same stylesheet rather than simulated with
+      `bg-*`/`border-*`/`hover:*` utilities.
+
+  The markup therefore puts NO background, border, shadow or hover utility on
+  the wrapper; the status `tint` from `task_card_tint/1` rides along as the
+  flat variant's subtle wash.
+
   ## Why the preview helpers stay HERE
 
   The card template and its bounded-preview helpers (`text_preview/2`,
@@ -169,6 +190,14 @@ defmodule EvoDashWeb.TaskCardComponents do
   attr(:task, :map, required: true)
   attr(:show_details, :boolean, default: false)
   attr(:focused, :boolean, default: false)
+  # Surface variant, written as `data-variant` on the `task-card` root. `flat`
+  # (default) is a LIST ROW — the only context that renders this card today
+  # (the `/tasks` list), where an elevated box per row is too loud; `raised` is
+  # the opt-in CARD treatment for content read/decided as one unit. Elevation,
+  # background, border, hover/selected/focus treatments all come from
+  # `assets/css/surfaces.css` — the markup carries no shadow/background
+  # utilities on the wrapper.
+  attr(:variant, :string, default: "flat", values: ["flat", "raised"])
   attr(:current_node_id, :any, default: nil)
   # nil | %{state: :loading | :ok | :error, task:, error:, seq:, archive:} —
   # the lazily-fetched heavy payload (see the moduledoc). nil = not loaded.
@@ -238,18 +267,20 @@ defmodule EvoDashWeb.TaskCardComponents do
     finished_at = Map.get(@task, :finished_at)
     finished_label = if finished_at, do: relative_time(finished_at)
     agent_count = Map.get(@task, :agent_count) %>
-    <div class={[
-      "min-w-0 bg-base-100 rounded-xl border relative z-10 group has-[[open]]:z-30",
-      if(@focused,
-        do: "border-base-300",
-        else: [
-          "border-base-200/60 shadow-sm hover:shadow-md transition-shadow",
-          tint
-        ]
-      )
-    ]}>
-      <!-- Accent Top Border — clipped by inner wrapper so it respects rounded corners -->
-      <div :if={!@focused} class="absolute inset-0 rounded-xl overflow-hidden pointer-events-none">
+    <div
+      class={[
+        "task-card min-w-0 rounded-xl border relative z-10 group has-[[open]]:z-30",
+        tint
+      ]}
+      data-variant={@variant}
+      data-selected={to_string(@focused)}
+    >
+      <%!-- Accent Top Border — clipped by inner wrapper so it respects rounded
+           corners. `task-card-accent` is ALWAYS in the DOM and CSS-owned: hidden
+           in the flat (list-row) variant, shown for `raised` (see
+           `assets/css/surfaces.css`), so `@focused` no longer gates markup — it
+           only writes `data-selected`. --%>
+      <div class="task-card-accent absolute inset-0 rounded-xl overflow-hidden pointer-events-none">
         <div class={["absolute top-0 left-0 right-0 h-1 opacity-80", accent]}></div>
       </div>
 
@@ -276,7 +307,7 @@ defmodule EvoDashWeb.TaskCardComponents do
               </span>
             <% end %>
             <span class={[
-              "badge",
+              "task-card-status badge",
               status_badge,
               "font-medium border-0 px-2.5 py-2 rounded-md"
             ]}>
@@ -626,7 +657,7 @@ defmodule EvoDashWeb.TaskCardComponents do
               <% end %>
               <div class={["grid grid-cols-1 gap-4", !@focused && "lg:grid-cols-2"]}>
                 <!-- Objective card — full objective text (scrollable) + mode/path badges -->
-                <div class="bg-base-200/30 p-4 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+                <div class="task-card-panel p-4 rounded-lg">
                   <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
                     <h4 class="text-sm font-semibold flex items-center gap-2">
                       <.icon
@@ -666,7 +697,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                 <% card_result = if lite, do: Map.get(lite, :result), else: nil %>
                 <%= if card_result do %>
                   <!-- Agent Message card — full result content (scrollable) + badges -->
-                  <div class="bg-base-200/30 p-4 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+                  <div class="task-card-panel p-4 rounded-lg">
                     <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
                       <h4 class="text-sm font-semibold flex items-center gap-2">
                         <.icon
@@ -743,7 +774,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                 <% true -> %>
                   <% usage = Map.get(lite, :usage) %>
                   <%= if usage do %>
-                    <div class="bg-base-200/30 p-4 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+                    <div class="task-card-panel p-4 rounded-lg">
                       <h4 class="text-sm font-semibold flex items-center gap-2 mb-4">
                         <.icon name="hero-currency-dollar" class="size-4.5 text-primary-standalone" />
                         <%!-- zh_CN: Token → "词元" --%>{gettext("Token & Cost Usage")}
@@ -842,7 +873,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                   <% end %>
 
                   <%= if agent_count do %>
-                    <div class="bg-base-200/30 p-4 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+                    <div class="task-card-panel p-4 rounded-lg">
                       <h4 class="text-sm font-semibold flex items-center justify-between gap-2 mb-4">
                         <span class="flex items-center gap-2">
                           <.icon name="hero-user-group" class="size-4.5 text-primary-standalone" />
@@ -876,7 +907,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                     <% log_count = logs_preview.total %>
                     <details
                       id={"task-#{@task.id}-logs"}
-                      class="motion-disclosure bg-base-200/30 p-4 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors group/logs"
+                      class="task-card-panel motion-disclosure p-4 rounded-lg group/logs"
                       phx-hook="DisclosureMotion"
                     >
                       <summary class="cursor-pointer text-sm font-semibold flex items-center gap-2 select-none outline-none">
@@ -939,7 +970,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                     ArchiveComponents' own markup.
                   --%>
                   <%= if archive_opt?(@task.opts) or archive != nil do %>
-                    <div class="bg-base-200/30 p-4 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+                    <div class="task-card-panel p-4 rounded-lg">
                       <div class="flex items-center justify-between gap-2">
                         <h4 class="text-sm font-semibold flex items-center gap-2">
                           <.icon name="hero-archive-box" class="size-4.5 text-base-content/70" />
