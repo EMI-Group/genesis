@@ -1539,19 +1539,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert html =~ Path.basename(tmp_dir)
     end
 
+    # Settings are in the composer. Target the test's own project explicitly:
+    # a bare mount may auto-activate another async test's VCT project and close
+    # the palette. The rendered open-path form is exercised separately above.
     test "project settings panel shows config status", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/projects")
-
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      # The activation lands on the project overview; the settings panel below
-      # lives in the composer, so step into it like a user.
-      enter_composer(view)
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: "1"}}")
 
       assert has_element?(
                view,
@@ -1561,18 +1553,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "project settings shows no foreign repos by default", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/projects")
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: "1"}}")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      # The activation lands on the project overview; the settings panel below
-      # lives in the composer, so step into it like a user.
-      enter_composer(view)
+      assert assigns(view).active_project_path == tmp_dir
 
       assert has_element?(
                view,
@@ -6063,9 +6046,9 @@ defmodule EvoDashWeb.ProjectsLiveOverviewTest do
   the restored-draft rule, workspace framing/member selection, the remote
   (viewed) node case and the recent-activity block.
 
-  `async: true`: every test isolates its own XDG config dir and temp repo, the
-  task rows it writes are deleted on exit and its VCT workspace/project mounts
-  are forgotten on exit, so no concurrently running module observes this state.
+  `async: true`: every test isolates its own XDG config dir and temp repo,
+  deletes its own task rows, and forgets its project mounts on exit. A
+  concurrent bare `/projects` mount can still see a live fixture in VCT.
   """
 
   use EvoDashWeb.ConnCase, async: true
@@ -6339,6 +6322,10 @@ defmodule EvoDashWeb.ProjectsLiveOverviewTest do
   # consumed here: a later `assert_patch/1` must observe the event under test
   # (the click's own patch), never this landing navigation.
   defp open_overview!(conn, path) do
+    # The open event registers this child path, not the parent tmp_dir that
+    # setup_temp_dir cleans up. Forget only the mount this fixture creates.
+    on_exit(fn -> forget_quietly(path) end)
+
     {:ok, view, _html} = live(conn, ~p"/projects")
     render_click(view, "open_project", %{"path" => path})
     assert_patch(view, async_wait_budget())
