@@ -121,10 +121,9 @@ Remote activation also resolves `Application.get_env(:evo_dash, :remote_project_
 
 ## Project-config freshness (`genesis.toml` mtime gate)
 
-The page keeps the parsed `genesis.toml` (`project_config`, `worktree_script`, `commands`) beside `:project_config_mtime`, captured WITH that parse through `Project.project_config_mtime/1` (nil = not read yet, no file, or a remote path). Every site assigning the config captures the mtime beside it: `activate_project/2`, `AsyncLoad.remote_extras/3` and the `{:async_remote_project, …}` handler.
-`refresh_project_config/2` re-parses ONLY when forced (`force?:` opening the Configure/Project Settings panel always shows current settings) or the mtime differs, so the `:node_aware_reload_tasks` debounce costs one `File.stat/1` per broadcast and never a TOML parse.
-A REMOTE project's `genesis.toml` lives on the other host, so `remote?` is excluded from the local re-read (it would clobber the RPC-loaded config with nil); that config arrives with the activation/AsyncLoad result.
-The foreign-repo list is in-memory and not re-read by this path; `EvoGit.ProjectConfig.read/1` stays for the eager activation and forced panel-open reads — only the per-broadcast re-parse is gated.
+The page keeps the parsed `genesis.toml` (`project_config`, `worktree_script`, `commands`) beside `:project_config_mtime`, captured WITH that parse through `Project.project_config_mtime/1` (nil = not read yet, no file, or a remote path) at every config-assigning site (`activate_project/2`, `AsyncLoad.remote_extras/3`, the `{:async_remote_project, …}` handler).
+`refresh_project_config/2` re-parses ONLY when forced (opening the Configure/Project Settings panel always shows current settings) or the mtime differs, so the `:node_aware_reload_tasks` debounce costs one `File.stat/1` per broadcast and never a TOML parse.
+A REMOTE project's `genesis.toml` lives on the other host, so `remote?` is excluded from the local re-read (it would clobber the RPC-loaded config with nil) and that config arrives with the activation/AsyncLoad result; the in-memory foreign-repo list is not re-read by this path.
 
 ## Resolved-config reads & freshness (`EvoGit.Config`)
 
