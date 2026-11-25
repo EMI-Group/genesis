@@ -2,7 +2,7 @@
 
 ## Intent
 
-Support modules for `EvoDashWeb.ProjectsLive` (`GET /` and `GET /projects`) plus the durable design notes for the Projects page (command palette, project activation, task form threading, foreign repos, node handling).
+Support modules for `EvoDashWeb.ProjectsLive` (`GET /` and `GET /projects`) plus the durable design notes for the Projects page (project overview, command palette, project activation, task form threading, foreign repos, node handling).
 
 **The governing rule of this node: no `ProjectsLive` process ever blocks on a task-store or RPC call** — §The Rule below is the full contract (reads and slow writes spawned with a seq/in-flight-marker guard, instant click mutations only `EvoDash.SafeCall.run/1`-wrapped).
 Cross-suite test mechanics: `test/evo_dash_web/live/CONTEXT.md`; widget + shared-boundary detail: `../../components/CONTEXT.md`, `../CONTEXT.md`, `../draft_scope.ex`.
