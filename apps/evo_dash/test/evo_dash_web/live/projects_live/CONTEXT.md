@@ -24,12 +24,6 @@ Tests default to `async: true`.
 `ProjectFlowVctTest` is synchronous because it writes the shared `EvoGit.VCT` mount table and only forgets its own fixture.
 `AssistantComposerTest` is synchronous because its connected Assistant mount writes `EvoDash.ChatHistory` and it seeds a VCT mount for draft scope.
 The manual composer and inline settings mounts select projects through the URL without changing VCT or launching a task.
-
-## Mounted coverage boundaries
-
-LiveViewTest drives server-rendered events but does not execute the browser's native `<details>` opening or the browser storage hooks.
-Tests exercise local-node controls; they do not assert remote inline settings behavior.
-The manual composer route renders duplicate `task-options` and `persist-agent-state-toggle` IDs from `TaskFormComponents` and `RemoteView.task_configuration/1`, so strict LiveView checks fail before the affected interactions can run.
 The canonical-selection suites use in-memory config maps and sockets, never app-env runner overrides, task launches, network calls or global state mutations.
 Canonical bundle fixtures call the public `Project.load_model_selection_from_config/2` API rather than mocking the core resolver.
 `ProjectTest` isolates configuration per process with `EvoDash.Test.ConfigDir.isolate!/1` and can inject local resolved configuration through `Process.put(:memo_config_resolve, config)`.
@@ -44,6 +38,9 @@ Missing ownership/readiness fields remain compatible only for valid unstamped lo
 
 ## Coverage Boundaries
 
+The mounted tests drive server-rendered events but do not execute the browser's native `<details>` opening or browser storage hooks.
+These mounted tests exercise local-node controls; they do not assert remote inline settings behavior.
+The manual composer route renders duplicate `task-options` and `persist-agent-state-toggle` IDs from `TaskFormComponents` and `RemoteView.task_configuration/1`, so strict LiveView checks fail before the affected interactions can run.
 Legacy Project profile-selection assertions expect the first configured profile id without a selection script, the empty-string Auto sentinel with a script, `{[], nil}` for no profiles without a script, and `{[], ""}` for no profiles with a script.
 Remote legacy profile loading must ignore a local `:memo_config_resolve` and degrade to `{[], nil}` on an unreachable node.
 Canonical launches distinguish nil/uninitialized selection, which locks the configured default even with rules enabled, from explicit empty-map/empty-string Auto, which removes every model lock.
