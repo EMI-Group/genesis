@@ -286,14 +286,21 @@ defmodule EvoDashWeb.SettingsLiveTest.ConnectManager do
        connect_result: connect_result,
        delay_ms: delay_ms,
        released: false,
-       calls: []
+       calls: [],
+       callers: []
      }}
   end
 
   @impl true
-  def handle_call(:connect, _from, state) do
+  def handle_call(:connect, from, state) do
     hold_reply(state.delay_ms, state.released)
-    {:reply, state.connect_result, %{state | calls: state.calls ++ [:connect]}}
+
+    # Recording the caller pid is what lets a test PROVE the click's connect
+    # was consumed here before the test ends (see `await_connect_consumed!/1`),
+    # so the spawned worker can never fall through to the REAL manager after
+    # teardown and start Erlang distribution.
+    {:reply, state.connect_result,
+     %{state | calls: state.calls ++ [:connect], callers: [elem(from, 0) | state.callers]}}
   end
 
   @impl true
@@ -309,6 +316,11 @@ defmodule EvoDashWeb.SettingsLiveTest.ConnectManager do
   @impl true
   def handle_call(:calls, _from, state) do
     {:reply, state.calls, state}
+  end
+
+  @impl true
+  def handle_call(:callers, _from, state) do
+    {:reply, state.callers, state}
   end
 
   @impl true
@@ -2123,6 +2135,40 @@ defmodule EvoDashWeb.SettingsLiveTest do
       {id, manager}
     end
 
+    @connect_poll_ms 2
+
+    # Proves the click's connect was consumed BY THE FAKE before the test can
+    # end. `connect_remote_target` spawns the connect on
+    # `EvoDash.TaskSupervisor` (`LiveHooks.NodeAware.initiate_remote_connect/2`
+    # → `NodeContext.connect/1`), and that worker OUTLIVES the test unless it
+    # is awaited: once `start_supervised!` stops the fake its Registry entry is
+    # gone, so `EvoGit.RemoteConnection.ensure_started/1` falls through to the
+    # REAL manager, which starts Erlang distribution — a `node()` flip nothing
+    # restores (test/CONTEXT.md, § Distribution start). Bounded poll on the
+    # fake's recorded `:callers`; a connect that never lands fails loudly.
+    defp await_connect_consumed!(manager) do
+      deadline = System.monotonic_time(:millisecond) + async_wait_budget()
+      do_await_connect_consumed!(manager, deadline)
+    end
+
+    defp do_await_connect_consumed!(manager, deadline) do
+      case GenServer.call(manager, :callers) do
+        [_ | _] = callers ->
+          callers
+
+        [] ->
+          if System.monotonic_time(:millisecond) >= deadline do
+            flunk(
+              "the Connect click never reached the fake connection manager — the spawned " <>
+                "connect is still in flight (test/CONTEXT.md, § Distribution start)"
+            )
+          else
+            Process.sleep(@connect_poll_ms)
+            do_await_connect_consumed!(manager, deadline)
+          end
+      end
+    end
+
     # The terminal :connected status map. Realistic ordering in these tests:
     # the fake manager's state is mutated FIRST ({:set_status, ...}), then the
     # same map is broadcast — mirroring the real core (manager state changes,
@@ -2156,6 +2202,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       html = render_click(view, "connect_remote_target", %{"id" => id})
 
+      # The click's connect runs OFF-PROCESS; await its receipt by the fake so
+      # the worker cannot outlive the test (see await_connect_consumed!/1).
+      assert [_] = await_connect_consumed!(manager)
+
       # Async contract: the click only sets the per-target pending marker and
       # spawns the supervised connect task — NO synchronous flash.
       refute html =~ "Connect succeeded."
@@ -2179,6 +2229,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       render_click(view, "connect_remote_target", %{"id" => id})
+      assert [_] = await_connect_consumed!(manager)
 
       GenServer.call(manager, {:set_status, connect_status_connected()})
       send(view.pid, {:remote_connection_status, id, connect_status_connected()})
@@ -2204,6 +2255,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       render_click(view, "connect_remote_target", %{"id" => id})
+      assert [_] = await_connect_consumed!(manager)
 
       # Intermediate :connecting broadcast (manager state then broadcast) — the
       # non-terminal phase must not flash AND must leave the marker in place so
@@ -2232,6 +2284,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       render_click(view, "connect_remote_target", %{"id" => id})
+      assert [_] = await_connect_consumed!(manager)
 
       GenServer.call(manager, {:set_status, connect_status_error("ssh refused")})
       send(view.pid, {:remote_connection_status, id, connect_status_error("ssh refused")})
