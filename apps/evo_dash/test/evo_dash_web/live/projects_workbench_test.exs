@@ -465,6 +465,8 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
           history_row_ids(view) == []
       end)
 
+      assert has_element?(view, "#workbench-history-content", "No conversations found.")
+
       view
       |> element(".workbench-history-switch button", "Tasks")
       |> render_click()
@@ -476,6 +478,7 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
       |> render_change(%{"query" => ""})
 
       wait_for(view, fn -> history_row_ids(view) == [task_id] end)
+      refute has_element?(view, "#workbench-history-content", "No conversations found.")
     end
   end
 
