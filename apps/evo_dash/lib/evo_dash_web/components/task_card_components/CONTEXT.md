@@ -12,6 +12,7 @@ The task card's data contract plus the helper families extracted from `task_card
 - `./repos.ex` → `result_repos/1`, `task_repos/2`, `result_repos_badges/1`.
 - `./archive.ex` → the `detail.archive` envelope readers (`archive_state/1`, `archive_records/1`, `archive_total/1`, `archive_dropped/1`, `archive_exhausted?/1`, `archive_server_total/1`, `archive_agent_results/1`, `archive_loading_more?/1`, `archive_more_error/1`) + `archive_opt?/1` (a `defdelegate` to `EvoDashWeb.ArchiveHelpers.archive_opt?/1` — the ONE archive opt-in predicate, shared with the review page).
 - `./errors.ex` → the structured failure-record readers `task_error/1` / `error_field/2`.
+- Card chrome — `task_card` root + `data-variant` (`flat` list row default, `raised` opt-in) + `data-selected`, `task-card-accent`, `task-card-status`, `task-card-panel`, all surfaces/ elevation CSS-owned in `assets/css/surfaces.css` → §Card chrome.
 
 ## Task Cards & the Summary-Map Contract
 
