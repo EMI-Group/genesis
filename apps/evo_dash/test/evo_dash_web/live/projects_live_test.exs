@@ -4158,8 +4158,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
     test "cancel_edit_foreign_repo clears the edit assigns", %{conn: conn, tmp_dir: tmp_dir} do
       {repo_path, _head_sha} = git_repo_fixture!(tmp_dir, "repo1")
+      stub_github_upstream_check!()
 
-      {:ok, view, _html} = live(conn, ~p"/projects")
+      # An explicit primary path prevents deferred VCT auto-activation from
+      # replacing the foreign-repo list between Add and Edit.
+      {:ok, view, _html} = live(conn, ~p"/projects?#{[project: tmp_dir, wb_task: "1"]}")
+      assert assigns(view)[:active_project_path] == tmp_dir
+      assert has_element?(view, "#task-form")
 
       render_click(view, "add_foreign_repo", %{
         "repo_id" => "repo1",
@@ -5597,71 +5602,6 @@ defmodule EvoDashWeb.ProjectsLiveTest do
                )
     end
 
-    # A batch that is still running is what makes the form render the
-    # "Loading models…" status. That status must offer a retry (a lost batch is
-    # not the only reason the form can sit there) and the retry must re-run the
-    # batch instead of being refused while loading.
-    test "the loading state offers a retry that re-runs the batch", %{
-      conn: conn,
-      tmp_dir: tmp_dir
-    } do
-      test_pid = self()
-
-      install_reporting_async_load_runner(fn ->
-        receive do
-          :release -> :ok
-        after
-          5_000 -> :ok
-        end
-
-        EvoDashWeb.ProjectsLive.AsyncLoad.default_batch(node(), false, nil, nil, true, false)
-      end)
-
-      # `wb_task=1`: the composer owns the picker controls asserted below.
-      {:ok, view, _html} = live(conn, ~p"/projects?#{[project: tmp_dir, wb_task: "1"]}")
-
-      first_task = await_view_batch(view.pid)
-      assert first_task != view.pid
-      assert first_task != test_pid
-
-      assert assigns(view)[:model_selection_ready?] == false
-      assert assigns(view)[:model_selection_error] == nil
-
-      html = render(view)
-      assert html =~ ~s(id="model-selection-loading")
-      assert html =~ "Loading models…"
-
-      assert has_element?(view, "#model-selection-loading-retry[phx-click=retry_model_selection]")
-
-      # The retry is NOT refused while the first batch is still running.
-      render_click(element(view, "#model-selection-loading-retry"))
-
-      second_task = await_view_batch(view.pid)
-      assert second_task != first_task
-
-      # Still loading (both batches are blocked), still retryable.
-      assert assigns(view)[:model_selection_ready?] == false
-      assert has_element?(view, "#model-selection-loading")
-
-      # Release both: whichever result lands last settles the picker. The
-      # stale one is either applied first (then superseded by the newer scope)
-      # or dropped against an already-applied bundle, which keeps it usable —
-      # so the settled state is always launchable with no recorded error.
-      send(first_task, :release)
-      send(second_task, :release)
-
-      # Drain BOTH children before reading: `wait_assigns` alone can return on
-      # the first applied result while the other is still in flight.
-      await_async_loads(view)
-
-      assert assigns(view)[:model_selection_ready?] == true
-      assert assigns(view)[:model_selection_error] == nil
-      refute has_element?(view, "#model-selection-loading")
-      refute has_element?(view, "#model-selection-loading-retry")
-      # An empty (but loaded) inventory renders the explicit setup action.
-      assert has_element?(view, "#task-model-setup")
-    end
-
     # `handle_params/3` skips its batch while `workbench_project_selection` is
     # set (the activation owns it), so the `{:registered, ...}` continuation
     # must spawn the batch ITSELF — and keep the selection in place for the
@@ -6512,10 +6452,11 @@ defmodule EvoDashWeb.ProjectsLiveOverviewTest do
 end
 
 defmodule EvoDashWeb.ProjectsLiveSyncTest do
-  # `async: false` — every test here mutates a MUTABLE process-wide global that
-  # another `async: true` module also reads or writes, and ExUnit drains ALL
-  # async modules before it starts any sync one, so a write here can never race
-  # them:
+  # `async: false` — these tests depend on process-wide state or events that
+  # async modules can change. ExUnit drains all async modules first:
+  #
+  #   * broadcasts on the global `"config"` topic can spawn a batch in the
+  #     same mounted view as the Retry click, even for another test's config dir.
   #
   #   * `:sys.suspend(EvoGit.TaskRegistry)` — freezing the one serialized registry
   #     would deadlock any concurrent suite that touches it.
@@ -6566,6 +6507,76 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
 
   setup [:setup_temp_dir, :set_onboarding_completed, :reset_active_tasks_hub]
   setup_all [:install_git_template]
+
+  # Retry must start a fresh batch even when the original is still running.
+  test "the loading state offers a retry that re-runs the batch", %{conn: conn, tmp_dir: tmp_dir} do
+    test_pid = self()
+    release = make_ref()
+
+    install_reporting_async_load_runner(fn ->
+      owner_ref = Process.monitor(test_pid)
+
+      receive do
+        ^release ->
+          Process.demonitor(owner_ref, [:flush])
+          EvoDashWeb.ProjectsLive.AsyncLoad.default_batch(node(), false, nil, nil, true, false)
+
+        {:DOWN, ^owner_ref, :process, ^test_pid, _reason} ->
+          # Don't leave a blocked child or run a load after the test has failed.
+          Process.exit(self(), :kill)
+      end
+    end)
+
+    # `wb_task=1`: the composer owns the picker controls asserted below.
+    {:ok, view, _html} = live(conn, ~p"/projects?#{[project: tmp_dir, wb_task: "1"]}")
+
+    first_task = await_view_batch(view.pid)
+    assert first_task != view.pid
+    assert first_task != test_pid
+
+    assert assigns(view)[:model_selection_ready?] == false
+    assert assigns(view)[:model_selection_error] == nil
+
+    html = render(view)
+    assert html =~ ~s(id="model-selection-loading")
+    assert html =~ "Loading models…"
+
+    assert has_element?(view, "#model-selection-loading-retry[phx-click=retry_model_selection]")
+
+    first_seq = assigns(view)[:projects_load_seq]
+    render_click(element(view, "#model-selection-loading-retry"))
+    retry_seq = assigns(view)[:projects_load_seq]
+    assert retry_seq > first_seq
+
+    second_task = await_view_batch(view.pid)
+    assert second_task != first_task
+
+    # Both batches are blocked; the loading state stays retryable.
+    assert assigns(view)[:model_selection_ready?] == false
+    assert has_element?(view, "#model-selection-loading")
+
+    # Only Retry can make the picker ready: keep the original blocked until
+    # the new generation applies, then drain the now-stale original result.
+    send(second_task, release)
+
+    wait_assigns(view, fn assigns ->
+      assigns[:projects_load_seq] == retry_seq and assigns[:model_selection_ready?] == true and
+        assigns[:model_selection_error] == nil
+    end)
+
+    assert Process.alive?(first_task)
+    send(first_task, release)
+    await_async_loads(view)
+    refute Process.alive?(first_task)
+
+    assert assigns(view)[:projects_load_seq] == retry_seq
+    assert assigns(view)[:model_selection_ready?] == true
+    assert assigns(view)[:model_selection_error] == nil
+    refute has_element?(view, "#model-selection-loading")
+    refute has_element?(view, "#model-selection-loading-retry")
+    # An empty (but loaded) inventory renders the explicit setup action.
+    assert has_element?(view, "#task-model-setup")
+  end
 
   # Moved here from the async module: a connected `HomeLive` mount writes the
   # process-wide `EvoDash.ChatHistory` table, which the async
