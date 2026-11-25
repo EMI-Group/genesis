@@ -11,10 +11,13 @@
 // One tab is a plain, string-valued record:
 //   {key, kind, id, node, projectPath, project, title, location, href,
 //    preview?, active?}
-// `key` is `JSON.stringify([node, projectPath, kind, id])`, so it encodes the
-// scope: tabs of different projects (or BEAM nodes) never collide and never see
-// each other.
+// `key` is `JSON.stringify([node, projectPath, kind, id])`, with an empty
+// projectPath for tasks: their node + task id already identifies the view.
+// projectPath still determines which rail shows the tab. The local task node
+// is also empty, including for an explicit legacy `node=local` route.
 const MAX_TABS_PER_PROJECT = 40
+const TAB_GROUP_ORDER = ["project", "task", "chat", "diff", "other"]
+const REVIEW_PATH = /^\/review\/([^/]+)(?:\/commit\/[^/]+)?$/
 // Only used to resolve a RELATIVE persisted href into `.pathname`/`.search`;
 // the origin is never read back and never compared against a real page.
 const TAB_BASE_URL = "https://workbench.invalid"
@@ -45,47 +48,86 @@ function copyList(tabs) {
     .map(entry => ({...entry}))
 }
 
+function nodeScope(node) {
+  return node === "local" ? "" : probe(node)
+}
+
 function tabKey(node, projectPath, kind, id) {
-  return JSON.stringify([probe(node), probe(projectPath), probe(kind), probe(id)])
+  const type = probe(kind)
+  return type === "task"
+    ? JSON.stringify([nodeScope(node), "", type, probe(id)])
+    : JSON.stringify([probe(node), probe(projectPath), type, probe(id)])
 }
 
-function sameScope(left, right) {
-  return probe(left?.node) === probe(right?.node) &&
-    probe(left?.projectPath) === probe(right?.projectPath)
-}
-
-// An href is only ever followed when it stays inside this dashboard: an
-// absolute path to one of the four destinations (or a review deep link) on the
-// SAME origin. A persisted href is untrusted input, so everything else is
-// dropped instead of navigated to.
-function safeHref(value, origin) {
-  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) return false
-  try {
-    const url = new URL(value, origin || TAB_BASE_URL)
-    const base = new URL(origin || TAB_BASE_URL)
-    return url.origin === base.origin &&
-      (/^\/(projects|tasks|assistant)$/.test(url.pathname) || url.pathname.startsWith("/review/"))
-  } catch {
-    return false
+function tabGroup(kind) {
+  switch (kind) {
+    case "project": return "project"
+    case "task": return "task"
+    case "assistant":
+    case "draft":
+    case "chat": return "chat"
+    case "diff": return "diff"
+    default: return "other"
   }
 }
 
-function defaultHref(value) {
-  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//")
+function sameScope(left, right) {
+  return nodeScope(left?.node) === nodeScope(right?.node) &&
+    probe(left?.projectPath) === probe(right?.projectPath)
 }
 
-// One project's tabs, in rail order.
-function tabsForProject(tabs, node, projectPath) {
+// Persisted hrefs are untrusted; only same-origin relative paths are accepted.
+function tabURL(value, origin = TAB_BASE_URL) {
+  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) return null
+  try {
+    const base = new URL(origin)
+    const url = new URL(value, base)
+    return url.origin === base.origin ? url : null
+  } catch {
+    return null
+  }
+}
+
+function taskRoute(url) {
+  if (!url) return null
+  let id
+  if (url.pathname === "/tasks") {
+    id = url.searchParams.get("task")
+  } else {
+    const match = REVIEW_PATH.exec(url.pathname)
+    if (!match) return null
+    try {
+      id = decodeURIComponent(match[1])
+    } catch {
+      return null
+    }
+  }
+  return id ? {kind: "task", id, node: nodeScope(url.searchParams.get("node"))} : null
+}
+
+function safeHref(value, origin) {
+  const url = tabURL(value, origin || TAB_BASE_URL)
+  return !!url && (/^\/(projects|tasks|assistant)$/.test(url.pathname) || !!taskRoute(url))
+}
+
+function projectTabs(tabs, node, projectPath) {
   const scoped = {node, projectPath}
   return safeList(tabs).filter(tab => tab && sameScope(tab, scoped))
+}
+
+// Rail order groups types; stable sort preserves insertion order within each.
+function tabsForProject(tabs, node, projectPath) {
+  return projectTabs(tabs, node, projectPath).sort((left, right) =>
+    TAB_GROUP_ORDER.indexOf(tabGroup(left.kind)) - TAB_GROUP_ORDER.indexOf(tabGroup(right.kind)))
 }
 
 // Restore the persisted list. `raw` is whatever `JSON.parse` produced — a list,
 // a JSON string, or garbage — and `validate(href)` decides whether a persisted
 // href may be followed (the hook passes `safeHref` bound to its own origin).
 // Every entry is re-normalised from its OWN href, then RE-KEYED from its fields
-// so a stale or hand-edited key can never address the wrong tab, and duplicates
-// collapse last-wins (the persisted list is append-ordered).
+// so a stale or hand-edited key can never address the wrong tab. Duplicates
+// keep the last route, but a late task alias must not lose an earlier scope or
+// turn a pinned tab back into a preview.
 function restore(raw, validate) {
   let list = raw
   if (typeof list === "string") {
@@ -95,39 +137,37 @@ function restore(raw, validate) {
       return []
     }
   }
-  const accept = typeof validate === "function" ? validate : defaultHref
+  const accept = typeof validate === "function" ? validate : safeHref
   const restored = new Map()
   for (const entry of safeList(list)) {
     const tab = normaliseStored(entry, accept)
-    if (tab) restored.set(tab.key, tab)
+    if (!tab) continue
+    const previous = restored.get(tab.key)
+    restored.set(tab.key, previous && tab.kind === "task" ? mergeTask(previous, tab) : tab)
   }
   return [...restored.values()]
 }
 
 function normaliseStored(entry, accept) {
   if (!entry || typeof entry !== "object") return null
-  const kind = probe(entry.kind)
-  if (!kind) return null
-  if (!accept(entry.href)) return null
-  let url
-  try {
-    url = new URL(entry.href, TAB_BASE_URL)
-  } catch {
-    return null
-  }
-  // `wb_workspace` was a legacy single-project scope param: it only ever scoped
-  // the view, so dropping it keeps the href addressable.
-  const legacy = url.searchParams.has("wb_workspace")
-  url.searchParams.delete("wb_workspace")
+  const url = tabURL(entry.href)
+  if (!url || !accept(entry.href)) return null
+
+  const task = taskRoute(url)
+  const kind = task?.kind || probe(entry.kind)
+  if (!kind || (!task && kind === "task")) return null
+  // `wb_workspace` used to scope a project view. Leave exact task routes alone.
+  const legacy = !task && url.searchParams.has("wb_workspace")
+  if (legacy) url.searchParams.delete("wb_workspace")
   const tab = {
     kind,
-    id: probe(entry.id),
-    node: url.searchParams.get("node") || "",
+    id: task?.id ?? probe(entry.id),
+    node: task?.node ?? (url.searchParams.get("node") || ""),
     projectPath: typeof entry.projectPath === "string" ? entry.projectPath : "",
     project: probe(entry.project),
     title: probe(entry.title),
     location: probe(entry.location),
-    href: url.pathname + url.search,
+    href: legacy ? url.pathname + url.search + url.hash : entry.href,
     preview: entry.preview === true,
     active: entry.active === true,
   }
@@ -147,6 +187,19 @@ function normaliseStored(entry, accept) {
   tab.key = tabKey(tab.node, tab.projectPath, tab.kind, tab.id)
   if (alwaysPinned(tab.kind)) tab.preview = false
   return tab
+}
+
+function mergeTask(previous, next) {
+  const scope = next.projectPath ? next : previous
+  return {
+    ...previous,
+    ...next,
+    projectPath: scope.projectPath,
+    project: scope.project || (sameScope(previous, next) ? previous.project : ""),
+    title: next.title || previous.title,
+    location: next.location || previous.location,
+    preview: previous.preview === true && next.preview === true,
+  }
 }
 
 // Mark ONE tab active within its own project (the rail's "current" marker is
@@ -175,7 +228,7 @@ function activate(tabs, key) {
 function trimProject(list, scope) {
   let trimmed = list
   while (true) {
-    const mine = tabsForProject(trimmed, scope.node, scope.projectPath)
+    const mine = projectTabs(trimmed, scope.node, scope.projectPath)
     if (mine.length <= MAX_TABS_PER_PROJECT) return trimmed
     const victim = evictionVictim(mine)
     if (!victim) return trimmed
@@ -207,12 +260,20 @@ function openTab(tabs, tab, options) {
   const list = copyList(tabs)
   if (!tab || typeof tab !== "object") return list
   const next = scopedTab(tab, options)
-  if (!next.key || !next.kind) return list
+  if (!next?.key || !next.kind) return list
 
   const index = list.findIndex(entry => entry.key === next.key)
   if (index >= 0) {
-    list[index] = {...list[index], ...next, key: list[index].key, preview: list[index].preview === true}
-    return markActive(list, list[index].key)
+    const previous = list[index]
+    const update = {...next, preview: previous.preview === true}
+    const merged = next.kind === "task" ? mergeTask(previous, update) : {...previous, ...update}
+    list[index] = merged
+    // A preview can learn its project after opening. Holding onto its key must
+    // not leave two disposable views in the destination project.
+    const scoped = merged.preview && !sameScope(previous, merged)
+      ? list.filter(entry => entry === merged || !isPreviewFor(entry, merged))
+      : list
+    return trimProject(markActive(scoped, merged.key), merged)
   }
 
   const twin = list.findIndex(entry =>
@@ -223,8 +284,7 @@ function openTab(tabs, tab, options) {
   }
 
   if (next.preview) {
-    const slot = list.findIndex(entry =>
-      entry.preview === true && !alwaysPinned(entry.kind) && sameScope(entry, next))
+    const slot = list.findIndex(entry => isPreviewFor(entry, next))
     if (slot >= 0) {
       list[slot] = next
       markActive(list, next.key)
@@ -237,19 +297,27 @@ function openTab(tabs, tab, options) {
   return trimProject(list, next)
 }
 
+function isPreviewFor(entry, scope) {
+  return entry.preview === true && !alwaysPinned(entry.kind) && sameScope(entry, scope)
+}
+
 function scopedTab(tab, options) {
+  const task = taskRoute(tabURL(tab.href))
+  const kind = task?.kind || probe(tab.kind)
+  if (!task && kind === "task") return null
   return {
     ...tab,
-    key: probe(tab.key) || tabKey(tab.node, tab.projectPath, tab.kind, tab.id),
-    kind: probe(tab.kind),
-    id: probe(tab.id),
-    node: probe(tab.node),
+    key: task ? tabKey(task.node, "", task.kind, task.id)
+      : probe(tab.key) || tabKey(tab.node, tab.projectPath, kind, tab.id),
+    kind,
+    id: task?.id ?? probe(tab.id),
+    node: task?.node ?? probe(tab.node),
     projectPath: probe(tab.projectPath),
     project: probe(tab.project),
     title: probe(tab.title),
     location: probe(tab.location),
     href: probe(tab.href),
-    preview: options?.preview === true && !alwaysPinned(tab.kind),
+    preview: options?.preview === true && !alwaysPinned(kind),
   }
 }
 
@@ -294,4 +362,4 @@ function cycleTab(tabs, node, projectPath, currentKey, direction) {
 // binding; the functions above own every tab decision.
 
 export {MAX_TABS_PER_PROJECT, TAB_BASE_URL, alwaysPinned, sameScope, tabKey,
-  tabsForProject, safeHref, restore, openTab, pinTab, closeTab, cycleTab, activate}
+  tabGroup, tabsForProject, safeHref, restore, openTab, pinTab, closeTab, cycleTab, activate}
