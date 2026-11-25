@@ -200,8 +200,9 @@ It must stay there: a scroll container's own background paints its visible box a
 
 ### In-shell page height contract (`main#main-content` content box)
 
-`main#main-content` is a definite-height flex item, so its content box is already viewport minus the persistent top bar (`.workbench-top`, `0 0 3.5rem`) and minus the main padding (`px-4 … pt-4 pb-4`) — in-shell pages size against THAT box, never against the viewport; `.shell-fill` (app.css: `height: 100%; min-height: 0`) is the ONE utility for a page root that must FILL it (the `/phoenix/dashboard` iframe, the xl+ `AgentsLive` grid), while a page that scrolls normally keeps plain page flow and must not force `height`.
-No in-shell page takes `height`/`min-height` from `100vh`/`100dvh` (a `max-height` CAP may); `--shell-topbar-h` (defined once on `#app-layout`, `3.5rem`) is the only way a cap may account for the top bar, and `#main-scroll` stays the ONE page scroller.
+`main#main-content` is a definite-height flex item, so its content box is already viewport minus the persistent top bar (`.workbench-top { flex: 0 0 var(--shell-topbar-h); }`) and minus the main padding (`px-4 … pt-4 pb-4`) — in-shell pages size against THAT box, never against the viewport; `.shell-fill` (app.css: `height: 100%; min-height: 0`) is the ONE utility for a page root that must FILL it (the `/phoenix/dashboard` iframe, the xl+ `AgentsLive` grid), while a page that scrolls normally keeps plain page flow and must not force `height`.
+`--shell-topbar-h` is defined once on `#app-layout` in `workbench.css`, defaults to `calc(var(--control-h) + var(--card-pad) / 4)`, and resolves through `--workbench-topbar-size` to `calc(var(--touch-target) + var(--card-pad) * .75)` at widths up to `1023.98px` or with a coarse pointer.
+No in-shell page takes `height`/`min-height` from `100vh`/`100dvh` (a `max-height` CAP may); `--shell-topbar-h` is the only way a cap may account for the top bar, and `#main-scroll` stays the ONE page scroller.
 
 ### `phx-click` + JS hook on the same element — double firing
 
