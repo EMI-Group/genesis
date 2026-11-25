@@ -65,7 +65,8 @@ A nonblank `task` stays an opaque binary in `@task_scope_id`; `Scope.path(task_i
 `{:remote_connection_status, _, _}` routes to `Scope.connection_status/2`, which delegates NodeAware chrome, invalidates disconnected data immediately and re-patches when the same target resolves to a different BEAM.
 A target is available only when its `:connected` status advertises the resolved BEAM; a connected alias of the local BEAM is valid but a pending local placeholder is not.
 `Scope.prepare/2` initializes the scope presentation assigns; the parent may keep its existing mount seeds and should not duplicate the old node-only reset or pre-load inspector selection.
-Availability/identity change clears both live and retained rows, inspector/watch/history state and modals, optimistic/queued messages, raw/folded graph and folds, buffered events and timer tokens; counters are advanced and the user’s `left_view` and serialized stream worker are preserved.
+Availability/identity change clears both live and retained rows, inspector/watch/history state and modals, optimistic/queued messages, raw/folded graph and folds, buffered events and timer tokens; page, refresh and graph counters advance while the user’s `left_view` and serialized stream worker are preserved.
+Reset advances the watch token even without an attached watch, rejecting stale independent history results across same-BEAM target and task switches; `inspector_history_seq` advances only for independent history fetches and adopted checkpoints, not resets.
 On a successful page load the loader applies only matching rows, then consumes the requested agent id; in focused mode selection, deep links and send actions require a matching live row.
 
 The focused loader uses `NodeContext.call_remote/4` for `RemoteAPI.get_task_lite/1` and `list_agents/0` so a failed RPC does not masquerade as a missing task or zero agents.

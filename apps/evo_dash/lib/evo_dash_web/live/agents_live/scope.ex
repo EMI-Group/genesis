@@ -166,6 +166,8 @@ defmodule EvoDashWeb.AgentsLive.Scope do
     assigns = socket.assigns
     available? = available?(assigns)
 
+    # Detach advances the watch token even without a watch, fencing old history
+    # results on the same BEAM without counting a reset as a history operation.
     socket
     |> StreamWatch.detach()
     |> assign(
@@ -215,7 +217,6 @@ defmodule EvoDashWeb.AgentsLive.Scope do
       commit_fold_expanded: MapSet.new(),
       load_generation: (assigns[:load_generation] || 0) + 1,
       refresh_seq: (assigns[:refresh_seq] || 0) + 1,
-      inspector_history_seq: (assigns[:inspector_history_seq] || 0) + 1,
       commit_graph_seq: (assigns[:commit_graph_seq] || 0) + 1
     )
   end
