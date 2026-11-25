@@ -315,6 +315,50 @@ test("the history list is the ONE scroller and the header stays put", () => {
   assert.equal(values(pinned[0].body).flex, "none");
 });
 
+test("history chrome follows the DOM and keeps controls and two-line rows readable", () => {
+  const css = source["workbench.css"];
+  for (const rule of leafRules(css).filter(rule => /workbench-history/.test(rule.selectorText))) {
+    assert.doesNotMatch(rule.body, /(?:^|;)\s*(?:order|grid-(?:area|row|column)(?:-start|-end)?|grid-template-areas)\s*:/,
+      `history's paint and focus order must agree: ${rule.selectorText}`);
+  }
+
+  const [filters] = rulesWith(".workbench-history-filters");
+  assert.equal(values(filters.body)["grid-template-columns"], "repeat(2, minmax(0, 1fr))");
+  for (const selector of [".workbench-history-filter", "#workbench-history-query"]) {
+    const [control] = rulesWith(selector);
+    assert.equal(values(control.body)["min-height"], "var(--control-h)");
+  }
+
+  const [row] = rulesWith(".workbench-history-row > .workbench-row");
+  assert.equal(values(row.body)["min-block-size"], "var(--row-h-tall)");
+  assert.doesNotMatch(row.body, /(?:^|;)\s*border(?:-block|-bottom|-top)?\s*:/, "rows use space, not dividers");
+  const [meta] = rulesWith(".workbench-history-meta");
+  assert.equal(values(meta.body)["font-size"], "var(--text-xs)");
+  assert.equal(values(meta.body)["flex-wrap"], "wrap");
+});
+
+test("the kind switch fits translated labels and takes the touch floor", () => {
+  const css = source["workbench.css"];
+  const switchRule = leafRules(css).find(rule =>
+    rule.selectorText.includes('.workbench-history-switch:is([data-history-kind="tasks"], [data-history-kind="conversations"])'));
+  assert.equal(values(switchRule.body)["grid-template-columns"], "repeat(2, minmax(0, 1fr))");
+  const button = ".workbench-history-switch [data-workbench-kind]";
+  const [choice] = rulesWith(button);
+  const declared = values(choice.body);
+  assert.equal(declared["min-height"], "var(--control-h)");
+  assert.equal(declared["min-width"], "0");
+  assert.equal(declared["overflow-wrap"], "anywhere");
+  for (const property of ["white-space", "text-overflow", "max-width", "width", "inline-size", "max-inline-size"]) {
+    assert.equal(declared[property], undefined, `a translated label must not be clipped by ${property}`);
+  }
+
+  const coarse = blocks("@media (pointer: coarse)", css).join("\n");
+  const [touch] = rulesWith(button, coarse);
+  assert.equal(values(touch.body)["min-height"], "var(--touch-target)");
+  const [search] = rulesWith("#workbench-history-search", coarse);
+  assert.equal(values(search.body)["font-size"], "16px");
+});
+
 test("only the selected Source Control view scrolls", () => {
   const [body] = rulesWith(".workbench-git-body");
   const declared = values(body.body);
@@ -355,7 +399,7 @@ test("Source Control keeps its heading, summary and view switcher at intrinsic h
   const declared = values(search.body);
   assert.equal(declared.position, "sticky", "branch search stays reachable inside the scrolling view");
   assert.equal(declared["inset-block-start"], "0");
-  assert.equal(declared.background, "var(--surface-rail)", "rows must not show through the search field");
+  assert.equal(declared.background, "var(--surface-dock)", "rows must not show through the search field");
   const [branches] = blocks("#workbench-git-branches", source["workbench.css"]);
   assert.match(values(branches)["scroll-padding-block-start"], /var\(--touch-target\)/,
     "keyboard scrolling leaves space for sticky branch search");
