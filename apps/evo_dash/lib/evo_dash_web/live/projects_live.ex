@@ -265,6 +265,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     node_path={@task_node_path}
                     starting_commit={@task_starting_commit}
                     resume_from={@task_resume_from}
+                    show_options={false}
                     archive={@task_archive}
                     persist_agent_state?={@persist_agent_state?}
                     provider_profiles={@provider_profiles}
