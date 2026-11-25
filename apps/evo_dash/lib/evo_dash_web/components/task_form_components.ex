@@ -60,7 +60,9 @@ defmodule EvoDashWeb.TaskFormComponents do
   app.js).
 
   Routine task options and the optional advanced disclosure sit below the
-  editor, associated with `task-form`. Project settings belong to the page.
+  editor, associated with `task-form`. A page that renders its own Task Options
+  section sets `show_options={false}` and renders `task_options_tab/1` there
+  instead. Project settings belong to the page.
 
   Passing `provider_profiles`, `model_selections`, or a non-empty `model_spec`
   moves the shared `LLMSelectionComponents.llm_selection/1` capsule INSIDE the
@@ -134,6 +136,7 @@ defmodule EvoDashWeb.TaskFormComponents do
   attr(:resume_from, :string, default: "")
   attr(:disabled, :boolean, default: false)
   attr(:launch_disabled, :boolean, default: false)
+  attr(:show_options, :boolean, default: true, doc: "Render built-in task options.")
   attr(:archive, :boolean, default: false)
   attr(:persist_agent_state?, :boolean, default: true)
   attr(:provider_profiles, :list, default: [])
@@ -158,7 +161,7 @@ defmodule EvoDashWeb.TaskFormComponents do
     ~H"""
     <.composer kind="task" class="w-full flex-1 flex flex-col min-h-0">
       {task_editor(assigns)}
-      <div :if={!@disabled} class="mx-auto mt-3 w-full max-w-3xl shrink-0 px-4">
+      <div :if={@show_options && !@disabled} class="mx-auto mt-3 w-full max-w-3xl shrink-0 px-4">
         <.task_options_tab
           mode={@mode}
           node_path={@node_path}
