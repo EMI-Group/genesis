@@ -29,8 +29,72 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
   attr(:new_repo_path, :string, default: "")
   attr(:new_repo_description, :string, default: "")
   attr(:remote, :boolean, default: false)
+  attr(:inline, :boolean, default: false)
 
+  @doc "Renders one set of task form controls, either inline or in the workbench dialog."
   def task_configuration(assigns) do
+    ~H"""
+    <.settings_shell inline={@inline}>
+      <div class={["space-y-4", if(@inline, do: "py-4", else: "p-4")]}>
+        <section>
+          <.dynamic_tag
+            tag_name={if(@inline, do: "h2", else: "h3")}
+            id={@inline && "workbench-task-settings-title"}
+            class="mb-2 text-base font-semibold"
+          >
+            {gettext("Task Options")}
+          </.dynamic_tag>
+          <EvoDashWeb.TaskFormComponents.task_options_tab
+            mode={@task_mode}
+            node_path={@task_node_path}
+            starting_commit={@task_starting_commit}
+            resume_from={@task_resume_from}
+            archive={@task_archive}
+            persist_agent_state?={@persist_agent_state?}
+            build_systems={@build_systems}
+            selected_build_system={@task_build_system}
+          />
+        </section>
+        <section class="pt-4 border-t border-base-300">
+          <.dynamic_tag
+            tag_name={if(@inline, do: "h2", else: "h3")}
+            class="mb-2 text-base font-semibold"
+          >
+            {gettext("Project Settings")}
+          </.dynamic_tag>
+          <EvoDashWeb.ProjectComponents.project_settings_tab
+            remote={@remote}
+            active_project={@active_project_path}
+            project_config={@project_config}
+            worktree_script={@worktree_script}
+            commands={@commands}
+            foreign_repos={@foreign_repos}
+            foreign_repo_path_suggestions={@foreign_repo_path_suggestions}
+            show_add_foreign_repo={@show_add_foreign_repo_form}
+            new_repo_id={@new_repo_id}
+            new_repo_path={@new_repo_path}
+            new_repo_description={@new_repo_description}
+            tauri_detected={@tauri_detected}
+            platform={@platform}
+          />
+        </section>
+      </div>
+    </.settings_shell>
+    """
+  end
+
+  attr(:inline, :boolean, required: true)
+  slot(:inner_block, required: true)
+
+  defp settings_shell(%{inline: true} = assigns) do
+    ~H"""
+    <section id="workbench-task-settings" aria-labelledby="workbench-task-settings-title">
+      {render_slot(@inner_block)}
+    </section>
+    """
+  end
+
+  defp settings_shell(assigns) do
     ~H"""
     <dialog
       id="workbench-task-settings"
@@ -49,39 +113,7 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
           <.icon name="hero-x-mark" class="size-5" />
         </button>
       </header>
-      <div class="space-y-4 p-4">
-        <section>
-          <h3 class="text-sm font-semibold mb-2">{gettext("Task Options")}</h3>
-          <EvoDashWeb.TaskFormComponents.task_options_tab
-            mode={@task_mode}
-            node_path={@task_node_path}
-            starting_commit={@task_starting_commit}
-            resume_from={@task_resume_from}
-            archive={@task_archive}
-            persist_agent_state?={@persist_agent_state?}
-            build_systems={@build_systems}
-            selected_build_system={@task_build_system}
-          />
-        </section>
-        <section class="pt-4 border-t border-base-300">
-          <h3 class="text-sm font-semibold mb-2">{gettext("Project Settings")}</h3>
-          <EvoDashWeb.ProjectComponents.project_settings_tab
-            remote={@remote}
-            active_project={@active_project_path}
-            project_config={@project_config}
-            worktree_script={@worktree_script}
-            commands={@commands}
-            foreign_repos={@foreign_repos}
-            foreign_repo_path_suggestions={@foreign_repo_path_suggestions}
-            show_add_foreign_repo={@show_add_foreign_repo_form}
-            new_repo_id={@new_repo_id}
-            new_repo_path={@new_repo_path}
-            new_repo_description={@new_repo_description}
-            tauri_detected={@tauri_detected}
-            platform={@platform}
-          />
-        </section>
-      </div>
+      {render_slot(@inner_block)}
     </dialog>
     """
   end
