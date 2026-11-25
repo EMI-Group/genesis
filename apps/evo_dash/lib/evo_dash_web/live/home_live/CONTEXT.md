@@ -161,8 +161,11 @@ The attachment pipeline mirrors `ProjectsLive.AttachFile`:
 - pending chips carry a remove action (`chat_attachment_remove`, `phx-value-index`) and pending attachments are cleared exactly on a successful send.
 - attaching requires the LOCAL node (`current_node == node()`); a remote/pending node or a picker error only sets `attach_unavailable` and offers the manual-path form, whose reads run on the LOCAL filesystem (`attachment_pipeline.ex` → `AttachedFile.read/1`).
 
-The shared composer surface's editor contains `#chat-form` with the textarea and staged attachment chips; its final toolbar (`#chat-composer-controls`) keeps the attach menu, workspace selector when applicable, followed-task control, model capsule, and Send/Stop in that order.
-The toolbar is outside `#chat-form`, so its upload and manual path forms never nest and the Send button targets `form="chat-form"`; the textarea is NOT `phx-update="ignore"`, so staging a text file simply assigns the draft server-side.
+The shared `composer_surface/1` carries `.assistant-input-card` and renders the editor itself as `form#chat-form.workbench-composer-editor.assistant-message-form` via `editor_tag`, `editor_class` and `editor_attrs`, with only the textarea and staged attachment chips in the editor slot.
+The form keeps `phx-submit="send_message"`, `phx-change="chat_input"` and `phx-debounce="250"`.
+The final toolbar (`#chat-composer-controls`) is the form's immediate sibling inside `.assistant-input-card` and keeps the attach menu, workspace selector when applicable, followed-task control, model capsule, and Send/Stop in that order.
+The toolbar is outside `#chat-form`, so its upload and manual path forms never nest and the Send button targets `form="chat-form"`.
+The textarea is NOT `phx-update="ignore"`, so staging a text file simply assigns the draft server-side.
 `Uploads` owns native browser upload validation, progress and consumption: an empty/whitespace draft with no completed attachment cannot send, uploads in progress block every send event while leaving the draft editable, browser upload works independently of the deployment host, server-path attachment is a separate local-node-only entry, and New chat / session / node switches cancel pending uploads.
 
 ## Caps

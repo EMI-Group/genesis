@@ -109,32 +109,35 @@ defmodule EvoDashWeb.HomeLive.Composer do
       >
         {assigns[:workspace_error]}
       </p>
-      <ComposerComponents.composer kind="assistant" class="assistant-input-card">
+      <ComposerComponents.composer kind="assistant">
         <ComposerComponents.composer_surface
+          class="assistant-input-card"
+          editor_tag="form"
+          editor_class="assistant-message-form"
+          editor_attrs={
+            %{
+              "id" => "chat-form",
+              "phx-submit" => "send_message",
+              "phx-change" => "chat_input",
+              "phx-debounce" => "250"
+            }
+          }
           toolbar_id="chat-composer-controls"
           toolbar_class="assistant-context-bar"
         >
           <:editor>
-            <form
-              id="chat-form"
-              phx-submit="send_message"
-              phx-change="chat_input"
-              phx-debounce="250"
-              class="assistant-message-form"
-            >
-              <.attachment_chips {assigns} />
-              <textarea
-                id="chat-message-input"
-                name="message"
-                phx-hook="AssistantComposer"
-                disabled={@composer_textarea_disabled?}
-                placeholder={gettext("Message Genesis Assistant…")}
-                rows="3"
-                aria-label={gettext("Message Genesis Assistant…")}
-                aria-describedby="chat-keyboard-hint"
-                class="assistant-textarea"
-              >{@composer_draft}</textarea>
-            </form>
+            <.attachment_chips {assigns} />
+            <textarea
+              id="chat-message-input"
+              name="message"
+              phx-hook="AssistantComposer"
+              disabled={@composer_textarea_disabled?}
+              placeholder={gettext("Message Genesis Assistant…")}
+              rows="3"
+              aria-label={gettext("Message Genesis Assistant…")}
+              aria-describedby="chat-keyboard-hint"
+              class="assistant-textarea"
+            >{@composer_draft}</textarea>
           </:editor>
           <:toolbar>
             <div class="assistant-context-start">
