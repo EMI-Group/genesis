@@ -12,6 +12,7 @@ The task card's data contract plus the helper families extracted from `task_card
 - `./repos.ex` → `result_repos/1`, `task_repos/2`, `result_repos_badges/1`.
 - `./archive.ex` → the `detail.archive` envelope readers (`archive_state/1`, `archive_records/1`, `archive_total/1`, `archive_dropped/1`, `archive_exhausted?/1`, `archive_server_total/1`, `archive_agent_results/1`, `archive_loading_more?/1`, `archive_more_error/1`) + `archive_opt?/1` (a `defdelegate` to `EvoDashWeb.ArchiveHelpers.archive_opt?/1` — the ONE archive opt-in predicate, shared with the review page).
 - `./errors.ex` → the structured failure-record readers `task_error/1` / `error_field/2`.
+- Card chrome — `task_card` root + `data-variant` (`flat` list row default, `raised` opt-in) + `data-selected`, `task-card-accent`, `task-card-status`, `task-card-panel`, all surfaces/ elevation CSS-owned in `assets/css/surfaces.css` → §Card chrome.
 
 ## Task Cards & the Summary-Map Contract
 
@@ -127,6 +128,17 @@ Every component here is a pure function component re-executed on EVERY LiveView 
 - `render_result_full/1` runs only in the TasksLive modal, never on the page render.
 - A slow task-card page load is no longer explained by these components — the collapsed render is summary-only; the cost sits in the LiveView's paginated summary load and the per-card detail fetches (outside this node).
 
+## Card chrome — the CSS-owned surface system
+
+The card's chrome is the dashboard's three-layer surface system in `assets/css/surfaces.css`; the markup only supplies class names and attributes, and the wrapper carries NO background/border/shadow/hover utilities.
+`task_card/1` declares `attr(:variant, :string, default: "flat", values: ["flat", "raised"])` and writes it as `data-variant` on the root, plus `data-selected={@focused}`.
+`flat` (the default, and the only variant `/tasks` uses) is a LIST ROW: canvas fill, hairline border, `box-shadow: none`, no accent bar — a long task list must not read as a stack of elevated cards.
+`raised` is the opt-in CARD treatment (raised surface + the elevation token + the accent bar) for content read/decided as one unit; no caller uses it yet, so adding it is a caller-side attrs change only.
+The root class list is `task-card min-w-0 rounded-xl border relative z-10 group has-[[open]]:z-30` + the status `tint` from `task_card_tint/1` (the flat variant's subtle wash — the helper is unchanged).
+`task-card-accent` is the accent top-bar wrapper and `task-card-status` marks the LIVE status badge (the review badge stays a plain `badge`).
+`task-card-panel` is the recessed shell of every nested detail/options panel — Objective, Agent Message, Token & Cost Usage, Agents Spawned, Execution Logs (`<details>`) and Archived Agent Details — which therefore keep only their spacing/radius utilities (`p-4 rounded-lg`, plus `motion-disclosure` on the logs disclosure) instead of a tinted `bg-*`/`border-*`/`hover:*` simulation of depth.
+Selection, hover and `:focus-visible` are three distinct CSS treatments keyed on `data-selected`/`:hover`/`:focus-visible`; the accent belongs to the SELECTED object only, so no markup branch chooses a border or shadow for `@focused` anymore.
+
 ## Rendering Caps — task-card rows
 
 `EvoDashWeb.Helpers.blob_preview/2` / `list_preview/2` are the single source of previews (see the parent `components/CONTEXT.md` → "Blob & Collection Rendering Caps").
@@ -151,4 +163,5 @@ Markup in this subtree follows the dashboard's ONE density/type scale (`docs/ui-
 The uppercase section headings in `result_render.ex` (`Error`/`Crashed`/`No Changes`/`Agent Message`/`Repositories`) are `text-2xs font-semibold … uppercase tracking-wide` — all-caps micro labels, never `text-xs font-bold`.
 Reading bodies use `text-base` (the Objective in `options.ex`), dense message/preview bodies `text-sm`, and ids/paths/badges/helper lines `text-xs` (13 px is the metadata floor; stacktraces stay `text-xs` mono).
 Bordered message/notice panels and inset wells are `rounded-xl` — `p-3` inside a card, `p-4` for a modal/zoomed body — while controls and chips are `rounded-lg`; the session panel (`session.ex`) is a card-like panel (`rounded-xl p-4`) whose actions are `btn-sm`.
+Radius and spacing stay in markup utilities, but the SURFACE (fill, hairline border, elevation, hover/selected/focus) of the card and its nested panels is CSS-owned — see "Card chrome" above; never rebuild depth with `shadow-*`/`bg-base-100`/`hover:*` utilities on a card or panel.
 `errors.ex` and `archive.ex` render no markup (pure total readers); the class strings they feed live in the parent `task_card_components.ex`, as do the pinned collapsed-strip and expanded-error class lists in `task_card_components_test.exs`.

@@ -1156,6 +1156,161 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
     end
   end
 
+  # The card's chrome is CSS-OWNED (`assets/css/surfaces.css`): the markup only
+  # writes the `.task-card` / `.task-card-accent` / `.task-card-status` /
+  # `.task-card-panel` class names plus `data-variant` / `data-selected`, so a
+  # utility-built elevation (`shadow-sm`, `hover:shadow-md`, `bg-base-100`) or a
+  # `@focused`-driven border branch must never come back.
+  describe "task_card/1 — surface chrome" do
+    test "the root keeps the layout classes and carries flat/unselected data attributes" do
+      root =
+        render_action_card(%{id: "t_chrome"})
+        |> parse()
+        |> Floki.find("div.task-card")
+        |> List.first()
+
+      classes = class_list(root)
+
+      for kept <- [
+            "task-card",
+            "min-w-0",
+            "rounded-xl",
+            "border",
+            "relative",
+            "z-10",
+            "group",
+            "has-[[open]]:z-30"
+          ] do
+        assert kept in classes,
+               "expected #{kept} on the task-card root, got #{inspect(classes)}"
+      end
+
+      assert Floki.attribute(root, "data-variant") == ["flat"]
+      # `to_string/1` is deliberate: a bare boolean attribute would vanish when
+      # false and never match CSS `[data-selected="true"]`.
+      assert Floki.attribute(root, "data-selected") == ["false"]
+
+      for banned <- [
+            "bg-base-100",
+            "shadow-sm",
+            "hover:shadow-md",
+            "transition-shadow",
+            "border-base-200/60",
+            "border-base-300"
+          ] do
+        refute banned in classes, "did not expect #{banned} on the task-card root"
+      end
+    end
+
+    test "the raised variant and the focused flag are written as data attributes" do
+      root =
+        render_action_card(%{id: "t_raised"}, variant: "raised", focused: true)
+        |> parse()
+        |> Floki.find("div.task-card")
+        |> List.first()
+
+      assert "task-card" in class_list(root)
+      assert Floki.attribute(root, "data-variant") == ["raised"]
+      assert Floki.attribute(root, "data-selected") == ["true"]
+    end
+
+    test "task-card-accent is always present once and task-card-status marks ONLY the live badge" do
+      doc =
+        render_action_card(%{id: "t_marked", status: :completed, review_status: :merged})
+        |> parse()
+
+      # Always in the DOM (CSS hides it for the flat variant) — never gated on
+      # `@focused` anymore.
+      assert [accent] = Floki.find(doc, ".task-card-accent")
+      assert "task-card-accent" in class_list(accent)
+
+      badges = Floki.find(doc, "span.badge")
+      assert length(badges) == 2
+
+      assert [live_badge] = Floki.find(doc, "span.task-card-status")
+      assert "task-card-status" in class_list(live_badge)
+      assert Floki.text(live_badge) =~ "Completed"
+      refute Floki.text(live_badge) =~ "Merged"
+
+      # The review-status badge is unmarked chrome.
+      review_badge = Enum.find(badges, &(&1 != live_badge))
+      assert review_badge
+      refute "task-card-status" in class_list(review_badge)
+      assert Floki.text(review_badge) =~ "Merged"
+    end
+
+    test "every nested detail panel is a recessed task-card-panel with p-4" do
+      usage = %{
+        input_tokens: 1_000,
+        output_tokens: 500,
+        total_tokens: 1_500,
+        input_cost: 0.001,
+        output_cost: 0.002,
+        total_cost: 0.003
+      }
+
+      # `format_datetime/2` dot-accesses `:time` on each log timestamp.
+      logs = [
+        %{timestamp: %{time: ~T[12:00:00]}, level: :info, message: "agent started"},
+        %{timestamp: %{time: ~T[12:00:01]}, level: :warn, message: "agent warned"}
+      ]
+
+      panels =
+        render_action_card(
+          %{
+            id: "t_panels",
+            status: :completed,
+            opts: [prompt: "Panel contract task", mode: "simple", archive: true]
+          },
+          show_details: true,
+          detail: %{
+            state: :ok,
+            task: %{
+              result: {:ok, %{result: "agent message"}},
+              usage: usage,
+              logs: logs
+            }
+          }
+        )
+        |> parse()
+        |> Floki.find(".task-card-panel")
+
+      # Objective + Agent Message + Token & Cost Usage + Agents Spawned +
+      # Execution Logs (a <details>) + Archived Agent Details.
+      assert length(panels) == 6
+
+      for panel <- panels do
+        classes = class_list(panel)
+
+        for kept <- ["task-card-panel", "p-4", "rounded-lg"] do
+          assert kept in classes,
+                 "expected #{kept} on a nested panel, got #{inspect(classes)}" <>
+                   " (#{inspect(Floki.text(panel) |> String.slice(0, 40))})"
+        end
+
+        for banned <- ["bg-base-200/30", "border-base-200/80", "hover:border-base-300"] do
+          refute banned in classes, "did not expect #{banned} on a nested panel"
+        end
+      end
+    end
+
+    test "surfaces.css owns all four surface-chrome selectors (markup cannot drift)" do
+      css =
+        "../../../assets/css/surfaces.css"
+        |> Path.expand(__DIR__)
+        |> File.read!()
+
+      assert css =~ ".task-card {"
+      assert css =~ ".task-card-panel {"
+      assert css =~ ".task-card-accent"
+      assert css =~ ".task-card-status {"
+
+      # The two data attributes the markup writes are the CSS switch.
+      assert css =~ ~s([data-variant="flat"])
+      assert css =~ ~s([data-selected="true"])
+    end
+  end
+
   # Test-data builders — a minimal failed TaskInfo-shaped map (ATOM keys, the
   # post-Codec-decoded shape) and an error record map.
   defp failed_task(overrides \\ %{}) do
