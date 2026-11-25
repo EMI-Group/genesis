@@ -2,10 +2,10 @@ import {projectPreview} from "./workbench_project_preview"
 import {closeAnimated} from "./disclosure_motion.js"
 import {createPanelHost} from "./workbench_panel_dom"
 import {initialPanelState, PANEL_OPEN} from "./workbench_panel"
-import {alwaysPinned, openTab, pinTab as pinTabIn, closeTab as closeTabIn, cycleTab,
-  tabsForProject as tabsForProjectIn, restore as restoreTabs, safeHref as safeHrefBase} from "./workbench_tabs"
+import {closeTab as closeTabIn, restore as restoreTabs, safeHref as safeHrefBase} from "./workbench_tabs"
+import {link, railMethods, TAB_KEY} from "./workbench_rail"
+import {defaultDraftHref, exactHref, historyKey, navigationState, sameTabClick} from "./workbench_navigation"
 
-const TAB_KEY = "genesis-workbench.tabs.v1"
 const ACCENT_KEY = "genesis-workbench.accent"
 const SIDEBAR_WIDTHS_KEY = "genesis-workbench.sidebar-widths"
 const HISTORY_KEY = "genesis-workbench.history"
@@ -15,16 +15,7 @@ const SIDEBAR_WIDTHS = {
   right: {default: 336, min: 264, max: 640},
 }
 const CENTER_MIN_WIDTH = 480
-const GIT_DIFF_TAB = "workbench-git-diff"
 let projectSidebarScrollTop = 0
-const TAB_ICONS = {
-  task: "hero-clipboard-document",
-  chat: "hero-chat-bubble-left",
-  draft: "hero-chat-bubble-left",
-  assistant: "hero-chat-bubble-left",
-  project: "hero-folder",
-  diff: "hero-document-text",
-}
 function applyAccent(el) {
   el.dataset.accentColor = read(localStorage, ACCENT_KEY, "") || el.dataset.workbenchAccentDefault
 }
@@ -45,19 +36,44 @@ function write(storage, key, data) {
   try { storage.setItem(key, JSON.stringify(data)) } catch { /* use current page state */ }
 }
 
-function element(tag, className, label) {
-  const el = document.createElement(tag)
-  if (className) el.className = className
-  if (label) el.textContent = label
-  return el
-}
+const currentHref = () => exactHref(location)
+const navigation = navigationState()
+let mountedWorkbench
+let navigationBound = false
+const repaintPending = () => mountedWorkbench?.paintPending()
 
-function link(href, label, className) {
-  const anchor = element("a", className, label)
-  anchor.href = href
-  anchor.dataset.phxLink = "redirect"
-  anchor.dataset.phxLinkState = "push"
-  return anchor
+// LiveView can destroy the outgoing hook before it emits the navigation commit
+// and mounts the destination. One document-level observer bridges that gap.
+function bindNavigation() {
+  if (navigationBound) return
+  navigationBound = true
+  const traverse = () => { navigation.traverse(currentHref()); repaintPending() }
+  if (performance.getEntriesByType("navigation")[0]?.type === "back_forward") traverse()
+  window.addEventListener("popstate", traverse, true)
+  window.addEventListener("pageshow", event => { if (event.persisted) traverse() })
+  window.addEventListener("hashchange", () => mountedWorkbench?.onNavigation())
+  window.addEventListener("phx:before-navigate", event => {
+    if (event.detail?.pop || !event.detail?.href) return
+    const href = exactHref(new URL(event.detail.href, location.href))
+    const revision = navigation.revision
+    queueMicrotask(() => {
+      if (!event.defaultPrevented && navigation.revision === revision && href !== currentHref()) {
+        navigation.start(href, repaintPending, true)
+        repaintPending()
+      }
+    })
+  })
+  window.addEventListener("phx:page-loading-start", ({detail}) => {
+    if (!["patch", "redirect"].includes(detail?.kind) || !detail.to) return
+    navigation.start(exactHref(new URL(detail.to, location.href)), repaintPending)
+    repaintPending()
+  })
+  window.addEventListener("phx:navigate", ({detail}) => {
+    if (!detail?.href || exactHref(new URL(detail.href, location.href)) !== currentHref()) return
+    if (!detail.pop) navigation.commit(currentHref())
+    repaintPending()
+    mountedWorkbench?.onNavigation()
+  })
 }
 
 // A persisted href may only be followed inside THIS dashboard; the rule itself
@@ -80,8 +96,8 @@ const safeHref = value => safeHrefBase(value, location.origin)
 // current markers and the preview handoff all follow the current tab.
 const SYNC_DATASET_KEYS = [
   "workbenchNode", "workbenchProject", "workbenchTask", "workbenchSession",
-  "workbenchDraft", "workbenchDraftProject", "workbenchPage",
-  "workbenchGitBranch", "workbenchStartingCommit",
+  "workbenchDraft", "workbenchDraftProject", "workbenchPage", "workbenchTitle",
+  "workbenchDefaultDraft", "workbenchGitBranch", "workbenchStartingCommit",
 ]
 
 // One normalised string per input: `undefined`, `null` and a missing field read
@@ -141,10 +157,15 @@ function workbenchSyncNeeded(state, applied) {
 // sweep — every decision stays in the pure block above.
 
 const Workbench = {
+  ...railMethods,
+
   mounted() {
     // The persisted list is untrusted input the store normalises and re-keys.
+    this.navigation = navigation
+    mountedWorkbench = this
+    bindNavigation()
     this.tabs = restoreTabs(read(sessionStorage, TAB_KEY, []), safeHref)
-    write(sessionStorage, TAB_KEY, this.tabs)
+    this.persistTabs()
     this.media = matchMedia(WIDE)
     this.reduceMotion = matchMedia("(prefers-reduced-motion: reduce)")
     this.panelHost = createPanelHost(() => Boolean(this.reduceMotion?.matches))
@@ -233,7 +254,7 @@ const Workbench = {
         event.preventDefault()
       }
     }
-    this.onNavigation = () => this.sync()
+    this.onNavigation = () => { if (this.el.isConnected) this.sync() }
     this.onStorage = event => {
       if (event.key === ACCENT_KEY) applyAccent(this.el)
       if (event.key === SIDEBAR_WIDTHS_KEY && !this.sidebarDrag) {
@@ -280,7 +301,6 @@ const Workbench = {
     this.el.addEventListener("workbench:section", this.onNavigation)
     this.el.addEventListener("keydown", this.onKey)
     this.media.addEventListener("change", this.onResize)
-    window.addEventListener("phx:page-loading-stop", this.onNavigation)
     window.addEventListener("storage", this.onStorage)
     // Undefined until the sweep records it, so the probe reports "dirty" here.
     this.appliedSyncState = undefined
@@ -309,7 +329,7 @@ const Workbench = {
     this.el.removeEventListener("workbench:section", this.onNavigation)
     this.el.removeEventListener("keydown", this.onKey)
     this.media.removeEventListener("change", this.onResize)
-    window.removeEventListener("phx:page-loading-stop", this.onNavigation)
+    if (mountedWorkbench === this) mountedWorkbench = null
     window.removeEventListener("storage", this.onStorage)
     this.panelHost.destroy()
     // Release the preview snapshot cache + its shadow-DOM host — but NEVER mid
@@ -345,6 +365,8 @@ const Workbench = {
     this.positionCreateMenu()
     // The probe's baseline, taken once every marker of this sweep is in place.
     this.appliedSyncState = this.syncState()
+    this.settleActivation()
+    this.maybeOpenDefaultDraft()
   },
 
   // The probe inputs for `updated()` (pure block above): property reads only —
@@ -513,226 +535,6 @@ const Workbench = {
     }
   },
 
-  captureTab() {
-    const data = this.el.dataset
-    const task = data.workbenchTask
-    const session = data.workbenchSession
-    const draft = data.workbenchDraft
-    const draftProject = data.workbenchDraftProject || this.project
-    let tab
-    if (task) {
-      const href = data.workbenchPage === "review" && location.pathname.startsWith("/review/")
-        ? location.pathname + location.search
-        : route("/tasks", this.node, {task})
-      tab = {kind: "task", id: task, href, title: data.workbenchTitle}
-    } else if (session) {
-      tab = {kind: "chat", id: session, href: route("/assistant", this.node, {session})}
-    } else if (draft) {
-      if (!draftProject) {
-        this.currentTab = null
-        return
-      }
-      tab = {kind: "draft", id: draft, href: route("/assistant", this.node,
-        {wb_draft: draft, wb_project: draftProject}), title: data.workbenchNewChat}
-    } else if (data.workbenchPage === "assistant") {
-      // A scoped assistant route may render before its session or draft is assigned.
-      const url = new URL(location.href)
-      if (url.searchParams.has("session") || url.searchParams.has("wb_draft")) {
-        this.currentTab = this.tabs.find(entry => entry.href === url.pathname + url.search)?.key
-        return
-      }
-      tab = {kind: "assistant", id: "", href: route("/assistant", this.node), title: data.workbenchChats}
-    } else if (data.workbenchPage === "dashboard" && this.project &&
-        this.el.querySelector('#dashboard-root[data-workbench-compose="true"] #task-form')) {
-      const params = {project: this.project, wb_task: "1"}
-      if (data.workbenchGitBranch && data.workbenchStartingCommit) {
-        params.wb_git_branch = data.workbenchGitBranch
-        params.starting_commit = data.workbenchStartingCommit
-      }
-      const href = route("/projects", this.node, params)
-      tab = {kind: "project", id: "", href, title: data.workbenchNewTask}
-    }
-
-    if (!tab) {
-      this.currentTab = null
-      return
-    }
-
-    const tabProject = tab.kind === "draft" ? draftProject : tab.kind === "project" ? this.project : ""
-    tab.key = JSON.stringify([this.node, tabProject, tab.kind, tab.id])
-    tab.location = data.workbenchNodeName
-    const previous = this.tabs.find(entry => entry.key === tab.key)
-    tab.node = this.node
-    // Focused tasks can render before their project is loaded asynchronously.
-    tab.projectPath = (tab.kind === "draft" ? draftProject : this.project) || previous?.projectPath || ""
-    tab.project = this.projectName || previous?.project
-    const row = this.rows.find(row => row.dataset.workbenchItem === tab.kind && row.dataset.itemId === tab.id)
-    tab.title = tab.title || row?.dataset.itemTitle || previous?.title || tab.id
-
-    if (session && draft && draftProject) {
-      const draftKey = JSON.stringify([this.node, draftProject, "draft", draft])
-      this.tabs = this.tabs.filter(entry => entry.key !== draftKey)
-    }
-
-    this.currentTab = tab.key
-    this.saveTab(tab)
-  },
-
-  tabsForProject(node, projectPath) {
-    return tabsForProjectIn(this.tabs, node, projectPath)
-  },
-
-  // The scope the rail shows: the mounted project, else the current tab's own
-  // project (a legacy conversation can be open without one).
-  projectScopePath() {
-    return this.project || this.tabs.find(tab => tab.key === this.currentTab)?.projectPath || ""
-  },
-
-  visibleTabs() {
-    return this.tabsForProject(this.node, this.projectScopePath())
-  },
-
-  // Only `task`/`chat` tabs open as PREVIEWS — one disposable slot per project;
-  // every other kind is pinned from the start.
-  saveTab(tab) {
-    this.tabs = openTab(this.tabs, tab, {preview: !alwaysPinned(tab.kind)})
-    write(sessionStorage, TAB_KEY, this.tabs)
-  },
-
-  pinTab(key) {
-    this.tabs = pinTabIn(this.tabs, key)
-    write(sessionStorage, TAB_KEY, this.tabs)
-    this.renderTabs()
-  },
-
-  railActiveKey() {
-    return this.previewTab?.key || (this.gitDiff ? GIT_DIFF_TAB : this.currentTab)
-  },
-
-  // The rail's tabs; the client-only Git diff view is appended last.
-  railTabs() {
-    const tabs = this.previewTab
-      ? this.tabsForProject(this.previewTab.node, this.previewTab.projectPath) : this.visibleTabs()
-    if (!this.gitDiff || this.previewTab) return tabs
-    return [...tabs, {key: GIT_DIFF_TAB, kind: "diff", title: this.gitDiff, project: this.projectName}]
-  },
-
-  renderTabs() {
-    const rail = this.el.querySelector("#workbench-tabs")
-    if (!rail) return
-    const activeKey = this.railActiveKey()
-    const tabs = this.railTabs()
-    const signature = JSON.stringify([activeKey, tabs])
-    if (rail.dataset.signature === signature) return
-    rail.dataset.signature = signature
-    const focused = document.activeElement
-    const focusedKey = rail.contains(focused) ? focused.closest("[data-tab-key]")?.dataset.tabKey : null
-    const hint = this.el.dataset.workbenchKeepOpen || "Keep this tab open"
-    rail.replaceChildren(...tabs.map(tab => {
-      const current = tab.key === activeKey
-      const preview = tab.preview === true
-      const item = element("div", "workbench-tab")
-      item.dataset.tabKey = tab.key
-      if (preview) item.dataset.preview = "true"
-      const anchor = tab.kind === "diff" ? element("span", "workbench-tab-link") : link(tab.href, "", "workbench-tab-link")
-      const icon = element("span", `${TAB_ICONS[tab.kind] || TAB_ICONS.project} workbench-tab-icon`)
-      icon.setAttribute("aria-hidden", "true")
-      anchor.append(icon, element("span", "truncate", tab.title))
-      const duplicates = tabs.some(other => other.key !== tab.key && other.title === tab.title)
-      if (duplicates && tab.location) anchor.append(element("span", "workbench-tab-instance", tab.location))
-      anchor.title = [tab.location, tab.project, tab.title].filter(Boolean).join(" / ")
-      if (preview) {
-        anchor.title += ` · ${hint}`
-        anchor.setAttribute("aria-description", hint)
-      }
-      if (current) anchor.setAttribute("aria-current", "page")
-      const close = element("button", "workbench-tab-close")
-      const closeIcon = element("span", "hero-x-mark")
-      closeIcon.setAttribute("aria-hidden", "true")
-      close.append(closeIcon)
-      close.type = "button"
-      if (tab.kind === "diff") close.dataset.workbenchCloseGitDiff = "true"
-      else close.dataset.workbenchCloseTab = tab.key
-      close.setAttribute("aria-label", this.el.dataset.workbenchClose + " " + tab.title)
-      item.classList.toggle("is-current", current)
-      item.append(anchor, close)
-      if (focusedKey === tab.key) queueMicrotask(() => (focused?.matches(".workbench-tab-close") ? close : anchor).focus({preventScroll: true}))
-      return item
-    }))
-    rail.querySelector(".is-current")?.scrollIntoView({block: "nearest", inline: "nearest"})
-    this.syncTabOverflow()
-    this.syncTabRailHints()
-  },
-
-  // The rail-end overflow menu is SERVER-rendered and only driven here: it
-  // exists while the strip actually scrolls, and its list mirrors the rail.
-  syncTabOverflow() {
-    const rail = this.el.querySelector("#workbench-tabs")
-    const overflow = this.el.querySelector("#workbench-tabs-overflow")
-    if (!rail || !overflow) return
-    const overflows = rail.children.length > 0 && rail.scrollWidth > rail.clientWidth + 1
-    overflow.hidden = !overflows
-    if (!overflows) overflow.open = false
-    else if (overflow.open) this.renderOverflowTabs()
-  },
-
-  // One `.workbench-row` per stored tab of THIS project: the client-only Git
-  // view is not a stored tab, so it is never listed.
-  renderOverflowTabs() {
-    const list = this.el.querySelector("#workbench-tabs-overflow-list")
-    if (!list) return
-    const activeKey = this.railActiveKey()
-    list.replaceChildren(...this.railTabs().filter(tab => tab.kind !== "diff").map(tab => {
-      const anchor = link(tab.href, "", "workbench-row")
-      const icon = element("span", `${TAB_ICONS[tab.kind] || TAB_ICONS.project} workbench-tab-icon`)
-      icon.setAttribute("aria-hidden", "true")
-      anchor.dataset.workbenchTabOverflowKey = tab.key
-      anchor.title = [tab.location, tab.project, tab.title].filter(Boolean).join(" / ")
-      if (tab.key === activeKey) anchor.setAttribute("aria-current", "page")
-      anchor.append(icon, element("span", "truncate", tab.title))
-      return anchor
-    }))
-  },
-
-  // Both rail hints are server-rendered translations: read them defensively.
-  syncTabRailHints() {
-    const hints = [this.el.dataset.workbenchNextTab, this.el.dataset.workbenchPrevTab].filter(Boolean)
-    const rail = this.el.querySelector("#workbench-tabs")
-    if (hints.length) rail?.setAttribute("aria-description", hints.join(" · "))
-    else rail?.removeAttribute("aria-description")
-  },
-
-  // Alt+Left/Right cycles this project's tabs, but ONLY from inside the rail.
-  cycleTabWithKey(event) {
-    const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0
-    if (!step || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.defaultPrevented) return false
-    if (!event.target.closest("#workbench-tabs, #workbench-tabs-overflow")) return false
-    if (event.target.closest('input, textarea, select, [contenteditable], [contenteditable="true"]')) return false
-    const next = cycleTab(this.tabs, this.node, this.projectScopePath(), this.currentTab, step)
-    if (!next) return false
-    event.preventDefault()
-    event.stopPropagation()
-    // The destination render marks the tab `aria-current="page"` (the
-    // announcement); focus follows so the strip stays reachable.
-    window.addEventListener("phx:page-loading-stop", () => requestAnimationFrame(() => {
-      const root = document.getElementById("app-layout")
-      root?.querySelector(`[data-tab-key="${CSS.escape(next.key)}"] .workbench-tab-link`)?.focus({preventScroll: true})
-    }), {once: true})
-    this.navigate(next.href)
-    return true
-  },
-
-  renderHistory() {
-    // The panel's own queries, filters, empty state and "more" control are
-    // SERVER-rendered live-component state; the hook only marks the row whose
-    // window is already open in this tab.
-    for (const row of this.rows) {
-      const current = this.currentTab === JSON.stringify(
-        [this.node, "", row.dataset.workbenchItem, row.dataset.itemId])
-      row.querySelector("[data-workbench-open]")?.classList.toggle("is-current", current)
-    }
-  },
-
   // The per-panel state machine and the open/close start frames live in the
   // `panelHost` (workbench_panel_dom.js); every LiveView patch re-runs this, so
   // an unchanged state is a pure re-assert that never restarts a running close.
@@ -866,11 +668,25 @@ const Workbench = {
     }
     const trigger = event.target.closest("button, a")
     if (!trigger) return
-    // Picking an overflow entry is an ordinary link navigation: close the menu,
-    // never prevent the click.
-    if ("workbenchTabOverflowKey" in trigger.dataset) {
-      const overflow = trigger.closest("#workbench-tabs-overflow")
-      if (overflow) overflow.open = false
+    const overflowKey = trigger.dataset.workbenchTabOverflowKey
+    const tabLink = trigger.matches("a.workbench-tab-link") || Boolean(overflowKey)
+    const historyRow = trigger.matches("a[data-workbench-open]") && trigger.closest("[data-workbench-item]")
+    if ((tabLink || historyRow) && sameTabClick(event, trigger)) {
+      const href = trigger.getAttribute("href")
+      const key = overflowKey || (historyRow ? historyKey(this.node, historyRow.dataset) :
+        trigger.closest("[data-tab-key]")?.dataset.tabKey)
+      if (overflowKey) trigger.closest("#workbench-tabs-overflow").open = false
+      if (key && safeHref(href)) {
+        if (tabLink && key === this.currentTab && href === currentHref() && !navigation.moving) {
+          event.preventDefault()
+          event.stopPropagation()
+          if (this.gitDiff) this.closeGitDiff()
+          else if (overflowKey) this.focusTab(key)
+        } else {
+          this.indicateActivation(href, key, tabLink && (event.detail === 0 || Boolean(overflowKey)))
+        }
+      }
+      return
     }
     if ("workbenchCloseGitDiff" in trigger.dataset) {
       this.closeGitDiff()
@@ -893,18 +709,10 @@ const Workbench = {
       if (active) {
         event.preventDefault()
         event.stopPropagation()
-        if (active.key !== this.currentTab || navigating) this.navigate(active.href)
+        if (active.key !== this.currentTab || navigating) this.navigate(active.href, {key: active.key})
         else if (this.gitDiff) this.closeGitDiff()
         return
       }
-    }
-    if (this.gitDiff && trigger.matches("a.workbench-tab-link") &&
-        trigger.closest("[data-tab-key]")?.dataset.tabKey === this.currentTab &&
-        !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
-      event.preventDefault()
-      event.stopPropagation()
-      this.closeGitDiff()
-      return
     }
     const create = trigger.closest("#workbench-create")
     if (create) create.open = false
@@ -968,27 +776,74 @@ const Workbench = {
       this.pushEventTo("#workbench-projects", "discard_assistant_draft", {id: closed.id})
     }
     this.tabs = tabs
-    write(sessionStorage, TAB_KEY, this.tabs)
+    this.persistTabs()
     this.renderTabs()
 
-    const focusNext = () => {
-      const root = document.getElementById("app-layout")
-      const tab = focus?.key && root?.querySelector(`[data-tab-key="${CSS.escape(focus.key)}"] .workbench-tab-link`)
-      const control = tab || root?.querySelector("#workbench-create-toggle")
-      control?.focus()
-    }
     if (key === this.currentTab) {
       const blank = closed.projectPath ? {wb_home: "1", project: closed.projectPath} : {wb_home: "1"}
-      if (restoreFocus) {
-        window.addEventListener("phx:page-loading-stop", () => requestAnimationFrame(focusNext), {once: true})
-      }
-      this.navigate(focus?.href || route("/projects", this.node, blank))
+      this.navigate(focus?.href || route("/projects", this.node, blank), {key: focus?.key || null, restoreFocus})
     } else if (restoreFocus) {
-      focusNext()
+      this.focusTab(focus?.key)
     }
   },
 
-  navigate(href) {
+  persistTabs() { write(sessionStorage, TAB_KEY, this.tabs) },
+
+  focusTab(key) {
+    const anchor = key && this.el.querySelector(`[data-tab-key="${CSS.escape(key)}"] .workbench-tab-link`)
+    const control = anchor || this.el.querySelector("#workbench-create-toggle")
+    control?.focus({preventScroll: true})
+  },
+
+  indicateActivation(href, key, restoreFocus) {
+    navigation.request(href, key, restoreFocus ? document.activeElement : null, repaintPending)
+    this.paintPending()
+  },
+
+  settleActivation() {
+    if (!this.routeConfirmed) return
+    const done = navigation.confirm(currentHref(), this.currentTab ?? null)
+    if (!done) return
+    this.paintPending()
+    if (!done.focus) return
+    const revision = navigation.revision
+    requestAnimationFrame(() => {
+      const focused = document.activeElement
+      if (mountedWorkbench === this && this.el.isConnected && navigation.revision === revision &&
+          currentHref() === done.href && (this.currentTab ?? null) === done.key &&
+          (focused === document.body || focused === done.focus)) this.focusTab(done.key)
+    })
+  },
+
+  maybeOpenDefaultDraft() {
+    if (!this.routeConfirmed || this.currentTab || this.previewTab || this.gitDiff) return
+    const url = new URL(location.href)
+    const href = defaultDraftHref(url, this.el.dataset, this.visibleTabs().length > 0)
+    if (!href) return
+    const scope = new URL(href, url.origin).searchParams.get("wb_project")
+    if (this.tabsForProject(this.node, scope).length) return
+    const source = exactHref(url)
+    const revision = navigation.revision
+    queueMicrotask(() => {
+      // A newer patch, user navigation or browser traversal may have won.
+      if (mountedWorkbench !== this || !this.el.isConnected || currentHref() !== source ||
+          navigation.revision !== revision || this.el.dataset.workbenchDefaultDraft !== href ||
+          this.railTabs().length || this.tabsForProject(this.node, scope).length ||
+          !navigation.claimDefault(source, JSON.stringify([this.node, scope]))) return
+      this.navigate(href)
+    })
+  },
+
+  navigate(href, {key, restoreFocus} = {}) {
+    if (!safeHref(href)) return
+    if (key !== undefined) {
+      if (!navigation.moving && currentHref() === href && (this.currentTab ?? null) === key) {
+        if (this.gitDiff) this.closeGitDiff()
+        else if (restoreFocus) this.focusTab(key)
+        return
+      }
+      this.indicateActivation(href, key, restoreFocus)
+    }
     const anchor = link(href, "", "sr-only")
     this.el.append(anchor)
     anchor.click()
