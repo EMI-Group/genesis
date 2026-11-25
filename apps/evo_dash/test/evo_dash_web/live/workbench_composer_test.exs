@@ -29,8 +29,8 @@ defmodule EvoDashWeb.WorkbenchComposerTest do
           show_options: false
         )
 
-      assert [_] =
-               Floki.find(dom, "#input-layout[data-layout=#{unquote(layout)}] #{@surface}")
+      input_layout = "#input-layout[data-layout=#{unquote(layout)}]"
+      assert [_] = Floki.find(dom, "#{input_layout}#{@surface}, #{input_layout} #{@surface}")
 
       {editor, toolbar} = composer_regions(dom, "task")
 
@@ -87,8 +87,16 @@ defmodule EvoDashWeb.WorkbenchComposerTest do
     assert [chat_form] =
              Floki.find(dom, "form#chat-form[phx-submit=send_message][phx-change=chat_input]")
 
-    assert [^message] = within(chat_form, "textarea#chat-message-input")
-    assert Floki.find(dom, "#chat-form form") == []
+    assert [^chat_form] = Floki.find(dom, "#chat-form")
+    assert [^message] = Floki.find(dom, "#chat-message-input")
+    assert Floki.find(dom, "form #chat-form, #chat-form form") == []
+
+    # The editor can associate its textarea explicitly if chat-form wraps the
+    # send button but must remain separate from the toolbar's attachment form.
+    case Floki.attribute(message, "form") do
+      [] -> assert [^message] = within(chat_form, "textarea#chat-message-input")
+      owners -> assert owners == ["chat-form"]
+    end
 
     assert [_] = within(toolbar, "#chat-llm-selection")
 
@@ -98,11 +106,11 @@ defmodule EvoDashWeb.WorkbenchComposerTest do
                "#chat-attach-menu form#chat-attach-manual-form[phx-submit=chat_attach_manual]"
              )
 
+    # A form attribute overrides ancestry; implicit submits must be inside chat-form.
+    submit = "button[type=submit]:not([phx-click]):not([disabled]):not(.hidden)"
+
     assert [_] =
-             within(
-               toolbar,
-               "button[type=submit][form=chat-form]:not([phx-click]):not([disabled]):not(.hidden)"
-             )
+             within(toolbar, "#{submit}[form=chat-form], #chat-form #{submit}:not([form])")
 
     assert [_] =
              within(toolbar, "button[type=button][phx-click=stop]:not([disabled]):not(.hidden)")
