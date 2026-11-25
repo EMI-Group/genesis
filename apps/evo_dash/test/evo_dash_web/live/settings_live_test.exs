@@ -39,16 +39,15 @@ defmodule EvoDashWeb.SettingsLiveTest.Helpers do
   import Phoenix.LiveViewTest
   import ExUnit.Assertions
   import ExUnit.Callbacks
+  alias EvoDash.Test.SettingsAwait
 
   # Load-tolerant budgets for waits on ASYNC settings work (mount load chain,
   # owned config-save receipt, provider-request round trips). That work runs in
   # supervised tasks on a shared host whose scheduling swings 10-30x
   # (test/CONTEXT.md), so the previous 1-5 s budgets intermittently expired.
   # The waits stay bounded and still fail loudly — only the deadlines moved.
+  # `EvoDash.Test.SettingsAwait` owns the budgets themselves (single source).
   @async_wait_budget_ms 30_000
-  # `:sys.get_state/2` timeout for `assigns/1`: the LiveView can be starved for
-  # seconds on a loaded host, where the 5 s default exits the test.
-  @assigns_timeout_ms 30_000
 
   # The same load-tolerant budget for `assert_receive` / poll deadlines in the
   # test modules below (module attributes are not importable across modules).
@@ -58,111 +57,35 @@ defmodule EvoDashWeb.SettingsLiveTest.Helpers do
   # Mount helper — deterministic settle of the page's ASYNC loads
   # ───────────────────────────────────────────────────────────────────────────
   #
-  # Every Settings page mount kicks off an async load on EvoDash.TaskSupervisor:
-  # `SettingsLive.NodeData.start/3` (from handle_params/3) reads config.toml and
-  # reports back `{:settings_node_data_loaded, node, category, results}`, whose
-  # handler REPLACES the `:file_config` assign with the snapshot it read; the
-  # NodeAware hook additionally spawns its sidebar fetch. The node-data task
-  # reads the config at its START but only sends the message after its remaining
-  # work, so under scheduler load the apply routinely lands AFTER the first event
-  # a test drives — reverting the state the test just mutated (that is what
-  # intermittently broke the editor/save/list-editing assertions in full-suite
-  # runs: `current_models/1` came back empty, and the editor render lost the
-  # profile being edited).
-  #
-  # `mount_settings/2` funnels every mount in this file through a deterministic
-  # settle: wait for THIS mount's async tasks to exit, then drain their result
-  # messages (render/1 performs a synchronous round-trip, so everything queued
-  # before it — including the node-data apply — is processed first). Only then is
-  # the view handed to the test, so no stale apply can arrive mid-test.
+  # Every Settings page mount kicks off an async load on EvoDash.TaskSupervisor
+  # (`SettingsLive.NodeData.start/3` from handle_params/3, plus the NodeAware
+  # sidebar fetch), and its APPLY replaces the `:file_config` assign the test is
+  # about to mutate. `mount_settings/2` therefore funnels every mount in this
+  # file through `EvoDash.Test.SettingsAwait.await_settled/1`, which waits on the
+  # page's OWN authoritative markers — never on a sample of
+  # `EvoDash.TaskSupervisor` pids (empty in the gap between two chained mount
+  # loads, so such a drain reported "settled" mid-load) and never on
+  # `config_saving` (false on every refusal, so it proved nothing).
   #
   # The ORIGINAL mount HTML is returned unchanged: the "shell seeding (async
   # platform gating)" describe asserts on the seed-shell render that live/3
   # always returns.
   def mount_settings(conn, path) do
     {:ok, view, html} = Phoenix.LiveViewTest.live(conn, path)
-    await_mount_async_loads(view)
+    SettingsAwait.await_settled(view)
     {:ok, view, html}
   end
 
-  # Waits until every EvoDash.TaskSupervisor child started by THIS LiveView
-  # process has exited, then flushes their result messages into the view.
-  # Task.Supervisor records the spawning process in the child's `$callers`
-  # process-dictionary entry, so matching it against the view pid targets exactly
-  # this mount's tasks — a leftover task from another test is never waited on
-  # (and cannot block the mount).
-  def await_mount_async_loads(view) do
-    view.pid
-    |> mount_async_task_pids()
-    |> Enum.map(&Process.monitor/1)
-    |> Enum.each(fn ref ->
-      # A task that already exited delivers its :DOWN immediately (reason
-      # :noproc); the send/2 that carries its result always happens BEFORE the
-      # process exits, so the message is queued by the time the monitor fires.
-      receive do
-        {:DOWN, ^ref, :process, _pid, _reason} -> :ok
-      after
-        @async_wait_budget_ms -> :ok
-      end
-    end)
-
-    # No render here: the test's next synchronous call (render_hook /
-    # :sys.get_state / render) drains the queued result messages first, because
-    # the LiveView processes its mailbox in order.
-    :ok
-  end
-
-  def mount_async_task_pids(view_pid) do
-    EvoDash.TaskSupervisor
-    |> DynamicSupervisor.which_children()
-    |> Enum.flat_map(fn
-      {_, pid, _, _} when is_pid(pid) ->
-        if view_pid in task_callers(pid), do: [pid], else: []
-
-      _ ->
-        []
-    end)
-  end
-
-  def task_callers(pid) do
-    case Process.info(pid, :dictionary) do
-      {:dictionary, dict} -> Keyword.get(dict, :"$callers", [])
-      _ -> []
-    end
-  end
-
-  # Mutations acknowledge dispatch before the off-process write/read completes.
-  # Always assert the authoritative completion, not the dispatch render.
-  def settings_hook(view, event, params) do
-    Phoenix.LiveViewTest.render_hook(view, event, params)
-    await_config_save(view)
-  end
-
-  def await_config_save(view) do
-    wait_settings(view, &(not &1[:config_saving]))
-    render(view)
-  end
-
-  def wait_settings(view, predicate, deadline \\ nil) do
-    deadline = deadline || System.monotonic_time(:millisecond) + @async_wait_budget_ms
-    current = assigns(view)
-
-    if predicate.(current) do
-      current
-    else
-      assert System.monotonic_time(:millisecond) < deadline,
-             "Settings did not reach the expected authoritative state"
-
-      receive do
-      after
-        2 -> wait_settings(view, predicate, deadline)
-      end
-    end
-  end
-
   # In LiveView 1.x the test View struct has no `.assigns` field, so we read
-  # them from the underlying LiveView process socket.
-  def assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
+  # them from the underlying LiveView process socket (the ONE shared read).
+  def assigns(view), do: SettingsAwait.assigns(view)
+
+  # An event that STARTS a whole-file save, acknowledged only by ITS receipt
+  # (the success flash the handler's `success_msg` produces). Never a plain
+  # `render_hook`: the dispatch render precedes the off-process write.
+  def save_hook(view, expected_msg, event, params) when is_binary(expected_msg) do
+    SettingsAwait.await_save(view, expected_msg, fn -> render_hook(view, event, params) end)
+  end
 
   # Builds a deterministic NodeData results map for the currently viewed node
   # by applying the pure PlatformInfo filters to the UNFILTERED schemas
@@ -678,6 +601,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
   use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   import EvoDashWeb.SettingsLiveTest.Helpers
+  alias EvoDash.Test.SettingsAwait
 
   setup do
     # Isolate this test's config directory PER PROCESS through the
@@ -824,7 +748,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       # The search handler expects %{"value" => text} (the input name is "value").
       # A mismatched key (e.g. %{"search" => text}) would silently fail to match.
-      html = settings_hook(view, "search", %{"value" => "scheduler"})
+      html = render_hook(view, "search", %{"value" => "scheduler"})
 
       # When search_text is non-empty, the search results panel is shown
       # (the render/1 template branches on @search_text != "").
@@ -834,7 +758,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "search handler shows 'no settings found' for a non-matching term", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      html = settings_hook(view, "search", %{"value" => "zzz_nonexistent_xyz"})
+      html = render_hook(view, "search", %{"value" => "zzz_nonexistent_xyz"})
 
       assert html =~ "No settings found matching"
     end
@@ -843,9 +767,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       # First type a search term
-      _html = settings_hook(view, "search", %{"value" => "scheduler"})
+      _html = render_hook(view, "search", %{"value" => "scheduler"})
       # Then clear it (the clear button sends phx-value-value="")
-      html = settings_hook(view, "search", %{"value" => ""})
+      html = render_hook(view, "search", %{"value" => ""})
 
       # When search_text is empty, the category section is shown instead of
       # the search results panel.
@@ -967,8 +891,14 @@ defmodule EvoDashWeb.SettingsLiveTest do
       """)
 
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "test_llm", %{})
-      wait_settings(view, &match?({:ok, _}, &1.llm_test_status))
+      render_hook(view, "test_llm", %{})
+
+      SettingsAwait.await_assigns(
+        view,
+        "the connection test to land its success result in `llm_test_status`",
+        &match?({:ok, _}, &1.llm_test_status)
+      )
+
       assert_receive {:settings_llm_request, headers, body}, async_wait_budget()
 
       assert List.keyfind(headers, "authorization", 0) ==
@@ -1106,6 +1036,53 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert result.assigns.flash["error"] == "Selected profile has no model configured."
       refute_receive {:llm_test_result, _}, 0
     end
+
+    test "an unapplied config snapshot refuses the test instead of silently discarding it" do
+      # Pins the production defect: the REAL mount seed must not claim the file
+      # config already belongs to the current scope. A lazy local seed is
+      # indistinguishable from an applied snapshot, so a click inside that window
+      # started a test whose seq the pending node-data apply then bumped —
+      # dropping the genuine result with no retry and no visible message.
+      alias EvoDashWeb.{SettingsComponents, SettingsLive}
+      alias EvoDashWeb.SettingsLive.{ConfigIO, PageState}
+
+      file_config = %{
+        llm: %{
+          providers: [
+            %{
+              "id" => "account",
+              "provider" => "openai",
+              "default_model" => "example",
+              "models" => [%{"model" => "example"}, %{"model" => "other"}]
+            }
+          ]
+        }
+      }
+
+      selection = Enum.find(ConfigIO.model_selections(file_config), &(&1.model == "other"))
+
+      socket = %Phoenix.LiveView.Socket{
+        assigns:
+          PageState.initial_assigns(node())
+          |> Map.new()
+          |> Map.merge(%{
+            __changed__: nil,
+            current_node: node(),
+            flash: %{},
+            file_config: file_config,
+            test_profile_id: SettingsComponents.model_selection_value(selection)
+          })
+      }
+
+      assert {:noreply, result} = SettingsLive.handle_event("test_llm", %{}, socket)
+
+      assert result.assigns.llm_test_status == :idle
+
+      assert result.assigns.flash["error"] ==
+               "Wait for this node's configuration to load before testing."
+
+      refute_receive {:llm_test_result, _}, 0
+    end
   end
 
   describe "sandbox write_paths list editor" do
@@ -1116,7 +1093,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "sandbox category renders the write_paths card without crashing", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = settings_hook(view, "select_category", %{"category" => "sandbox"})
+      html = render_hook(view, "select_category", %{"category" => "sandbox"})
 
       # Regression: the sandbox category used to hard-filter to [:sandbox, :mode],
       # so any other sub_category == nil schema (write_paths) hit a CaseClauseError
@@ -1132,7 +1109,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "search for write_paths renders the card", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      html = settings_hook(view, "search", %{"value" => "write_paths"})
+      html = render_hook(view, "search", %{"value" => "write_paths"})
 
       assert html =~ "Search Results"
       assert html =~ "sandbox.write_paths"
@@ -1142,9 +1119,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "add_list_entry appends a blank entry to the in-memory config", %{conn: conn} do
       seed_write_paths(["/tmp/a", "/tmp/b"])
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "select_category", %{"category" => "sandbox"})
+      render_hook(view, "select_category", %{"category" => "sandbox"})
 
-      html = settings_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
+      html = render_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
 
       # The implementation appends a trailing "" entry (the "add row").
       assert write_paths(view) == ["/tmp/a", "/tmp/b", ""]
@@ -1156,7 +1133,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "add_list_entry with an unknown key path flashes an error", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      html = settings_hook(view, "add_list_entry", %{"key_path" => "nope.nope"})
+      html = render_hook(view, "add_list_entry", %{"key_path" => "nope.nope"})
 
       assert html =~ "Invalid key path."
       assert write_paths(view) == nil
@@ -1165,10 +1142,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "remove_list_entry removes the entry at the given index", %{conn: conn} do
       seed_write_paths(["/tmp/a", "/tmp/b"])
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "select_category", %{"category" => "sandbox"})
+      render_hook(view, "select_category", %{"category" => "sandbox"})
 
       html =
-        settings_hook(view, "remove_list_entry", %{
+        render_hook(view, "remove_list_entry", %{
           "key_path" => "sandbox.write_paths",
           "index" => "0"
         })
@@ -1186,7 +1163,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       # Malformed index → Integer.parse fails → treated as -1 → no-op
-      settings_hook(view, "remove_list_entry", %{
+      render_hook(view, "remove_list_entry", %{
         "key_path" => "sandbox.write_paths",
         "index" => "abc"
       })
@@ -1194,7 +1171,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert write_paths(view) == ["/tmp/a", "/tmp/b"]
 
       # Out-of-range index → no-op
-      settings_hook(view, "remove_list_entry", %{
+      render_hook(view, "remove_list_entry", %{
         "key_path" => "sandbox.write_paths",
         "index" => "5"
       })
@@ -1207,15 +1184,15 @@ defmodule EvoDashWeb.SettingsLiveTest do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       # Add a blank entry, then remove the first entry → ["/tmp/b", ""]
-      settings_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
+      render_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
 
-      settings_hook(view, "remove_list_entry", %{
+      render_hook(view, "remove_list_entry", %{
         "key_path" => "sandbox.write_paths",
         "index" => "0"
       })
 
       html =
-        settings_hook(view, "save_category", %{
+        save_hook(view, "Configuration saved successfully.", "save_category", %{
           "category" => "sandbox",
           "sandbox.mode" => "auto",
           # Form submission includes the hidden sentinel "" plus the text inputs;
@@ -1234,10 +1211,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # The UI flow: add one blank entry, then save. The form submits the hidden
       # sentinel "" plus the blank input → parsed to [] (a set-but-empty list
       # that REPLACES the platform defaults, distinct from unset/nil).
-      settings_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
+      render_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
 
       html =
-        settings_hook(view, "save_category", %{
+        save_hook(view, "Configuration saved successfully.", "save_category", %{
           "category" => "sandbox",
           "sandbox.mode" => "auto",
           "sandbox.write_paths" => ["", ""]
@@ -1252,7 +1229,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html =
-        settings_hook(view, "save_category", %{
+        save_hook(view, "Configuration saved successfully.", "save_category", %{
           "category" => "sandbox",
           "sandbox.mode" => "auto"
         })
@@ -2328,7 +2305,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "copied event flashes the confirmation message", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      html = settings_hook(view, "copied", %{})
+      html = render_hook(view, "copied", %{})
 
       assert html =~ "Copied to clipboard"
     end
@@ -2357,7 +2334,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = settings_hook(view, "select_category", %{"category" => "appearance"})
+      html = render_hook(view, "select_category", %{"category" => "appearance"})
 
       assert assigns(view).active_category == :appearance
       # The active category's content section is rendered.
@@ -2381,14 +2358,14 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "saving the appearance category persists the selected accent color", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "select_category", %{"category" => "appearance"})
+      render_hook(view, "select_category", %{"category" => "appearance"})
 
       # The real form submits the hidden input's name/value pair inside the
       # save_category params (mirroring the sandbox write_paths save tests —
       # save_category → params_to_category_config passes the :string value
       # through raw → deep_put [:appearance, :accent_color] => "teal").
       html =
-        settings_hook(view, "save_category", %{
+        save_hook(view, "Configuration saved successfully.", "save_category", %{
           "category" => "appearance",
           "appearance.accent_color" => "teal"
         })
@@ -2402,9 +2379,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "select_category", %{"category" => "appearance"})
+      render_hook(view, "select_category", %{"category" => "appearance"})
 
-      html = settings_hook(view, "select_appearance_accent", %{"accent" => "teal"})
+      html = render_hook(view, "select_appearance_accent", %{"accent" => "teal"})
 
       # The pending draft re-renders the card: the hidden input now carries
       # teal (the draft threads via card_value/3 — no form submit involved)
@@ -2441,9 +2418,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "select_category", %{"category" => "appearance"})
+      render_hook(view, "select_category", %{"category" => "appearance"})
 
-      html = settings_hook(view, "select_appearance_accent", %{"accent" => "chartreuse"})
+      html = render_hook(view, "select_appearance_accent", %{"accent" => "chartreuse"})
 
       # Unknown value → error flash and no draft set — the card keeps the
       # current (blue) value.
@@ -2489,7 +2466,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       refute html =~ "h-full bg-base-100/50"
 
       for cat <- ["scheduler", "sandbox", "tools"] do
-        html = settings_hook(view, "select_category", %{"category" => cat})
+        html = render_hook(view, "select_category", %{"category" => cat})
         doc = Floki.parse_document!(html)
 
         # The category root div IS the content column — a direct flex child of
@@ -2520,7 +2497,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "search results column carries overflow-y-auto on the form", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      html = settings_hook(view, "search", %{"value" => "scheduler"})
+      html = render_hook(view, "search", %{"value" => "scheduler"})
       doc = Floki.parse_document!(html)
 
       # The search form is the content column — explicitly scrollable so
@@ -2544,6 +2521,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
   import EvoDashWeb.SettingsLiveTest.Helpers
+  alias EvoDash.Test.SettingsAwait
 
   test "in-flight save owns its token across rejected reset and stale completions", %{conn: conn} do
     # This test belongs to the sync module because it suspends the process-global
@@ -2568,7 +2546,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
     """)
 
     {:ok, view, _} = mount_settings(conn, ~p"/settings")
-    settings_hook(view, "edit_provider_profile", %{"profile_id" => "default"})
+    render_hook(view, "edit_provider_profile", %{"profile_id" => "default"})
     before = assigns(view).file_config
     :ok = :sys.suspend(EvoGit.AgentScheduler)
 
@@ -2617,7 +2595,11 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
     assert assigns(view).editing_profile_id == "default"
 
     :ok = :sys.resume(EvoGit.AgentScheduler)
-    html = await_config_save(view)
+    # The click landed while the writer was frozen, so the receipt cannot wrap
+    # it: await the save's own completion evidence instead (no owned request, no
+    # live writer, no invalidated-writer drain, the success flash rendered).
+    SettingsAwait.await_settled(view)
+    html = render(view)
     assert html =~ "Provider profile saved."
     assert assigns(view).editing_profile_id == nil
     saved = assigns(view).file_config
@@ -2625,7 +2607,11 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
     assert get_in(saved, [:sandbox, :write_paths]) == ["/custom"]
     assert EvoGit.Config.user_config()["llm"]["providers"] == saved.llm.providers
 
-    html = settings_hook(view, "reset_key", %{"key_path" => "sandbox.write_paths"})
+    html =
+      save_hook(view, "Reset sandbox.write_paths to default.", "reset_key", %{
+        "key_path" => "sandbox.write_paths"
+      })
+
     assert html =~ "Reset sandbox.write_paths to default."
     reset_config = assigns(view).file_config
     assert get_in(reset_config, [:sandbox, :write_paths]) == nil
@@ -2747,7 +2733,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
   describe "boolean field rendering (nix.enabled)" do
     test "renders a DaisyUI toggle with hidden field for false value submission", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = settings_hook(view, "select_category", %{"category" => "nix"})
+      html = render_hook(view, "select_category", %{"category" => "nix"})
 
       # The hidden field (value="false") must appear BEFORE the checkbox so that
       # unchecked submits "false" and checked submits "true" (checkbox overrides).
@@ -2841,7 +2827,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
       # Deliver the async platform-filtered schemas before selecting the
       # category (the seed shell shows the UNFILTERED map).
       deliver_node_data(view)
-      html = settings_hook(view, "select_category", %{"category" => "sandbox"})
+      html = render_hook(view, "select_category", %{"category" => "sandbox"})
 
       assert assigns(view).active_category == :sandbox
       # sub_category == nil schemas (mode + write_paths) remain.
@@ -2861,7 +2847,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
       # Deliver the async platform-filtered schemas before selecting the
       # category (the seed shell shows the UNFILTERED map).
       deliver_node_data(view)
-      html = settings_hook(view, "select_category", %{"category" => "sandbox"})
+      html = render_hook(view, "select_category", %{"category" => "sandbox"})
 
       # On Linux the sandbox schemas are unchanged — all sub-sections render.
       assert html =~ "Linux Security"
@@ -2912,7 +2898,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
       assert html =~ ~s(phx-value-category="nix")
       # ...and selecting the category renders its content section (only the
       # active category's section is rendered, so select first).
-      section_html = settings_hook(view, "select_category", %{"category" => "nix"})
+      section_html = render_hook(view, "select_category", %{"category" => "nix"})
 
       assert section_html =~ ~s(id="category-nix")
     end
@@ -2925,7 +2911,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
       html = deliver_node_data(view)
 
       assert html =~ ~s(phx-value-category="nix")
-      section_html = settings_hook(view, "select_category", %{"category" => "nix"})
+      section_html = render_hook(view, "select_category", %{"category" => "nix"})
 
       assert section_html =~ ~s(id="category-nix")
     end
@@ -2940,7 +2926,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
       # An explicit false counts as "configured" — the section must stay
       # editable so the user can turn the feature on.
       assert html =~ ~s(phx-value-category="nix")
-      section_html = settings_hook(view, "select_category", %{"category" => "nix"})
+      section_html = render_hook(view, "select_category", %{"category" => "nix"})
 
       assert section_html =~ ~s(id="category-nix")
     end
@@ -2961,7 +2947,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
 
       # Selecting the hidden category is a no-op — it is not a known category
       # in the filtered map, so active_category stays :llm.
-      select_html = settings_hook(view, "select_category", %{"category" => "nix"})
+      select_html = render_hook(view, "select_category", %{"category" => "nix"})
 
       assert assigns(view).active_category == :llm
       refute select_html =~ ~s(id="category-nix")
@@ -2969,7 +2955,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
       # Search: only the nix schemas ([nix] :enabled / :flake_output) contain
       # "nix" in key_path/description, so with the category removed from
       # @schemas_by_category the search finds zero matches.
-      search_html = settings_hook(view, "search", %{"value" => "nix"})
+      search_html = render_hook(view, "search", %{"value" => "nix"})
 
       assert search_html =~ "No settings found matching"
     end

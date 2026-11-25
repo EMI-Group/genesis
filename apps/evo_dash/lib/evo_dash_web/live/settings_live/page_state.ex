@@ -130,8 +130,15 @@ defmodule EvoDashWeb.SettingsLive.PageState do
       credentials: EvoGit.Config.credentials(),
       llm_test_status: :idle,
       llm_test_seq: 0,
-      # Mount's config is local; a remote test waits for its own async snapshot.
-      test_config_scope: {nil, node()},
+      # The mount's config is NOT yet authoritative for the connection test:
+      # `file_config` is still the synchronous seed until the node-data snapshot
+      # is APPLIED. Only that apply (`LlmTestEvents.assign_test_config/2`, from
+      # the node-data result or a save receipt) or `reset_config_scope/1`'s nil
+      # installs a scope, so a `test_llm` click arriving earlier is REFUSED with
+      # "Wait for this node's configuration to load before testing." instead of
+      # starting a test whose result the pending apply would silently discard
+      # (it bumps `llm_test_seq`, so the in-flight result no longer matches).
+      test_config_scope: nil,
       # Per-profile OAuth/subscription credential status (see
       # EvoDashWeb.SettingsLive.AuthStatus): `%{profile_id => %{state:, expires:,
       # account_id:, login_instructions:, oauth_file:}}`. Loaded
