@@ -363,9 +363,6 @@ defmodule EvoDashWeb.WorkbenchComponent do
         >
           <% href = navigation_path("/projects", host.id, project: project.path, wb_home: "1") %>
           <% active = host.id == @node_id and project.path == @project %>
-          <% row_id =
-            "workbench-project-activity-" <>
-              Base.url_encode64(:erlang.term_to_binary({host.id, project.path}), padding: false) %>
           <div class="workbench-project-heading">
             <.link
               patch={if @patch_links, do: href}
@@ -382,13 +379,6 @@ defmodule EvoDashWeb.WorkbenchComponent do
               <span class="workbench-project-name min-w-0 truncate">{project.name}</span>
               <span class="workbench-project-server" title={host.name}>{host.name}</span>
             </.link>
-          </div>
-          <div
-            id={row_id <> "-open"}
-            class="workbench-project-open-windows"
-            data-workbench-project-windows
-            phx-update="ignore"
-          >
           </div>
         </div>
       </div>
