@@ -373,6 +373,23 @@ defmodule EvoGit.AgentState do
   end
 
   @doc """
+  The shared durable SNAPSHOT of one task's agent tree, or the reason it cannot
+  be built.
+
+  Delegates to `EvoGit.AgentState.Snapshot.read/2`: `{:ok, snapshot}` carries the
+  ROOT record (the one whose `parent_id` is `nil`) plus the full roster, and the
+  error shapes are `{:error, :unavailable}` (no/degraded store — "cannot tell",
+  never "empty"), `{:error, :empty}` (an empty roster) and `{:error, :no_root}`
+  (rows but no root). This is the ONE read model a pause/resume consumer should
+  use instead of re-reading `roster/2` itself; the rest of the snapshot API
+  (`live/1`, `children/3`, `position/1`, `agent_ids/1`) is pure over the value.
+  """
+  @spec snapshot(task_id(), keyword()) ::
+          {:ok, EvoGit.AgentState.Snapshot.t()}
+          | {:error, :empty | :no_root | :unavailable}
+  def snapshot(task_id, opts \\ []), do: EvoGit.AgentState.Snapshot.read(task_id, opts)
+
+  @doc """
   The LEAN `roster/2` skeletons of MANY tasks in one bounded pass.
 
   One constant-shape `SELECT` per batch of task ids (`Store.roster_many/2`),

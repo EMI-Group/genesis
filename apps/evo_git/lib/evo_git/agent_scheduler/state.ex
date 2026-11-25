@@ -66,6 +66,15 @@ defmodule EvoGit.AgentScheduler.State do
     (`%{agent_id => {token, timer_ref}}`); `token` is the identity carried in the
     `{:reattach_timeout, agent_id, token}` message, so a timer whose waiter was
     already claimed is ignored instead of clearing a newer batch
+  - `task_freezes` — `%{task_id => %EvoGit.AgentScheduler.TaskFreeze{}}` for every
+    task pause currently DRAINING: the roster of agents that still owe a paused
+    outcome (see `EvoGit.AgentScheduler.TaskFreeze`). Present ⟺ the task is
+    freezing; deleted when the pause completes, is abandoned by a cancel or is
+    cleared.
+  - `task_freeze_timers` — `%{task_id => %{timeout: ref, grace: ref}}`, the
+    scheduler-owned quiesce/grace timers of a freeze. Kept OUT of the freeze
+    record so `TaskFreeze` stays a pure state machine; a fired message whose ref
+    is not the current one is stale and ignored.
 
   ### LLM Slot Management (per-model pools)
   - `llm_holders` — `%{model_id => MapSet}` of agent IDs currently holding an LLM slot
@@ -119,6 +128,8 @@ defmodule EvoGit.AgentScheduler.State do
             max_tool_concurrency: 2,
             task_local_counters: %{},
             task_agent_counts: %{},
+            task_freezes: %{},
+            task_freeze_timers: %{},
             paused: false,
             sandbox_mode: nil,
             sandbox_resources: nil,
@@ -156,6 +167,12 @@ defmodule EvoGit.AgentScheduler.State do
           max_tool_concurrency: pos_integer(),
           task_local_counters: %{optional(String.t()) => pos_integer()},
           task_agent_counts: %{optional(String.t()) => pos_integer()},
+          task_freezes: %{optional(String.t()) => EvoGit.AgentScheduler.TaskFreeze.t()},
+          task_freeze_timers: %{
+            optional(String.t()) => %{
+              optional(:timeout | :grace) => reference() | nil
+            }
+          },
           paused: boolean(),
           sandbox_mode: :auto | :enabled | :disabled | nil,
           sandbox_resources: map() | nil,

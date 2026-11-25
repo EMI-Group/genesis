@@ -511,23 +511,6 @@ defmodule EvoGit.Agent.SubagentProcessing do
     "Error: Subagent failed due to an unexpected error (#{inspect(reason)}). Please retry the spawn or report this issue to the user if it persists."
   end
 
-  # A TASK PAUSE stopped the child at a turn boundary: this is NOT a failure and
-  # NOT a completion. Its committed work (the pause checkpoint commit) has been
-  # merged into the parent worktree like a normal completion; the child itself
-  # comes back from its OWN durable row (conversation, branch, worktree base) on
-  # a task resume, because a resume is whole-tree.
-  def format_subagent_result({:paused, info}) when is_map(info) do
-    checkpoint = Map.get(info, :checkpoint) || "unknown"
-    branch = Map.get(info, :branch) || "unknown"
-
-    "The subagent PAUSED: the task was paused, so it stopped cleanly at a turn boundary " <>
-      "after its last tool call completed (nothing was interrupted). Its committed work " <>
-      "(checkpoint #{checkpoint}, branch #{branch}) was merged into your worktree. " <>
-      "A task resume re-spawns it from its own durable state and worktree base, and it will " <>
-      "produce further results then — so do not wait for it now: finish your own current step " <>
-      "and stop at your next turn boundary."
-  end
-
   def format_subagent_result({:ok, %Result{result: result, commit_sha: commit_sha}}) do
     """
     # Result
@@ -652,29 +635,10 @@ defmodule EvoGit.Agent.SubagentProcessing do
               {children, [{spec.repo_id, sha} | details]}
             end
 
-          # A PAUSED child is merged like a completion: its pause checkpoint
-          # commit is the work it left behind (fall back to today's behaviour —
-          # no merge — when the term carries no checkpoint sha).
-          {:paused, %{checkpoint: sha} = paused_info} when is_binary(sha) ->
-            if spec.repo_id == parent_repo_id do
-              child =
-                merge_child(
-                  index,
-                  %Result{
-                    result: format_subagent_result({:paused, paused_info}),
-                    commit_sha: sha,
-                    branch: Map.get(paused_info, :branch)
-                  },
-                  spec.context_node.path,
-                  spec.agent_module,
-                  spec.objective
-                )
-
-              {[child | children], details}
-            else
-              {children, [{spec.repo_id, sha} | details]}
-            end
-
+          # A PAUSED child NEVER reaches a parent batch: a task pause freezes the
+          # whole tree, the parent's batch is parked and cleared, and every agent
+          # reports to the task freeze instead. `{:paused, _}` therefore merges
+          # nothing here (nor does an error or a nil-commit completion).
           _ ->
             {children, details}
         end
