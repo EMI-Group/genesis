@@ -185,9 +185,9 @@ defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
       task_id = "heartbeat_pausing_#{unique}"
       expired = System.system_time(:second) - 300
 
-      # A pause that is still DRAINING is a live task: its wrapper is alive and
+      # A pause that is still FREEZING is a live task: its wrapper is alive and
       # its agents are walking to a turn boundary. If its lease were allowed to
-      # expire the sweep would park (or fail) a drain that is still running.
+      # expire the sweep would park (or fail) a freeze that is still running.
       task = seed_task!(task_id, :pausing, lease_expires_at: expired)
       assert task.status == :pausing
 
@@ -202,7 +202,7 @@ defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
       assert found.lease_expires_at > expired,
              "heartbeat should renew the lease of an owned :pausing task, got #{inspect(found.lease_expires_at)}"
 
-      assert found.pause_kind == nil, "a draining pause is not a dirty pause"
+      assert found.pause_kind == nil, "a freezing pause is not a dirty pause"
     end
 
     test "heartbeat never renews a :paused row's lease (even when owned)" do

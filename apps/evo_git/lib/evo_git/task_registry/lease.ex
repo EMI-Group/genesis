@@ -90,12 +90,13 @@ defmodule EvoGit.TaskRegistry.Lease do
   # is still alive on this node and keeps owning its lease for as long as it
   # idles (an idle session is not a dead one).
   #
-  # Task pause: `:pausing` is included because a pause drain is a NORMAL live
-  # run — the wrapper is still alive while the agents walk to their turn
-  # boundary, so its lease must keep being renewed or the sweep would kill it
-  # mid-drain. `:paused` is DELIBERATELY ABSENT: a paused row has NO wrapper and
-  # NO lease (`Pause.resume/1` mints a fresh one), so renewing it would invent
-  # liveness for a run that is not running.
+  # Task pause: `:pausing` is included because a task that is FREEZING is a
+  # NORMAL live run — the wrapper is still alive while the agents reach their
+  # freeze point (a turn boundary or a parked subagent batch), so its lease must
+  # keep being renewed or the sweep would kill it mid-freeze. `:paused` is
+  # DELIBERATELY ABSENT: a paused row has NO wrapper and NO lease
+  # (`Pause.resume/1` mints a fresh one), so renewing it would invent liveness
+  # for a run that is not running.
   @renewed_statuses [:running, :pending, :cancelling, :awaiting_input, :pausing]
 
   # Statuses the one-shot `:lease_sweep` may classify as LEAKED. `:awaiting_input`
@@ -103,7 +104,7 @@ defmodule EvoGit.TaskRegistry.Lease do
   # sched_meta agents AND the lease stopped being renewed) the session cannot
   # come back, so the row must not sit in a live status forever.
   #
-  # Task pause: `:pausing` is swept like `:running` (a drain whose wrapper died
+  # Task pause: `:pausing` is swept like `:running` (a freeze whose wrapper died
   # with the BEAM is a dirty pause, resolved by `Pause.pause_kind_for_restart/2`).
   # `:paused` is DELIBERATELY ABSENT — the paused resting state is the sweep's
   # OUTPUT, never its input, so a paused row is never re-swept.
@@ -130,7 +131,7 @@ defmodule EvoGit.TaskRegistry.Lease do
 
   @doc """
   `true` when the task is PROVABLY a leaked live row: a known live status
-  (`:running`, `:pausing` — a mid-drain run whose wrapper is still supposed to
+  (`:running`, `:pausing` — a mid-freeze run whose wrapper is still supposed to
   be alive —, or `:awaiting_input` — an idle interactive session), an expired
   (or missing) lease, and not owned by this registry — the verdict the one-shot
   `:lease_sweep` acts on. A `:paused` row is never leaked: it has no wrapper and

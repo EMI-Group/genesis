@@ -32,6 +32,18 @@ defmodule EvoGit.Auth.ChatGPTResponsesTest do
     assert request.host == "api.openai.com"
     assert request.path == "/v1/responses"
     assert {"authorization", "Bearer example-token"} in request.headers
+
+    assert {"originator", EvoGit.Auth.ChatGPT.agent_name()} in request.headers
+
+    assert Enum.any?(request.headers, fn {name, value} ->
+             name == "user-agent" and
+               String.starts_with?(value, "#{EvoGit.Auth.ChatGPT.agent_name()}/")
+           end)
+
+    refute Enum.any?(request.headers, fn {name, _value} ->
+             name in ["chatgpt-account-id", "openai-beta"]
+           end)
+
     body = Jason.decode!(request.body)
     assert body["store"] == false
     assert body["stream"] == true

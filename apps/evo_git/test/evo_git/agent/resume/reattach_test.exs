@@ -186,6 +186,79 @@ defmodule EvoGit.Agent.Resume.ReattachTest do
     assert texts == %{0 => formatted(stored)}
   end
 
+  # --- A CLEAN pause frozen BEFORE a child registered spawns it FRESH ---
+  test "a :clean_pause upgrades a row-less slot to :fresh with a built spec and no id",
+       %{tmp_dir: tmp_dir} do
+    fixture = subagent_fixture!(tmp_dir)
+    roster = roster_fun([running_row(@child_a, 0)])
+    finished = %Result{result: "both children finished", commit_sha: nil}
+
+    rebuild = fn _agent_id, plan, _opts ->
+      send(self(), {:rebuilt, plan})
+      {:ok, [{:ok, finished}, {:ok, finished}]}
+    end
+
+    # A real spawn always names its `path`; the production spec builder needs it.
+    slots = [{0, call()}, {1, subagent_call_at("c1", "./src")}]
+
+    parent =
+      state(
+        context: conversation([subagent_call("c0"), subagent_call_at("c1", "./src")]),
+        repo_path: fixture.repo
+      )
+
+    assert %{texts: texts} =
+             Reattach.resolve(parent, slots,
+               reattach_fun: deny_reattach(),
+               rebuild_fun: rebuild,
+               roster_fun: roster,
+               turn: @turn,
+               resume_kind: :clean_pause
+             )
+
+    assert_received {:rebuilt, plan}
+    assert [running_entry, fresh_entry] = plan.entries
+    # The child that DID register keeps its own durable identity.
+    assert running_entry.status == :running
+    assert running_entry.agent_id == @child_a
+    # The child the pause froze BEFORE it registered is spawned, not reported
+    # lost: a real spec from the PRODUCTION builder, and NO agent id.
+    assert fresh_entry.index == 1
+    assert fresh_entry.status == :fresh
+    assert fresh_entry.agent_id == nil
+    assert fresh_entry.result == nil
+    assert %AgentSpec{} = fresh_entry.spec
+    # A fresh child has no resume identity: it is a first spawn.
+    assert fresh_entry.spec.opts[:resume_agent_id] == nil
+    assert texts == %{0 => formatted(finished), 1 => formatted(finished)}
+  end
+
+  test "a :dirty_pause leaves a row-less slot :missing" do
+    stored = %Result{result: "only child", commit_sha: nil}
+    roster = roster_fun([done_row(@child_a, 0, stored)])
+
+    rebuild = fn _agent_id, plan, _opts ->
+      send(self(), {:rebuilt, plan})
+      {:ok, [{:ok, stored}, {:error, :subagent_result_lost}]}
+    end
+
+    assert %{texts: texts} =
+             Reattach.resolve(
+               state(context: conversation([subagent_call("c0"), subagent_call("c1")])),
+               [{0, call()}, {1, call()}],
+               reattach_fun: deny_reattach(),
+               rebuild_fun: rebuild,
+               roster_fun: roster,
+               turn: @turn,
+               resume_kind: :dirty_pause
+             )
+
+    assert_received {:rebuilt, plan}
+    # After a crash a row-less slot really IS a lost child.
+    assert [%{status: :done}, %{status: :missing, agent_id: nil}] = plan.entries
+    assert texts == %{0 => formatted(stored)}
+  end
+
   # --- A rebuilt commit is MERGED, through the ordinary merge path ---
 
   test "a rebuilt child's commit is merged into the parent worktree", %{tmp_dir: tmp_dir} do
@@ -399,6 +472,17 @@ defmodule EvoGit.Agent.Resume.ReattachTest do
   end
 
   defp call, do: subagent_call("ignored")
+
+  defp subagent_call_at(id, path) do
+    %ReqLLM.ToolCall{
+      id: id,
+      type: "function",
+      function: %{
+        name: "task",
+        arguments: Jason.encode!(%{"path" => path, "objective" => "child objective"})
+      }
+    }
+  end
 
   defp tool_text(%State{context: %ReqLLM.Context{messages: messages}}, id) do
     Enum.find_value(messages, fn

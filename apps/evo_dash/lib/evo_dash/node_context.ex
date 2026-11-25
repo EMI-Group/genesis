@@ -829,14 +829,21 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
-  Pauses a task on the given node at the next turn boundary.
+  Pauses a task on the given node, freezing every agent of the task at its
+  current position.
 
   Delegates to `EvoGit.RemoteNode.pause_task/2`. The task moves to `:pausing`
-  and every agent of the task drains at its NEXT TURN BOUNDARY — an in-flight
-  tool call is never interrupted — then the task parks in `:paused`, which is
-  NON-TERMINAL and resumable through `resume_task/2`. Returns `:ok` on success
-  (a task that is already `:pausing`/`:paused` is idempotent `:ok`) or
-  `{:error, reason}`; the documented reasons are `:not_found` (unknown task),
+  while the tree is being frozen — an in-flight TOOL batch gets a bounded
+  chance to finish and the tree is then frozen in place, at a turn boundary or
+  parked inside its subagent batch (a parent waiting on subagents stays
+  waiting) — then the task parks in `:paused`, which is NON-TERMINAL and
+  resumable through `resume_task/2`. `pause_kind` is `:clean` only when every
+  agent proved it reached its freeze point inside the quiesce budget and
+  `:dirty` for any other cause (a host restart / lease sweep, an expired
+  quiesce that had to cut a tool batch off, or an agent that could not prove a
+  clean freeze). Returns `:ok` on success (a task that is already
+  `:pausing`/`:paused` is idempotent `:ok`) or `{:error, reason}`; the
+  documented reasons are `:not_found` (unknown task),
   `:not_running` (a `:pending`/`:finalizing`/`:cancelling`/terminal task),
   `:not_pausable` (an interactive session), `:not_resumable` (no durable agent
   state to restore) and `:scheduler_unavailable` (the scheduler is down, so the
@@ -851,13 +858,16 @@ defmodule EvoDash.NodeContext do
   Resumes a paused task on the given node.
 
   Delegates to `EvoGit.RemoteNode.resume_task/2`. The SAME task id is
-  re-enqueued with its persisted opts and a fresh lease and the task's whole
-  durable run tree restores its own conversation, worktree and branch — the
-  root plus every subagent that was still running (an already-consumed child is
-  not revived and a child with no durable record is reported as lost) — so the
-  task's `started_at`, `opts`, `commit_sha`,
-  `result` and accumulated `usage` are preserved. Returns `:ok` on success or
-  `{:error, reason}`; the documented reasons are `:not_found` (unknown task),
+  re-enqueued with its persisted opts and a fresh lease and the whole frozen
+  run tree thaws IN PLACE with the same agent ids, each agent restoring its own
+  conversation, worktree and branch — a parent that was waiting on its
+  subagents is still waiting and merges only when those children genuinely
+  finish, a running child continues its own run and a child whose result had
+  not yet been collected is revived; only a batch slot with no durable record
+  at all is reported as lost — so the task's `started_at`, `opts`,
+  `commit_sha`, `result` and accumulated `usage` are preserved. Returns `:ok`
+  on success or `{:error, reason}`; the documented reasons are `:not_found`
+  (unknown task),
   `:not_paused` (the task is not in `:paused`), `:not_resumable` (no durable run
   to restore), the start-time admission errors (model selection, session mode,
   persistent state — the row stays `:paused`) and `:scheduler_unavailable` when

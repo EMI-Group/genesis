@@ -42,6 +42,12 @@ defmodule EvoGit.Agent.ToolDispatch do
   ZERO tool calls and no usable text is the only error path (one nudge, then the
   bounded protocol-violation route); there is NO completion tool.
 
+  A SUBAGENT batch answered by the scheduler with `{:freeze, :task_pause}` is
+  neither: the task is pausing, so no call completes, the batch is not emitted,
+  sorted or assembled, and the turn returns `{:pause, state}` with the in-flight
+  batch marker intact (a pause is a snapshot of the whole agent tree — see
+  `EvoGit.Agent.SubagentProcessing`).
+
   The turn runs on `%EvoGit.Agent.State{}`. Its outside-world dependencies are
   injectable through `EvoGit.Agent.Exchange.Seams` (the `:llm_call`,
   `:tool_batch` and `:scheduler` seams, resolved from ONE `opts` keyword list and
@@ -235,7 +241,23 @@ defmodule EvoGit.Agent.ToolDispatch do
     # carried on the struct itself now. Identical values: the runner populates
     # both fields from that same row when it builds the state.
     max_retries = state.max_retries
-    llm_gen_opts = state.llm_generation_params
+    # The prompt-cache/routing identity is FROZEN at registration (injected once
+    # into `provider_options` by `AgentScheduler.Dispatch`) and RE-ASSERTED here,
+    # because this is the ONE request boundary and a rebuilt or restored param
+    # list (resume, retry, a list re-derived from the profile) would otherwise
+    # silently drop it. The key VALUE is never re-derived — only attached — so
+    # this is a safety net, not a second derivation. `put_cache_identity/3` is
+    # idempotent (a no-op once the key is present), provider-gated (`:openai`,
+    # `:openai_codex`) and byte-identical for every other provider, so it is
+    # inert for a nil/blank key, a non-GPT model or a non-keyword option list,
+    # and it only ever APPENDS the identity keys, never replacing an existing
+    # `provider_options` entry (`auth_mode`, `oauth_file`, the resolved api key).
+    llm_gen_opts =
+      EvoGit.Config.Schema.LLM.put_cache_identity(
+        state.llm_generation_params,
+        EvoGit.Config.Schema.LLM.provider_from_model(state.llm_model),
+        state.prompt_cache_key
+      )
 
     case llm_call.(
            context,
@@ -554,6 +576,12 @@ defmodule EvoGit.Agent.ToolDispatch do
             loop_fn,
             trigger_recovery_fn
           )
+
+        # A TASK PAUSE froze the batch: the in-flight marker STAYS set (appending
+        # nothing here), because a pause is a snapshot of the run's current
+        # position — the durable pre-batch checkpoint is what a resume restores.
+        {:pause, %State{} = paused_state} ->
+          {:pause, paused_state}
       end
     end
   end
@@ -882,6 +910,10 @@ defmodule EvoGit.Agent.ToolDispatch do
   def process_tool_calls([], _state, _subagent_modules, _opts), do: {:error, :protocol_violation}
 
   @doc false
+  # The ONE non-empty tool-call router. Besides `{:continue, results, usage}` it
+  # PROPAGATES `{:pause, state}` unchanged: a task pause that froze a subagent
+  # batch is neither an error nor a completion (see
+  # `process_regular_tool_calls/4`).
   def process_tool_calls(tool_calls, %State{} = state, subagent_modules, opts)
       when is_list(tool_calls) and tool_calls != [] do
     process_regular_tool_calls(tool_calls, state, subagent_modules, opts)
@@ -934,13 +966,50 @@ defmodule EvoGit.Agent.ToolDispatch do
     if indexed_calls != [], do: Sink.phase(:tools)
     indexed_standard_results = process_standard_calls(indexed_standard_calls, state, opts)
 
-    {indexed_subagent_results, merge_message, subagent_usage} =
-      EvoGit.Agent.SubagentProcessing.process_subagent_calls(
-        indexed_subagent_calls,
-        state,
-        sync_commit_fn: &sync_current_commit_after_tools/1
-      )
+    case EvoGit.Agent.SubagentProcessing.process_subagent_calls(
+           indexed_subagent_calls,
+           state,
+           subagent_seam_opts(opts)
+         ) do
+      # A TASK PAUSE froze the subagent batch: this is neither an error nor a
+      # completion. Nothing is emitted, sorted or assembled and the state (with its
+      # in-flight batch marker) is handed straight back, so the pause is a snapshot
+      # of the whole agent tree. Standard calls of a MIXED batch may already have
+      # run — accepted: the interrupted class makes the task pause dirty.
+      {:pause, %State{} = paused_state} ->
+        {:pause, paused_state}
 
+      {indexed_subagent_results, merge_message, subagent_usage} ->
+        finish_tool_batch(
+          indexed_calls,
+          indexed_standard_results,
+          indexed_subagent_results,
+          merge_message,
+          subagent_usage,
+          state
+        )
+    end
+  end
+
+  # The subagent-processing opts: the ONE required callback plus the optional,
+  # default-inert spawn seam (`:spawn_sub_agents_fun`) when the caller supplied one.
+  # An absent seam adds NO entry, so the production call is byte-identical.
+  defp subagent_seam_opts(opts) do
+    [sync_commit_fn: &sync_current_commit_after_tools/1] ++
+      Keyword.take(opts, [:spawn_sub_agents_fun])
+  end
+
+  # The post-batch half of a tool-call turn: re-order the results into the model's
+  # call order, emit one `{:tool_result, id, status}` per call, and assemble the
+  # messages the transcript grows by.
+  defp finish_tool_batch(
+         indexed_calls,
+         indexed_standard_results,
+         indexed_subagent_results,
+         merge_message,
+         subagent_usage,
+         %State{} = state
+       ) do
     # Keep the accepted response available until the session checkpoints it.
     if indexed_calls != [], do: Sink.phase(:llm_complete)
 

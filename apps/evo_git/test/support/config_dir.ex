@@ -15,11 +15,22 @@ defmodule EvoGit.TestSupport.ConfigDir do
 
   ## Scope of the process-dictionary override
 
-  `$callers` covers `GenServer`/`Task`/`Supervisor` children started FROM the
-  test process (OTP 24+ `proc_lib` propagates `$callers`), but it does NOT cover
-  the app-global singletons started at boot — `EvoGit.AgentScheduler`,
-  `EvoGit.TaskRegistry`, `EvoGit.Store`, `EvoGit.PeakHourEngine`. A module whose
-  config reads happen inside one of those must therefore stay `async: false`.
+  A child process inherits the override through the SPAWN CHAIN, which is the
+  concatenation of the two keys OTP keeps for exactly this purpose: `$callers`
+  (written by Elixir's `Task`/`Task.Supervisor`, so a task chain is covered) and
+  `$ancestors` (written by `proc_lib`, so EVERY `proc_lib` child is covered too —
+  a plain `GenServer.start_link/3`, a `Supervisor`, a `:proc_lib.spawn`).
+  `$ancestors` is load-bearing, not a fallback nicety: `GenServer.start_child`
+  never sets `$callers`, so a `$callers`-only lookup leaves the override
+  invisible to a `GenServer` child — e.g. ReqLLM's `StreamServer`, which is
+  where a provider adapter's `attach_stream/4` runs, so a credential lookup
+  there would read the DEVELOPER's real `~/.config/genesis` instead of the
+  isolated directory.
+
+  Neither key covers the app-global singletons started at boot —
+  `EvoGit.AgentScheduler`, `EvoGit.TaskRegistry`, `EvoGit.Store`,
+  `EvoGit.PeakHourEngine`. A module whose config reads happen inside one of
+  those must therefore stay `async: false`.
 
   The per-path `:persistent_term` config cache is keyed by FILE PATH, so a
   unique directory per test is cache-safe.
@@ -112,8 +123,10 @@ defmodule EvoGit.TestSupport.ConfigDir do
   The seam function installed as `:config_dir_fun` by `test/test_helper.exs`.
 
   Returns the override directory for the current execution context, or `nil`.
-  Order: this process' own override, then the first override found in a
-  `$callers` process dictionary (local node pids only).
+  Order: this process' own override, then the first override found in the
+  process' SPAWN CHAIN — its `$callers` (`Task`) entries, then its `$ancestors`
+  (`proc_lib`, hence any `GenServer`/`Supervisor`) entries (local node pids
+  only).
   """
   @spec resolve() :: String.t() | nil
   def resolve do
@@ -122,17 +135,25 @@ defmodule EvoGit.TestSupport.ConfigDir do
         dir
 
       _ ->
-        Process.get(:"$callers", [])
-        |> Enum.find_value(fn pid -> caller_override(pid) end)
+        Enum.find_value(spawn_chain(), &caller_override/1)
     end
+  end
+
+  # The pids whose dictionaries this process inherits from, in the order
+  # `resolve/0` consults them: Elixir `Task` writes the `$callers` chain,
+  # `proc_lib` writes `$ancestors` (see the moduledoc's "Scope of the
+  # process-dictionary override"). Built from the two keys directly so a
+  # config read in a test that never isolated anything copies no dictionary.
+  defp spawn_chain do
+    Process.get(:"$callers", []) ++ Process.get(:"$ancestors", [])
   end
 
   @doc """
   Puts the config directory override into the CURRENT process dictionary.
 
   Call this from a `setup` block so the TEST process carries the override
-  (children started by the test inherit it through OTP's `$callers`
-  propagation).
+  (children started by the test inherit it through their spawn chain —
+  `$callers` for `Task` children, `$ancestors` for every `proc_lib` child).
 
   It ALSO records the calling pid as an OWNER of `dir` (one marker file under
   `<dir>/.evogit-owners/`, see `await_dir_writers/3`). That is what lets a
@@ -319,7 +340,7 @@ defmodule EvoGit.TestSupport.ConfigDir do
 
   defp held_by?(pid, registrar) when is_pid(pid) do
     case Process.info(pid, :dictionary) do
-      {:dictionary, dictionary} -> registrar in Keyword.get(dictionary, :"$callers", [])
+      {:dictionary, dictionary} -> registrar in chain_from(dictionary)
       nil -> false
     end
   end
@@ -327,7 +348,7 @@ defmodule EvoGit.TestSupport.ConfigDir do
   defp held_by?(_pid, _registrar), do: false
 
   # A writer FOR THIS DIRECTORY: the per-test ownership predicate (the registrar
-  # is in the child's `$callers`), the destination predicate (the child resolves
+  # is in the child's spawn chain), the destination predicate (the child resolves
   # `dir` as its override, so any write it performs lands inside
   # `<dir>/genesis`), or an OWNER pid in its chain (a pid that activated `dir`
   # and is remembered by a marker file, so it still counts after it died). One
@@ -335,10 +356,10 @@ defmodule EvoGit.TestSupport.ConfigDir do
   defp writer_for?(pid, registrar, dir, owners) when is_pid(pid) do
     case Process.info(pid, :dictionary) do
       {:dictionary, dictionary} ->
-        callers = Keyword.get(dictionary, :"$callers", [])
+        chain = chain_from(dictionary)
 
-        registrar in callers or override_from(dictionary, callers) == dir or
-          Enum.any?(callers, &(&1 in owners))
+        registrar in chain or override_from(dictionary, chain) == dir or
+          Enum.any?(chain, &(&1 in owners))
 
       nil ->
         false
@@ -347,13 +368,20 @@ defmodule EvoGit.TestSupport.ConfigDir do
 
   defp writer_for?(_pid, _registrar, _dir, _owners), do: false
 
+  # The SPAWN CHAIN recorded in a child's dictionary: `$callers` (Elixir `Task`)
+  # then `$ancestors` (`proc_lib`, hence any `GenServer`/`Supervisor`) — the same
+  # order `resolve/0` consults for the calling process.
+  defp chain_from(dictionary) do
+    Keyword.get(dictionary, :"$callers", []) ++ Keyword.get(dictionary, :"$ancestors", [])
+  end
+
   # The override a child would resolve: its OWN dictionary entry first, then the
-  # first override in its `$callers` chain — byte-identical to `resolve/0`, but
+  # first override in its spawn chain — byte-identical to `resolve/0`, but
   # evaluated for an arbitrary pid instead of the calling process.
-  defp override_from(dictionary, callers) do
+  defp override_from(dictionary, chain) do
     case Keyword.get(dictionary, :evogit_config_dir) do
       dir when is_binary(dir) -> dir
-      _ -> Enum.find_value(callers, fn pid -> caller_override(pid) end)
+      _ -> Enum.find_value(chain, fn pid -> caller_override(pid) end)
     end
   end
 

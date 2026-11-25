@@ -15,6 +15,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   alias EvoGit.AgentScheduler.Dispatch
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.Subagents
+  alias EvoGit.AgentScheduler.TaskFreeze
   alias EvoGit.AgentScheduler.WorktreeManager
 
   # --- Close Waiters (EvoGit.AgentScheduler.await_close/2) ---
@@ -398,15 +399,25 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   so only its `EvoGit.AgentScheduler.await_close/2` waiters — flushed with the
   SAME post-injection terminal term — are answered.
 
-  The PAUSED shape (`{:paused, info}`, the terminal term of a TASK PAUSE) is
-  routed with the same root/child split but WITHOUT completion semantics: no
-  `:finalizing` notification, no merge, no archive/note write. `info` is
-  `%{agent_id, task_id, checkpoint, branch, reason: :task_pause}`, where
-  `checkpoint` is the paused worktree's checkpoint commit (or `nil`). A ROOT
-  replies `{:paused, info}` to its blocked caller (when it has one) and flushes
-  its `await_close/2` waiters with the same term; a CHILD stores `{:paused, info}`
-  as its sub-result and resumes the parent, which merges the child's committed
-  work like a normal completion and then stops at its own boundary.
+  The PAUSED shape (`{:paused, info}`, the terminal term of a TASK PAUSE) has NO
+  completion semantics and NO root/child split: a pause is a WHOLE-TREE FREEZE, so
+  every agent's report is routed to the task's
+  `%EvoGit.AgentScheduler.TaskFreeze{}` (`state.task_freezes`). `info` is
+  `%{agent_id, task_id, checkpoint, branch, durable, clean_freeze, reason:
+  :task_pause}`, where `checkpoint` is the paused worktree's checkpoint commit
+  (or `nil`).
+
+    * while the freeze still waits for other agents (`{:pending, freeze}`) the
+      report is stored and NOBODY is answered — the agent's own `await_close/2`
+      waiters are flushed with its `{:paused, info}`, which is all an individual
+      agent's pause can honestly claim;
+    * the LAST report (`{:complete, freeze}`) completes the freeze
+      (`EvoGit.AgentScheduler.complete_freeze/4`), which answers the ROOT's caller
+      and `await_close/2` waiters with the ONE task-level pause term
+      (`pause_kind: :clean | :dirty`);
+    * with NO freeze for the task (a pause that was cleared/abandoned, or a
+      straggler) the report is IGNORED with one warning: it fills no parent batch,
+      merges nothing, and never replies `meta.from`.
   """
   @spec handle_session_result(pos_integer(), term(), State.t()) :: {:noreply, State.t()}
   def handle_session_result(agent_id, {:paused, info} = paused, %State{} = state)
@@ -414,6 +425,8 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
     case Store.get_sched_meta(agent_id) do
       {:ok, meta} ->
         # `result_sent` keeps a later `:DOWN` a RECYCLE instead of a crash-retry.
+        # It is set on EVERY paused path, including the ignored one: the agent's
+        # run did stop, so re-dispatching it as a crash would be a lie.
         Store.put_sched_meta(agent_id, %{meta | result_sent: true})
 
         Logger.info(
@@ -421,24 +434,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
             "(task #{inspect(meta.task_id)}, checkpoint #{inspect(Map.get(info, :checkpoint))})"
         )
 
-        if meta.parent_id do
-          Subagents.store_sub_result(meta.parent_id, agent_id, paused, meta.spec)
-          {:noreply, Subagents.maybe_resume_parent(state, meta.parent_id)}
-        else
-          # A `nil` `from` (interactive root) has no caller to reply to.
-          if meta.from do
-            GenServer.reply(meta.from, paused)
-          end
-
-          state = flush_close_waiters(state, agent_id, paused)
-
-          state = %{
-            state
-            | task_agent_counts: Map.delete(state.task_agent_counts, meta.task_id)
-          }
-
-          {:noreply, state}
-        end
+        handle_paused_report(state, agent_id, meta, paused, info)
 
       :error ->
         Logger.warning(
@@ -492,6 +488,45 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
         {:noreply, state}
     end
+  end
+
+  # Routes ONE paused report to the task's freeze. Total: no freeze, a freeze
+  # whose root row vanished and a duplicate report all degrade to "nothing more
+  # to answer".
+  defp handle_paused_report(%State{} = state, agent_id, meta, paused, info) do
+    case Map.get(state.task_freezes, meta.task_id) do
+      nil ->
+        Logger.warning(
+          "AgentScheduler: paused result for agent #{agent_id} of task " <>
+            "#{inspect(meta.task_id)} but no task freeze is in flight — ignoring it " <>
+            "(nothing is stored, merged or replied)"
+        )
+
+        {:noreply, state}
+
+      freeze ->
+        state = flush_close_waiters(state, agent_id, paused)
+
+        case TaskFreeze.report(freeze, agent_id, info) do
+          {:pending, freeze} ->
+            {:noreply, put_task_freeze(state, meta.task_id, freeze)}
+
+          {:complete, freeze} ->
+            state = put_task_freeze(state, meta.task_id, freeze)
+
+            {:noreply,
+             EvoGit.AgentScheduler.complete_freeze(
+               state,
+               meta.task_id,
+               TaskFreeze.kind(freeze),
+               freeze
+             )}
+        end
+    end
+  end
+
+  defp put_task_freeze(%State{} = state, task_id, freeze) do
+    %{state | task_freezes: Map.put(state.task_freezes, task_id, freeze)}
   end
 
   @doc """

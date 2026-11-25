@@ -76,10 +76,10 @@ defmodule EvoGit.TaskControl.Tools do
        force: %{type: "boolean", default: false}
      }, ["task_id"], false},
     {"genesis_pause_task", :pause,
-     "pause the task at the next turn boundary; the agent finishes its current tool call; only non-interactive tasks with durable agent state can be paused; returns request acceptance and the saved task state, not proof that every agent has stopped",
+     "freeze every agent of the task at its current position; in-flight tool calls get a bounded chance to finish, then the tree is frozen in place; only non-interactive tasks with durable agent state can be paused; returns request acceptance and the saved task state, not proof that every agent has frozen",
      %{task_id: @id}, ["task_id"], false},
     {"genesis_resume_task", :resume,
-     "resume a paused task from its durable checkpoint; a pause recorded after a restart (dirty) tells the agents their last tool call may be incomplete; same task id, work continues where it stopped",
+     "thaw a paused task's whole frozen agent tree in place with the same agent ids and saved context; a dirty pause (restart or lease sweep, a quiesce timeout that cut off a tool call, or an unprovable clean freeze) tells the agents their last tool call may be partially applied; same task id, work continues where it stopped",
      %{task_id: @id}, ["task_id"], false}
   ]
 

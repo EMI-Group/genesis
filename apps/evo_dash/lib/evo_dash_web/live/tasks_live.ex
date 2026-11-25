@@ -729,8 +729,9 @@ defmodule EvoDashWeb.TasksLive do
           />
         <% end %>
 
-        <!-- Pause Task confirmation modal (graceful: agents stop at their next
-             turn boundary, the task keeps its work and stays resumable) -->
+        <!-- Pause Task confirmation modal (snapshot: every agent of the task is
+             frozen — in-flight tool calls get a bounded chance to finish — and the
+             whole tree keeps its state, so the task stays resumable) -->
         <%= if @confirm_pause_task_id do %>
           <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="close_pause_modal">
@@ -742,9 +743,9 @@ defmodule EvoDashWeb.TasksLive do
               </div>
 
               <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
-                <%!-- zh_CN: 暂停在下一轮对话边界生效，当前工具调用会先执行完，所以可能要等一会儿 --%>
+                <%!-- zh_CN: 暂停会冻结任务的整棵 agent 树：进行中的工具调用会先在限定时间内执行完，之后整棵树（包括保留自身状态的子 agent）都可以恢复 --%>
                 {gettext(
-                  "The agent finishes its current tool call first, so this can take a moment. The task keeps all of its work and can be resumed later."
+                  "The task freezes all of its agents. In-flight tool calls are allowed to finish first (up to a bounded limit), and the whole task tree — including its subagents, which keep their state — can be resumed later."
                 )}
               </p>
               <p class="text-xs text-base-content/70 mb-5">
@@ -1646,11 +1647,11 @@ defmodule EvoDashWeb.TasksLive do
   end
 
   # Task-level pause, step 2: ASYNC under SafeCall (an exit becomes a value).
-  # A pause drains the task's agents at their NEXT TURN BOUNDARY — the agent
-  # finishes its current tool call first — so the call is far slower than a
-  # status write and must NEVER block the LiveView. The modal is closed, the
-  # card collapsed and the busy marker set immediately; the outcome lands as
-  # `{{:pause_result, task_id}, result}`.
+  # A pause FREEZES the task's whole agent tree — every agent is stopped at its
+  # current position (in-flight tool batches get a bounded quiesce budget to
+  # finish) — so the call can take a while and must NEVER block the LiveView.
+  # The modal is closed, the card collapsed and the busy marker set immediately;
+  # the outcome lands as `{{:pause_result, task_id}, result}`.
   @impl true
   def handle_event("confirm_pause_task", _params, socket) do
     case socket.assigns[:confirm_pause_task_id] do

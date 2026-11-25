@@ -33,7 +33,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
   # Statuses of the OWNING task row: `:blocked` is agent-side only, so the task
   # is `:running` while the assistant works and `:awaiting_input` while its
   # interactive session idles between exchanges. The TASK-level pause statuses
-  # are admitted too: `:pausing` (a pause is draining the task) and `:paused`
+  # are admitted too: `:pausing` (a pause is freezing the task) and `:paused`
   # (its non-terminal resting state) both keep the owning task alive and
   # resumable, so its assistant session identity stays valid.
   # The AGENT-level lists above and elsewhere (`SchedMeta.statuses/0`,

@@ -60,8 +60,10 @@ defmodule EvoDash.Test.ConfigDirTest do
   `test/test_helper.exs` (`:evo_git, :config_dir_fun` →
   `EvoDash.Test.ConfigDir.resolve/0`).
 
-  The tests prove supervised-task inheritance (including transitivity), the raw
-  spawn escape boundary, and the fallback directory's first-run redirect.
+  The tests prove supervised-task inheritance (including transitivity), the
+  `$ancestors` arm a plain `GenServer` child needs (it never gets `$callers`),
+  the raw spawn escape boundary, and the fallback directory's first-run
+  redirect.
   The positive mounted proof lives in ConfigDirMountedTest below because its
   real Projects loader also reads a BEAM-global runner seam.
 
@@ -75,6 +77,25 @@ defmodule EvoDash.Test.ConfigDirTest do
 
   alias EvoDash.Test.ConfigDir
   alias EvoDash.Test.ConfigDirTest.Fixture
+
+  defmodule Probe do
+    @moduledoc false
+    # A plain `proc_lib` child: `GenServer.start_link/3` is the shape that gets
+    # NO `$callers` inheritance from its starter.
+    use GenServer
+
+    def start_link(_opts \\ nil), do: GenServer.start_link(__MODULE__, nil)
+
+    @impl true
+    def init(nil), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:chain, _from, state),
+      do: {:reply, {Process.get(:"$callers"), Process.get(:"$ancestors")}, state}
+
+    def handle_call(:resolve, _from, state),
+      do: {:reply, EvoDash.Test.ConfigDir.resolve(), state}
+  end
 
   setup context, do: Fixture.setup(context)
 
@@ -120,13 +141,49 @@ defmodule EvoDash.Test.ConfigDirTest do
 
     assert Task.await(task, 5_000) == config_dir
 
-    # A raw spawn does NOT propagate `$callers`; document the escaping process
-    # class rather than pretending that the seam reaches boot-time singletons.
+    # A raw spawn inherits NEITHER `$callers` NOR `$ancestors`; document the
+    # escaping process class rather than pretending that the seam reaches
+    # boot-time singletons.
     parent = self()
     spawn(fn -> send(parent, {:raw_spawn_config_dir, EvoGit.Platform.config_dir()}) end)
     assert_receive {:raw_spawn_config_dir, raw_spawn_dir}, 5_000
     assert raw_spawn_dir == Fixture.without_override(fn -> ConfigDir.config_dir() end)
     assert raw_spawn_dir != config_dir
+  end
+
+  describe "resolution (spawn chain)" do
+    test "a GenServer child inherits the override through `$ancestors`, not `$callers`" do
+      dir = ConfigDir.isolate!("config_dir_resolve_genserver")
+
+      # The production shape: a `GenServer.start_link/3` child is where a config
+      # or credential read runs with NO `$callers` chain. Elixir's `Task` writes
+      # `$callers` itself; `proc_lib` only writes `$ancestors`, so a
+      # `$callers`-only resolution answers the DEVELOPER's real config dir here
+      # and the test silently reads a real registration / real credentials.
+      {:ok, probe} = Probe.start_link()
+
+      {callers, ancestors} = GenServer.call(probe, :chain)
+
+      # The premise: `GenServer.start_link/3` writes `$ancestors` and NOT
+      # `$callers`, which is why the `$ancestors` arm is required at all.
+      refute self() in List.wrap(callers)
+      assert self() in ancestors
+      assert GenServer.call(probe, :resolve) == dir
+    end
+
+    @tag no_override: true
+    test "without an override a GenServer child resolves nothing, so the platform dir is used" do
+      # No `setup`-time `isolate!/1` in this test: neither the test process nor
+      # a plain `GenServer` child below it carries an override, and `nil` means
+      # "use the real platform directory".
+      assert ConfigDir.resolve() == nil
+
+      {:ok, probe} = Probe.start_link()
+      assert GenServer.call(probe, :resolve) == nil
+
+      # The convenience accessor still answers the concrete fallback directory.
+      assert ConfigDir.config_dir() == EvoGit.Platform.config_dir()
+    end
   end
 
   describe "cleanup ordering (supervised writers)" do

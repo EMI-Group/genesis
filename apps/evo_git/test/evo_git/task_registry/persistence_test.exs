@@ -1554,7 +1554,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
   end
 
   # TASK PAUSE × the cancel / force-kill / start machinery. The pause PROTOCOL
-  # itself (validation, the `{:paused, info}` drain result, resume, restart
+  # itself (validation, the `{:paused, info}` freeze result, resume, restart
   # mapping) is pinned in `pause_test.exs`; what lives here is the interaction
   # with the app-global cancel/force-kill paths this module already exercises.
   describe "task pause: cancel / force kill interaction" do
@@ -1577,7 +1577,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
           lease_expires_at: System.system_time(:second) + 300
         })
 
-      # The drain in flight: scheduler pause marker set + one live agent.
+      # The freeze in flight: scheduler pause marker set + one live agent.
       :ok = EvoGit.AgentScheduler.ControlPlane.mark_task_pausing(task_id)
       assert EvoGit.AgentScheduler.ControlPlane.task_pausing?(task_id)
 
@@ -1593,7 +1593,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       assert :ok = TaskRegistry.cancel_task(task_id)
 
-      # A cancel that arrives mid-drain WINS: the pause is abandoned first…
+      # A cancel that arrives mid-freeze WINS: the pause is abandoned first…
       refute EvoGit.AgentScheduler.ControlPlane.task_pausing?(task_id),
              "cancel must abandon the pause (no agent may keep walking to it)"
 
@@ -1724,7 +1724,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
             result: nil
           })
 
-        # A paused (or draining) row OWNS its id: `start_task/2` mints a fresh id,
+        # A paused (or freezing) row OWNS its id: `start_task/2` mints a fresh id,
         # so only a direct `{:start_task, id, ...}` call can reach this guard —
         # and it must never take the row over (that would reset the archive
         # roster and lose the paused run).

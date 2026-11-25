@@ -432,6 +432,45 @@ defmodule EvoGit.AgentScheduler.Subagents do
 
   def validate_spawn_spatiality(_parent_type, _parent_path, _child_type, _child_path), do: :ok
 
+  # --- Task-pause parking ---
+
+  @doc """
+  PARKS a parent that is blocked in `spawn_sub_agents/2` because the task is
+  being PAUSED.
+
+  Answers its batch waiter with `{:freeze, :task_pause}` (the agent side turns
+  that into a pause at this very boundary) and CLEARS every batch field on the
+  row — waiter, counts, results, indices and membership — so:
+    * a paused CHILD can never complete this parent's batch (nobody is waiting
+      for results any more);
+    * the row stops looking like a live batch, and the parent's status returns to
+      `:running` so its own pause report is the one terminal outcome it delivers.
+  The children's work is NOT lost: each child reports its own pause to the task
+  freeze and keeps its durable row, which a whole-tree resume rebuilds from.
+
+  A parent with no batch waiter (never blocked, or a retained batch) is left
+  untouched — there is nothing to park.
+  """
+  @spec park_for_pause(pos_integer(), SchedMeta.t()) :: :ok
+  def park_for_pause(agent_id, %SchedMeta{sub_agent_from: from} = meta)
+      when not is_nil(from) do
+    if waiter_alive?(from), do: GenServer.reply(from, {:freeze, :task_pause})
+
+    Store.put_sched_meta(agent_id, %{
+      meta
+      | sub_agent_from: nil,
+        total_sub_specs: 0,
+        pending_sub_agents: MapSet.new(),
+        sub_agent_results: %{},
+        sub_agent_indices: %{},
+        status: :running
+    })
+
+    :ok
+  end
+
+  def park_for_pause(_agent_id, %SchedMeta{}), do: :ok
+
   # --- Result Tracking ---
 
   @doc """
@@ -444,12 +483,11 @@ defmodule EvoGit.AgentScheduler.Subagents do
   contributes nothing — its result's foreign commits are ignored, so a stale SHA
   can never overwrite a newer one recorded by a writable foreign agent.
 
-  A PAUSED child's `{:paused, info}` term is stored EXACTLY like a result (the
-  map/roll-up only special-cases `{:ok, %Result{}}`), so the parent receives it
-  as one more sub-result once its batch completes — the agent-side
-  `EvoGit.Agent.SubagentProcessing` then merges `info.checkpoint` (the child's
-  pause commit) like a normal completion and formats it as a neutral sentence,
-  never as an error.
+  A PAUSED child NEVER reaches this function: a task pause freezes the whole
+  tree, so the parent's batch is parked and cleared by `park_for_pause/2` and
+  every agent's `{:paused, info}` is reported to the task freeze
+  (`EvoGit.AgentScheduler.TaskFreeze`) instead. A pause therefore fills no
+  `sub_agent_results` slot, merges nothing and narrates no completion.
   """
   @spec store_sub_result(pos_integer(), pos_integer(), term(), EvoGit.AgentSpec.t() | nil) :: :ok
   def store_sub_result(parent_id, sub_id, result, child_spec \\ nil) do

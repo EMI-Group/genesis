@@ -46,7 +46,7 @@ defmodule EvoGit.Application do
       read_concurrency: true
     ])
 
-    # Task-level PAUSE marker: task_ids currently draining a task-level pause.
+    # Task-level PAUSE marker: task_ids whose task-level pause is currently freezing.
     # `EvoGit.AgentScheduler.begin_task_pause/1` registers a task here BEFORE it
     # flags the task's live agents, so an agent registered afterwards (a
     # crash-retry, a late dispatch) is seeded with `pause_requested = true` by

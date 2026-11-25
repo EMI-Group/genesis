@@ -47,6 +47,11 @@ defmodule EvoGit.Agent.Session.PauseTest do
      a PAUSE (the scheduler's pause slot purge shape) instead of a crash; the
      SAME kill without the flag keeps today's crash behaviour (the scheduler
      sees the abnormal exit and no result is delivered).
+  6. A task pause's bounded-quiesce DEADLINE (`{:task_freeze, :force}`) interrupts
+     an agent that never reached a turn boundary: the pre-batch checkpoint's
+     in-flight marker survives as the snapshot, `clean_freeze` is `false` for an
+     interruptible (shell) batch, and the pause is still delivered exactly ONCE.
+     A pause honoured at a turn BOUNDARY instead reports `clean_freeze: true`.
 
   ## Why `async: true` is safe
 
@@ -189,6 +194,9 @@ defmodule EvoGit.Agent.Session.PauseTest do
       # run wrote. `checkpoint_for_pause/1` anchors it under
       # `refs/genesis/salvage/<branch>`, which is what survives the reclaim.
       assert %{agent_id: ^agent_id, task_id: ^task_id, reason: :task_pause} = info
+      # The pause was honoured AFTER the batch completed, so nothing was frozen and
+      # no interruptible call was in flight: the agent reports a CLEAN freeze.
+      assert info.clean_freeze == true
       checkpoint = info.checkpoint
       assert is_binary(checkpoint)
       assert Salvage.commit_exists?(repo_root, checkpoint)
@@ -260,6 +268,68 @@ defmodule EvoGit.Agent.Session.PauseTest do
       assert Salvage.commit_exists?(repo_root, checkpoint)
       assert {:ok, content} = Git.run(["show", "#{checkpoint}:#{@pause_file}"], repo_root)
       assert String.trim(content) == String.trim(@pause_content)
+    end
+  end
+
+  describe "a task pause's bounded-quiesce deadline ({:task_freeze, :force})" do
+    test "interrupts a mid-batch agent and the pre-batch marker makes the pause DIRTY",
+         %{agent_id: agent_id, repo_root: repo_root} = ctx do
+      {:ok, pid, ref} =
+        start_session(
+          dispatch_ctx(ctx,
+            llm_call: shell_calling_llm(self()),
+            tool_batch: blocking_tool_batch(self())
+          )
+        )
+
+      # The exchange worker is parked INSIDE a SHELL tool batch: it never reached a
+      # turn boundary, so the engine can never honour the pause itself.
+      assert_receive {:tool_batch_blocked, _worker}, @async_wait_budget_ms
+      :ok = ControlPlane.set_pause(agent_id, true)
+
+      # The deadline interrupts it. The session kills the worker; its abnormal
+      # `:DOWN` is converted into a pause from the LAST checkpointed state — the
+      # pre-batch one, whose `pending_tool_batch` marker is INTACT.
+      send(pid, {:task_freeze, :force})
+
+      assert_receive {:agent_session_result, ^agent_id, ^pid, {:paused, info}},
+                     @async_wait_budget_ms
+
+      # A shell call may have been interrupted half-way, so this is NOT a clean
+      # freeze: the task-level pause must be persisted dirty.
+      assert %{agent_id: ^agent_id, reason: :task_pause, clean_freeze: false} = info
+      assert is_binary(info.checkpoint)
+      assert Salvage.commit_exists?(repo_root, info.checkpoint)
+
+      # Exactly ONE terminal delivery, and never the completion term.
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, @async_wait_budget_ms
+      refute_receive {:agent_session_result, ^agent_id, ^pid, _other}, 100
+    end
+
+    test "finalizes ONCE when the freeze arrives again while the pause is being finalized",
+         %{agent_id: agent_id} = ctx do
+      {:ok, pid, ref} =
+        start_session(
+          dispatch_ctx(ctx,
+            llm_call: shell_calling_llm(self()),
+            tool_batch: blocking_tool_batch(self())
+          )
+        )
+
+      assert_receive {:tool_batch_blocked, _worker}, @async_wait_budget_ms
+      :ok = ControlPlane.set_pause(agent_id, true)
+
+      # The deadline is not guaranteed to be sent once: whichever interleaving the
+      # second freeze lands in (a dead worker, a running pause finalizer), a pause
+      # can never be delivered twice.
+      send(pid, {:task_freeze, :force})
+      send(pid, {:task_freeze, :force})
+
+      assert_receive {:agent_session_result, ^agent_id, ^pid, {:paused, _info}},
+                     @async_wait_budget_ms
+
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, @async_wait_budget_ms
+      refute_receive {:agent_session_result, ^agent_id, ^pid, _other}, 200
     end
   end
 
@@ -423,6 +493,42 @@ defmodule EvoGit.Agent.Session.PauseTest do
       else
         {:implicit_completion, response(context, assistant_message("done", nil)), "done"}
       end
+    end
+  end
+
+  # Turn 1 asks for ONE SHELL tool call: a batch class that is NOT a subagent, so a
+  # freeze during it must be reported DIRTY (a shell call may have been interrupted
+  # half-way). A second turn is never reached.
+  defp shell_calling_llm(test_pid) do
+    fn context, _tools, _params, agent_id, _retries ->
+      send(test_pid, {:llm_call, agent_id})
+
+      if assistant_message_count(context) == 0 do
+        {:ok,
+         response(
+           context,
+           assistant_message("Running a shell command.", [
+             ReqLLM.ToolCall.new(
+               "call_shell_block",
+               "bash",
+               Jason.encode!(%{"command" => "sleep 60"})
+             )
+           ])
+         )}
+      else
+        {:implicit_completion, response(context, assistant_message("done", nil)), "done"}
+      end
+    end
+  end
+
+  # A `:tool_batch` seam that never returns: it reports the exchange worker and
+  # blocks until it is killed, which is exactly the "never reached a turn boundary"
+  # shape the freeze deadline exists for.
+  defp blocking_tool_batch(test_pid) do
+    fn _indexed_calls, _state ->
+      send(test_pid, {:tool_batch_blocked, self()})
+      Process.sleep(30_000)
+      []
     end
   end
 

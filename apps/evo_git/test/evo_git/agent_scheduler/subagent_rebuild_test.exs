@@ -13,6 +13,9 @@ defmodule EvoGit.AgentScheduler.SubagentRebuildTest do
     * a `:running` slot is re-spawned under its PERSISTED `agent_id` with its
       persisted spawn position and a spec carrying the resume opts — never a
       fresh id;
+    * a `:fresh` slot (a child the pause froze BEFORE it registered) is spawned
+      through the same path but WITHOUT an `:agent_id` opt, carrying only its
+      batch position, so the scheduler mints its id like the original spawn;
     * a `:missing` slot answers `{:error, :subagent_result_lost}`;
     * slots are ordered by `spawn_index` (model call order), not by the order
       they arrive in;
@@ -103,6 +106,19 @@ defmodule EvoGit.AgentScheduler.SubagentRebuildTest do
       objective: "child #{agent_id}",
       repo_id: "primary",
       opts: [resume_agent_id: agent_id, restore_agent_state: true]
+    }
+  end
+
+  # A child that never registered before the pause: a first-spawn spec, so it
+  # carries NO resume identity.
+  defp fresh_spec do
+    %AgentSpec{
+      context_node: %ContextNode{path: "./doc", repo: "/test"},
+      phylo_node: %PhyloGraphNode{repo: "/test", base_commit: "base", current_commit: "base"},
+      agent_module: EvoGit.Agents.Executor,
+      objective: "fresh child",
+      repo_id: "primary",
+      opts: [persistent_state: true]
     }
   end
 
@@ -361,6 +377,85 @@ defmodule EvoGit.AgentScheduler.SubagentRebuildTest do
 
     assert {:error, {:spawn_failed, message}} = slot
     assert message =~ "kaboom"
+  end
+
+  # --- (6b) a :fresh slot was frozen BEFORE it registered ---
+  test "a :fresh slot is spawned WITHOUT an :agent_id opt but WITH its batch position" do
+    put_parent()
+    fresh = %{index: 0, status: :fresh, agent_id: nil, result: nil, spec: fresh_spec()}
+    test_pid = self()
+
+    allocating = fn state, _meta, entry, registration_opts ->
+      send(test_pid, {:spawned, entry.index, registration_opts, entry.spec})
+      # The scheduler mints the id, exactly as the original spawn would.
+      {:ok, @child_b, state}
+    end
+
+    assert {:noreply, state} =
+             SubagentRebuild.handle_rebuild(
+               @parent,
+               plan([fresh]),
+               5_000,
+               from(),
+               [spawn_fun: allocating],
+               %SchedulerState{}
+             )
+
+    assert_received {:spawned, 0, registration_opts, spec}
+    # NO id: the child never registered before the pause, so it must be a FIRST
+    # spawn, not a resume under a stale identity.
+    refute Keyword.has_key?(registration_opts, :agent_id)
+    assert registration_opts[:spawn_index] == 0
+    assert registration_opts[:spawn_turn] == @turn
+    assert %AgentSpec{} = spec
+    waiting = row(@parent)
+    assert waiting.status == :waiting
+    assert waiting.sub_agent_indices == %{@child_b => 0}
+    assert waiting.pending_sub_agents == MapSet.new([@child_b])
+    assert state.reattach_waiters != %{}
+  end
+
+  test "a mixed done/running/fresh batch counts every slot and resolves each one" do
+    put_parent()
+    stored = %Result{result: "already done", commit_sha: "c-9501"}
+
+    entries = [
+      done_entry(0, @child_a, stored),
+      running_entry(1, @child_c),
+      %{index: 2, status: :fresh, agent_id: nil, result: nil, spec: fresh_spec()}
+    ]
+
+    test_pid = self()
+
+    spawning = fn state, _meta, entry, registration_opts ->
+      send(test_pid, {:spawned, entry.index, registration_opts})
+      id = if entry.status == :fresh, do: @child_b, else: entry.agent_id
+      {:ok, id, state}
+    end
+
+    assert {:noreply, state} =
+             SubagentRebuild.handle_rebuild(
+               @parent,
+               plan(entries),
+               5_000,
+               from(),
+               [spawn_fun: spawning],
+               %SchedulerState{}
+             )
+
+    # `:running` keeps its id, `:fresh` arrives without one.
+    assert_received {:spawned, 1, running_opts}
+    assert running_opts[:agent_id] == @child_c
+    assert_received {:spawned, 2, fresh_opts}
+    refute Keyword.has_key?(fresh_opts, :agent_id)
+    waiting = row(@parent)
+    # ONE expected count over the WHOLE batch, every slot accounted for.
+    assert waiting.total_sub_specs == 3
+    assert waiting.sub_agent_results == %{0 => {:ok, stored}}
+    assert waiting.sub_agent_indices == %{@child_c => 1, @child_b => 2}
+    assert waiting.pending_sub_agents == MapSet.new([@child_c, @child_b])
+    assert map_size(waiting.sub_agent_results) + MapSet.size(waiting.pending_sub_agents) == 3
+    assert state.reattach_waiters != %{}
   end
 
   # --- (7) refusals never touch the row ---

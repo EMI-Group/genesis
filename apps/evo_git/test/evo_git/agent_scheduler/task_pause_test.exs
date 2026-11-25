@@ -1,17 +1,31 @@
 defmodule EvoGit.AgentScheduler.TaskPauseTest do
   @moduledoc """
-  TASK-LEVEL PAUSE on the scheduler side.
+  TASK-LEVEL PAUSE on the scheduler side — the FREEZE COORDINATOR.
 
   A task pause is a durable, resumable resting state, NOT a cancel and NOT a
   failure: `EvoGit.AgentScheduler.begin_task_pause/1` marks the task in the
-  `:evogit_task_pause` control-plane table and sets the `pause_requested` flag on
-  the control row (`{agent_id, cancel_requested, pause_requested}`) of every live
-  agent of that task, then purges those agents from the LLM/tool waiting queues
-  replying `{:error, :paused}`. Agents honour the flag at their next TURN
-  BOUNDARY and deliver `{:paused, info}` — a term the scheduler routes like a
-  normal terminal result but without completion semantics.
+  `:evogit_task_pause` control-plane table, sets the `pause_requested` flag on the
+  control row (`{agent_id, cancel_requested, pause_requested}`) of every live
+  agent of that task, purges those agents from the LLM/tool waiting queues
+  replying `{:error, :paused}`, and opens ONE `%TaskFreeze{}` over the whole agent
+  TREE.
 
-  What these tests pin:
+  The freeze is what makes a pause coherent:
+
+    * a parent blocked in `spawn_sub_agents/2` is PARKED — its caller receives
+      `{:freeze, :task_pause}` and its batch fields are cleared, so no child
+      result can ever complete that batch;
+    * `spawn_sub_agents/2` for a pausing task is answered `{:freeze, :task_pause}`
+      and registers nothing;
+    * every agent (root and children) reports `{:paused, info}` to the freeze;
+      NOBODY is answered until the LAST pending agent reports, and that ONE
+      task-level answer carries `pause_kind: :clean | :dirty`;
+    * a child's pause never lands in a parent batch, never merges and never
+      narrates a completion;
+    * a quiesce timer forces whatever has not reported (`{:task_freeze, :force}`
+      to its session) and ONE bounded grace timer then completes the pause DIRTY.
+
+  What these tests also pin:
 
     * the pause flag is atomic and INDEPENDENT of the cancel flag;
     * a NEW agent of an already-pausing task is seeded `pause_requested = true`
@@ -20,17 +34,18 @@ defmodule EvoGit.AgentScheduler.TaskPauseTest do
       slot waits with `{:error, :paused}`, and leaves the cancel flag alone;
     * CANCEL WINS: `begin_graceful_cancel/1` clears a pending pause, and a pause
       that arrives while the task is cancelling is a total no-op;
-    * a force kill clears the task pause marker;
-    * `{:paused, info}` routing: a ROOT replies `{:paused, info}` to its caller
-      and `await_close/2` waiters, a CHILD lands as a paused sub-result and
-      resumes the parent, and neither runs completion semantics.
+    * a force kill clears the task pause marker.
 
-  `async: true`: every row used here lives in the app-global named ETS tables, so
-  each test writes ONLY under per-test UNIQUE agent ids (`9_960_000+`) and task
-  ids, and deletes exactly its own rows — never a whole-table wipe.
+  `async: false` — the quiesce cases pin the PROCESS-WIDE app env keys
+  `:task_pause_quiesce_ms` / `:task_pause_force_grace_ms` via
+  `Application.put_env/3`, which a concurrently running module could observe.
+  Every other test here only writes its OWN rows in the app-global named ETS
+  tables under per-test UNIQUE agent ids (`9_960_000+`) and task ids and deletes
+  exactly those rows — never a whole-table wipe.
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
+  alias EvoGit.Agent.SubagentProcessing
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.ControlPlane
@@ -39,7 +54,7 @@ defmodule EvoGit.AgentScheduler.TaskPauseTest do
   alias EvoGit.AgentScheduler.Slots
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
-  alias EvoGit.Agent.SubagentProcessing
+  alias EvoGit.AgentScheduler.TaskFreeze
   alias EvoGit.AgentSpec
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
@@ -101,6 +116,45 @@ defmodule EvoGit.AgentScheduler.TaskPauseTest do
     end)
 
     agent_id
+  end
+
+  # An agent whose "session" is THIS test process, so a force command is
+  # observable in the mailbox and the freeze counts it as live.
+  defp put_session_agent!(task_id, overrides) do
+    put_live_agent!(task_id, Map.put(Map.new(overrides), :session_pid, self()))
+  end
+
+  # Drives `begin_task_pause/1` through the real handler and returns the new
+  # scheduler state (with the freeze opened).
+  defp begin_pause!(state, task_id) do
+    assert {:reply, :ok, new_state} =
+             AgentScheduler.handle_call({:begin_task_pause, task_id}, {self(), make_ref()}, state)
+
+    assert ControlPlane.task_pausing?(task_id)
+    on_exit(fn -> ControlPlane.clear_task_pausing(task_id) end)
+    new_state
+  end
+
+  defp freeze_for(state, task_id), do: Map.fetch!(state.task_freezes, task_id)
+
+  defp freeze_timer_token(state, task_id, kind) do
+    {token, _timer} = state.task_freeze_timers |> Map.fetch!(task_id) |> Map.fetch!(kind)
+    token
+  end
+
+  defp paused_info(task_id, agent_id, overrides \\ []) do
+    Map.merge(
+      %{
+        agent_id: agent_id,
+        task_id: task_id,
+        checkpoint: "checkpoint-#{agent_id}",
+        branch: "branch-#{agent_id}",
+        durable: true,
+        clean_freeze: true,
+        reason: :task_pause
+      },
+      Map.new(overrides)
+    )
   end
 
   setup do
@@ -227,7 +281,7 @@ defmodule EvoGit.AgentScheduler.TaskPauseTest do
 
       state = base_state()
 
-      assert {:reply, :ok, ^state} =
+      assert {:reply, :ok, paused_state} =
                AgentScheduler.handle_call(
                  {:begin_task_pause, task_id},
                  {self(), make_ref()},
@@ -235,6 +289,7 @@ defmodule EvoGit.AgentScheduler.TaskPauseTest do
                )
 
       assert ControlPlane.task_pausing?(task_id)
+      assert AgentScheduler.task_freezing?(paused_state, task_id)
 
       for id <- [root, child] do
         assert Store.pause_requested?(id), "agent #{id} of the task must be flagged"
@@ -243,24 +298,29 @@ defmodule EvoGit.AgentScheduler.TaskPauseTest do
 
       refute Store.pause_requested?(other), "another task's agent must not be flagged"
       refute ControlPlane.task_pausing?(other_task)
+      refute AgentScheduler.task_freezing?(paused_state, other_task)
 
-      # clear_task_pause/1 clears the marker AND every flag of the task.
-      assert {:reply, :ok, ^state} =
+      # clear_task_pause/1 clears the marker AND every flag of the task — and it
+      # must take the freeze (and its timers) with it, so a timer can never fire
+      # for a task that is no longer pausing.
+      assert {:reply, :ok, cleared_state} =
                AgentScheduler.handle_call(
                  {:clear_task_pause, task_id},
                  {self(), make_ref()},
-                 state
+                 paused_state
                )
 
       refute ControlPlane.task_pausing?(task_id)
+      refute AgentScheduler.task_freezing?(cleared_state, task_id)
+      assert cleared_state.task_freeze_timers == %{}
       for id <- [root, child], do: refute(Store.pause_requested?(id))
 
       # Idempotent / total with nothing left.
-      assert {:reply, :ok, ^state} =
+      assert {:reply, :ok, ^cleared_state} =
                AgentScheduler.handle_call(
                  {:clear_task_pause, unique_task_id("pause-empty")},
                  {self(), make_ref()},
-                 state
+                 cleared_state
                )
     end
 
@@ -290,7 +350,7 @@ defmodule EvoGit.AgentScheduler.TaskPauseTest do
 
       state = base_state()
 
-      assert {:reply, :ok, ^state} =
+      assert {:reply, :ok, paused_state} =
                AgentScheduler.handle_call(
                  {:begin_task_pause, task_id},
                  {self(), make_ref()},
@@ -300,16 +360,20 @@ defmodule EvoGit.AgentScheduler.TaskPauseTest do
       assert ControlPlane.task_pausing?(task_id)
       assert Store.pause_requested?(agent_id)
 
-      assert {:reply, :ok, _state} =
+      assert {:reply, :ok, cancelled_state} =
                AgentScheduler.handle_call(
                  {:begin_graceful_cancel, task_id},
                  {self(), make_ref()},
-                 state
+                 paused_state
                )
 
       refute ControlPlane.task_pausing?(task_id), "the cancel abandoned the pause marker"
       refute Store.pause_requested?(agent_id), "the cancel cleared the pause flag"
-      assert Store.cancel_requested?(agent_id), "the cancel flag owns the drain now"
+
+      refute AgentScheduler.task_freezing?(cancelled_state, task_id),
+             "the cancel abandoned the freeze"
+
+      assert Store.cancel_requested?(agent_id), "the cancel flag owns the freeze now"
     end
 
     test "a force kill clears the task pause marker" do
@@ -319,7 +383,7 @@ defmodule EvoGit.AgentScheduler.TaskPauseTest do
 
       state = base_state()
 
-      assert {:reply, :ok, _state} =
+      assert {:reply, :ok, paused_state} =
                AgentScheduler.handle_call(
                  {:begin_task_pause, task_id},
                  {self(), make_ref()},
@@ -328,15 +392,16 @@ defmodule EvoGit.AgentScheduler.TaskPauseTest do
 
       assert ControlPlane.task_pausing?(task_id)
 
-      assert {:reply, :ok, _state} =
+      assert {:reply, :ok, killed_state} =
                AgentScheduler.handle_call(
                  {:force_kill_task_agents_for_task, task_id},
                  {self(), make_ref()},
-                 state
+                 paused_state
                )
 
       refute ControlPlane.task_pausing?(task_id)
       refute Store.pause_requested?(agent_id)
+      refute AgentScheduler.task_freezing?(killed_state, task_id)
     end
   end
 
@@ -392,137 +457,197 @@ defmodule EvoGit.AgentScheduler.TaskPauseTest do
     end
   end
 
-  # --- {:paused, info} routing ----------------------------------------------
+  # --- The freeze: parking a waiting parent ---------------------------------
 
-  describe "handle_session_result/3 — {:paused, info}" do
-    test "a ROOT replies {:paused, info} to the caller and to await_close waiters" do
-      task_id = unique_task_id("pause-root")
-      agent_id = unique_agent_id()
-      from = {self(), make_ref()}
-      {_caller, caller_ref} = from
-      close_from = {self(), make_ref()}
-      {_close_caller, close_ref} = close_from
+  describe "begin_task_pause/1 — parking the tree" do
+    test "parks a waiting parent and leaves the task DRAINING (no result reply)" do
+      task_id = unique_task_id("pause-park")
+      {_caller, waiter_ref} = waiter = {self(), make_ref()}
+      child = unique_agent_id()
 
-      put_live_agent!(task_id)
+      parent =
+        put_session_agent!(task_id, %{
+          depth: 0,
+          parent_id: nil,
+          status: :waiting,
+          sub_agent_from: waiter,
+          total_sub_specs: 1,
+          pending_sub_agents: MapSet.new([child]),
+          sub_agent_indices: %{child => 0}
+        })
 
-      :ets.insert(
-        :evogit_sched_meta,
-        {agent_id,
-         %SchedMeta{
-           id: agent_id,
-           depth: 0,
-           spec: agent_spec(),
-           task_id: task_id,
-           retries: 0,
-           from: from,
-           session_pid: self(),
-           foreign_repo_commits: %{"foreign1" => "sha-1"}
-         }}
-      )
+      state = begin_pause!(base_state(), task_id)
 
-      on_exit(fn -> :ets.delete(:evogit_sched_meta, agent_id) end)
+      # The parent's exchange is released with the PARK term — not a result.
+      assert_received {^waiter_ref, {:freeze, :task_pause}}
+      refute_received {^waiter_ref, {:ok, _}}
+      refute_received {^waiter_ref, {:paused, _}}
 
-      state =
-        base_state(task_agent_counts: %{task_id => 2})
-        |> Lifecycle.register_close_waiter(agent_id, close_from)
+      # …and its batch is cleared, so no child result can ever complete it.
+      assert {:ok, parked} = Store.get_sched_meta(parent)
+      assert parked.sub_agent_from == nil
+      assert parked.total_sub_specs == 0
+      assert parked.pending_sub_agents == MapSet.new()
+      assert parked.sub_agent_results == %{}
+      assert parked.sub_agent_indices == %{}
+      assert parked.status == :running
 
-      info = %{
-        agent_id: agent_id,
-        task_id: task_id,
-        checkpoint: "checkpoint-sha",
-        branch: "evogit-agent-paused",
-        reason: :task_pause
-      }
-
-      assert {:noreply, new_state} =
-               Lifecycle.handle_session_result(agent_id, {:paused, info}, state)
-
-      # The caller and every close waiter receive the SAME term — a pause is a
-      # terminal outcome, but it is NOT a result/report.
-      assert_received {^caller_ref, {:paused, ^info}}
-      assert_received {^close_ref, {:paused, ^info}}
-      refute_received {^caller_ref, {:ok, _}}
-
-      assert new_state.task_agent_counts == %{}
-      assert new_state.close_waiters == %{}
-      assert {:ok, stored} = Store.get_sched_meta(agent_id)
-      assert stored.result_sent
+      # The freeze covers the whole live tree and waits for every report.
+      freeze = freeze_for(state, task_id)
+      assert TaskFreeze.root_id(freeze) == parent
+      assert TaskFreeze.pending(freeze) == [parent]
+      assert TaskFreeze.kind(freeze) == :clean
+      assert Map.has_key?(state.task_freeze_timers, task_id)
     end
+  end
 
-    test "a CHILD lands as a paused sub-result and resumes the parent" do
-      task_id = unique_task_id("pause-child")
-      parent_id = unique_agent_id()
-      child_id = unique_agent_id()
-      # A LIVE waiter (a running parent blocked on its batch) — NOT the retained
-      # `sub_agent_from: nil` marker, which keeps the parent :running instead.
-      subagent_from = {self(), make_ref()}
+  # --- The freeze: {:paused, info} routing ----------------------------------
 
-      :ets.insert(
-        :evogit_sched_meta,
-        {parent_id,
-         %SchedMeta{
-           id: parent_id,
-           depth: 0,
-           spec: agent_spec(),
-           task_id: task_id,
-           retries: 0,
-           status: :waiting,
-           sub_agent_from: subagent_from,
-           total_sub_specs: 1,
-           pending_sub_agents: MapSet.new([child_id]),
-           sub_agent_indices: %{child_id => 0}
-         }}
-      )
+  describe "the task freeze — {:paused, info} routing" do
+    test "a paused result with no freeze is ignored entirely" do
+      task_id = unique_task_id("pause-no-freeze")
+      waiter_ref = make_ref()
+      parent_ref = make_ref()
 
-      :ets.insert(
-        :evogit_sched_meta,
-        {child_id,
-         %SchedMeta{
-           id: child_id,
-           depth: 1,
-           spec: agent_spec(),
-           task_id: task_id,
-           parent_id: parent_id,
-           retries: 0,
-           status: :running,
-           session_pid: self()
-         }}
-      )
+      parent =
+        put_session_agent!(task_id, %{
+          depth: 0,
+          parent_id: nil,
+          status: :waiting,
+          sub_agent_from: {self(), parent_ref},
+          total_sub_specs: 1,
+          sub_agent_indices: %{}
+        })
 
-      :ok = Store.put_agent_state(parent_id, agent_state())
-
-      info = %{
-        agent_id: child_id,
-        task_id: task_id,
-        checkpoint: "c-sha",
-        branch: "b",
-        reason: :task_pause
-      }
-
+      child = put_session_agent!(task_id, %{depth: 1, parent_id: parent})
+      info = paused_info(task_id, child)
       state = base_state()
 
-      assert {:noreply, new_state} =
-               Lifecycle.handle_session_result(child_id, {:paused, info}, state)
+      # No freeze for the task: the old "a paused child fills the parent's batch"
+      # behaviour is GONE — nothing is stored, merged, resumed or replied.
+      assert {:noreply, ^state} =
+               Lifecycle.handle_session_result(child, {:paused, info}, state)
 
-      # A paused child is NOT a failure: it is stored verbatim as its sub-result…
-      assert {:ok, parent} = Store.get_sched_meta(parent_id)
-      assert parent.sub_agent_results == %{0 => {:paused, info}}
-      refute Map.get(parent.foreign_repo_commits, "primary")
+      assert {:ok, parent_meta} = Store.get_sched_meta(parent)
+      assert parent_meta.sub_agent_results == %{}
+      assert parent_meta.foreign_repo_commits == %{}
+      assert parent_meta.status == :waiting
+      assert :queue.to_list(state.queue) == []
 
-      # …the child's row is marked replied (so its :DOWN recycles, not retries)…
-      assert {:ok, child} = Store.get_sched_meta(child_id)
-      assert child.result_sent
+      # The child's run DID stop, so its row is marked replied (a `:DOWN` after
+      # this recycles instead of crash-retrying)…
+      assert {:ok, child_meta} = Store.get_sched_meta(child)
+      assert child_meta.result_sent
+      # …and nobody was answered.
+      refute_received {^parent_ref, _}
+      refute_received {^waiter_ref, _}
+    end
 
-      # …and the parent is resumed with the scheduler (queued here because the
-      # scheduler state is paused).
-      assert parent.status == :ready
-      assert :queue.to_list(new_state.queue) == [parent_id]
+    test "a child's paused report fills NOTHING in the parent and never merges" do
+      task_id = unique_task_id("pause-child-report")
+      parent_ref = make_ref()
 
-      on_exit(fn ->
-        :ets.delete(:evogit_sched_meta, parent_id)
-        :ets.delete(:evogit_sched_meta, child_id)
-        Store.delete_agent_state(parent_id)
-      end)
+      parent =
+        put_session_agent!(task_id, %{
+          depth: 0,
+          parent_id: nil,
+          status: :waiting,
+          sub_agent_from: {self(), parent_ref},
+          total_sub_specs: 1
+        })
+
+      child = put_session_agent!(task_id, %{depth: 1, parent_id: parent})
+
+      state = begin_pause!(base_state(), task_id)
+      assert_received {^parent_ref, {:freeze, :task_pause}}
+
+      info = paused_info(task_id, child)
+      {_close_caller, close_ref} = close_from = {self(), make_ref()}
+      state = Lifecycle.register_close_waiter(state, child, close_from)
+
+      assert {:noreply, pending_state} =
+               Lifecycle.handle_session_result(child, {:paused, info}, state)
+
+      # Nothing lands in the parent batch, nothing is merged, nobody is resumed.
+      assert {:ok, parent_meta} = Store.get_sched_meta(parent)
+      assert parent_meta.sub_agent_results == %{}
+      assert parent_meta.foreign_repo_commits == %{}
+      assert parent_meta.sub_agent_from == nil
+      assert parent_meta.status == :running
+      assert :queue.to_list(pending_state.queue) == []
+      refute_received {^parent_ref, _}
+
+      # The individual agent's own close waiters ARE flushed with its own term.
+      assert_received {^close_ref, {:paused, ^info}}
+
+      # The freeze records the report and now waits for the parent only.
+      freeze = freeze_for(pending_state, task_id)
+      assert TaskFreeze.pending(freeze) == [parent]
+      assert child in TaskFreeze.agents(freeze)
+      assert TaskFreeze.kind(freeze) == :clean
+    end
+
+    test "the ROOT is answered only by the LAST pending report, with pause_kind" do
+      task_id = unique_task_id("pause-last")
+      {_caller, caller_ref} = caller = {self(), make_ref()}
+      {_close_caller, close_ref} = close_from = {self(), make_ref()}
+
+      parent = put_session_agent!(task_id, %{depth: 0, parent_id: nil, from: caller})
+      child = put_session_agent!(task_id, %{depth: 1, parent_id: parent})
+
+      state = base_state(task_agent_counts: %{task_id => 2})
+      state = begin_pause!(state, task_id)
+      state = Lifecycle.register_close_waiter(state, parent, close_from)
+
+      root_info = paused_info(task_id, parent)
+
+      assert {:noreply, waiting_state} =
+               Lifecycle.handle_session_result(parent, {:paused, root_info}, state)
+
+      # The root's OWN close waiters get its own term; the task caller waits.
+      assert_received {^close_ref, {:paused, ^root_info}}
+      refute_received {^caller_ref, _}
+      assert TaskFreeze.pending(freeze_for(waiting_state, task_id)) == [child]
+
+      child_info = paused_info(task_id, child)
+
+      assert {:noreply, done_state} =
+               Lifecycle.handle_session_result(child, {:paused, child_info}, waiting_state)
+
+      assert_received {^caller_ref, {:paused, term}}
+      assert term.agent_id == parent
+      assert term.task_id == task_id
+      assert term.reason == :task_pause
+      assert term.pause_kind == :clean
+      assert term.checkpoint == root_info.checkpoint
+      assert term.branch == root_info.branch
+      assert term.durable == true
+      assert term.clean_freeze == true
+      assert term.frozen_agents == Enum.sort([parent, child])
+
+      # The freeze and its timers are gone; the count is kept while rows linger.
+      refute AgentScheduler.task_freezing?(done_state, task_id)
+      assert done_state.task_freeze_timers == %{}
+      assert done_state.close_waiters == %{}
+      assert done_state.task_agent_counts[task_id] == 2
+    end
+
+    test "a report that is not clean-freeze completes the pause DIRTY" do
+      task_id = unique_task_id("pause-dirty")
+      {_caller, caller_ref} = caller = {self(), make_ref()}
+      root = put_session_agent!(task_id, %{depth: 0, parent_id: nil, from: caller})
+
+      state = begin_pause!(base_state(), task_id)
+      info = paused_info(task_id, root, %{clean_freeze: false})
+
+      assert {:noreply, done_state} =
+               Lifecycle.handle_session_result(root, {:paused, info}, state)
+
+      assert_received {^caller_ref, {:paused, term}}
+      assert term.pause_kind == :dirty
+      assert term.clean_freeze == false
+      assert term.frozen_agents == [root]
+      refute AgentScheduler.task_freezing?(done_state, task_id)
     end
 
     test "a paused term for an agent with no sched_meta is ignored" do
@@ -541,24 +666,132 @@ defmodule EvoGit.AgentScheduler.TaskPauseTest do
     end
   end
 
-  # --- Paused child format + merge (agent-side consumers) -------------------
+  # --- The freeze: spawning while pausing -----------------------------------
 
-  describe "a paused subagent is formatted and merged like a completion" do
-    test "the formatted text is neutral and names the pause" do
-      text =
-        SubagentProcessing.format_subagent_result(
-          {:paused, %{checkpoint: "abc123", branch: "evogit-agent-x", reason: :task_pause}}
-        )
+  describe "spawn_sub_agents/2 while the task is pausing" do
+    test "answers {:freeze, :task_pause} and registers nothing" do
+      task_id = unique_task_id("pause-spawn")
+      parent = put_session_agent!(task_id, %{depth: 0, parent_id: nil})
+      :ok = ControlPlane.mark_task_pausing(task_id)
+      on_exit(fn -> ControlPlane.clear_task_pausing(task_id) end)
 
-      refute String.starts_with?(text, "Error:")
-      refute text =~ "Error"
-      assert text =~ "PAUSED"
-      assert text =~ "abc123"
-      assert text =~ "evogit-agent-x"
-      assert text =~ "A task resume re-spawns it from its own durable state"
+      state = base_state(paused: false)
+      rows_before = length(Store.list_sched_meta())
+
+      assert {:reply, {:freeze, :task_pause}, ^state} =
+               AgentScheduler.handle_call(
+                 {:spawn_sub_agents, parent, [agent_spec()]},
+                 {self(), make_ref()},
+                 state
+               )
+
+      assert length(Store.list_sched_meta()) == rows_before,
+             "a spawn during a pause must register no child"
+
+      # The parent keeps NO installed batch (nothing to wait for, nothing to fill).
+      assert {:ok, meta} = Store.get_sched_meta(parent)
+      assert meta.total_sub_specs == 0
+      assert meta.pending_sub_agents == MapSet.new()
+      assert meta.sub_agent_results == %{}
+    end
+  end
+
+  # --- The freeze: quiesce + grace timers -----------------------------------
+
+  describe "the freeze quiesce/grace timers" do
+    setup do
+      prev_quiesce = Application.get_env(:evo_git, :task_pause_quiesce_ms)
+      prev_grace = Application.get_env(:evo_git, :task_pause_force_grace_ms)
+      Application.put_env(:evo_git, :task_pause_quiesce_ms, 20)
+      Application.put_env(:evo_git, :task_pause_force_grace_ms, 20)
+
+      on_exit(fn ->
+        restore_env(:task_pause_quiesce_ms, prev_quiesce)
+        restore_env(:task_pause_force_grace_ms, prev_grace)
+      end)
+
+      :ok
     end
 
-    test "the paused checkpoint becomes a merge child like a normal completion" do
+    test "a quiesce timeout force-freezes the remaining agents and completes DIRTY" do
+      task_id = unique_task_id("pause-quiesce")
+      {_caller, caller_ref} = caller = {self(), make_ref()}
+
+      parent = put_session_agent!(task_id, %{depth: 0, parent_id: nil, from: caller})
+      child = put_session_agent!(task_id, %{depth: 1, parent_id: parent})
+
+      state = begin_pause!(base_state(), task_id)
+      assert TaskFreeze.pending(freeze_for(state, task_id)) == Enum.sort([parent, child])
+
+      # The quiesce seam is read at CALL time: the armed timer really fires fast.
+      timeout_token = freeze_timer_token(state, task_id, :timeout)
+
+      assert_receive {:task_freeze_timeout, ^task_id, ^timeout_token}, 1_000
+
+      assert {:noreply, forced_state} =
+               AgentScheduler.handle_info(
+                 {:task_freeze_timeout, task_id, timeout_token},
+                 state
+               )
+
+      # Every still-pending agent's session is told to force-freeze (both fake
+      # sessions are THIS process).
+      assert_receive {:task_freeze, :force}, 1_000
+      assert_receive {:task_freeze, :force}, 1_000
+
+      freeze = freeze_for(forced_state, task_id)
+      assert freeze.forced
+      assert TaskFreeze.kind(freeze) == :dirty
+      assert TaskFreeze.pending(freeze) == []
+      assert TaskFreeze.agents(freeze) == Enum.sort([parent, child])
+      refute_received {^caller_ref, _}
+
+      # The grace seam is a bounded second chance: the pause then completes DIRTY
+      # from whatever is durable (nothing was reported here).
+      grace_token = freeze_timer_token(forced_state, task_id, :grace)
+
+      assert_receive {:task_freeze_grace, ^task_id, ^grace_token}, 1_000
+
+      assert {:noreply, done_state} =
+               AgentScheduler.handle_info(
+                 {:task_freeze_grace, task_id, grace_token},
+                 forced_state
+               )
+
+      assert_receive {^caller_ref, {:paused, term}}, 1_000
+      assert term.agent_id == parent
+      assert term.task_id == task_id
+      assert term.pause_kind == :dirty
+      assert term.checkpoint == nil
+      assert term.branch == nil
+      assert term.frozen_agents == Enum.sort([parent, child])
+      refute AgentScheduler.task_freezing?(done_state, task_id)
+    end
+
+    test "a stale timer token is ignored" do
+      task_id = unique_task_id("pause-stale-timer")
+      parent = put_session_agent!(task_id, %{depth: 0, parent_id: nil})
+
+      state = begin_pause!(base_state(), task_id)
+
+      assert {:noreply, ^state} =
+               AgentScheduler.handle_info({:task_freeze_timeout, task_id, make_ref()}, state)
+
+      assert {:noreply, ^state} =
+               AgentScheduler.handle_info({:task_freeze_grace, task_id, make_ref()}, state)
+
+      refute_received {:task_freeze, :force}
+      assert TaskFreeze.pending(freeze_for(state, task_id)) == [parent]
+    end
+  end
+
+  defp restore_env(key, nil), do: Application.delete_env(:evo_git, key)
+  defp restore_env(key, value), do: Application.put_env(:evo_git, key, value)
+
+  # --- A paused child is never a completion (agent-side consumers) ----------
+
+  describe "a paused child is never a completion" do
+    test "a paused payload is not a merge child and narrates no PAUSED result" do
       spec = agent_spec()
 
       info = %{
@@ -569,23 +802,20 @@ defmodule EvoGit.AgentScheduler.TaskPauseTest do
         reason: :task_pause
       }
 
-      {children, cross_repo} =
-        SubagentProcessing.collect_mergeable_results([{3, spec}], [{:paused, info}], "primary")
-
-      assert cross_repo == []
-
-      assert [%{index: 3, commit_sha: "c-sha", branch: "b-name", node_path: "./"} = child] =
-               children
-
-      assert child.objective == spec.objective
-
-      # No checkpoint sha ⇒ today's behaviour (no merge attempt).
+      # It never reaches a parent batch, so it is never a merge child.
       assert {[], []} =
                SubagentProcessing.collect_mergeable_results(
                  [{3, spec}],
-                 [{:paused, %{info | checkpoint: nil}}],
+                 [{:paused, info}],
                  "primary"
                )
+
+      # The old "PAUSED … a task resume re-spawns it" narration is gone: the
+      # formatter no longer has a paused clause at all.
+      text = SubagentProcessing.format_subagent_result({:paused, info})
+      refute text =~ "PAUSED"
+      refute text =~ "A task resume re-spawns it from its own durable state"
+      refute String.starts_with?(text, "Error:")
     end
   end
 end

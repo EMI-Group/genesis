@@ -69,6 +69,17 @@ Sessions are IN-MEMORY only: a BEAM restart loses the session and fails the task
 5. `:simple` root = `Manager` (plans, delegates to Executor/TaskScheduler/Investigator subagents); `:custom` root = `EvoGit.Agents.Custom` bound to the `agent:` id.
 6. Errors: `{:error, {:invalid_node_path, msg}}`; invalid starting commit → `{:error, message}` from `format_invalid_starting_commit_error/3`; anything else propagates.
 
+### Task Pause Result Pass-Through (`{:paused, info}`)
+
+`AgentScheduler.run_agent/2` is a blocking `GenServer.call(…, :infinity)` returning `{:ok, %Result{}} | {:error, term()} | {:paused, map()}`, where `info = %{agent_id, task_id, reason: :task_pause, pause_kind, checkpoint, branch, durable, clean_freeze, frozen_agents}` (the ROOT's own facts plus the task-level freeze verdict) — a pause is a THIRD terminal term, never completion.
+`Evolution.deliver_agent_result/4` is the ONE explicit pause branch (`evolution.ex:124-133`): it logs "task paused at a turn boundary … not merging" and returns `{:paused, info}` UNCHANGED, with NO `notify_finalizing/1` and NO `merge_and_report/3,4`.
+`merge_and_report/4` never receives a pause — its `is_map(agent_output)` guard cannot match the tuple, and it is only reachable from the `{:ok, %Result{}}` arm.
+Pass-through is the whole contract: `TaskRegistry.TaskExecutor` returns the phase value verbatim and `TaskRegistry.handle_wrapper_result/3`'s `{:paused, info}` arm parks the row via `persist_paused/3` (`:paused`, `finished_at` nil, result/usage untouched, `pause_kind` DERIVED from that report by `Pause.pause_kind/1` — `:clean` only when it proves `clean_freeze: true` and `durable: true`).
+`Genesis` (Mode A and Mode B architecture), `SkillExtraction` and `SelfReflective` have NO pause arm: they fall into their generic `error ->` clause, log it as a failure and return the tuple unchanged for the wrapper to park.
+`Assistant.finalize/3` has no `{:paused, info}` clause (a `CaseClauseError` would fail the wrapper), but that is unreachable because `TaskRegistry.Pause` refuses an interactive task with `:not_pausable`.
+**Genesis Mode B implementation phase is the exception**: a paused manager result matches its `error ->` arm, which logs "implementation phase failed", fires `notify_finalizing/1` and returns `merge_and_report(repo_path, architect_output, …)` — the paused second root therefore becomes an `{:ok, report}` architect partial success and the task COMPLETES instead of parking.
+This directory never sees individual subagent results (`spawn_sub_agents/2` blocks inside the scheduler); child-result narration, including the paused-child text, belongs to `../agent/subagent_processing.ex` (`format_subagent_result/1`).
+
 ### `starting_commit` Opt — Evolution Only
 
 `TaskRegistry.RuntimeOpts.build_common_runtime_opts/3` passes `:starting_commit` for BOTH `:genesis` and `:evolve`, but only `Evolution.run/2` reads it — a genesis value is silently ignored.

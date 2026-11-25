@@ -80,6 +80,7 @@ defmodule EvoGit.LLM.ChatGPTResponses do
 
     original_provider_opts = opts[:provider_options] || []
     cache_key = original_provider_opts[:prompt_cache_key] || original_provider_opts[:session_id]
+    # `siwc_account` is a Genesis registration alias, never an OpenAI body field.
     provider_opts = [store: false, prompt_cache_key: cache_key]
 
     opts =
@@ -104,10 +105,35 @@ defmodule EvoGit.LLM.ChatGPTResponses do
            {"authorization", "Bearer " <> token},
            {"content-type", "application/json"},
            {"accept", "text/event-stream"}
-         ],
+         ] ++
+           identity_headers(original_provider_opts, cache_key) ++ attribution_headers(),
          payload
        )}
     end
+  end
+
+  # SIWC usage-attribution headers required by OpenAI's token-sharing docs: the
+  # `originator` name matches the registration `agent_name_hint`, and the
+  # `user-agent` carries `<app name>/<version>`. ChatGPT's usage surface
+  # attributes requests by these headers.
+  defp attribution_headers do
+    name = ChatGPT.agent_name()
+    version = Application.spec(:evo_git, :vsn) |> to_string()
+
+    [{"originator", name}, {"user-agent", "#{name}/#{version}"}]
+  end
+
+  # The per-agent-run identity rides BOTH the body `prompt_cache_key` and the
+  # `session-id` header. Thread headers are emitted only when supplied.
+  defp identity_headers(original_provider_opts, cache_key) do
+    thread_id = original_provider_opts[:thread_id]
+
+    [
+      {"session-id", original_provider_opts[:session_id] || cache_key},
+      {"thread-id", thread_id},
+      {"x-client-request-id", thread_id}
+    ]
+    |> Enum.reject(fn {_name, value} -> is_nil(value) end)
   end
 
   @impl true

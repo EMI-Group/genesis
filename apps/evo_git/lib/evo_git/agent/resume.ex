@@ -17,14 +17,29 @@ defmodule EvoGit.Agent.Resume do
     * `:dirty_pause` — a task-level pause resumed after a host restart: the
       SAME repair and ONE `[RESUME]` notice (it additionally states the pause
       happened and what the whole-tree resume does with the subagents).
-    * `:clean_pause` — the user paused the task at a turn boundary and resumed
-      it: the conversation is restored with **NO repair** (nothing was
-      interrupted, so no `tool_calls` tail is dangling — see `dangling/1` and
-      `clean_pause_intact?/1`) and ONE neutral pause/resume notice instead of
-      `[RESUME]` (`Resume.Notice`). A clean pause whose durable state DOES prove
-      an interruption (a non-empty `pending_tool_batch` or a dangling tail) is
-      repaired and narrated as an interruption instead — the transcript, never
-      the pause label, is the truth.
+    * `:clean_pause` — the user paused the task and resumed it: the conversation
+      is restored with **NO repair** and ONE neutral pause/resume notice instead
+      of `[RESUME]` (`Resume.Notice`). Which of the THREE clean-pause positions
+      the durable state proves decides the work — see below. A clean pause whose
+      durable state proves a MIXED interruption (a marker with any non-subagent
+      class) is repaired and narrated as an interruption instead — the
+      transcript, never the pause label, is the truth.
+
+  ## The three clean-pause positions (`apply/2`'s branch order)
+
+  1. **Turn boundary** — no in-flight marker and no dangling `tool_calls` tail
+     (`clean_pause_intact?/1`): nothing is appended except the notice.
+  2. **Awaiting children** — the marker holds ONLY `:subagent` calls AND the
+     transcript really does have unanswered calls
+     (`frozen_subagent_batch?/1`): the pause froze the parent inside
+     `spawn_sub_agents/2`, so NOT a single call was interrupted. The batch is
+     rebuilt/re-attached in ONE `Reattach.resolve/3` call, one REAL tool result is
+     appended per unanswered call, the merge note is reported when a child's work
+     landed, and the only fallback text is the neutral
+     `EvoGit.Agent.Resume.ImpactText.pause_lost/1` — never the crash wording.
+  3. **Safety fallback** — anything else (a mixed or non-subagent marker, a bare
+     dashboard/re-entrant resume, a marker whose tail is already answered):
+     repair as an interruption, exactly like a crash retry.
 
   ## Two steps, both driven by transcript SHAPE (the repairing kinds)
 
@@ -50,7 +65,9 @@ defmodule EvoGit.Agent.Resume do
      from the children's DURABLE rows (`EvoGit.Agent.Resume.RosterBatch`):
      finished children contribute their stored results and still-running ones
      are re-spawned under their persisted ids with their own anchored base,
-     branch and restored conversation — recursively down the tree.
+     branch and restored conversation — recursively down the tree. A child the
+     pause froze BEFORE it registered is spawned FRESH
+     (a `:fresh` plan entry, same spec builder as the original spawn).
   2. **Notice** — append ONE `[RESUME]`-framed, NON-user-authored `:user`
      message (`EvoGit.Agent.Resume.Notice`) stating the interruption, the
      interrupted calls and their classes, the worktree situation and how to
@@ -133,14 +150,29 @@ defmodule EvoGit.Agent.Resume do
       clean_pause?(state) and clean_pause_intact?(state) ->
         state |> annotate_pause() |> clear_marker()
 
+      clean_pause?(state) and frozen_subagent_batch?(state) ->
+        batch = ToolBatch.normalize(state.pending_tool_batch)
+        state = %{state | pending_tool_batch: batch}
+
+        state
+        |> resume_frozen_batch(batch, with_resume_kind(opts, state))
+        |> annotate_pause()
+        |> clear_marker()
+
       true ->
         batch = ToolBatch.normalize(state.pending_tool_batch)
         state = %{state | pending_tool_batch: batch}
-        state |> repair(batch, opts) |> annotate(batch) |> clear_marker()
+        state |> repair(batch, with_resume_kind(opts, state)) |> annotate(batch) |> clear_marker()
     end
   end
 
   def apply(state, _opts), do: state
+
+  # The resume KIND travels with the options into `Reattach`/`RosterBatch`, so a
+  # re-spawned child inherits the pause position it was frozen in (`nil` = the
+  # crash-retry path, which writes no pause key at all).
+  defp with_resume_kind(opts, %State{} = state),
+    do: Keyword.put(opts, :resume_kind, resume_kind(state))
 
   @doc """
   True when this state is a `:clean_pause` resume: the user paused the task at a
@@ -357,6 +389,70 @@ defmodule EvoGit.Agent.Resume do
 
       false
     end
+  end
+
+  # The SECOND clean-pause position: the pause froze the parent while it WAITED on
+  # subagents. Two facts must hold — the marker holds ONLY `:subagent` calls (so no
+  # call of any other class was interrupted) AND the transcript really does have
+  # unanswered calls (there must be something to answer). A marker with a mixed
+  # class, or a tail that is already answered, is a genuine interruption and keeps
+  # the repair path.
+  defp frozen_subagent_batch?(%State{} = state) do
+    ToolBatch.subagent_only?(state.pending_tool_batch) and dangling(state) != :none
+  end
+
+  ## Frozen batch (clean pause, parent waiting on children)
+
+  # Answer the frozen batch with the REAL children: ONE re-attach/rebuild request
+  # for the WHOLE batch, one tool result per unanswered call in model call order,
+  # then the ordinary merge note. Nothing here was interrupted, so the only
+  # fallback text is the NEUTRAL `ImpactText.pause_lost/1`.
+  defp resume_frozen_batch(%State{} = state, batch, opts) do
+    case dangling(state) do
+      {:ok, turn, calls} ->
+        # The TURN travels with the request: the durable rebuild identifies the
+        # frozen children by the parent turn that spawned them.
+        classified = classify(calls, batch, state)
+
+        reattach =
+          Reattach.resolve(state, subagent_slots(classified), Keyword.put(opts, :turn, turn))
+
+        results =
+          classified
+          |> Enum.map(&pause_result(&1, reattach))
+          |> Enum.map(&ContextBuilder.tag_message_turn(&1, turn))
+
+        state = %{state | context: ReqLLM.Context.append(state.context, results)}
+
+        append_merge_note(state, turn, reattach)
+
+      :none ->
+        state
+    end
+  end
+
+  # A real child's formatted text wins; a slot with no real result answers the
+  # neutral pause text. A call whose class is NOT `:subagent` on this path means
+  # the marker and the transcript disagree, which IS an interruption — it keeps
+  # the class-honest impact text (and is reported, never silently reclassified).
+  defp pause_result({index, call, class}, reattach) do
+    text =
+      Map.get(reattach.texts, index) ||
+        case class do
+          :subagent ->
+            ImpactText.pause_lost(call)
+
+          other ->
+            Logger.warning(
+              "Resume: a clean-frozen batch carries a #{inspect(other)} call " <>
+                "(#{inspect(call_id(call))}) that was not part of the subagent batch; " <>
+                "answering it as an interruption"
+            )
+
+            ImpactText.impact(other, call)
+        end
+
+    ToolDispatch.assemble_tool_result(call_id(call), call_name(call), text)
   end
 
   ## Notice

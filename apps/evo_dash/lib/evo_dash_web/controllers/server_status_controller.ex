@@ -33,12 +33,12 @@ defmodule EvoDashWeb.ServerStatusController do
   that phase still owns its worktree and its merge-back work.
 
   The task-level PAUSE pair splits across that line. `:pausing` IS busy: a pause
-  request is still DRAINING the task's agents at their next turn boundary, so a
-  wrapper and its lease are alive and work is in flight — stopping the server
-  now would lose it. `:paused` is NOT busy: every agent has stopped at a turn
-  boundary, the state is durable and resumable, and no wrapper and no lease
-  remain, so a paused task holds nothing an upgrade could destroy and must not
-  block it.
+  request is still FREEZING the whole task tree, whose in-flight tool batches
+  get a bounded quiesce budget to finish, so a wrapper and its lease are alive
+  and work is in flight — stopping the server now would lose it. `:paused` is
+  NOT busy: every agent's frozen position is durable and resumable, and no
+  wrapper and no lease remain, so a paused task holds nothing an upgrade could
+  destroy and must not block it.
   """
 
   use EvoDashWeb, :controller
@@ -48,12 +48,12 @@ defmodule EvoDashWeb.ServerStatusController do
   # The live-state ids are counted. `:finalizing` is included on purpose: a task
   # in that phase still owns its worktree and its merge-back work.
   #
-  # `:pausing` is included: a pause request is still DRAINING the task's agents
-  # at their next turn boundary, so a wrapper and its lease are alive and work is
-  # in flight. `:paused` is deliberately EXCLUDED: every agent has stopped at a
-  # turn boundary, the state is durable and resumable, and no wrapper and no
-  # lease remain — a paused task holds nothing an upgrade could destroy, so it
-  # must not block the idle gate.
+  # `:pausing` is included: a pause request is still FREEZING the task's whole
+  # agent tree, whose in-flight tool batches get a bounded quiesce budget to
+  # finish, so a wrapper and its lease are alive and work is in flight.
+  # `:paused` is deliberately EXCLUDED: every agent's frozen position is durable
+  # and resumable, and no wrapper and no lease remain — a paused task holds
+  # nothing an upgrade could destroy, so it must not block the idle gate.
   #
   # `:awaiting_input` is deliberately EXCLUDED: it marks an idle interactive
   # session waiting for the user, which holds no worker, no LLM slot, no tool

@@ -3762,11 +3762,13 @@ defmodule EvoDashWeb.TasksLiveTest do
     end
   end
 
-  # Task-level PAUSE / RESUME (`docs/task-pause.md`). `:pausing` is the DRAIN
-  # window (the agent stops at its next turn boundary, so the request is slow)
-  # and `:paused` is the NON-TERMINAL, resumable resting state. Both actions are
-  # ASYNC on this page, so every assertion either awaits the store row or the
-  # socket assigns instead of reading the click's HTML.
+  # Task-level PAUSE / RESUME (`docs/task-pause.md`). A pause is a SNAPSHOT of
+  # the whole task tree: the request moves the task to `:pausing` while every
+  # agent freezes (in-flight tool calls get a bounded chance to finish) and then
+  # rests in the NON-TERMINAL, resumable `:paused` state, from which a resume
+  # THAWS the same tree in place. Both actions are ASYNC on this page, so every
+  # assertion either awaits the store row or the socket assigns instead of
+  # reading the click's HTML.
   describe "task pause and resume" do
     test "the status filter offers Pausing and Paused and filters by the stored status text", %{
       conn: conn
@@ -3867,9 +3869,13 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ "Pause task?"
       assert html =~ "Task: #{id}"
       assert html =~ "Keep Running"
-      # The drain wording promises a delay and a resumable task.
-      assert html =~ "finishes its current tool call first"
+      # The modal promises a whole-tree freeze (in-flight calls get a bounded
+      # window) whose snapshot stays resumable — no drain-at-next-turn wording.
+      assert html =~ "The task freezes all of its agents"
+      assert html =~ "whole task tree"
+      assert html =~ "including its subagents"
       assert html =~ "can be resumed later"
+      refute html =~ "finishes its current tool call first"
 
       render_click(view, "confirm_pause_task", %{"task_id" => id})
 

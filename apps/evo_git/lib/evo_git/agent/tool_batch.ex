@@ -10,10 +10,19 @@ defmodule EvoGit.Agent.ToolBatch do
 
   Every path that stops executing the batch clears it: the normal completion
   (`EvoGit.Agent.ToolDispatch.continue_after_tools/7`), the protocol-violation
-  path, and the exchange's terminal checkpoints. The marker is written ONCE per
-  tool-calling turn, immediately before the batch runs, and the pre-batch
-  checkpoint makes it durable together with the assistant `tool_calls` message
-  (so a resumed run can tell which calls were in flight and of what class).
+  path, and the `:finish`/`:yield` terminal checkpoints. The marker is written
+  ONCE per tool-calling turn, immediately before the batch runs, and the
+  pre-batch checkpoint makes it durable together with the assistant `tool_calls`
+  message (so a resumed run can tell which calls were in flight and of what
+  class).
+
+  **A task pause is the ONE exception**: `{:pause, state}` PRESERVES the marker
+  (see `EvoGit.Agent.Exchange`), because a pause is a snapshot of the whole agent
+  tree — the batch was frozen, not completed, so the resumed run must still see
+  which calls were in flight. `subagent_only?/1` tells the two freeze shapes
+  apart: a pure subagent batch was waiting on children (nothing was
+  interrupted), while a mixed or non-subagent batch may have been interrupted
+  mid-call.
 
   ## Shape
 
@@ -196,6 +205,28 @@ defmodule EvoGit.Agent.ToolBatch do
         _none -> []
       end
     end)
+  end
+
+  @doc """
+  True iff the marker is a PURE subagent batch: at least one call and EVERY
+  call's class is `:subagent`.
+
+  This is the pause-kind question asked of a FROZEN batch
+  (`EvoGit.Agent.Session.Pause.info/4`'s `clean_freeze`): a parent waiting on
+  children had no call interrupted, so a freeze there loses nothing. A mixed
+  batch (or one with no subagent call at all) means a shell/edit/write call may
+  have been interrupted half-way, which the task pause must record as dirty.
+
+  Total: `nil` (no marker), an empty normalized marker and any malformed value
+  answer `false` — "no marker" is NOT a subagent batch (it is no batch at all,
+  which the caller decides about on its own).
+  """
+  @spec subagent_only?(term()) :: boolean()
+  def subagent_only?(batch) do
+    case calls(batch) do
+      [] -> false
+      calls -> Enum.all?(calls, &(&1.class == :subagent))
+    end
   end
 
   ## Classification internals

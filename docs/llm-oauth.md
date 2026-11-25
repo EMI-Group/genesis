@@ -34,6 +34,8 @@ models = ["MODEL_ID_FROM_GENESIS_CHATGPT_MODELS"]
 ```
 
 The provider identifier `openai_codex` is retained so existing profiles and task references can be loaded. On upgrade, sign in through Genesis and select an available model if the previously configured model is missing. Credentials imported from Codex in older versions are not used by this connection. The subscription uses [OpenAI's public Responses endpoint](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference).
+Every inference request also identifies the calling app, which is what lets ChatGPT's Settings → Usage page attribute the traffic instead of bucketing it as surface "unknown": the `originator` header carries the same stable app name Genesis sends as its registration `agent_name_hint`, and `User-Agent` carries `<app name>/<version>`; `EvoGit.Auth.ChatGPT.agent_name/0` is the single source for both.
+The Codex `backend-api` headers (`chatgpt-account-id`, `openai-beta`) stay omitted, because this flow targets the public Responses endpoint rather than `chatgpt.com/backend-api`.
 
 For a separate account or workspace, use `genesis chatgpt login --account work` and set `siwc_account = "work"` on its provider profile. Run `genesis chatgpt logout --account work` to disconnect it. The default alias is `default`. The pasted-address route works the same way for a named account.
 

@@ -54,7 +54,10 @@ defmodule EvoGit.Agent.ToolBatchTest do
      reproduces the built marker exactly (STRING keys + STRING classes back to
      Atom classes, call order preserved), and every malformed shape a restored
      column could hold degrades to `nil` (no marker) rather than raising in the
-     resume path.
+     resume path;
+  4. **`subagent_only?/1`** tells a PURE subagent batch (at least one call, every
+     call `:subagent`) from a marker that carries an interruptible call — the
+     question a frozen pause asks to decide clean vs dirty.
   """
 
   use ExUnit.Case, async: true
@@ -377,6 +380,57 @@ defmodule EvoGit.Agent.ToolBatchTest do
                started_at: nil,
                calls: [%{index: 0, id: nil, name: nil, class: :read}]
              }
+    end
+  end
+
+  describe "subagent_only?/1 — is a FROZEN batch a pure subagent batch?" do
+    test "no marker at all is NOT a pure subagent batch" do
+      # The caller decides what "no batch" means (a pause with no in-flight batch
+      # is clean for a different reason); this predicate answers only about a batch.
+      for no_marker <- [nil, %{}, %{"calls" => []}, "garbage", 42] do
+        refute ToolBatch.subagent_only?(no_marker),
+               "expected #{inspect(no_marker)} to be NOT a pure subagent batch"
+      end
+    end
+
+    test "a marker whose every call is :subagent is a pure subagent batch" do
+      batch =
+        ToolBatch.build(
+          [
+            %{id: "c0", name: "subagent_batch_probe"},
+            %{id: "c1", name: "subagent_batch_probe"}
+          ],
+          3,
+          BatchAgent.subagent_modules()
+        )
+
+      assert Enum.map(batch.calls, & &1.class) == [:subagent, :subagent]
+      assert ToolBatch.subagent_only?(batch)
+
+      # A RESTORED marker (STRING keys + STRING classes) answers the same.
+      assert batch |> Jason.encode!() |> Jason.decode!() |> ToolBatch.subagent_only?()
+    end
+
+    test "ONE non-subagent call (a MIXED batch) is not a pure subagent batch" do
+      # Every other class interrupts real work, which is what makes a pause dirty.
+      for name <- ["read", "bash", "edit", "write"] do
+        batch =
+          ToolBatch.build(
+            [%{id: "c0", name: "subagent_batch_probe"}, %{id: "c1", name: name}],
+            3,
+            BatchAgent.subagent_modules()
+          )
+
+        refute ToolBatch.subagent_only?(batch),
+               "expected a batch containing #{inspect(name)} to be NOT subagent-only"
+      end
+    end
+
+    test "the subagent NAME without the declaration is an ordinary call" do
+      batch = ToolBatch.build([%{id: "c0", name: "subagent_batch_probe"}], 3, [])
+
+      assert Enum.map(batch.calls, & &1.class) == [:read]
+      refute ToolBatch.subagent_only?(batch)
     end
   end
 

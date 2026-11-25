@@ -872,8 +872,11 @@ defmodule EvoGit.RemoteNode do
 
   @doc """
   Requests a TASK-LEVEL PAUSE on the given node: the task moves to `:pausing`,
-  its agents stop at their next turn boundary and it parks in `:paused` once the
-  drain completes. A task already `:pausing`/`:paused` is idempotent `:ok`.
+  its whole agent tree freezes at its current position (an in-flight tool batch
+  gets a bounded chance to finish, then it is force-frozen) and it parks in
+  `:paused` with a `pause_kind` derived from the report (`:clean` only when
+  every agent proved it froze inside the quiesce, otherwise `:dirty`). A task
+  already `:pausing`/`:paused` is idempotent `:ok`.
   On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.pause_task/1`
   directly. On a remote node, routes the call through `:erpc` via
   `call_remote/4`.

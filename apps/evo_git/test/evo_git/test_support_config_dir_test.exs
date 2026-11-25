@@ -140,6 +140,24 @@ defmodule EvoGit.TestSupport.ConfigDirTest do
   alias EvoGit.TestSupport.ConfigDir
   alias EvoGit.TestSupport.FsCleanup
 
+  defmodule Probe do
+    @moduledoc false
+    # A plain `proc_lib` child, i.e. the shape of ReqLLM's `StreamServer`.
+    use GenServer
+
+    def start_link(_opts \\ nil), do: GenServer.start_link(__MODULE__, nil)
+
+    @impl true
+    def init(nil), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:chain, _from, state),
+      do: {:reply, {Process.get(:"$callers"), Process.get(:"$ancestors")}, state}
+
+    def handle_call(:resolve, _from, state),
+      do: {:reply, EvoGit.TestSupport.ConfigDir.resolve(), state}
+  end
+
   describe "directory naming (unique across BEAMs, not merely within one)" do
     test "the name carries the OS pid and a random component, and two calls differ" do
       dir = ConfigDir.isolate!("config_dir_unique")
@@ -178,6 +196,25 @@ defmodule EvoGit.TestSupport.ConfigDirTest do
       assert ConfigDir.activate(other) == other
       assert ConfigDir.resolve() == other
       assert Process.get(:evogit_config_dir) == other
+    end
+
+    test "a GenServer child inherits the override through `$ancestors`, not `$callers`" do
+      dir = ConfigDir.isolate!("config_dir_resolve_genserver")
+
+      # The production shape: ReqLLM's `StreamServer` is a plain
+      # `GenServer.start_link/3` child, and that is where a provider adapter's
+      # `attach_stream/4` (hence the ChatGPT credential lookup) runs. Elixir's
+      # `Task` writes `$callers` itself; `proc_lib` only writes `$ancestors`, so a
+      # `$callers`-only resolution answers the DEVELOPER's real config dir here
+      # and a credential test silently reads a real registration.
+      {:ok, probe} = Probe.start_link()
+
+      {callers, ancestors} = GenServer.call(probe, :chain)
+      # The premise: `GenServer.start_link/3` writes `$ancestors` and NOT
+      # `$callers`, which is why the `$ancestors` arm is required at all.
+      refute self() in List.wrap(callers)
+      assert self() in ancestors
+      assert GenServer.call(probe, :resolve) == dir
     end
   end
 

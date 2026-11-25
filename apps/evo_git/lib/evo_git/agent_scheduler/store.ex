@@ -330,10 +330,11 @@ defmodule EvoGit.AgentScheduler.Store do
   Sets the `pause_requested` flag to `true` on an agent's control row.
 
   Called by the scheduler when a task-level pause is requested for the agent's
-  task; the agent honours the flag at its next turn boundary (never mid-tool) and
-  the flag is cleared by `clear_pause_requested/1` / the task-level clear when the
-  pause is completed or abandoned. One atomic update on the control row — the
-  agent's state row is never written here.
+  task; the agent honours the flag at a turn boundary (or while parked on its
+  subagent batch, with an in-flight tool batch force-frozen once the quiesce
+  expires), and the flag is cleared by `clear_pause_requested/1` / the
+  task-level clear when the pause is completed or abandoned. One atomic update
+  on the control row — the agent's state row is never written here.
   """
   @spec set_pause_requested(pos_integer()) :: :ok | {:error, :not_found}
   def set_pause_requested(agent_id) do
@@ -391,7 +392,7 @@ defmodule EvoGit.AgentScheduler.Store do
   `task_id` (the `:evogit_sched_meta` scan).
 
   Used when a pause is ABANDONED (a cancel that arrives while `:pausing` wins)
-  and when a force kill or a completed drain ends the pause. Total: an agent
+  and when a force kill or a completed freeze ends the pause. Total: an agent
   whose row is already gone is simply skipped, and a missing table is a no-op.
   """
   @spec clear_pause_requested_for_task(String.t()) :: :ok

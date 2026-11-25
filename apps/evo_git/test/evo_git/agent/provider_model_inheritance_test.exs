@@ -224,7 +224,7 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
     effective = wire("work", "wide", "high")
     {root, state} = register!(ctx.snapshot, root_spec(ctx.repo, model_spec: original))
     {:ok, resolved} = ModelSelection.resolve(state, effective)
-    SchedulerStore.put_agent_state(root, struct!(agent!(root), resolved))
+    SchedulerStore.put_agent_state(root, struct!(agent!(root), Map.drop(resolved, [:provider])))
     assert meta!(root).spec.model_spec == original
     child = child_spec(root, ctx.repo)
     assert_inherited(child, effective, false)

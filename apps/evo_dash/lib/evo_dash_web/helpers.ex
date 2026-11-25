@@ -142,7 +142,9 @@ defmodule EvoDashWeb.Helpers do
   user message — is its OWN violet family: neither busy work (amber) nor a
   terminal outcome (base-content), so the colour itself says "a human is
   needed here".
-  `:pausing` is still busy work — a pause is draining the task's agents at the next turn boundary — so it shares the amber family.
+  `:pausing` is still busy work — a pause is freezing the whole task tree
+  (in-flight tool batches get a bounded chance to finish) — so it shares the
+  amber family.
   `:paused` is a non-terminal, resumable resting state with no live wrapper, so it gets its own info (blue) family, deliberately distinct from busy (amber), terminal (base-content) and human-needed (violet).
   """
   def task_status_badge(:running),
@@ -187,7 +189,8 @@ defmodule EvoDashWeb.Helpers do
   Statuses arrive as atoms; unknown/non-atom input falls back to a dim neutral
   gray. `:awaiting_input` is violet (the idle-session family), deliberately
   distinct from both the amber busy family and the neutral terminal family.
-  `:pausing` is still busy work (a pause draining the agents at the next turn boundary), so it stays amber.
+  `:pausing` is still busy work (a pause freezing the whole task tree, with
+  in-flight tool batches getting a bounded chance to finish), so it stays amber.
   `:paused` is the non-terminal resumable resting state and gets its own info (blue) family.
   """
   def task_status_dot_class(:running), do: "bg-warning"

@@ -8,34 +8,38 @@ defmodule EvoDash.Test.ConfigDir do
   `:config_dir_fun` app-env seam of `EvoGit.Platform.config_dir/1`:
   `test/test_helper.exs` installs `{EvoDash.Test.ConfigDir, :resolve, []}` as
   `:config_dir_fun`, so every `EvoGit.Config.config_dir/0` call consults the
-  CURRENT process (or one of its `$callers`) instead of the BEAM-global
-  `XDG_CONFIG_HOME` env var. Production never sets `:config_dir_fun`, so
-  production resolution stays byte-identical to the XDG/platform-directory
-  behaviour.
+  CURRENT process (or one of its spawn-chain ancestors — `$callers` then
+  `$ancestors`) instead of the BEAM-global `XDG_CONFIG_HOME` env var. Production
+  never sets `:config_dir_fun`, so production resolution stays byte-identical to
+  the XDG/platform-directory behaviour.
 
   Both helpers use the SAME process-dictionary key (`:evogit_config_dir`), so an
   umbrella `mix test` that loads both apps' test helpers resolves identically
   whichever helper installed the fun last, and a module in either app can
   activate the override through either helper.
 
-  ## `$callers` rule — what inherits the override
+  ## Spawn-chain rule — what inherits the override
 
   `Process.get(:evogit_config_dir)` covers the process that called
-  `activate/1`; every other process is resolved by walking the `:"$callers"`
-  chain, which OTP 24+ `proc_lib` propagates from parent to child for
-  `GenServer`/`Task`/`Supervisor` children started FROM the test process —
-  including `Task.Supervisor.start_child/2` (the `EvoDash.SafeCall` async-load
-  path). `Phoenix.LiveViewTest` additionally sets the mounted view's
-  `:"$callers"` to the TEST pid explicitly
+  `activate/1`; every other process is resolved by walking its SPAWN CHAIN — the
+  `:"$callers"` entries (written by Elixir's `Task`/`Task.Supervisor`) followed
+  by the `:"$ancestors"` entries (`proc_lib`, hence ANY `GenServer`/`Supervisor`
+  child), which is the order `resolve/0` consults. `$ancestors` is load-bearing,
+  not a fallback nicety: a plain `GenServer.start_link/3` child inherits NO
+  `$callers`, so a `$callers`-only lookup resolves the DEVELOPER's real
+  `~/.config/genesis` inside it (real registrations, real credentials) and a
+  config read there silently escapes the isolation. `Task.Supervisor.start_child/2`
+  (the `EvoDash.SafeCall` async-load path) records this same chain in its child.
+  `Phoenix.LiveViewTest` additionally sets the mounted view's `:"$callers"` to
+  the TEST pid explicitly
   (`deps/phoenix_live_view/lib/phoenix_live_view/channel.ex:1297`), so a mounted
   LiveView resolves the test's override AND so does every supervised load task
   the view spawns (the chain is view -> load task -> test pid).
 
   It does NOT cover:
 
-    * processes with no caller chain back to the test — e.g. a raw `spawn/1`
-      or `:proc_lib.spawn/1` (nothing propagates `$callers`), or a process
-      started by a child that itself did not inherit one;
+    * processes with no chain back to the test — e.g. a raw `spawn/1` or
+      `:proc_lib.spawn/1` started by a process that inherited neither key;
     * the app-global singletons started at BOOT — `EvoGit.AgentScheduler`,
       `EvoGit.TaskRegistry`, `EvoGit.Store`, `EvoGit.PeakHourEngine`. A module
       whose config reads happen INSIDE one of those (e.g. a `TaskRegistry` read
@@ -83,13 +87,13 @@ defmodule EvoDash.Test.ConfigDir do
 
   A child is a writer for `dir` when ANY of these holds:
 
-    * it still carries the REGISTRAR pid in its `:"$callers"` chain (the pid is
-      readable after the test process died, because it lives in the child's
-      dictionary) — the per-test `isolate!/1` case; or
-    * its own dictionary / caller chain RESOLVES `dir` as its config-dir
+    * it still carries the REGISTRAR pid in its SPAWN CHAIN — `$callers` then
+      `$ancestors` (the pid is readable after the test process died, because it
+      lives in the child's dictionary) — the per-test `isolate!/1` case; or
+    * its own dictionary / spawn chain RESOLVES `dir` as its config-dir
       override (every pid in that chain must still be ALIVE for a dictionary
       read to answer); or
-    * its `:"$callers"` chain names a pid that ever ACTIVATED `dir` through
+    * its spawn chain names a pid that ever ACTIVATED `dir` through
       `activate/1` — the owner marker. A pid VALUE stays readable in the child's
       dictionary after its process died, so this is the case that makes a
       `setup_all`-created directory exactly as safe as a per-test one: the
@@ -100,7 +104,7 @@ defmodule EvoDash.Test.ConfigDir do
   The removal itself is `EvoDash.Test.FsCleanup.rm_rf!/2` — a bounded DEADLINE
   that re-drains (with the remaining window) before every attempt and retries
   both transient races (`:eexist`, `:enotempty`) instead of re-raising on a
-  fixed attempt count. That is the honest backstop for a re-creator whose caller
+  fixed attempt count. That is the honest backstop for a re-creator whose spawn
   chain identifies no registrar AND resolves no override (a raw `spawn/1`), and
   for a matched writer that is merely starved for longer than one drain. A tree
   that genuinely cannot be removed still raises `File.Error` (logged with its
@@ -135,8 +139,10 @@ defmodule EvoDash.Test.ConfigDir do
   The seam function installed as `:config_dir_fun` by `test/test_helper.exs`.
 
   Returns the override directory for the current execution context, or `nil`.
-  Order: this process' own override, then the first override found in a
-  `$callers` process dictionary (local node pids only).
+  Order: this process' own override, then the first override found in the
+  process' SPAWN CHAIN — its `$callers` (`Task`) entries, then its `$ancestors`
+  (`proc_lib`, hence any `GenServer`/`Supervisor`) entries (local node pids
+  only).
   """
   @spec resolve() :: String.t() | nil
   def resolve do
@@ -145,17 +151,25 @@ defmodule EvoDash.Test.ConfigDir do
         dir
 
       _ ->
-        Process.get(:"$callers", [])
-        |> Enum.find_value(fn pid -> caller_override(pid) end)
+        Enum.find_value(spawn_chain(), &caller_override/1)
     end
+  end
+
+  # The pids whose dictionaries this process inherits from, in the order
+  # `resolve/0` consults them: Elixir `Task` writes the `$callers` chain,
+  # `proc_lib` writes `$ancestors` (see the moduledoc's "Spawn-chain rule").
+  # Built from the two keys directly so a config read in a test that never
+  # isolated anything copies no dictionary.
+  defp spawn_chain do
+    Process.get(:"$callers", []) ++ Process.get(:"$ancestors", [])
   end
 
   @doc """
   Puts the config directory override into the CURRENT process dictionary.
 
   Call this from a `setup` block so the TEST process carries the override
-  (children started by the test inherit it through OTP's `$callers`
-  propagation).
+  (children started by the test inherit it through their spawn chain —
+  `$callers` for `Task` children, `$ancestors` for every `proc_lib` child).
 
   It ALSO records the calling pid as an OWNER of `dir` (one marker file under
   `<dir>/.evodash-owners/`, see `await_dir_writers/3`). That is what lets a
@@ -187,7 +201,7 @@ defmodule EvoDash.Test.ConfigDir do
     # The REGISTRAR is the process that owns this directory for cleanup
     # purposes: `isolate!/1` (the per-test path) registers it from the TEST
     # process, which is the pid every supervised load task of that test keeps in
-    # its `:"$callers"` chain (see `await_supervised_writers/2`). For a
+    # its spawn chain (see `await_supervised_writers/2`). For a
     # `setup_all`-created module-level directory the registrar appears in no
     # child's chain, so the removal ALSO drains by DESTINATION — a child that
     # resolves the directory as its override, or names a pid that activated it
@@ -215,7 +229,7 @@ defmodule EvoDash.Test.ConfigDir do
 
   @doc """
   Waits (bounded, monitor-based) for every live `EvoDash.TaskSupervisor` child
-  whose `:"$callers"` chain still contains `registrar`, then returns.
+  whose spawn chain still contains `registrar`, then returns.
 
   This is the ordering guarantee behind the `on_exit` cleanup. ExUnit ends the
   test process BEFORE any `on_exit` callback runs, but
@@ -245,7 +259,7 @@ defmodule EvoDash.Test.ConfigDir do
   Waits (bounded, monitor-based) for every live `EvoDash.TaskSupervisor` child
   that could write into `dir`, then returns.
 
-  A writer is a child that carries `registrar` in its `:"$callers"` chain
+  A writer is a child that carries `registrar` in its spawn chain
   (`await_supervised_writers/2`'s per-test contract), OR resolves `dir` as its
   config-dir override, OR names a pid that `activate/1` recorded as an owner of
   `dir` — the last two are the DESTINATION-based predicates that cover a
@@ -275,7 +289,7 @@ defmodule EvoDash.Test.ConfigDir do
 
   It deliberately does NOT go through `activate/1`'s owner registry: here the
   registrar IS the calling (test) process, whose pid every child of the test
-  keeps in its `:"$callers"` chain, so the ownership predicate already covers
+  keeps in its spawn chain, so the ownership predicate already covers
   every writer this directory can have. Skipping the marker keeps the per-test
   hot path free of file I/O.
   `isolate_module!/1` registers the directory's ONLY `on_exit` cleanup (the
@@ -353,7 +367,7 @@ defmodule EvoDash.Test.ConfigDir do
 
   defp held_by?(pid, registrar) when is_pid(pid) do
     case Process.info(pid, :dictionary) do
-      {:dictionary, dictionary} -> registrar in Keyword.get(dictionary, :"$callers", [])
+      {:dictionary, dictionary} -> registrar in chain_from(dictionary)
       nil -> false
     end
   end
@@ -361,18 +375,18 @@ defmodule EvoDash.Test.ConfigDir do
   defp held_by?(_pid, _registrar), do: false
 
   # A writer FOR THIS DIRECTORY: the per-test ownership predicate (the registrar
-  # is in the child's `$callers`), the destination predicate (the child resolves
-  # `dir` as its override, so any write it performs lands inside
-  # `<dir>/genesis`), or an OWNER pid in its chain (a pid that activated `dir`
-  # and is remembered by a marker file, so it still counts after it died). One
-  # dictionary read per child covers all three.
+  # is in the child's spawn chain), the destination predicate (the child resolves
+  # `dir` as its override, so any write it performs lands inside `<dir>/genesis`),
+  # or an OWNER pid in its chain (a pid that activated `dir` and is remembered by
+  # a marker file, so it still counts after it died). One dictionary read per
+  # child covers all three.
   defp writer_for?(pid, registrar, dir, owners) when is_pid(pid) do
     case Process.info(pid, :dictionary) do
       {:dictionary, dictionary} ->
-        callers = Keyword.get(dictionary, :"$callers", [])
+        chain = chain_from(dictionary)
 
-        registrar in callers or override_from(dictionary, callers) == dir or
-          Enum.any?(callers, &(&1 in owners))
+        registrar in chain or override_from(dictionary, chain) == dir or
+          Enum.any?(chain, &(&1 in owners))
 
       nil ->
         false
@@ -381,20 +395,27 @@ defmodule EvoDash.Test.ConfigDir do
 
   defp writer_for?(_pid, _registrar, _dir, _owners), do: false
 
+  # The SPAWN CHAIN recorded in a child's dictionary: `$callers` (Elixir `Task`)
+  # then `$ancestors` (`proc_lib`, hence any `GenServer`/`Supervisor`) — the same
+  # order `resolve/0` consults for the calling process.
+  defp chain_from(dictionary) do
+    Keyword.get(dictionary, :"$callers", []) ++ Keyword.get(dictionary, :"$ancestors", [])
+  end
+
   # The override a child would resolve: its OWN dictionary entry first, then the
-  # first override in its `$callers` chain — byte-identical to `resolve/0`, but
+  # first override in its spawn chain — byte-identical to `resolve/0`, but
   # evaluated for an arbitrary pid instead of the calling process.
-  defp override_from(dictionary, callers) do
+  defp override_from(dictionary, chain) do
     case Keyword.get(dictionary, :evogit_config_dir) do
       dir when is_binary(dir) -> dir
-      _ -> Enum.find_value(callers, fn pid -> caller_override(pid) end)
+      _ -> Enum.find_value(chain, fn pid -> caller_override(pid) end)
     end
   end
 
   # ── owner registry: which pids ever ACTIVATED this directory ─────────────
   #
   # The ownership predicate above matches the REGISTRAR pid inside a child's
-  # `:"$callers"` chain, and a pid VALUE stays readable there after its process
+  # SPAWN CHAIN, and a pid VALUE stays readable there after its process
   # died. A module-level directory created by `setup_all` has no such pid — its
   # registrar appears in no child's chain — so the pids that ACTIVATE it (one
   # per test, through `activate/1`) are remembered ON DISK instead: one empty

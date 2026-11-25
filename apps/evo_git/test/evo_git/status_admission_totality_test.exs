@@ -65,7 +65,7 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
   ## The TASK-PAUSE pairing (`docs/task-pause.md` §7)
 
   A task-level pause adds two NON-terminal statuses: `:pausing` (a pause
-  request is draining the task's agents — wrapper alive, lease renewed) and
+  request is freezing the task's agents — wrapper alive, lease renewed) and
   `:paused` (the resting state — no wrapper, no lease, resumable, `finished_at`
   nil). The second pairing rule therefore holds over the SAME `@lists` table: a
   set that admits `:running` must admit `:pausing`, and a set that admits
@@ -82,7 +82,7 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
       status;
     * `@paused_lease_lists` — `Lease.renewed_statuses/0`,
       `Lease.leaked_statuses/0` and `Lightweight.lease_statuses/0` admit
-      `:pausing` (a draining task still has a live wrapper, so its lease keeps
+      `:pausing` (a freezing task still has a live wrapper, so its lease keeps
       being renewed and it may still be swept if that wrapper dies) but NEVER
       `:paused` (the resting row has no wrapper and no heartbeat, so listing it
       would make every paused task look like a leaked lease row).
@@ -217,7 +217,7 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
 
   # ── the TASK-PAUSE pairing (`docs/task-pause.md` §7) ───────────────────────
   #
-  # `:pausing` (a pause request is draining the task's agents — non-terminal,
+  # `:pausing` (a pause request is freezing the task's agents — non-terminal,
   # wrapper alive) must follow `:running` in every TASK-level admission set, and
   # `:paused` (the non-terminal resting state — no wrapper, no lease, resumable)
   # must follow `:awaiting_input`. Where an absence is deliberate it is pinned
@@ -252,7 +252,7 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
                       end)
 
   # {label, {module, function}, :atom | :string} — the LEASE sets. They admit
-  # `:pausing` (a mid-drain task still has a LIVE WRAPPER, so its lease keeps
+  # `:pausing` (a mid-freeze task still has a LIVE WRAPPER, so its lease keeps
   # being renewed and it may still be swept when that wrapper dies) but NEVER
   # `:paused`: the resting state has no wrapper and no heartbeat, so listing it
   # would make every paused task look like a leaked lease row.
@@ -420,7 +420,7 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
           assert marker(kind, @pausing) in statuses,
                  "#{label} admits #{inspect(marker(kind, @running))} but NOT " <>
                    "#{inspect(marker(kind, @pausing))}. A pause request must be " <>
-                   "admitted wherever a running task is, so the drain can be " <>
+                   "admitted wherever a running task is, so the freeze can be " <>
                    "observed, listed, cancelled and force-killed; either add it " <>
                    "to this list or pin it in @pause_exempt_lists with a reason.\n" <>
                    "Got: #{inspect(statuses)}"
@@ -497,7 +497,7 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
         statuses = assert_list!(label, module, function)
 
         assert marker(kind, @pausing) in statuses,
-               "#{label} must admit :pausing — a draining task still has a live wrapper"
+               "#{label} must admit :pausing — a freezing task still has a live wrapper"
 
         refute marker(kind, @paused) in statuses,
                "#{label} must NOT admit :paused — a paused row holds no lease"
@@ -507,7 +507,7 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
     test ":pausing/:paused are non-terminal and each decodes to itself" do
       for status <- [@pausing, @paused] do
         refute status in TaskRegistry.terminal_statuses(),
-               "#{inspect(status)} is a NON-terminal resting/draining status"
+               "#{inspect(status)} is a NON-terminal resting/freezing status"
 
         assert status in Codec.known_statuses(),
                "#{inspect(status)} must decode to itself, never to nil/:pending"

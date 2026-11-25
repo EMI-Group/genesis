@@ -34,6 +34,7 @@ defmodule EvoGit.TaskRegistry.PauseTest do
   alias EvoGit.Agent.Result
   alias EvoGit.AgentScheduler.ControlPlane
   alias EvoGit.AgentState
+  alias EvoGit.AgentState.Snapshot
   alias EvoGit.TaskRegistry.Pause
   alias EvoGit.TaskRegistry.RuntimeOpts
 
@@ -110,10 +111,14 @@ defmodule EvoGit.TaskRegistry.PauseTest do
     :ok
   end
 
-  # Writes one CHILD durable run (a `parent_id` no row holds, `depth: 1`), so
-  # the task's roster is child-only and holds nothing a resume could restore.
-  defp seed_child_run!(task_id, agent_id \\ 2, parent_id \\ 99) do
+  # Writes one CHILD durable run (a `parent_id` no row holds by default,
+  # `depth: 1`), so a task's roster can be made child-only (nothing a resume
+  # could restore) or a real two-level tree. `fields` adds/overrides run facts —
+  # a still-running child keeps `status: "running"` and its own `pause_commit`.
+  defp seed_child_run!(task_id, agent_id \\ 2, parent_id \\ 99, fields \\ %{}) do
     on_exit(fn -> AgentState.delete_task(task_id) end)
+
+    run_fields = Map.merge(%{parent_id: parent_id, depth: 1, phase: "paused"}, fields)
 
     :ok =
       AgentState.checkpoint(task_id, agent_id, %{
@@ -124,7 +129,7 @@ defmodule EvoGit.TaskRegistry.PauseTest do
             content: [ReqLLM.Message.ContentPart.text("child run #{task_id}")]
           }
         ],
-        fields: %{parent_id: parent_id, depth: 1, phase: "paused"}
+        fields: run_fields
       })
 
     :ok = AgentState.flush()
@@ -242,7 +247,7 @@ defmodule EvoGit.TaskRegistry.PauseTest do
       assert_receive {:task_updated, ^task_id, :pausing, _node}, 1_000
       refute_receive {:task_updated, ^task_id, _, _}, 0
 
-      # The scheduler half: the task is marked as draining, which is what makes
+      # The scheduler half: the task is marked as freezing, which is what makes
       # an agent registered from now on start with `pause_requested = true`.
       assert ControlPlane.task_pausing?(task_id)
     end
@@ -426,7 +431,7 @@ defmodule EvoGit.TaskRegistry.PauseTest do
       refute_receive {:task_updated, ^task_id, _, _}, 0
 
       # The wrapper is done: its ref is dropped and the scheduler pause marker
-      # is cleared (the drain is over).
+      # is cleared (the freeze is over).
       refute Map.has_key?(:sys.get_state(TaskRegistry.server()).task_refs, task_id)
       refute ControlPlane.task_pausing?(task_id)
     end
@@ -447,6 +452,59 @@ defmodule EvoGit.TaskRegistry.PauseTest do
       assert fetched.lease_expires_at == nil
       assert_receive {:task_updated, ^task_id, :paused, _node}, 1_000
       refute_receive {:task_updated, ^task_id, _, _}, 0
+    end
+
+    test "derives pause_kind from the pause REPORT — only a provable clean snapshot stays :clean" do
+      # A report that cannot prove a clean snapshot must never claim one, or the
+      # resume would skip the crash repair it needs. The four shapes below are
+      # the whole rule: an explicit `:dirty`, a non-durable flush, an
+      # interrupted (non-subagent) freeze point, and the honest clean case.
+      unique = System.unique_integer([:positive])
+
+      cases = [
+        {"clean", %{agent_id: 1, pause_kind: :clean, durable: true, clean_freeze: true}, :clean},
+        {"dirty_kind", %{agent_id: 1, pause_kind: :dirty, durable: true, clean_freeze: true},
+         :dirty},
+        {"not_durable", %{agent_id: 1, pause_kind: :clean, durable: false, clean_freeze: true},
+         :dirty},
+        {"not_clean_freeze",
+         %{agent_id: 1, pause_kind: :clean, durable: true, clean_freeze: false}, :dirty}
+      ]
+
+      subscribe_tasks!()
+
+      for {label, report, expected} <- cases do
+        task_id = "paused_kind_#{label}_#{unique}"
+
+        seed_task!(task_id, :running,
+          result: "pause report #{label}",
+          usage: %EvoGit.Agent.Usage{total_tokens: 11},
+          commit_sha: "sha_#{label}"
+        )
+
+        clear_pause_marker!(task_id)
+        ref = put_fake_wrapper!(task_id)
+
+        deliver_wrapper_result(
+          ref,
+          {:paused, Map.merge(%{task_id: task_id, reason: :task_pause}, report)}
+        )
+
+        fetched = reload(task_id)
+        assert fetched.status == :paused, "expected :paused for #{label}"
+        assert fetched.pause_kind == expected, "expected #{inspect(expected)} for #{label}"
+        # Still the PAUSED resting state: not finished, no lease, and every
+        # paused-run fact preserved for the resume.
+        assert fetched.finished_at == nil
+        assert fetched.lease_expires_at == nil
+        assert fetched.result == "pause report #{label}"
+        assert %EvoGit.Agent.Usage{total_tokens: 11} = fetched.usage
+        assert fetched.commit_sha == "sha_#{label}"
+
+        assert_receive {:task_updated, ^task_id, :paused, _node}, 1_000
+        refute_receive {:task_updated, ^task_id, _, _}, 0
+        refute Map.has_key?(:sys.get_state(TaskRegistry.server()).task_refs, task_id)
+      end
     end
 
     test "a pause report that loses to a :cancelling row resolves it :cancelled" do
@@ -777,6 +835,61 @@ defmodule EvoGit.TaskRegistry.PauseTest do
       assert Keyword.get(spawn_opts, :resume_current_commit) == "cur123"
       assert Keyword.get(spawn_opts, :resume_branch) == "evogit-agent_facts"
       assert Keyword.get(spawn_opts, :resume_anchor_ref) == anchor_ref
+    end
+
+    test "restores the WHOLE frozen tree — the running child keeps its own row" do
+      unique = System.unique_integer([:positive])
+      task_id = "resume_tree_#{unique}"
+      root_id = 1
+      child_id = 2
+      anchor_ref = "refs/genesis/agent-state/#{task_id}/#{root_id}"
+
+      seed_task!(task_id, :paused, pause_kind: :clean, lease_expires_at: nil)
+
+      seed_durable_run!(task_id, root_id, %{
+        pause_commit: "root_pause",
+        current_commit: "root_cur",
+        branch: "evogit-agent_tree",
+        anchor_ref: anchor_ref
+      })
+
+      # A still-running child of the SAME frozen tree with its own checkpoint:
+      # the thaw planner restores it, so the registry must neither read its
+      # facts nor consume its row.
+      seed_child_run!(task_id, child_id, root_id, %{
+        pause_commit: "child_pause",
+        status: "running"
+      })
+
+      _registry = start_registry_with_spawn_seam!(self())
+
+      assert :ok = TaskRegistry.resume_task(task_id)
+
+      assert_receive {:wrapper_spawned, :genesis, spawn_opts, ^task_id, _server}, 1_000
+      assert Keyword.get(spawn_opts, :resume_kind) == :clean_pause
+      # The ROOT's five facts — the child's are the planner's business.
+      assert Keyword.get(spawn_opts, :pause_commit) == "root_pause"
+      assert Keyword.get(spawn_opts, :resume_agent_id) == root_id
+      assert Keyword.get(spawn_opts, :resume_current_commit) == "root_cur"
+      assert Keyword.get(spawn_opts, :resume_branch) == "evogit-agent_tree"
+      assert Keyword.get(spawn_opts, :resume_anchor_ref) == anchor_ref
+
+      # The SAME task id was re-enqueued…
+      assert reload(task_id).status == :running
+
+      # …and the child is STILL a live row in the durable snapshot: nothing in
+      # the resume admission consumed it, so the planner can restore it from its
+      # own conversation, worktree base and position.
+      assert {:ok, snapshot} = Snapshot.read(task_id)
+      assert snapshot.root.agent_id == root_id
+
+      # Both rows stay LIVE — the root's own row is untouched too — so the thaw
+      # planner finds the whole frozen tree, child included.
+      assert Enum.map(Snapshot.live(snapshot), & &1.agent_id) == [root_id, child_id]
+
+      child = Enum.find(Snapshot.live(snapshot), &(&1.agent_id == child_id))
+      assert child.fields[:pause_commit] == "child_pause"
+      assert child.fields[:parent_id] == root_id
     end
 
     test "a root row WITHOUT an anchor_ref still carries the derived anchor fact" do

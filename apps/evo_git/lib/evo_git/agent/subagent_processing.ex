@@ -7,11 +7,30 @@ defmodule EvoGit.Agent.SubagentProcessing do
   which is ownership-aware for `CONTEXT.md` conflicts), and formatting the
   output for the LLM context.
 
+  ## A TASK PAUSE freezes the batch — it never completes it
+
+  When the scheduler answers the spawn with `{:freeze, :task_pause}` the task is
+  pausing, so NOTHING is finished here: this function returns `{:pause, state}`
+  with the state it was given (no tool results, no merge, no commit sync, no
+  usage). A pause is a SNAPSHOT of the whole agent tree — a parent blocked on a
+  batch is parked with its durable in-flight batch marker (`pending_tool_batch`)
+  intact, so a resumed parent rebuilds/waits on the restored children instead of
+  seeing a fabricated "results" for calls that never completed.
+
   ## Usage
 
   Called from the agent loop when processing subagent tool calls:
 
-      {indexed_subagent_results, merge_message} =
+      {indexed_subagent_results, merge_message, usage} =
+        EvoGit.Agent.SubagentProcessing.process_subagent_calls(
+          indexed_subagent_calls,
+          state,
+          sync_commit_fn: &sync_current_commit_after_tools/1
+        )
+
+  or, when the task is pausing:
+
+      {:pause, %EvoGit.Agent.State{}} =
         EvoGit.Agent.SubagentProcessing.process_subagent_calls(
           indexed_subagent_calls,
           state,
@@ -37,21 +56,33 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   @doc """
   Processes subagent tool calls: spawns subagents, merges results.
-  Returns `{indexed_results, merge_message}`.
+  Returns `{indexed_results, merge_message, usage}` — or `{:pause, state}` when a
+  TASK PAUSE froze the batch (see the moduledoc: the input state comes back
+  unchanged, with no results, no merge and no usage).
 
   ## Options
 
     * `:sync_commit_fn` — callback `fn(state)` for syncing commit after tool execution (required)
+    * `:spawn_sub_agents_fun` — the spawn seam, `fn(specs, timeout) -> results`.
+      Defaults to `&EvoGit.AgentScheduler.spawn_sub_agents/2` read at CALL time, so
+      an un-seamed run is byte-identical to production while a test can answer
+      `{:freeze, :task_pause}` (or an error) without a live scheduler.
   """
   @spec process_subagent_calls(
           indexed_calls :: [{map(), non_neg_integer()}],
           state :: State.t(),
           opts :: keyword()
-        ) :: {list(), String.t() | nil, Usage.t()}
+        ) ::
+          {list(), String.t() | nil, Usage.t()}
+          | {:pause, State.t()}
   def process_subagent_calls([], _state, opts) when is_list(opts), do: {[], nil, Usage.zero()}
 
   def process_subagent_calls(indexed_calls, state, opts) when is_list(opts) do
     sync_commit_fn = Keyword.fetch!(opts, :sync_commit_fn)
+
+    spawn_fun =
+      Keyword.get(opts, :spawn_sub_agents_fun) ||
+        (&EvoGit.AgentScheduler.spawn_sub_agents/2)
 
     # Validate calls: separate valid from those missing required 'path' argument.
     # Invalid calls get immediate error results fed back to the LLM so it can correct them.
@@ -64,8 +95,40 @@ defmodule EvoGit.Agent.SubagentProcessing do
     # Runs in the agent process (this process), using Process.get(:repo_path).
     EvoGit.AgentScheduler.Dispatch.commit_pending_in_worktree()
 
-    results = AgentScheduler.spawn_sub_agents(subagent_specs)
+    results = spawn_fun.(subagent_specs, :infinity)
 
+    case results do
+      # A TASK PAUSE frozen the batch: no call completed, so this is a PAUSE, not
+      # an error and not a completion. The input state is returned UNCHANGED — the
+      # caller keeps its in-flight batch marker, appends nothing and merges
+      # nothing; a task resume rebuilds/waits on the restored children.
+      {:freeze, :task_pause} ->
+        {:pause, state}
+
+      results ->
+        process_spawn_results(
+          results,
+          specs_with_index,
+          valid_calls,
+          path_error_results,
+          invalid_results,
+          state,
+          sync_commit_fn
+        )
+    end
+  end
+
+  # The pre-pause body: scheduler errors become per-subagent error results, and a
+  # result list is merged/formatted as usual.
+  defp process_spawn_results(
+         results,
+         specs_with_index,
+         valid_calls,
+         path_error_results,
+         invalid_results,
+         %State{} = state,
+         sync_commit_fn
+       ) do
     # Handle scheduler errors (e.g. scheduler paused) — spawn_sub_agents returns
     # {:error, reason} instead of a results list. Convert to per-subagent error
     # results so the parent agent gets a clear message.
@@ -448,23 +511,6 @@ defmodule EvoGit.Agent.SubagentProcessing do
     "Error: Subagent failed due to an unexpected error (#{inspect(reason)}). Please retry the spawn or report this issue to the user if it persists."
   end
 
-  # A TASK PAUSE stopped the child at a turn boundary: this is NOT a failure and
-  # NOT a completion. Its committed work (the pause checkpoint commit) has been
-  # merged into the parent worktree like a normal completion; the child itself
-  # comes back from its OWN durable row (conversation, branch, worktree base) on
-  # a task resume, because a resume is whole-tree.
-  def format_subagent_result({:paused, info}) when is_map(info) do
-    checkpoint = Map.get(info, :checkpoint) || "unknown"
-    branch = Map.get(info, :branch) || "unknown"
-
-    "The subagent PAUSED: the task was paused, so it stopped cleanly at a turn boundary " <>
-      "after its last tool call completed (nothing was interrupted). Its committed work " <>
-      "(checkpoint #{checkpoint}, branch #{branch}) was merged into your worktree. " <>
-      "A task resume re-spawns it from its own durable state and worktree base, and it will " <>
-      "produce further results then — so do not wait for it now: finish your own current step " <>
-      "and stop at your next turn boundary."
-  end
-
   def format_subagent_result({:ok, %Result{result: result, commit_sha: commit_sha}}) do
     """
     # Result
@@ -589,29 +635,10 @@ defmodule EvoGit.Agent.SubagentProcessing do
               {children, [{spec.repo_id, sha} | details]}
             end
 
-          # A PAUSED child is merged like a completion: its pause checkpoint
-          # commit is the work it left behind (fall back to today's behaviour —
-          # no merge — when the term carries no checkpoint sha).
-          {:paused, %{checkpoint: sha} = paused_info} when is_binary(sha) ->
-            if spec.repo_id == parent_repo_id do
-              child =
-                merge_child(
-                  index,
-                  %Result{
-                    result: format_subagent_result({:paused, paused_info}),
-                    commit_sha: sha,
-                    branch: Map.get(paused_info, :branch)
-                  },
-                  spec.context_node.path,
-                  spec.agent_module,
-                  spec.objective
-                )
-
-              {[child | children], details}
-            else
-              {children, [{spec.repo_id, sha} | details]}
-            end
-
+          # A PAUSED child NEVER reaches a parent batch: a task pause freezes the
+          # whole tree, the parent's batch is parked and cleared, and every agent
+          # reports to the task freeze instead. `{:paused, _}` therefore merges
+          # nothing here (nor does an error or a nil-commit completion).
           _ ->
             {children, details}
         end

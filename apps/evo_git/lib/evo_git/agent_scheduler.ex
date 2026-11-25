@@ -67,12 +67,25 @@ defmodule EvoGit.AgentScheduler do
 
   A task can be PAUSED instead of cancelled (`begin_task_pause/1`): the task's
   agents get a `pause_requested` control-plane flag, are purged from the
-  LLM/tool waiting queues with `{:error, :paused}`, and stop at their next turn
-  boundary — never mid-tool — delivering `{:paused, info}` as their terminal
-  outcome (a root caller and its `await_close/2` waiters receive that term
-  instead of a `%EvoGit.Agent.Result{}`). `clear_task_pause/1` abandons a pause;
-  a graceful cancel always WINS over a pending pause and a pause that arrives
-  while the task is cancelling is ignored.
+  LLM/tool waiting queues with `{:error, :paused}`, and freeze at their exact
+  position — a turn boundary, or parked while waiting on a subagent batch, with
+  an in-flight tool batch given a bounded chance to finish — delivering
+  `{:paused, info}` as their terminal outcome. `clear_task_pause/1` abandons a
+  pause; a graceful cancel always WINS over a pending pause and a pause that
+  arrives while the task is cancelling is ignored.
+
+  A pause is a whole-TREE FREEZE, so it is coordinated by ONE
+  `EvoGit.AgentScheduler.TaskFreeze` record per task (`state.task_freezes`):
+  `begin_task_pause/1` freezes the task's roster, PARKS every parent blocked in
+  `spawn_sub_agents/2` (replying `{:freeze, :task_pause}` and clearing its batch
+  fields, so a paused child can never complete a parent's batch) and every agent
+  reports its own paused outcome. NOBODY replies to the root's caller until the
+  LAST pending agent reports; only then is the whole tree answered with one
+  `{:paused, %{… pause_kind: :clean | :dirty, frozen_agents: [...]}}` term. A
+  `spawn_sub_agents/2` that arrives while the task is freezing is refused with
+  `{:freeze, :task_pause}` instead of registering children, and a quiesce timer
+  (`:task_pause_quiesce_ms`, default 120 s) force-freezes whatever is left and
+  records the task DIRTY rather than hanging the pause forever.
 
   ## ETS Tables
 
@@ -124,6 +137,7 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentScheduler.SubagentReattach
   alias EvoGit.AgentScheduler.SubagentRebuild
   alias EvoGit.AgentScheduler.Subagents
+  alias EvoGit.AgentScheduler.TaskFreeze
   alias EvoGit.AgentSpec
 
   @agent_table :evogit_agent_summary
@@ -150,10 +164,13 @@ defmodule EvoGit.AgentScheduler do
     * `{:error, reason}` — it failed (including `:llm_not_configured`,
       `:cancelled` for a task already cancelling, and
       `:agent_max_retries_exceeded`);
-    * `{:paused, info}` — a TASK PAUSE stopped it at a turn boundary, with
-      `info = %{agent_id, task_id, checkpoint, branch, reason: :task_pause}`.
-      A pause is NOT completion: nothing is merged, archived or reported — the
-      caller decides what a paused task means.
+    * `{:paused, info}` — a TASK PAUSE froze the whole agent TREE, with
+      `info = %{agent_id, task_id, reason: :task_pause, pause_kind, checkpoint,
+      branch, durable, clean_freeze, frozen_agents}`; `pause_kind` is `:clean`
+      when every agent stopped with nothing interrupted and its state durable,
+      `:dirty` when something was (or might have been) interrupted or an agent
+      had to be forced. A pause is NOT completion: nothing is merged, archived
+      or reported — the caller decides what a paused task means.
   """
   @spec run_agent(AgentSpec.t(), timeout()) ::
           {:ok, %EvoGit.Agent.Result{}} | {:error, term()} | {:paused, map()}
@@ -915,7 +932,7 @@ defmodule EvoGit.AgentScheduler do
   Ends a task-level pause: clears the task marker and every `pause_requested`
   flag of the task's currently registered agents.
 
-  Called when the drain completes (the task becomes `:paused`), when the pause is
+  Called when the freeze completes (the task becomes `:paused`), when the pause is
   abandoned (a cancel that arrives while `:pausing` wins) or when the task is
   resumed. Total and idempotent — a task with no agents left is a no-op.
   Returns `:ok`.
@@ -1217,11 +1234,13 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call({:begin_graceful_cancel, task_id}, _from, %State{} = state) do
     # 0. CANCEL WINS over a task pause (hard requirement): abandon any in-flight
-    #    pause FIRST — clear the task pause marker and every agent's pause flag —
-    #    so no lingering pause flag can block or confuse the cancel that is
-    #    about to drive those agents into cancel-grace.
+    #    pause FIRST — clear the task pause marker, every agent's pause flag and
+    #    the freeze with its timers — so no lingering pause flag can block or
+    #    confuse the cancel that is about to drive those agents into
+    #    cancel-grace, and no freeze timer can fire against a cancelling task.
     ControlPlane.clear_task_pausing(task_id)
     Store.clear_pause_requested_for_task(task_id)
+    state = drop_freeze(state, task_id)
 
     # 1. Register the task in the cancelling marker so run_agent refuses new
     #    root agents for it and Dispatch.register_agent immediately puts any
@@ -1282,7 +1301,7 @@ defmodule EvoGit.AgentScheduler do
   def handle_call({:begin_task_pause, task_id}, _from, %State{} = state) do
     if cancelling_task?(task_id) do
       # A pause that arrives while the task is being CANCELLED is ignored: no
-      # marker, no flag, no purge — the cancel owns the drain.
+      # marker, no flag, no purge — the cancel owns the freeze.
       Logger.info("AgentScheduler: Pause for task #{task_id} ignored — the task is cancelling")
 
       {:reply, :ok, state}
@@ -1309,6 +1328,12 @@ defmodule EvoGit.AgentScheduler do
       {state, _status_updates} =
         Slots.purge_agents_from_queues(state, MapSet.new(agent_ids), :paused)
 
+      # 4. Open the TASK FREEZE: the whole agent TREE now owes this pause an
+      #    outcome, parents blocked on a subagent batch are PARKED here (their
+      #    batch is cleared, so no child result can ever complete it), and the
+      #    quiesce timer is armed so a wedged agent cannot hang the pause.
+      state = start_task_freeze(state, task_id)
+
       Logger.info(
         "AgentScheduler: Began task pause for task #{task_id} — #{length(agent_ids)} agent(s) flagged"
       )
@@ -1322,7 +1347,11 @@ defmodule EvoGit.AgentScheduler do
     ControlPlane.clear_task_pausing(task_id)
     Store.clear_pause_requested_for_task(task_id)
 
-    {:reply, :ok, state}
+    # A cancel/resume teardown must never leave a freeze (or its timers) behind:
+    # a timer that fired later would force-freeze agents of a task that is no
+    # longer pausing, and a late `{:paused, info}` would be reported against a
+    # dead freeze.
+    {:reply, :ok, drop_freeze(state, task_id)}
   end
 
   @impl true
@@ -1415,7 +1444,21 @@ defmodule EvoGit.AgentScheduler do
       # raising a MatchError inside the shared scheduler GenServer.
       case Store.get_sched_meta(parent_id) do
         {:ok, parent} ->
-          Subagents.spawn_validated_subagents(parent_id, parent, specs, from, state)
+          # A TASK PAUSE freezes the whole tree: registering children now would
+          # extend the freeze with agents that were not part of it. The
+          # parent's exchange is answered `{:freeze, :task_pause}` instead, which
+          # makes it pause at this very boundary (nothing is installed, spawned
+          # or dispatched).
+          if ControlPlane.task_pausing?(parent.task_id) do
+            Logger.info(
+              "AgentScheduler: refusing subagent spawn for agent #{parent_id} — " <>
+                "task #{inspect(parent.task_id)} is pausing"
+            )
+
+            {:reply, {:freeze, :task_pause}, state}
+          else
+            Subagents.spawn_validated_subagents(parent_id, parent, specs, from, state)
+          end
 
         :error ->
           {:reply, {:error, :not_found}, state}
@@ -1661,6 +1704,45 @@ defmodule EvoGit.AgentScheduler do
     SubagentReattach.handle_timeout(agent_id, token, state)
   end
 
+  # The QUIESCE timer of a task freeze popped: every agent still pending is
+  # FORCED (its session is told `{:task_freeze, :force}`, which kills a live
+  # exchange worker so the existing pause arm runs) and the pause is marked
+  # dirty; ONE bounded grace timer then waits for those reports to arrive.
+  @impl true
+  def handle_info({:task_freeze_timeout, task_id, ref}, %State{} = state) do
+    if current_freeze_timer?(state, task_id, :timeout, ref) do
+      force_freezing_agents(state, task_id)
+    else
+      {:noreply, state}
+    end
+  end
+
+  # The GRACE timer expired: whatever has still not reported is taken from its
+  # durable state AS-IS and the pause completes DIRTY — a pause is never worth
+  # hanging a task on one wedged agent.
+  @impl true
+  def handle_info({:task_freeze_grace, task_id, ref}, %State{} = state) do
+    cond do
+      not current_freeze_timer?(state, task_id, :grace, ref) ->
+        {:noreply, state}
+
+      not Map.has_key?(state.task_freezes, task_id) ->
+        {:noreply, state}
+
+      true ->
+        freeze = Map.fetch!(state.task_freezes, task_id)
+        pending = TaskFreeze.pending(freeze)
+
+        Logger.warning(
+          "AgentScheduler: task pause for task #{task_id} forced after the grace window; " <>
+            "#{length(pending)} agent(s) never reported: #{inspect(pending)}"
+        )
+
+        state = complete_freeze(state, task_id, :dirty, TaskFreeze.complete_forced(freeze))
+        {:noreply, state}
+    end
+  end
+
   # Session process exited (monitor :DOWN).
   @impl true
   def handle_info({:DOWN, ref, :process, pid, reason}, %State{} = state) do
@@ -1886,16 +1968,259 @@ defmodule EvoGit.AgentScheduler do
     |> Enum.map(fn {id, _meta} -> id end)
   end
 
+  # --- Task freeze coordinator ---------------------------------------------
+  #
+  # ONE `%TaskFreeze{}` per pausing task (`state.task_freezes`) tracks which
+  # agents of the tree still owe a paused outcome; the quiesce/grace timers live
+  # beside it in `state.task_freeze_timers` so `TaskFreeze` itself stays a pure
+  # state machine. Everything below is thin scheduling glue around that module.
+
+  @doc false
+  # True iff `task_id` has an in-flight freeze — the predicate
+  # `EvoGit.AgentScheduler.Lifecycle` routes a `{:paused, info}` result with.
+  @spec task_freezing?(State.t() | term(), String.t() | nil) :: boolean()
+  def task_freezing?(%State{task_freezes: freezes}, task_id) when is_map(freezes) do
+    is_binary(task_id) and Map.has_key?(freezes, task_id)
+  end
+
+  def task_freezing?(_state, _task_id), do: false
+
+  @doc false
+  # Completes a task freeze: replies to the ROOT's caller and `await_close/2`
+  # waiters with the ONE task-level pause term, forgets the freeze and its
+  # timers, and drops the task's agent count when no agent of the task is left.
+  #
+  # `kind` is `TaskFreeze.kind/1` of the finished freeze (`:clean` | `:dirty`);
+  # the per-agent facts come from the ROOT's reported payload (a forced freeze
+  # has none, so they answer `nil` honestly instead of inventing a checkpoint).
+  @spec complete_freeze(State.t(), String.t(), TaskFreeze.kind(), TaskFreeze.t()) :: State.t()
+  def complete_freeze(%State{} = state, task_id, kind, %TaskFreeze{} = freeze) do
+    root_id = TaskFreeze.root_id(freeze)
+    root_info = TaskFreeze.root_info(freeze)
+    frozen_agents = TaskFreeze.agents(freeze)
+
+    term =
+      {:paused,
+       %{
+         agent_id: root_id,
+         task_id: task_id,
+         reason: :task_pause,
+         pause_kind: kind,
+         checkpoint: Map.get(root_info, :checkpoint),
+         branch: Map.get(root_info, :branch),
+         durable: Map.get(root_info, :durable),
+         clean_freeze: Map.get(root_info, :clean_freeze),
+         frozen_agents: frozen_agents
+       }}
+
+    reply_root(root_id, term)
+
+    Logger.info(
+      "AgentScheduler: task pause for task #{inspect(task_id)} complete (#{kind}) — " <>
+        "#{length(frozen_agents)} agent(s) frozen"
+    )
+
+    state
+    |> Lifecycle.flush_close_waiters(root_id, term)
+    |> drop_freeze(task_id)
+    |> maybe_drop_task_agent_count(task_id)
+  end
+
+  def complete_freeze(%State{} = state, _task_id, _kind, _freeze), do: state
+
+  # Opens the freeze over the task's live roster: `TaskFreeze.begin/4`, PARK every
+  # parent blocked on a subagent batch, arm the quiesce timer.
+  #
+  # A task with no resolvable ROOT is not frozen at all: nobody would receive the
+  # one pause term, so the existing flag/purge work is all there is to do.
+  defp start_task_freeze(%State{} = state, task_id) do
+    metas = freeze_roster(task_id)
+
+    case Enum.find(metas, fn {_agent_id, meta} -> is_nil(meta.parent_id) end) do
+      nil ->
+        Logger.warning(
+          "AgentScheduler: task #{inspect(task_id)} is pausing but has no root agent " <>
+            "with a live run — no freeze started"
+        )
+
+        state
+
+      {root_id, _root_meta} ->
+        freeze = TaskFreeze.begin(task_id, Enum.map(metas, &elem(&1, 0)), root_id)
+
+        Enum.each(metas, fn {agent_id, meta} -> Subagents.park_for_pause(agent_id, meta) end)
+
+        state
+        |> put_freeze(task_id, freeze)
+        |> arm_freeze_timeout(task_id)
+    end
+  end
+
+  # The agents of the task that must report this pause: their run has not already
+  # settled (`result_sent`) and, when it has a session, that session is alive —
+  # a dead session can never report and would only force a dirty timeout.
+  defp freeze_roster(task_id) do
+    Store.list_sched_meta()
+    |> Enum.filter(fn
+      {_agent_id, %SchedMeta{task_id: tid} = meta} -> tid == task_id and freeze_participant?(meta)
+      _other -> false
+    end)
+  end
+
+  defp freeze_participant?(%SchedMeta{result_sent: true}), do: false
+  defp freeze_participant?(%SchedMeta{session_pid: pid}) when is_pid(pid), do: Process.alive?(pid)
+  defp freeze_participant?(_meta), do: true
+
+  # The quiesce timer: after it, whatever has not reported is FORCED.
+  # `:task_pause_quiesce_ms` is read at CALL time (a default-inert test seam).
+  defp arm_freeze_timeout(%State{} = state, task_id) do
+    arm_freeze_timer(state, task_id, :timeout, task_pause_quiesce_ms())
+  end
+
+  # The grace timer: after the force requests, the pause completes DIRTY with
+  # whatever arrived. `:task_pause_force_grace_ms`, also a call-time seam.
+  defp arm_freeze_grace(%State{} = state, task_id) do
+    arm_freeze_timer(state, task_id, :grace, task_pause_force_grace_ms())
+  end
+
+  # Stores BOTH the identity token the fired message carries and the timer ref
+  # used to cancel it: `{token, timer}`. The message tag is derived from the kind
+  # (`{:task_freeze_timeout | :task_freeze_grace, task_id, token}`).
+  defp arm_freeze_timer(%State{} = state, task_id, kind, delay_ms) do
+    token = make_ref()
+    message = {freeze_timer_tag(kind), task_id, token}
+    timer = Process.send_after(self(), message, delay_ms)
+    timers = Map.get(state.task_freeze_timers, task_id, %{})
+
+    %{
+      state
+      | task_freeze_timers:
+          Map.put(state.task_freeze_timers, task_id, Map.put(timers, kind, {token, timer}))
+    }
+  end
+
+  defp freeze_timer_tag(:timeout), do: :task_freeze_timeout
+  defp freeze_timer_tag(:grace), do: :task_freeze_grace
+
+  defp task_pause_quiesce_ms do
+    case Application.get_env(:evo_git, :task_pause_quiesce_ms, 120_000) do
+      ms when is_integer(ms) and ms > 0 -> ms
+      _other -> 120_000
+    end
+  end
+
+  defp task_pause_force_grace_ms do
+    case Application.get_env(:evo_git, :task_pause_force_grace_ms, 10_000) do
+      ms when is_integer(ms) and ms > 0 -> ms
+      _other -> 10_000
+    end
+  end
+
+  defp put_freeze(%State{} = state, task_id, freeze) do
+    %{state | task_freezes: Map.put(state.task_freezes, task_id, freeze)}
+  end
+
+  # Forgets a freeze AND cancels its timers. Safe for a task with no freeze, so
+  # every teardown path (complete/clear/cancel) can call it unconditionally.
+  defp drop_freeze(%State{} = state, task_id) do
+    Enum.each(Map.get(state.task_freeze_timers, task_id, %{}), fn
+      {_kind, {_token, timer}} -> Process.cancel_timer(timer)
+      _other -> :ok
+    end)
+
+    %{
+      state
+      | task_freezes: Map.delete(state.task_freezes, task_id),
+        task_freeze_timers: Map.delete(state.task_freeze_timers, task_id)
+    }
+  end
+
+  # A fired freeze message is honoured only when its token is the CURRENT one for
+  # that task and timer kind: an already-cancelled (or superseded) timer is stale.
+  defp current_freeze_timer?(%State{} = state, task_id, kind, token) do
+    case get_in(state.task_freeze_timers, [task_id, kind]) do
+      {^token, _timer} -> true
+      _other -> false
+    end
+  end
+
+  defp force_freezing_agents(%State{} = state, task_id) do
+    case Map.get(state.task_freezes, task_id) do
+      nil ->
+        {:noreply, state}
+
+      freeze ->
+        {freeze, victims} = TaskFreeze.timeout(freeze)
+
+        Logger.warning(
+          "AgentScheduler: task pause for task #{inspect(task_id)} timed out waiting for " <>
+            "#{length(victims)} agent(s) — force-freezing #{inspect(victims)}"
+        )
+
+        Enum.each(victims, &send_freeze_force/1)
+
+        state = state |> put_freeze(task_id, freeze) |> arm_freeze_grace(task_id)
+        {:noreply, state}
+    end
+  end
+
+  # `{:task_freeze, :force}` is the session's force-pause command: it kills a live
+  # exchange worker (the existing `:DOWN` pause arm then finalizes from the last
+  # checkpoint) or starts the pause finalizer directly.
+  defp send_freeze_force(agent_id) do
+    case Store.get_sched_meta(agent_id) do
+      {:ok, %SchedMeta{session_pid: pid}} when is_pid(pid) ->
+        send(pid, {:task_freeze, :force})
+
+      _other ->
+        :ok
+    end
+
+    :ok
+  end
+
+  defp reply_root(root_id, term) do
+    case Store.get_sched_meta(root_id) do
+      {:ok, %SchedMeta{from: from}} -> reply_live(from, term)
+      :error -> :ok
+    end
+  end
+
+  # `GenServer.reply/2` to a live caller only: a `nil` `from` (interactive root)
+  # would raise, and a dead one has nobody listening.
+  defp reply_live({pid, _tag} = from, term) when is_pid(pid) do
+    if Process.alive?(pid), do: GenServer.reply(from, term)
+    :ok
+  end
+
+  defp reply_live(_from, _term), do: :ok
+
+  # The per-task agent count is kept while any agent of the task is still
+  # registered (a paused child row lingers until its `:DOWN` recycles it), so the
+  # count semantics of a completion are preserved.
+  defp maybe_drop_task_agent_count(%State{} = state, task_id) do
+    if Enum.any?(Store.list_sched_meta(), fn
+         {_agent_id, %SchedMeta{task_id: tid}} -> tid == task_id
+         _other -> false
+       end) do
+      state
+    else
+      %{state | task_agent_counts: Map.delete(state.task_agent_counts, task_id)}
+    end
+  end
+
   # The BRUTAL cancellation body shared by the two force-kill entry points
   # (caller-pid-addressed and task-id-addressed). Both resolve a task id first,
   # so the cascade is IDENTICAL for a blocking `run_agent/2` task and for a
   # `from = nil` interactive session.
   defp cancel_task_agents(%State{} = state, task_id) do
-    # 0. A force kill ABANDONS any in-flight task pause: clear the task marker
-    #    and every pause flag, so a killed task cannot leave the scheduler (or a
-    #    late-registered agent) believing a pause is still draining.
+    # 0. A force kill ABANDONS any in-flight task pause: clear the task marker,
+    #    every pause flag and the freeze with its timers, so a killed task cannot
+    #    leave the scheduler (or a late-registered agent) believing a pause is
+    #    still freezing.
     ControlPlane.clear_task_pausing(task_id)
     Store.clear_pause_requested_for_task(task_id)
+    state = drop_freeze(state, task_id)
 
     # 1. Find ALL agents with this task_id
     agent_ids = agent_ids_for_task(task_id)
