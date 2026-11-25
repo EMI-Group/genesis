@@ -445,26 +445,39 @@ defmodule EvoGit.Config.Schema.LLM do
   @doc """
   Extracts the provider atom from a model spec.
 
-  Supports the three model spec formats used throughout EvoGit:
+  Supports the five model spec shapes used throughout EvoGit:
 
-  - **String** like `"openai:gpt-5"` — splits on the first `":"` and resolves
-    the provider part through the catalog's known provider spellings
+  - **Atom provider** like `:openai` — returned as-is (this is why the `nil`
+    clause comes first: `nil` is an atom).
+  - **Bare provider spelling** like `"openai"`, `"openai_codex"` or `"zai"` —
+    resolved through the catalog's known provider spellings
     (`known_provider_atom/1`); it is NEVER interned.
+  - **String** like `"openai:gpt-5"` — splits on the first `":"` and resolves
+    the provider part the same way.
   - **Map** like `%{provider: :openai, id: "gpt-5"}` — reads the `provider` key
     (atom- or string-keyed map), normalizing a string value the same way.
   - **Tuple** `{:openai, opts}` — returns the first element (the provider atom).
 
-  Returns `nil` for string specs without a colon, for a provider spelling that
-  is neither in the catalog nor an already-existing atom, or any unrecognized
-  format. `nil` means "no recognized provider": no cache identity and no
-  provider-specific default, which is the right answer for an unknown vendor.
+  A bare MODEL name is NOT a provider: `"gpt-5.1"` returns `nil`, because no
+  `:gpt-5_1`-style atom exists and `known_provider_atom/1` refuses to intern
+  one — which is exactly what keeps an unknown vendor byte-identical.
+
+  Returns `nil` otherwise, including for a provider spelling that is neither in
+  the catalog nor an already-existing atom. `nil` means "no recognized
+  provider": no cache identity and no provider-specific default, which is the
+  right answer for an unknown vendor.
   """
-  @spec provider_from_model(model_spec()) :: atom() | nil
+  @spec provider_from_model(model_spec() | atom()) :: atom() | nil
   def provider_from_model(nil), do: nil
+
+  def provider_from_model(provider) when is_atom(provider), do: provider
 
   def provider_from_model(model) when is_binary(model) do
     case String.split(model, ":", parts: 2) do
       [provider, _id] when provider != "" -> known_provider_atom(provider)
+      # A bare binary is a provider spelling only when it IS one; a bare model
+      # name resolves to nil here.
+      [provider] when provider != "" -> known_provider_atom(provider)
       _ -> nil
     end
   end
@@ -511,9 +524,37 @@ defmodule EvoGit.Config.Schema.LLM do
   provider_options[:session_id]`), and codex's `session-id`/`thread-id` headers
   likewise exist only when supplied — so without an identity every turn of an
   otherwise byte-stable conversation misses the cache.
-  The identity is derived from `conversation_id` and is stable for the whole
-  life of that conversation (one agent run), which is exactly the granularity
-  the provider caches at.
+  This function DERIVES the identity from the conversation scope — the readable
+  `genesis-<conversation_id>` form when it is ASCII and fits 64 bytes, otherwise
+  `genesis-` plus a url-base64 SHA-256 digest — and delegates the INJECTION to
+  `put_cache_identity/3`, the ONE injection primitive, with the provider it
+  resolves from `model` via `provider_from_model/1`.
+  The identity is stable for the whole life of that conversation (one agent
+  run), which is exactly the granularity the provider caches at.
+  Deriving twice for the same scope yields the same key, and injecting twice
+  is a no-op (see `put_cache_identity/3`).
+  """
+  @spec with_cache_identity(keyword(), String.t() | nil, model_spec() | atom()) :: keyword()
+  def with_cache_identity(params, conversation_id, model) do
+    put_cache_identity(params, provider_from_model(model), derived_identity(conversation_id))
+  end
+
+  # The conversation scope is the ONLY derivation input; a nil, empty or
+  # non-binary scope yields no identity at all (and therefore no injection).
+  defp derived_identity(scope) when is_binary(scope) and scope != "", do: cache_identity(scope)
+
+  defp derived_identity(_scope), do: nil
+
+  @doc """
+  The ONE prompt-cache/routing identity INJECTION primitive.
+
+  Takes request `params`, an explicit `provider` atom and an ALREADY-DERIVED
+  `key` (used VERBATIM — no re-prefixing, no re-hashing), and appends the
+  provider's cache-identity options.
+  This is the only way any caller (including `with_cache_identity/3`, which
+  derives the key and delegates here) may re-attach a frozen identity at a
+  later request boundary, so derivation and injection can never diverge.
+
   ## Provider gating
   Only `:openai` and `:openai_codex` understand these options; an undeclared
   `provider_options` key is a hard request-time error everywhere else, so every
@@ -522,19 +563,24 @@ defmodule EvoGit.Config.Schema.LLM do
     emits the `session-id` header, matching Codex CLI parity).
   - `:openai` gets `prompt_cache_key:` only (`session_id` is not in the
     `:openai` provider schema and would fail validation).
-  ## Explicit user configuration wins
+
+  ## Unchanged params
+  `params` is returned byte-identical when it is not a keyword list, when the
+  provider is not cache-identity capable, when `key` is not a non-empty binary,
+  or when `provider_options` is not a keyword list.
+
+  ## Explicit user configuration wins / idempotence
   When `provider_options` already carries `:prompt_cache_key` (or, for
   `:openai_codex`, `:session_id`, which already implies the cache key), the
-  params are returned untouched. Otherwise the appended keys extend the EXISTING
-  `provider_options` list — they never replace it, so `auth_mode: :oauth` and
-  `oauth_file:` survive.
+  params are returned untouched — which is also why injecting twice is a
+  no-op. Otherwise the appended keys extend the EXISTING `provider_options`
+  list — they never replace it, so `auth_mode: :oauth`, `oauth_file:` and any
+  other entry survive.
   """
-  @spec with_cache_identity(keyword(), String.t() | nil, model_spec()) :: keyword()
-  def with_cache_identity(params, conversation_id, model) do
-    provider = provider_from_model(model)
-
-    if Keyword.keyword?(params) and is_binary(conversation_id) and conversation_id != "" and
-         provider in @cache_identity_providers do
+  @spec put_cache_identity(keyword(), atom() | nil, String.t() | nil) :: keyword()
+  def put_cache_identity(params, provider, key) do
+    if Keyword.keyword?(params) and provider in @cache_identity_providers and
+         is_binary(key) and key != "" do
       provider_options = Keyword.get(params, :provider_options, [])
 
       cond do
@@ -551,8 +597,6 @@ defmodule EvoGit.Config.Schema.LLM do
           params
 
         true ->
-          key = cache_identity(conversation_id)
-
           additions =
             case provider do
               :openai_codex -> [prompt_cache_key: key, session_id: key]
