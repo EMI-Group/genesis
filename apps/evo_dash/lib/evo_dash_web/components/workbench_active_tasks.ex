@@ -202,19 +202,15 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
     end)
   end
 
-  # A row of either section. `live?` decides the destination: a LIVE task opens
-  # the run that actually focuses it — the tasks page's `?task=<id>` focus mode
-  # (`/agents` takes no task param, so it would drop the user on the whole
-  # inspector) — while a review candidate opens its review page. It covers the
-  # pause pair because `:paused`/`:pausing` are NON-terminal, so they must NEVER
-  # be titled or routed like a reviewable finished task.
+  # A row of either section: live tasks open the inspector, except paused tasks
+  # open their task card for Resume. Review candidates open their review page.
   defp row(task, now, node_id) do
     live? = live_task?(task)
     label = task_label(task)
 
     {href, sub_line, status_title, pulse?} =
       if live? do
-        {tasks_focus_href(task, node_id), format_elapsed(task.started_at, now),
+        {live_href(task, node_id), format_elapsed(task.started_at, now),
          active_status_title(task.status), pulsing_status?(task.status)}
       else
         {review_href(task, node_id),
@@ -234,15 +230,16 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
     }
   end
 
-  # A LIVE task's destination: the tasks page's FOCUS mode (`?task=<id>`), which
-  # filters that page to the one task and opens its card. `with_node_param/2`
-  # appends its own `?node=`, so the second parameter is joined with `&` by
-  # building the whole query at once. A summary with no usable id cannot be
-  # focused, so it falls back to the unfiltered page.
-  defp tasks_focus_href(task, node_id) do
+  defp live_href(%{status: :paused} = task, node_id),
+    do: task_focus_href(~p"/tasks", task, node_id)
+
+  defp live_href(task, node_id), do: task_focus_href(~p"/agents", task, node_id)
+
+  # Build both query parameters together, omitting either when unavailable.
+  defp task_focus_href(path, task, node_id) do
     case Enum.reject([node: node_id, task: task_key(task)], fn {_key, value} -> is_nil(value) end) do
-      [] -> ~p"/tasks"
-      query -> ~p"/tasks" <> "?" <> URI.encode_query(query)
+      [] -> path
+      query -> path <> "?" <> URI.encode_query(query)
     end
   end
 
@@ -250,7 +247,7 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
   # an id there is nothing to review, so it degrades to the tasks page.
   defp review_href(task, node_id) do
     case task_key(task) do
-      nil -> tasks_focus_href(task, node_id)
+      nil -> task_focus_href(~p"/tasks", task, node_id)
       id -> with_node_param(~p"/review/#{id}", node_id)
     end
   end
