@@ -1,7 +1,5 @@
-# Focused suite for the two RIGHT workbench panels: their default-CLOSED
-# server-rendered state, the ONE filters form in front of the history panel, and
-# the REAL server-side history read behind it (project / search / status /
-# kind).
+# Focused mounted suite for the empty-tabs route, node/project scope, and the
+# workbench's right panels (default-closed chrome and server-side history).
 #
 # `async: true` — this module never writes a BEAM-global that a concurrent
 # module reads:
@@ -17,10 +15,11 @@
 #     process-global `EvoGit.VCT` mount table that the async
 #     `EvoDashWeb.ProjectsLiveTest` reads for its "no active project" /
 #     "no project rows" assertions.
-#   * the only global this suite touches is the run-wide task store, seeded with
-#     PER-TEST-UNIQUE ids/project paths and cleaned up through a direct
-#     `EvoGit.Store.delete_task/2` (never a `TaskRegistry` cast, whose `"tasks"`
-#     broadcast would arm every mounted page's reload debounce).
+#   * task fixtures use PER-TEST-UNIQUE ids/project paths and are cleaned up
+#     through a direct `EvoGit.Store.delete_task/2` (never a `TaskRegistry`
+#     cast, whose `"tasks"` broadcast would arm every mounted page's debounce).
+#   * connection-manager entries use unique target ids in the test's isolated
+#     config directory; status events are sent only to the mounted view.
 #   * the sidebar hub is cleared per test for the LOCAL `{nil, node()}` context
 #     only — `EvoDashWeb.ConnCase` already does that in `setup`/`on_exit`, so it
 #     is not repeated here.
@@ -29,6 +28,24 @@
 # `EvoDashWeb.ProjectsLiveTest.Helpers`: a helper module defined in another
 # `.exs` only exists once that file loads, and this file must run alone with
 # `mix test apps/evo_dash/test/evo_dash_web/live/projects_workbench_test.exs`.
+# Defined before the async suite so ExUnit can start its registered connection
+# fixture as soon as the test module is compiled.
+defmodule EvoDashWeb.ProjectsWorkbenchTest.ConnectionManager do
+  use GenServer
+
+  def start_link(id), do: GenServer.start_link(__MODULE__, id)
+
+  @impl true
+  def init(id) do
+    {:ok, _} = Registry.register(EvoGit.RemoteConnection.Registry, id, :status)
+    {:ok, %{phase: :connecting, node: nil, last_error: nil}}
+  end
+
+  @impl true
+  def handle_call(:status, _from, status), do: {:reply, status, status}
+  def handle_call({:set_status, status}, _from, _previous), do: {:reply, :ok, status}
+end
+
 defmodule EvoDashWeb.ProjectsWorkbenchTest do
   use EvoDashWeb.ConnCase, async: true
 
@@ -44,6 +61,127 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
   @async_wait_budget_ms 30_000
 
   setup [:setup_temp_dir, :set_onboarding_completed]
+
+  describe "project empty-tabs route" do
+    test "leaving the overview for wb_home keeps the project scope but renders no view", %{
+      conn: conn,
+      tmp_dir: path
+    } do
+      task_id = seed_task!(path: path, objective: unique_phrase("empty-tabs"), status: :completed)
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: path}}")
+
+      assert has_element?(view, "#workbench-project-overview[data-overview-kind=project]")
+      assert has_element?(view, "#dashboard-root[data-workbench-compose=false]")
+      wait_for(view, fn -> has_element?(view, row_selector(task_id)) end)
+
+      # This is the URL reached after the client closes the last open tab; no
+      # client hook has to fix an incorrect server scope or display state.
+      render_patch(view, ~p"/projects?#{%{project: path, wb_home: "1"}}")
+
+      assert_empty_project_view(view, path)
+      assert has_element?(view, row_selector(task_id))
+    end
+
+    test "switching projects on wb_home resets the server-side history scope", %{
+      conn: conn,
+      tmp_dir: first
+    } do
+      second = make_project_dir!("evogit_workbench_second")
+      first_id = seed_task!(path: first, objective: unique_phrase("first"), status: :completed)
+      second_id = seed_task!(path: second, objective: unique_phrase("second"), status: :failed)
+      {view, _html} = mount_project_page!(conn, first)
+
+      wait_for(view, fn -> history_row_ids(view) == [first_id] end)
+
+      view
+      |> element("#workbench-history-filters")
+      |> render_change(%{"project" => "", "status" => "completed"})
+
+      assert has_element?(view, "#workbench-history-project", "All projects")
+
+      render_patch(view, ~p"/projects?#{%{project: second, wb_home: "1"}}")
+
+      assert_empty_project_view(view, second)
+      assert has_element?(view, "#workbench-history-project", Path.basename(second))
+      wait_for(view, fn -> history_row_ids(view) == [second_id] end)
+
+      # An invalid absolute path isn't a selected project, even when another
+      # valid selection was visible immediately before it.
+      missing = Path.join(second, "not-a-directory")
+      render_patch(view, ~p"/projects?#{%{project: missing, wb_home: "1"}}")
+
+      assert has_element?(view, ~s(#app-layout[data-workbench-project=""]))
+
+      assert has_element?(
+               view,
+               "#workbench-idle [data-workbench-idle-projects]:not([hidden])",
+               "No projects"
+             )
+
+      assert has_element?(view, "#workbench-idle [data-workbench-idle-window][hidden]")
+      refute has_element?(view, "#workbench-history-filters")
+      refute has_element?(view, row_selector(second_id))
+    end
+
+    test "switching the viewed node drops local scope and ignores the old target's connect event",
+         %{
+           conn: conn,
+           tmp_dir: path
+         } do
+      task_id = seed_task!(path: path, objective: unique_phrase("local-only"), status: :completed)
+      {old_id, old_manager} = connecting_target!("Old workbench node")
+      {current_id, current_manager} = connecting_target!("Current workbench node")
+      {view, _html} = mount_project_page!(conn, path)
+      wait_for(view, fn -> has_element?(view, row_selector(task_id)) end)
+
+      # Keep the exact same project path throughout: a path-only scope check
+      # cannot distinguish either pending remote context from the local one.
+      for {id, name} <- [{old_id, "Old workbench node"}, {current_id, "Current workbench node"}] do
+        target_path = ~p"/projects?#{%{project: path, wb_home: "1", node: id}}"
+        render_patch(view, target_path)
+        assert_patch(view, target_path, @async_wait_budget_ms)
+        assert has_element?(view, "#main-content p", "Connecting to #{name}…")
+      end
+
+      assert_no_project_scope(view, current_id, task_id)
+
+      connect_target(view, old_id, old_manager)
+      # The state round trip drains our send; render then flushes any patch
+      # notification from the LiveViewTest proxy before the negative probe.
+      :sys.get_state(view.pid, @async_wait_budget_ms)
+      render(view)
+      refute_patched(view)
+      assert has_element?(view, "#main-content p", "Connecting to Current workbench node…")
+      assert_no_project_scope(view, current_id, task_id)
+
+      # Positive control: the same event from the CURRENT target reconnects
+      # the page and preserves the empty-tabs URL. The fake has no daemon to
+      # answer File.dir?; a directory on the local host cannot validate it.
+      connect_target(view, current_id, current_manager)
+      uri = view |> assert_patch(@async_wait_budget_ms) |> URI.parse()
+      assert uri.path == "/projects"
+
+      assert URI.decode_query(uri.query) == %{
+               "project" => path,
+               "wb_home" => "1",
+               "node" => current_id
+             }
+
+      render_async(view, @async_wait_budget_ms)
+
+      assert has_element?(
+               view,
+               "#flash-error",
+               "Directory does not exist on the remote node: #{path}"
+             )
+
+      assert_no_project_scope(view, current_id, task_id)
+
+      render_patch(view, ~p"/projects?#{%{project: path, wb_home: "1"}}")
+      assert_empty_project_view(view, path)
+      wait_for(view, fn -> has_element?(view, row_selector(task_id)) end)
+    end
+  end
 
   describe "right workbench panels" do
     test "both panels render closed with collapsed toggles and hidden chrome", %{
@@ -390,6 +528,22 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
 
   # -- fixtures -------------------------------------------------------------
 
+  defp connecting_target!(name) do
+    id = unique_phrase("target")
+
+    assert {:ok, _} =
+             EvoGit.RemoteConnections.save(%{ssh_target: "user@host", id: id, name: name})
+
+    manager = start_supervised!({EvoDashWeb.ProjectsWorkbenchTest.ConnectionManager, id}, id: id)
+    {id, manager}
+  end
+
+  defp connect_target(view, id, manager) do
+    status = %{phase: :connected, node: "#{id}@127.0.0.1", last_error: nil}
+    :ok = GenServer.call(manager, {:set_status, status}, @async_wait_budget_ms)
+    send(view.pid, {:remote_connection_status, id, status})
+  end
+
   defp mount_project_page!(conn, project_path) do
     {:ok, view, html} = live(conn, ~p"/projects?#{%{project: project_path, wb_home: "1"}}")
 
@@ -472,6 +626,50 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
   end
 
   # -- waits ----------------------------------------------------------------
+
+  defp assert_empty_project_view(view, path) do
+    assert has_element?(view, ~s(#app-layout[data-workbench-project="#{path}"]))
+
+    assert has_element?(
+             view,
+             ~s(#dashboard-root[data-project="#{path}"][data-workbench-compose=false])
+           )
+
+    assert has_element?(view, "#workbench-tabs[phx-update=ignore]")
+    refute has_element?(view, "#workbench-tabs > *")
+
+    assert has_element?(
+             view,
+             "#workbench-idle [data-workbench-idle-window]:not([hidden])",
+             "No window selected"
+           )
+
+    assert has_element?(view, "#workbench-idle [data-workbench-idle-projects][hidden]")
+
+    assert has_element?(
+             view,
+             ~s(#workbench-history-project-filter option[selected][value="#{path}"])
+           )
+
+    assert has_element?(view, "#workbench-git-toggle")
+    refute has_element?(view, "#workbench-project-overview")
+    refute has_element?(view, "#task-form")
+    refute has_element?(view, "#dashboard-root[phx-hook=StatePersistence]")
+  end
+
+  defp assert_no_project_scope(view, target_id, task_id) do
+    assert has_element?(
+             view,
+             ~s(#app-layout[data-workbench-node="#{target_id}"][data-workbench-project=""])
+           )
+
+    assert has_element?(view, "#dashboard-root[data-workbench-compose=false]:not([data-project])")
+    refute has_element?(view, "#workbench-history-toggle")
+    refute has_element?(view, "#workbench-history-filters")
+    refute has_element?(view, "#workbench-git-toggle")
+    refute has_element?(view, "#task-form")
+    refute has_element?(view, row_selector(task_id))
+  end
 
   defp row_selector(id), do: "[data-workbench-item][data-item-id='#{id}']"
 
