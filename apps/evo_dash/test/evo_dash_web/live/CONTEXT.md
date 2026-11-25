@@ -6,6 +6,8 @@ ExUnit suites for the EvoDash LiveView pages and their support modules, mirrorin
 Page suites are split by MODULE for parallelism, so "is this page suite async?" has no per-file answer — check the module (census + forcing globals: `apps/evo_dash/test/CONTEXT.md`).
 This node owns the live-page cross-suite mechanics (wait cadences, the ReviewLive suite, async mount loads, exit-safety seams); per-suite detail: `./projects_live/CONTEXT.md`, `./settings_live/CONTEXT.md`, `./home_live/CONTEXT.md`, `./agents_live/CONTEXT.md`.
 No suite writes the config dir BEAM-globally: per-process `EvoDash.Test.ConfigDir.isolate!/1` (proof `../support/config_dir_test.exs`).
+No suite observes the run-wide project registry either, where it boots its own: `EvoDash.Test.IsolatedVCT.isolate!/1` gives a test one private `EvoGit.VCT` over a private store and designates it through `:evogit_vct_server`, which `EvoDash.VCTScope` resolves along the spawn chain for the mounted page and its load tasks (shared global `EvoGit.PubSub`, so `{:vct_updated, node}` refresh still fires).
+The config-dir and VCT designations are per-process, never BEAM-global, so a page suite that touches either stays `async: true`.
 
 ## Routing Table
 
@@ -18,14 +20,14 @@ No suite writes the config dir BEAM-globally: per-process `EvoDash.Test.ConfigDi
   Mounted rows and real reads pin project widening, query, status, live `/tasks`, terminal `/review`, and preservation of the first 15 rows when loading more.
   Task fixtures are deleted directly through `EvoGit.Store.delete_task/2`, and an async no-match query pins empty conversations without writing `EvoDash.ChatHistory`.
   The conversation case seeds one cache entry to pin the exact `/assistant?session=…` link and runs synchronously because `ChatHistory` is process-global and async suites assert its exact contents.
-  The sync cases depend on the process-global VCT registry remaining stable; the async `ProjectsLiveTest` clears it and asserts on its empty state.
+  The sync cases depend on the run-wide `EvoGit.VCT` registry they read without isolating (a concurrent mounting suite mounts into the same table), so they pin their own per-test-unique rows.
   The palette's Open Project by Path and Create New Project actions drive targeted `prepare`, the rendered manual browse and open/create controls, and real VCT registration through the mounted `ProjectWindow` LiveComponent.
   Both regressions require a live navigation to `/projects?project=<path>` without `wb_home=1`, a registered project overview, and an exact default-draft marker matching the scoped Assistant href; the parent `projects_live_test.exs` covers the separate legacy submission handlers.
   A direct URL to a real, unregistered local Git repo offers a working manual New task entry, directs the user to the project picker instead of enabling scoped Assistant chat, advertises no automatic draft link and leaves the repo unregistered after opening the composer.
   The overview's default Assistant draft URL is pinned exactly and disappears on empty-tabs and composer routes; `wb_home=1` preserves the selected project scope, empty client-owned tab rail and project-scoped history.
   A registered connection-manager fixture drives pending node switches on the same absolute path, proving that the previous target's late connect event cannot patch the current page and the current target's event preserves the exact empty-tabs URL; an unreachable daemon cannot validate a local directory or inherit its history.
 - `./projects_workbench_git_test.exs` (async) → on the mounted project overview, rendered Source Control controls fetch real Git commits and a working-tree diff, whose portal declares the shell's unique target (LiveViewTest pins server markup, not the browser's DOM move).
-- `./projects_workbench_workspace_test.exs` (sync because async Projects tests clear the shared VCT registry) → mounted workspace overview and `wb_home=1` navigation retain the workspace URL identity while shell and history scope follow the selected member's OS path.
+- `./projects_workbench_workspace_test.exs` (sync because it reads the run-wide `EvoGit.VCT` table without isolating one) → mounted workspace overview and `wb_home=1` navigation retain the workspace URL identity while shell and history scope follow the selected member's OS path.
 - `./review_live_test.exs` (125 tests across 10 case modules) → review page against the PER-REPOSITORY CARD design; "ReviewLive suite" below.
 - `./review_navigation_test.exs` (3 tests, async) → canonical workbench navigation uses real task rows and Git commits to pin stable task/primary-project metadata across Review, foreign commit detail and Back, and exercises exact node-switch URLs, pending/unavailable scope and stale local results through the mounted page.
 - `./review_test_helper.exs` → shared Review fixtures, mount settling and connection-manager fake; Mix discovery ignores the `_helper.exs` suffix.
