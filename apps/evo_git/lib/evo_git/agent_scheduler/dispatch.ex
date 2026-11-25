@@ -25,6 +25,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentScheduler.Worktrees
   alias EvoGit.AgentSpec
+  alias EvoGit.Config.Keys
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.AgentScheduler.Subagents
 
@@ -135,14 +136,23 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
     # A per-AGENT-RUN cache/routing identity: every turn of this agent (and
     # every retry/compression call it makes) shares one provider cache key,
-    # while distinct agents/subagents get distinct ones. Provider-gated inside
-    # the helper, so non-OpenAI params stay byte-identical.
+    # while distinct agents/subagents get distinct ones. The ACCOUNT provider is
+    # the primary signal — a legacy/non-canonical selection can carry a bare
+    # `llm_model` with no provider part — falling back to the model spec.
+    # Provider-gated inside the helper, so non-OpenAI params stay byte-identical.
+    identity_provider =
+      EvoGit.Config.Schema.LLM.provider_from_model(
+        Keys.get(selection, :provider) || resolved_model
+      )
+
     resolved_params =
       EvoGit.Config.Schema.LLM.with_cache_identity(
         selection.llm_generation_params,
         cache_identity_scope(task_id, id),
-        resolved_model
+        identity_provider
       )
+
+    warn_missing_cache_identity(id, task_id, identity_provider, resolved_params)
 
     resolved_context_window = selection.llm_context_window
 
@@ -210,6 +220,49 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     do: "#{task_id}-#{agent_id}"
 
   defp cache_identity_scope(_task_id, agent_id), do: "agent-#{agent_id}"
+
+  # Hardening: a cache-capable ACCOUNT whose registered params still carry no
+  # `prompt_cache_key` would miss the provider prompt cache on EVERY turn with
+  # no trace at all, so name the agent and the task once instead of staying
+  # silent. An explicit user `provider_options[:prompt_cache_key]` (or, for
+  # codex, `:session_id`) counts as present — explicit configuration wins and is
+  # not a skip.
+  defp warn_missing_cache_identity(id, task_id, provider, params)
+       when provider in [:openai, :openai_codex] do
+    if cache_identity_present?(params) do
+      :ok
+    else
+      Logger.warning(
+        "AgentScheduler: no prompt cache identity attached for agent #{id} " <>
+          "(task #{inspect(task_id)}): account provider #{inspect(provider)} is " <>
+          "cache-capable but provider_options is not a keyword list, so every turn " <>
+          "will miss the provider prompt cache"
+      )
+    end
+  end
+
+  # Every other provider (and an unresolved one) is deliberately left alone: an
+  # undeclared `provider_options` key is a hard request-time error there, so
+  # byte-identical params are the correct outcome, not a skip.
+  defp warn_missing_cache_identity(_id, _task_id, _provider, _params), do: :ok
+
+  defp cache_identity_present?(params) when is_list(params) do
+    if Keyword.keyword?(params) do
+      case Keyword.get(params, :provider_options) do
+        options when is_list(options) ->
+          Keyword.keyword?(options) and
+            (Keyword.has_key?(options, :prompt_cache_key) or
+               Keyword.has_key?(options, :session_id))
+
+        _options ->
+          false
+      end
+    else
+      false
+    end
+  end
+
+  defp cache_identity_present?(_params), do: false
 
   @doc """
   Computes the next task number by scanning the `.genesis/workers/` directory.
@@ -550,7 +603,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
           error
       end
     else
-      {id, model, params} = resolve_model_for_agent(state, requested)
+      {id, model, params, provider} = resolve_legacy_selection(state, requested)
 
       {:ok,
        %{
@@ -559,7 +612,8 @@ defmodule EvoGit.AgentScheduler.Dispatch do
          model_spec: nil,
          llm_model: model,
          llm_generation_params: params,
-         llm_context_window: resolve_context_window(state, id)
+         llm_context_window: resolve_context_window(state, id),
+         provider: provider
        }}
     end
   end
@@ -577,17 +631,46 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   @spec resolve_model_for_agent(State.t(), String.t() | nil) ::
           {String.t(), ReqLLM.model_input(), keyword()}
   def resolve_model_for_agent(%State{} = state, model_id) do
+    {resolved_id, model, params, _provider} = resolve_legacy_selection(state, model_id)
+    {resolved_id, model, params}
+  end
+
+  # The ONE lookup behind a LEGACY (non-canonical) selection: the pool id, the
+  # model, the generation params and the provider signal all come from the SAME
+  # resolved profile, so model and provider can never disagree. `nil` means no
+  # profile resolved at all.
+  @spec resolve_legacy_selection(State.t(), String.t() | nil) ::
+          {String.t(), ReqLLM.model_input(), keyword(), atom() | nil}
+  defp resolve_legacy_selection(%State{} = state, model_id) do
     case resolve_model_profile(state, model_id) do
       nil ->
         # No profiles configured at all — use state's backward-compat values
-        {State.default_pool_id(state), state.llm_model, state.llm_generation_params}
+        {State.default_pool_id(state), state.llm_model, state.llm_generation_params, nil}
 
       profile ->
         resolved_id = Map.get(profile, :id, "default")
         model = Map.get(profile, :model, state.llm_model)
         params = EvoGit.Config.Schema.llm_generation_params(profile)
-        {resolved_id, model, params}
+        {resolved_id, model, params, legacy_profile_provider(profile, model)}
     end
+  end
+
+  # The provider signal of a legacy selection, in precedence order:
+  #
+  # 1. the MODEL itself — a qualified `"openai:gpt-5.1"`, a model map carrying a
+  #    `provider` key, or the `{provider, opts}` form;
+  # 2. an explicit provider ON THE PROFILE (atom- or string-keyed) — a canonical
+  #    STRING-keyed provider account can be projected through this same legacy
+  #    arm (`state.ex`'s `fallback_default/1` → `canonical_fallback_default/1`),
+  #    and `resolve_model_for_agent/2` reads `:model` atom-keyed so such an
+  #    account's model falls back to `state.llm_model`;
+  # 3. `nil` — a BARE legacy model string carries no provider signal anywhere in
+  #    the data (such a profile is also dropped by `ProviderProfiles`), so it
+  #    deliberately gets no identity. Never guess a provider, never sniff a
+  #    model name.
+  defp legacy_profile_provider(profile, model) do
+    EvoGit.Config.Schema.LLM.provider_from_model(model) ||
+      EvoGit.Config.Schema.LLM.provider_from_model(Keys.get(profile, :provider))
   end
 
   @doc """
