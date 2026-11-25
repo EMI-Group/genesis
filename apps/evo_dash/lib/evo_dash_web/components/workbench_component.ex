@@ -22,6 +22,18 @@ defmodule EvoDashWeb.WorkbenchComponent do
 
   @history_statuses ~w(pending running finalizing awaiting_input cancelling pausing paused completed failed cancelled)
 
+  # Lifecycle classes of a history task row, and the ONE destination each class
+  # deserves:
+  #   * FINISHED — the run is over and its output (diff, merge/reject, archive)
+  #     is what the user came for, so the row opens the review page.
+  #   * LIVE — the run is still in flight, so the row opens THAT run's detail on
+  #     the tasks page (`?task=<id>` is the page's focus mode: it filters the
+  #     list to the one task and opens its card). `/agents` is NOT a valid target
+  #     here — it accepts no task param and would land on the whole inspector.
+  # A status outside both classes (an unknown/future value) falls back to the
+  # live destination, which focuses the task without claiming it is reviewable.
+  @finished_task_statuses [:completed, :failed, :cancelled]
+
   @impl true
   def mount(socket) do
     {:ok,
@@ -696,12 +708,14 @@ defmodule EvoDashWeb.WorkbenchComponent do
   defp task_row(task, id, node_id) do
     opts = task[:opts] || []
     title = opts[:objective] || opts[:prompt] || id
+    status = task[:status]
+    finished? = status in @finished_task_statuses
 
     %{
       kind: "task",
       id: id,
       title: String.slice(to_string(title), 0, 100),
-      status: task[:status],
+      status: status,
       at: task[:finished_at] || task[:started_at],
       active:
         task[:status] in [
@@ -713,9 +727,15 @@ defmodule EvoDashWeb.WorkbenchComponent do
           :pausing,
           :cancelling
         ],
-      href: navigation_path("/tasks", node_id, task: id)
+      href: task_row_href(finished?, id, node_id)
     }
   end
+
+  # A finished run is reviewable: `/review/<id>` (node-preserving, so a remote
+  # node's review page opens through the remote gate). A live run is focused on
+  # the tasks page.
+  defp task_row_href(true, id, node_id), do: navigation_path("/review/#{id}", node_id)
+  defp task_row_href(false, id, node_id), do: navigation_path("/tasks", node_id, task: id)
 
   defp chat_row(row, node_id) do
     %{
