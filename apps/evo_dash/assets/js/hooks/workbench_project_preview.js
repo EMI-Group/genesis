@@ -143,7 +143,6 @@ export const projectPreview = {
     surface.style.height = "100%"
     const wrapper = content.parentElement.cloneNode(false)
     const snapshot = content.cloneNode(true)
-    snapshot.classList.remove("node-switch-fade")
     snapshot.querySelectorAll("dialog, iframe, script, video, audio").forEach(node => node.remove())
     wrapper.append(snapshot)
     surface.append(wrapper)

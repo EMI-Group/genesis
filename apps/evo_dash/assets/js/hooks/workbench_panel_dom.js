@@ -18,12 +18,8 @@ import {initialPanelState, planPanelRequest, completePanelClose, isPanelCloseTra
 // property while the collapsed geometry is applied forces style recalc + layout,
 // so the following data-panel-state change is an ordinary before → after
 // computed-style change and the CSS transition runs.
-// This is ONE mechanism — a synchronous flush in the same task, exactly the
-// `void el.offsetWidth` convention node_switch_fade.js uses — NOT flush plus a
-// frame schedule and NOT a two-frame deferral: a frame lands after that frame's
-// style resolution (which is the pop-in this fixes) and would add a frame of
-// delay plus a frame handle to cancel. The flush keeps the open deterministic
-// and complete in the task that requested it.
+// The synchronous flush via `offsetWidth` starts the transition in the same
+// task, without a frame delay or a frame handle to cancel.
 function settleDisplayedLayout(panel) {
   void panel.offsetWidth
 }
