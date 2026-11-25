@@ -14,13 +14,14 @@ function load(file, exports, globals = {}) {
   return vm.runInNewContext(`${text}\n;(${exports});`, {URL, URLSearchParams, ...globals});
 }
 
-const store = load('workbench_tabs', '{TAB_BASE_URL, safeHref, tabKey, tabGroup, restore, openTab, tabsForProject, alwaysPinned, pinTab, closeTab, cycleTab}');
+const store = load('workbench_tabs', '{TAB_BASE_URL, safeHref, sameScope, tabKey, tabGroup, restore, openTab, tabsForProject, alwaysPinned, pinTab, closeTab, cycleTab}');
 const helpers = load('workbench_navigation', '{routeTab, exactHref, historyKey, defaultDraftHref, navigationState, sameTabClick}', store);
 const url = path => new URL(path, 'https://example.test');
 const taskKey = (id, node = '') => store.tabKey(node, '', 'task', id);
 const DRAFT = '/assistant?wb_project=%2Frepo&wb_draft=1234567890abcdef12345678';
 const OVERVIEW = '/projects?project=%2Frepo';
 const TASKS = '/tasks?node=remote&status=running&task=task-1';
+const AGENTS = '/agents?node=remote&task=task-1&agent=agent-3#tree';
 const COMMIT = '/review/task-1/commit/abcd?node=remote#file-2';
 
 function timers() {
@@ -43,6 +44,22 @@ test('task aliases preserve the actual URL and share the same node/task identity
   assert.equal(helpers.historyKey('remote', {workbenchItem: 'task', itemId: 'task-1'}), taskKey('task-1', 'remote'));
   assert.equal(helpers.historyKey('local', {workbenchItem: 'task', itemId: 'task-1'}), taskKey('task-1'));
   assert.equal(helpers.routeTab(url('/review/%E0'), {...data, workbenchNode: ''}, false), undefined);
+});
+
+test('focused Agents requires matching page, node and decoded task; global Agents stays outside the task rail', () => {
+  const data = {workbenchNode: 'remote', workbenchPage: 'agents', workbenchTask: 'task-1', workbenchTitle: 'My task'};
+  const view = helpers.routeTab(url(AGENTS), data, false);
+  assert.equal(view.kind, 'task');
+  assert.equal(view.id, 'task-1');
+  assert.equal(view.href, AGENTS);
+  assert.equal(view.title, 'My task');
+  for (const overrides of [{workbenchNode: 'other'}, {workbenchPage: 'tasks'}, {workbenchTask: 'task-2'}, {workbenchTask: ''}]) {
+    assert.equal(helpers.routeTab(url(AGENTS), {...data, ...overrides}, false), undefined);
+  }
+  const local = {...data, workbenchNode: '', workbenchTask: 'one+two'};
+  assert.equal(helpers.routeTab(url('/agents?node=local&task=one%2Btwo'), local, false).id, 'one+two');
+  assert.equal(helpers.routeTab(url('/agents?node=remote&agent=agent-3'), data, false), undefined);
+  assert.equal(helpers.routeTab(url('/agents?node=remote&agent=agent-3'), {...data, workbenchTask: ''}, false), null);
 });
 
 test('the only default is the exact server-supplied scoped draft on an empty ready overview', () => {
@@ -151,8 +168,9 @@ function fixture({initial = OVERVIEW, defaultDraft, tabs = []} = {}) {
   const globals = {location, document, queueMicrotask: fn => microtasks.push(fn)};
   const rail = load('workbench_rail', '{railMethods, link, TAB_KEY}', {...store, ...helpers, ...globals});
   const api = load('workbench', '{Workbench, navigation, attach: hook => { mountedWorkbench = hook; bindNavigation() }}', {
-    ...rail, ...helpers, ...globals, safeHrefBase: store.safeHref,
-    projectPreview: {forget() {}}, closeTabIn: store.closeTab, sessionStorage: {setItem() {}},
+    ...rail, ...helpers, ...globals, safeHrefBase: store.safeHref, sameScope: store.sameScope,
+    projectPreview: {forget() {}, remember() {}, show() {}, sync() {}},
+    closeTabIn: store.closeTab, sessionStorage: {setItem() {}},
     navigationState: () => helpers.navigationState({setTimer: clock.setTimeout, clearTimer: clock.clearTimeout}),
     requestAnimationFrame: fn => frames.push(fn),
     performance: {getEntriesByType: () => []},
@@ -407,6 +425,99 @@ test('only the clicked history row is busy and rapid clicks, patches, timeout an
   busy(task, false);
   assert.equal(hook.navigation.pending, null);
   assert.equal(chat.anchor.attrs['aria-current'], 'page');
+});
+
+test('focused Agents replaces the exact destination through review and Back, retaining pinned task metadata', () => {
+  const tasks = '/tasks?task=task-1&status=running';
+  const agents = '/agents?task=task-1&agent=agent-2#graph';
+  const review = '/review/task-1/commit/abcd#diff';
+  const savedTask = {...saved('task', 'task-1', tasks), title: 'Task objective', project: 'Named project', location: 'Local'};
+  const {hook, at, emit, frames, history, list, tabRail} = fixture({initial: tasks, tabs: [savedTask]});
+  Object.assign(hook.el.dataset, {workbenchPage: 'tasks', workbenchTask: 'task-1'});
+  hook.projectName = 'repo'; // The project shortcut label is not yet available after remount.
+  hook.onNavigation();
+  const key = taskKey('task-1');
+  hook.indicateActivation(agents, key, true);
+  assert.equal(tabRail.children[0].dataset.tabPending, 'true');
+  assert.equal(tabRail.children[0].children[0].href, tasks);
+  hook.el.dataset.workbenchPage = 'agents';
+  hook.project = '';
+  hook.projectName = undefined;
+  hook.onNavigation();
+  assert.equal(hook.tabs[0].href, tasks, 'the early layout cannot overwrite a confirmed destination');
+  at(agents);
+  emit('phx:navigate', {href: 'https://other.test' + agents});
+  assert.equal(hook.navigation.pending.href, agents, 'a matching path on another origin cannot confirm');
+  emit('phx:navigate', {href: agents});
+  assert.equal(hook.tabs.length, 1);
+  assert.equal(hook.tabs[0].key, key);
+  assert.equal(hook.tabs[0].projectPath, '/repo');
+  assert.equal(hook.tabs[0].project, 'Named project');
+  assert.equal(hook.tabs[0].location, 'Local');
+  assert.equal(hook.tabs[0].title, 'Task objective');
+  assert.equal(hook.tabs[0].preview, false);
+  hook.renderOverflowTabs();
+  assert.equal(list.children[0].href, agents);
+  assert.equal(list.children[0].attrs['aria-current'], 'page');
+  assert.equal(list.children[0].attrs['aria-busy'], undefined);
+  assert.equal(history.attrs['aria-current'], 'page');
+
+  hook.el.dataset.workbenchPage = 'review';
+  at(review);
+  emit('phx:navigate', {href: review});
+  assert.equal(hook.tabs[0].href, review);
+  assert.equal(hook.currentTab, key);
+  hook.el.dataset.workbenchPage = 'agents';
+  at(agents);
+  emit('popstate');
+  emit('phx:navigate', {href: agents, pop: true});
+  assert.equal(hook.tabs[0].href, agents);
+  assert.equal(hook.currentTab, key);
+  assert.equal(frames.length, 1);
+  frames.shift()();
+  assert.equal(hook.focused, undefined, 'the first activation no longer owns focus after Back');
+
+  at('/agents?agent=agent-2');
+  hook.el.dataset.workbenchTask = '';
+  emit('phx:navigate', {href: '/agents?agent=agent-2'});
+  assert.equal(hook.currentTab, null);
+  assert.equal(history.attrs['aria-current'], undefined);
+  assert.equal(hook.tabs[0].href, agents, 'global inspector never replaces a focused task route');
+});
+
+test('a project shortcut restores its focused Agents route and does not navigate away from a local diff on a modifier click', () => {
+  const agents = '/agents?node=local&task=task-1&agent=agent-2#graph';
+  const {hook, document, at, emit, navigated} = fixture({tabs: [saved('task', 'task-1', agents)]});
+  const anchor = document.createElement('a');
+  anchor.className = 'workbench-project-link';
+  anchor.href = OVERVIEW;
+  anchor.dataset = {workbenchNode: '', workbenchProject: '/repo'};
+  anchor.closest = selector => selector === 'button, a' ? anchor : null;
+  const click = (overrides = {}) => {
+    const event = {button: 0, target: anchor, preventDefault() { this.defaultPrevented = true; }, stopPropagation() {}, ...overrides};
+    hook.click(event);
+    return Boolean(event.defaultPrevented);
+  };
+  let closed = 0;
+  hook.closeGitDiff = () => closed++;
+  assert.equal(click({metaKey: true}), false);
+  assert.equal(click({button: 1}), false);
+  assert.deepEqual(navigated, []);
+  assert.equal(click(), true);
+  assert.deepEqual(navigated, [agents]);
+  at(agents);
+  Object.assign(hook.el.dataset, {workbenchPage: 'agents', workbenchTask: 'task-1'});
+  emit('phx:navigate', {href: agents});
+  hook.gitDiff = 'lib/changed.ex';
+  assert.equal(click({ctrlKey: true}), false);
+  assert.equal(closed, 0);
+  assert.equal(click(), true);
+  assert.equal(closed, 1, 'selecting the exact confirmed task route dismisses the local Git diff');
+  assert.deepEqual(navigated, [agents]);
+  anchor.dataset.workbenchProject = '/another';
+  anchor.href = '/projects?project=%2Fanother';
+  assert.equal(click(), false, 'an explicit project with no remembered tab follows its own link');
+  assert.deepEqual(navigated, [agents]);
 });
 
 test('closing the last tab takes the explicit home route without starting a new draft', () => {
