@@ -395,6 +395,7 @@ defmodule EvoDashWeb.WorkbenchComponent do
         rows: rows,
         filter_options: options,
         status_options: @history_statuses,
+        empty?: assigns.result != nil and rows == [] and !assigns.error,
         first_load?:
           assigns.project && assigns.target && is_nil(assigns.result) && assigns.loading
       )
@@ -405,7 +406,7 @@ defmodule EvoDashWeb.WorkbenchComponent do
       phx-hook="WorkbenchSection"
       class="workbench-history-content"
       aria-label={gettext("Project history")}
-      data-workbench-history-empty={if @result != nil and @rows == [] and !@error, do: "true"}
+      data-workbench-history-empty={if @empty?, do: "true"}
     >
       <p :if={@project && !@target} class="workbench-hint">
         {gettext("Connect to see this project's history.")}
@@ -505,6 +506,12 @@ defmodule EvoDashWeb.WorkbenchComponent do
       <p :if={@first_load?} class="workbench-hint" role="status">{gettext("Loading…")}</p>
       <p :if={@project && @target && @error} class="workbench-hint">
         {gettext("Could not load history")}
+      </p>
+      <p
+        :if={@project && @target && @history_kind == "chat" && @empty? && !@loading}
+        class="workbench-hint"
+      >
+        {gettext("No conversations found.")}
       </p>
       <div
         :if={@project && @target}
