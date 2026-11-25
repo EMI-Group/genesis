@@ -33,9 +33,10 @@ defmodule EvoDashWeb.ProjectsWorkbenchWorkspaceTest do
 
     {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: workspace.point}}")
 
+    # Wait for a resolved member; the no-member marker is also absent before loading.
     flush_loading(
       view,
-      "data-overview-no-member",
+      ~r/\A(?!.*data-overview-execution-member)/s,
       "workspace members did not resolve",
       @async_wait_budget_ms
     )
@@ -43,6 +44,7 @@ defmodule EvoDashWeb.ProjectsWorkbenchWorkspaceTest do
     assert has_element?(view, "#workbench-project-overview[data-overview-kind=workspace]")
     assert has_element?(view, "[data-overview-point]", workspace.point)
     assert_member_scope(view, workspace.point, first.path)
+    assert_workspace_default_draft(view, workspace.point)
 
     view
     |> form("#overview-member-form", %{"overview_member" => second.point})
@@ -50,6 +52,7 @@ defmodule EvoDashWeb.ProjectsWorkbenchWorkspaceTest do
 
     assert has_element?(view, "[data-overview-execution-member]", second.path)
     assert_member_scope(view, workspace.point, second.path)
+    assert_workspace_default_draft(view, workspace.point)
 
     render_patch(view, ~p"/projects?#{%{project: workspace.point, wb_home: "1"}}")
 
@@ -63,6 +66,16 @@ defmodule EvoDashWeb.ProjectsWorkbenchWorkspaceTest do
 
     refute has_element?(view, "#workbench-project-overview")
     refute has_element?(view, "#task-form")
+    refute has_element?(view, "#app-layout[data-workbench-default-draft]")
+  end
+
+  defp assert_workspace_default_draft(view, workspace_point) do
+    dom = view |> render() |> Floki.parse_fragment!()
+    assert [href] = Floki.attribute(dom, "a#overview-chat-assistant", "href")
+    assert %URI{path: "/assistant", query: query} = URI.parse(href)
+    assert %{"wb_project" => ^workspace_point, "wb_draft" => draft_id} = URI.decode_query(query)
+    assert draft_id != ""
+    assert Floki.attribute(dom, "#app-layout", "data-workbench-default-draft") == [href]
   end
 
   defp member!(root, name) do
