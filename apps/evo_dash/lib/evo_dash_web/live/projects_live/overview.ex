@@ -35,8 +35,9 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
       (`/assistant?wb_project=…&wb_draft=…[&node=…]`): `wb_project` is the OS
       path for a project and the WORKSPACE POINT for a workspace (a member path
       is never silently substituted — the assistant resolves the group itself).
-    * `default_draft_path/1` advertises that same URL for a confirmed explicit
-      overview. The browser decides whether its restored tab rail is empty.
+    * `default_draft_path/1` advertises that same URL only for a confirmed
+      explicit overview. The browser decides whether its restored tab rail is
+      empty.
     * `draft_id/0` mints the 24-lowercase-hex workbench draft id `HomeLive`
       requires (`byte_size(draft) == 24`).
     * `load/2` reads BOTH halves of the async payload off-process —
@@ -91,8 +92,7 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
   """
   @spec visible?(map()) :: boolean()
   def visible?(assigns) when is_map(assigns) do
-    not EvoDashWeb.RemoteGateComponents.gate_active?(assigns) and
-      not compose_task?(assigns) and
+    overview_available?(assigns) and
       not idle?(assigns) and
       (not is_nil(workspace_token(assigns)) or not is_nil(Map.get(assigns, :active_project)))
   end
@@ -108,6 +108,10 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
     do: Map.get(assigns, :compose_task?) == true
 
   def compose_task?(_assigns), do: false
+
+  defp overview_available?(assigns) do
+    not EvoDashWeb.RemoteGateComponents.gate_active?(assigns) and not compose_task?(assigns)
+  end
 
   defp idle?(assigns), do: Map.get(assigns, :workbench_idle?) == true
 
@@ -357,7 +361,9 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
 
   @doc """
   The same already-minted Assistant draft URL as the overview link, or nil
-  until the URL explicitly selects a confirmed, visible project or workspace.
+  until selection is confirmed. Requires a visible overview with an explicit
+  project or workspace URL selection. Implicit recent-project activation does
+  not offer a default draft.
 
   Confirmation uses the loaded VCT registry, never Git state or extra I/O.
   Whether to open the draft depends on the browser's restored tab rail.
@@ -369,12 +375,18 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
           overview_draft_id: draft
         } = assigns
       ) do
-    with true <- present?(selected) and present?(draft),
-         true <- visible?(assigns) and not ModelSelectionScope.pending_remote?(assigns),
+    with true <- present?(selected) and present?(draft) and visible?(assigns),
+         false <- ModelSelectionScope.pending_remote?(assigns),
          nil <- assigns[:remote_project_loading],
-         false <- assigns[:project_palette_open] == true or params["wb_open"] == "1",
+         nil <- assigns[:workbench_project_selection],
          false <-
-           Enum.any?(~w(wb_home wb_task resume_from starting_commit), &Map.has_key?(params, &1)),
+           assigns[:project_palette_open] == true or assigns[:workbench_open_requested] == true or
+             params["wb_open"] == "1",
+         false <-
+           Enum.any?(
+             ~w(wb_home wb_task wb_git_branch resume_from starting_commit),
+             &Map.has_key?(params, &1)
+           ),
          %{exec_path: path} = selection <- scope(assigns),
          true <- ProjectFlow.absolute_path_for_node?(assigns[:current_node] || node(), path),
          true <- confirmed_selection?(selection, selected, assigns) do

@@ -43,6 +43,12 @@ defmodule EvoDashWeb.Layouts do
   attr(:workbench_task, :string, default: nil)
   attr(:workbench_draft, :string, default: nil)
   attr(:workbench_draft_project, :string, default: nil)
+
+  attr(:workbench_default_draft, :string,
+    default: nil,
+    doc: "the Assistant draft URL offered by a confirmed project or workspace overview"
+  )
+
   attr(:workbench_git_project, :string, default: nil)
   attr(:github_status, :map, default: nil, doc: "the active project's GitHub upstream status")
   attr(:workbench_git_branch, :string, default: nil)
@@ -148,6 +154,7 @@ defmodule EvoDashWeb.Layouts do
       data-workbench-session={@current_session_id}
       data-workbench-draft={@workbench_draft}
       data-workbench-draft-project={@workbench_draft_project}
+      data-workbench-default-draft={@workbench_default_draft}
       data-workbench-git-branch={@workbench_git_branch}
       data-workbench-starting-commit={@workbench_starting_commit}
       data-workbench-new-task={gettext("New task")}

@@ -130,6 +130,7 @@ defmodule EvoDashWeb.ProjectsLive do
         remote_targets={assigns[:remote_targets] || []}
         connection_statuses={assigns[:connection_statuses] || %{}}
         workbench_project={workbench_project}
+        workbench_default_draft={Overview.default_draft_path(assigns)}
         workbench_git_project={if workbench_project == git_project, do: git_project}
         workbench_git_branch={@workbench_reconnect_params["wb_git_branch"]}
         workbench_starting_commit={@workbench_reconnect_params["starting_commit"]}
