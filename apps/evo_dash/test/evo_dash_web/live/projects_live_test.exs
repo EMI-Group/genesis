@@ -1478,16 +1478,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # (the surface this test pins) exactly as a user does.
       enter_composer(view)
 
-      # Expand the project settings panel (the click's own render IS the html
-      # below — a second full `render/1` would re-render the same DOM)
-      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-
-      # Project should be active — task form enabled
-      assert html =~ "task-launch-button"
-      # Project settings should show config info
-      assert html =~ "Foreign Repositories"
-      # Example-task help block hides once a project is open
-      refute html =~ "example-task-objective"
+      assert has_element?(view, "#task-form #task-launch-button")
+      assert has_element?(view, "#workbench-task-settings h3", "Foreign Repositories")
+      refute has_element?(view, "#example-task-objective")
     end
 
     test "detects genesis_new mode for empty directory", %{conn: conn, tmp_dir: tmp_dir} do
@@ -1534,12 +1527,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # lives in the composer, so step into it like a user.
       enter_composer(view)
 
-      # Expand the project settings panel (the click's own render IS the html
-      # below — a second full `render/1` would re-render the same DOM)
-      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-
-      # Empty directory has no genesis.toml — shows defaults message
-      assert html =~ "No genesis.toml" or html =~ "using global defaults"
+      assert has_element?(
+               view,
+               "details#workbench-task-settings p",
+               "No genesis.toml — using global defaults"
+             )
     end
 
     test "project settings shows no foreign repos by default", %{conn: conn, tmp_dir: tmp_dir} do
@@ -1556,12 +1548,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # lives in the composer, so step into it like a user.
       enter_composer(view)
 
-      # Expand the project settings panel (the click's own render IS the html
-      # below — a second full `render/1` would re-render the same DOM)
-      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-
-      # No foreign repos registered (scheduler not running in tests)
-      assert html =~ "No foreign repositories registered"
+      assert has_element?(
+               view,
+               "details#workbench-task-settings p",
+               "No foreign repositories registered"
+             )
     end
 
     test "local project opening stays synchronous (no async loading flag)", %{
@@ -1590,14 +1581,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     test "activates project from URL query param", %{conn: conn, tmp_dir: tmp_dir} do
       # `wb_task=1` is the explicit compose request, so this mount targets the
       # task composer (selecting a project alone lands on the overview).
-      {:ok, _view, html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: "1"}}")
+      {:ok, view, html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: "1"}}")
 
-      # Project should be active
       assert html =~ Path.basename(tmp_dir)
-      # Task form should be present
-      assert html =~ "task-launch-button"
-      # Project settings should be shown
-      assert html =~ "Project Settings"
+      assert has_element?(view, "#task-form #task-launch-button")
+      assert has_element?(view, "details#workbench-task-settings > summary", "Project Settings")
     end
   end
 
@@ -1807,16 +1795,12 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         ]
       })
 
-      # Expand the project settings panel (the click's own render IS the html
-      # below — a second full `render/1` would re-render the same DOM)
-      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-
-      # Foreign repos should be restored and visible in the project settings.
-      # The component renders repo.id and repo.root for each foreign repo.
-      assert html =~ "original"
-      assert html =~ "/Source/original-proj"
-      assert html =~ "reference"
-      assert html =~ "/Source/ref"
+      # Native <details> already renders its content. No LiveView toggle event
+      # is involved in opening the disclosure in the browser.
+      for {id, path} <- [{"original", "/Source/original-proj"}, {"reference", "/Source/ref"}] do
+        assert has_element?(view, "#workbench-task-settings span.badge", id)
+        assert has_element?(view, "#workbench-task-settings span[title='#{path}']", path)
+      end
     end
 
     test "restore_state with empty foreign repos does not error", %{conn: conn, tmp_dir: tmp_dir} do
@@ -1829,12 +1813,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         "foreign_repos" => []
       })
 
-      # Expand the project settings panel (the click's own render IS the html
-      # below — a second full `render/1` would re-render the same DOM)
-      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-
-      # No repos restored — shows the empty state message
-      assert html =~ "No foreign repositories registered"
+      assert has_element?(
+               view,
+               "details#workbench-task-settings p",
+               "No foreign repositories registered"
+             )
     end
   end
 
@@ -1883,28 +1866,37 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       clear_projects()
     end
 
-    test "the composer opens settings without a project path selector", %{
+    test "the composer exposes one set of inline options without a project path selector", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      # This test is ABOUT the composer, so it asks for it explicitly.
-      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: "1"}}")
+      {:ok, view, html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: "1"}}")
+      options = "#workbench-task-composer section[aria-labelledby=task-options-title]"
+      settings = "details#workbench-task-settings"
+      doc = Floki.parse_document!(html)
 
+      assert [_] = Floki.find(doc, "#task-form")
+      assert [_] = Floki.find(doc, "#task-options")
+      assert [_] = Floki.find(doc, "#persist-agent-state-toggle")
+      assert [_] = Floki.find(doc, "select[name=build_system]")
       refute has_element?(view, ".project-palette-trigger")
 
-      assert has_element?(
-               view,
-               "#task-form .input-card button[aria-controls=workbench-task-settings]"
-             )
-
-      assert has_element?(view, "dialog#workbench-task-settings:not([open])", "Task Options")
-      assert has_element?(view, "dialog#workbench-task-settings", "Project Settings")
+      assert has_element?(view, "#{options} h2#task-options-title", "Task Options")
 
       assert has_element?(
                view,
-               "dialog#workbench-task-settings select[name=build_system][form=task-form]"
+               "#{options} #task-options select[name=build_system][form=task-form]"
              )
 
+      assert has_element?(
+               view,
+               "#{settings}:not([open]) > summary#workbench-task-settings-title",
+               "Project Settings"
+             )
+
+      refute has_element?(view, "#{settings} [form=task-form]")
+      refute has_element?(view, "#task-form [aria-controls=workbench-task-settings]")
+      refute has_element?(view, "dialog#workbench-task-settings")
       refute has_element?(view, "#task-form dialog")
     end
   end
@@ -3294,7 +3286,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert html =~ ~s(data-node-id="#{id}")
 
       refute html =~ ~s(phx-click="open_project_palette")
-      refute html =~ ~s(data-workbench-task-settings)
+      refute has_element?(view, "#task-options")
+      refute has_element?(view, "#workbench-task-settings")
     end
 
     test "open_project_palette event is ignored while the gate is active", %{conn: conn} do
