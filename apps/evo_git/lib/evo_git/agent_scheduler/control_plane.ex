@@ -183,7 +183,8 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
 
   @doc """
   Sets the agent's `pause_requested` flag (`true` | `false` | `nil`) — the
-  TASK-PAUSE request an agent honours at its next turn boundary.
+  TASK-PAUSE request an agent honours at a turn boundary (or while parked on its
+  subagent batch).
 
   One atomic single-element update (`:ets.update_element/3`) on element 3, so it
   is independent of the cancel flag and never a whole-row read-modify-write.

@@ -42,18 +42,26 @@ defmodule EvoDashWeb.MCPTest do
   # Pause / resume are ADVERTISED here, never invoked: their action atoms
   # dispatch dynamically to the core's `EvoGit.TaskControl.pause/1` /
   # `resume/1`, which is a separate workstream. The contract under test is the
-  # tool surface an MCP client discovers (name, schema, required args, write
-  # annotations), not the core's pause implementation.
+  # tool surface an MCP client discovers (name, description, schema, required
+  # args, write annotations), not the core's pause implementation.
+  #
+  # The descriptions pin the FREEZE/THAW model the catalog carries verbatim: a
+  # pause freezes the whole agent tree at its current position (in-flight tool
+  # calls only get a bounded chance to finish) and a resume thaws that tree in
+  # place under the same agent ids and saved context — never a drain that lets
+  # the current tool call finish and stops.
   test "advertises the task pause/resume operator tools" do
     tools = rpc("tools/list")["result"]["tools"]
 
-    for {name, required_phrase} <- [
-          {"genesis_pause_task", "next turn boundary"},
-          {"genesis_resume_task", "durable checkpoint"}
-        ] do
+    for {name, description} <- %{
+          "genesis_pause_task" =>
+            "freeze every agent of the task at its current position; in-flight tool calls get a bounded chance to finish, then the tree is frozen in place; only non-interactive tasks with durable agent state can be paused; returns request acceptance and the saved task state, not proof that every agent has frozen",
+          "genesis_resume_task" =>
+            "thaw a paused task's whole frozen agent tree in place with the same agent ids and saved context; a dirty pause (restart or lease sweep, a quiesce timeout that cut off a tool call, or an unprovable clean freeze) tells the agents their last tool call may be partially applied; same task id, work continues where it stopped"
+        } do
       tool = Enum.find(tools, &(&1["name"] == name))
       assert tool, "expected #{name} to be advertised in tools/list"
-      assert tool["description"] =~ required_phrase
+      assert tool["description"] == description
 
       assert tool["inputSchema"] == %{
                "type" => "object",
@@ -74,10 +82,10 @@ defmodule EvoDashWeb.MCPTest do
 
     pause = Enum.find(tools, &(&1["name"] == "genesis_pause_task"))
     assert pause["description"] =~ "non-interactive tasks with durable agent state"
-    assert pause["description"] =~ "not proof that every agent has stopped"
+    assert pause["description"] =~ "not proof that every agent has frozen"
 
     resume = Enum.find(tools, &(&1["name"] == "genesis_resume_task"))
-    assert resume["description"] =~ "after a restart (dirty)"
+    assert resume["description"] =~ "partially applied"
   end
 
   test "gets existing task errors as tool results and rejects malformed arguments" do

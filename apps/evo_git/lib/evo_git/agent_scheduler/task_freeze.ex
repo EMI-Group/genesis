@@ -3,11 +3,12 @@ defmodule EvoGit.AgentScheduler.TaskFreeze do
   The PURE state machine of ONE task pause: the coordinator's bookkeeping, with
   no timers, no ETS and no GenServer calls.
 
-  A task pause is a whole-TREE drain. Every live agent of the task was told to
-  stop at its next turn boundary, so the pause is only COMPLETE once every one of
-  them has reported its `{:paused, info}` term — and a task that stopped being
-  drained half-way is not a clean pause at all. This module owns exactly that
-  accounting:
+  A task pause is a whole-TREE SNAPSHOT. Every live agent of the task freezes at
+  its exact position — a turn boundary, or parked while waiting on its subagent
+  batch, with an in-flight tool batch given a bounded chance to finish — so the
+  pause is only COMPLETE once every one of them has reported its `{:paused,
+  info}` term, and a tree that stopped half-way is not a clean pause at all. This
+  module owns exactly that accounting:
 
     * `begin/4` opens the freeze over the roster the scheduler resolved;
     * `report/3` records ONE agent's paused outcome and answers whether the tree
@@ -24,8 +25,9 @@ defmodule EvoGit.AgentScheduler.TaskFreeze do
   `kind` is the TASK-level pause kind and it only ever degrades from `:clean` to
   `:dirty`:
 
-    * `:clean` — every agent stopped at a turn boundary with nothing interrupted
-      and its state made durable. A resume restores it without repair.
+    * `:clean` — every agent proved an uninterrupted freeze at its own position
+      (a turn boundary, or a parent parked on its subagent batch) with its state
+      made durable. A resume restores it without repair.
     * `:dirty` — at least one agent reported `clean_freeze: false` (a mixed or
       non-subagent call may have been interrupted half-way) or `durable: false`
       (its conversation/checkpoint could not be confirmed written), or an agent

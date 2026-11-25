@@ -272,7 +272,9 @@ defmodule EvoGit.TaskControl do
   Requests a TASK-LEVEL PAUSE for a running task (`docs/task-pause.md`).
 
   A pause only ACCEPTS the request: the task moves to `:pausing` while its
-  agents stop at their next turn boundary, and reaches the `:paused` resting
+  whole agent tree freezes in place (each agent at its exact position — a turn
+  boundary, or parked while waiting on its subagent batch; an in-flight tool
+  batch gets a bounded chance to finish), and reaches the `:paused` resting
   state later, so `status` is the SAVED status at this instant. Repeating the
   request on a `:pausing`/`:paused` task is idempotent. An interactive-session
   task is refused (`not_pausable`) and a task whose durable agent state is
