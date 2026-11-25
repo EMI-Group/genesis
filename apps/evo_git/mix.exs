@@ -53,6 +53,13 @@ defmodule EvoGit.MixProject do
       {:tz, "~> 0.28"},
       {:yaml_elixir, "~> 2.11"},
       {:xqlite, "~> 0.16.0"},
+      # Security floor for the transitive db_connection dependency (pulled in
+      # via ecto_sql by xqlite_ecto3): 2.10.3 fixes EEF-CVE-2026-133555 /
+      # CVE-2026-133555 (code execution through the :log option of forged
+      # DBConnection.Stream structs). ecto_sql 3.14 requires "~> 2.9", so this
+      # explicit dep only raises the floor and never narrows resolution below
+      # what the adapter needs.
+      {:db_connection, "~> 2.10.3"},
       {:jason, "~> 1.2"},
       # Ecto — schema-less config validation/casting/defaults (no ecto_sql,
       # no database adapter; plain :ecto only)
