@@ -117,7 +117,7 @@ The ONE writer serializes SQLite, so it also owns how much work a queued backlog
 - `Record.encode_messages/1` is `:erlang.term_to_binary(messages, compressed: 6)` (zlib level 6) of the TAIL on `:append` and of the FULL transcript on `:rewrite`.
 - `Record.encode_fields/1` Jason-encodes every JSON column supplied on EVERY checkpoint — `:redispatch` (which carries the objective text), `:usage`, `:pending_inputs`, `:pending_tool_batch` — not only on the first one.
 - One checkpoint = one `BEGIN IMMEDIATE` transaction: `SELECT message_count, chunk_count`, one chunk INSERT, one UPSERT of every supplied scalar column (the dynamic SQL is rebuilt per write).
-- `update_volatile/4` would cost one reused prepared statement and re-encode no identity/run fact, but nothing produces it yet (Known Issues — Query & Write Amplification).
+- `update_volatile/4` costs one reused prepared statement and re-encodes no identity/run fact; it is the producer-side scalar-only path (`Session.Persistence.write_volatile_boundary/6` when the transcript did not move and no new `anchor_ref` was written).
 - WAL + `synchronous: normal` does NOT fsync per commit (SQLite syncs the WAL at an auto-checkpoint, ~1000 pages, and the database file after it), so the occasional slow commit is a checkpoint fsync on slow/network storage and it stalls the WRITER only.
 - A small append is single-digit milliseconds; a multi-MB `:rewrite` (post-compression, first snapshot, or a resync) is tens of milliseconds.
 - The writer is SHARED by every agent in the BEAM, so N concurrent agents serialize their commits there — a backlog delays durability, never a turn.
