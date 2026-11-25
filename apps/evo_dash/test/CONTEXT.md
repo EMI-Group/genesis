@@ -271,7 +271,8 @@ Page level: `select_quality_level` moves the assign and threads `:quality_level`
 Atom-exact ranges, never widen: Cancel `[:pending, :running, :awaiting_input]`, Force kill `[:running, :awaiting_input, :cancelling, :pausing, :paused]`, Pause `[:running, :pausing]` (hidden for `session_mode: "interactive"`, offered when absent), Resume `:paused` ungated.
 `/server/status` and the update gate stay busy on exactly `[:running, :pending, :finalizing, :cancelling, :pausing]`: `:pausing` blocks and participates, `:paused` neither blocks nor is waited on.
 `pause_kind` is the **18th** task-summary key, and every per-task action runs off-process behind the page's ONE `action_busy` map.
-TasksLive's `session_mode` filter stays SERVER-side over rows AND total (whitelist, clear) because the core SQL builder has no such predicate; the update wind-down ASKS idle `:awaiting_input` sessions to close via `close_session/3`, drops a stuck one after the grace polls and never force-kills one.
+`tasks_live_test.exs` pins the Tasks page's lifecycle and review-triaging vocabulary: the full ordered status option set (incl. `finalizing` and the derived `needs_review`), the needs-review round-trip (branchless rows excluded by the store predicate, a decided task departing through the debounced reload), URL-addressed filters that spawn exactly one page load per action, and the exact local/remote review hrefs.
+The update wind-down ASKS idle `:awaiting_input` sessions to close via `close_session/3`, drops a stuck one after the grace polls and never force-kills one, and the `session_mode` filter's real owner is `PageLoad.filters/1`, which passes `:session_mode` into the store's `Filters.where_session_mode_filter/2` so it narrows rows AND the SQL total.
 
 ## Provider-profile redesign regression coverage
 

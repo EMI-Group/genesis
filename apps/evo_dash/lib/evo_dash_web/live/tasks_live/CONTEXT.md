@@ -130,8 +130,8 @@ Pause and resume follow the same two-step / off-process discipline as cancel, bu
 - **Error mapping** — one precise gettext line per documented reason: `:not_found` → "Task not found.", `:not_running` → "Only a running task can be paused.", `:not_pausable` → "This task cannot be paused (interactive sessions can't be paused).", `:not_resumable` → "This task can't be resumed because durable agent state is disabled for it.", `:scheduler_unavailable` → "The scheduler is unavailable right now.", `:not_paused` → "Only a paused task can be resumed.", `{kind, _}` with `kind ∈ [:exit, :throw, :error]` → "The node could not be reached — the task's state is unchanged.", plus a generic `gettext("Failed to pause task: %{reason}")` / `gettext("Failed to resume task: %{reason}")` with `inspect/1` for anything unexpected.
 ## Status filter inventory
 The status `<select name="status_filter">` carries one option per addressable filter state; the value strings ARE the persisted status TEXT, so nothing is atomized on the way in or out.
-Current option set, in lifecycle order: `all`, `running`, `pending`, `cancelling`, `awaiting_input`, `pausing`, `paused`, `completed`, `failed`, `cancelled`.
-`finalizing` and `needs_review` are the two lifecycle states this page must also offer; `page_load.ex` already understands `needs_review` (`needs_review_filter?/1`, `review_status_filter/1`, `enforce_review_exactness/2`), while the two `<option>` elements themselves live in `tasks_live.ex` and are still pending (see "Pending page wiring").
+Current option set, in lifecycle order: `all`, `running`, `pending`, `finalizing`, `cancelling`, `awaiting_input`, `pausing`, `paused`, `completed`, `failed`, `cancelled`, `needs_review`.
+All twelve `<option>` elements are rendered by `tasks_live.ex` from the `@status_filters` whitelist, so `finalizing` and the DERIVED `needs_review` are both selectable now, and `needs_review` is understood by `page_load.ex` (`needs_review_filter?/1`, `review_status_filter/1`, `enforce_review_exactness/2`).
 `PageLoad.filters/1` maps the selection to the store keyword; the store's WHERE builder is `EvoGit.Store.Operations.Filters.where_filters/2` in the read-only sibling app.
 | option | store clause |
 |--------|--------------|
@@ -145,13 +145,15 @@ That guard is total: an absent, nil or unreadable `review_status` counts as "no 
 `@total_count`/`@total_pages` stay SQL-truthful even when the client-side guard drops rows — the same accepted trade-off as `:reflect` hiding.
 
 ## URL is state (filters, search, focused task)
-`handle_params/3` is the single seed of page state from the query string; today it resolves `?page=N` (pagination), `?task=<id>` (the focused single-task view) and `?node=<target_id>` (the viewed remote node).
-`tasks_url/2` is the ONE URL builder for them: it emits `?page=<n>` and appends `&node=<target_id>` itself — never `Helpers.with_node_param/2`, which appends `?`.
-Pagination IS URL-driven: `goto_page`/`prev_page`/`next_page` `push_patch` `tasks_url/2` and the load happens ONCE in `handle_params/3`, never as an "assign + reload" pair.
+`handle_params/3` is the single seed of page state from the query string: `?page=N` (pagination), `?task=<id>` (the focused single-task view), `?node=<target_id>` (the viewed remote node) and the five filters `?status`, `?project`, `?review`, `?session`, `?q` (seeded by the one private `seed_filters/2`, whitelisted against `@status_filters` / `@review_filters` / `@session_filters`, `project` any non-empty binary, `q` verbatim, every unknown/absent value back to its default).
+`tasks_url(socket, page, overrides \\ [])` (`tasks_url/3`) is the ONE URL builder: it uses the CURRENT filter assigns with `overrides` for the value being changed and emits ONLY non-default values as `&`-appended pairs in the order `page`, `status`, `project`, `review`, `session`, `q`, `node`.
+Defaults are page 1 / `all` / `all` / `all` / `all` / `""`, so a plain list stays `/tasks`, and every value is query-encoded with `URI.encode_www_form/1` because a project filter is an absolute filesystem path.
+It appends `&node=<target_id>` itself — never `Helpers.with_node_param/2`, which appends `?`.
+Every filter/search/reset/clear event (`filter_tasks`, `filter_review`, `search_tasks`, `filter_session_mode`, `reset_filters`, the five `clear_filter` clauses) and all three pagination events converge on the same path: compute the values → `push_patch` (page 1 for a filter/search/reset/clear change, the current filters preserved by pagination) → ONE load in `handle_params/3`, never an "assign + reload" pair.
+`toggle_reflect_tasks` is the ONE remaining assign + `reload(1)` path, because the reveal toggle is page-local (below).
+The search box patches with `replace: true` (no history entry per debounce tick), and `tasks_url/3` never emits `task`, so a filter change while a focused `?task=<id>` view is active DROPS the focus — focus mode exits instead of silently narrowing.
 `?task=<id>` keeps its full contract: a binary of 1..128 bytes (else nil), it auto-expands that card, switches `PageLoad.start/3` to the focused single-row `get_task_lite/2` read, passes `workbench_reconnect_params: Map.take(params, ["task"])` to the layout, hides the pagination, skips the `:reflect` hiding for it, and renders "Task not found" plus a "Task History" link when the read yields nothing.
-`?status`, `?review`, `?project`, `?q` and `?session` are NOT URL state yet: those events assign the filter and run one `PageLoad.start/3` directly, and `tasks_url/2` carries only `page`/`node`, so a filtered list is not deep-linkable (pending, see below).
-When that conversion lands, the search box patches with `replace: true` (no history spam per keystroke), a filter change while a focused `?task=<id>` view is active DROPS `task` from the URL (focus mode exits rather than silently narrowing), and every filter/search/reset/clear event converges on the SAME path as pagination: compute the values → `push_patch` → ONE load in `handle_params/3`.
-`show_reflect_tasks` is deliberately PAGE-LOCAL and never becomes URL state: it is a reveal preference, not a narrowing filter — not reset by `reset_filters`, not cleared by `handle_params/3`, not in the active-filter chip strip.
+`show_reflect_tasks` is deliberately PAGE-LOCAL and never becomes URL state: it is a reveal preference, not a narrowing filter — not reset by `reset_filters`, not seeded by `handle_params/3`, not in the active-filter chip strip.
 
 ## Destination rule (finished → review, live → in-page detail)
 A `:completed`/`:cancelled` row links to `/review/<id>` through the card (`EvoDashWeb.TaskCardComponents`, `Helpers.with_node_param(~p"/review/#{id}", @current_node_id)`), so the rendered `href` is `/review/<id>` locally and `/review/<id>?node=<target_id>` on a remote `?node=` view.
@@ -177,14 +179,6 @@ Event markers behind the matrix: Cancel `open_cancel_modal`, Pause `open_pause_m
 The count line reads `dngettext("default", "%{count} task found", "%{count} tasks found", length(@filtered_tasks))` for every filter except `needs_review`, whose honest wording is `dngettext("default", "%{count} task needs review", "%{count} tasks need review", length(@filtered_tasks))`.
 With `status_filter == "needs_review"` and an empty visible list the h2 is `gettext("No tasks need review")` and the hint is `gettext("Finished tasks that still need a review decision appear here.")`.
 `Task not found` still wins when `@focused_task_id` is set, and every other filter keeps the existing "No tasks found" branches byte-compatible (the adjust-filters hint when a filter is active or rows were dropped by the reveal toggle, else the start-tasks hint).
-
-## Pending page wiring (`tasks_live.ex`, outside this node)
-The pieces below are specified and testable but not yet wired, because the LiveView module sits outside this node's writable directory:
-- the `finalizing` (`gettext("Finalizing")`) and `needs_review` (`gettext("Needs review")` + a Chinese meaning comment) `<option>` elements in the status select, in lifecycle order;
-- the landed-load fold calling the 3-arity `PageLoad.visible_tasks(m.tasks, show_reflect_tasks or not is_nil(focused_task_id), socket.assigns.status_filter)` so the needs-review guard is live (today's 2-arity call leaves it inert);
-- the `needs_review` count line and empty-state wording above;
-- URL-addressed filters: parse `status` (whitelisted against the option set), `review`, `project`, `q`, `session` in `handle_params/3`, emit them from `tasks_url/2`, `replace: true` for search, and drop `task` when a filter changes;
-- the action-matrix, needs-review round-trip (including the `branch_name: nil` exclusion and the post-decision departure) and review-href pins in `test/evo_dash_web/live/tasks_live_test.exs`.
 
 ## ModalHelpers (full result / full objective)
 `view_full_result/2` reads the CACHED `:task_details` entry (never `socket.assigns.tasks` — those rows carry no `result`). `@selected_result` is modal STATE: `nil | %{state: :loading} | %{state: :ok, result: result} | %{state: :error, error: reason}`.

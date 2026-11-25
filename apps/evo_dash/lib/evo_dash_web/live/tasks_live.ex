@@ -45,6 +45,18 @@ defmodule EvoDashWeb.TasksLive do
 
   @default_page_size 25
 
+  # The filter vocabulary, in lifecycle order, whitelisted on the way IN
+  # (`handle_params/3`, from the query string) and on the way OUT (`tasks_url/3`
+  # and the select options). The status strings ARE the stored status TEXT, so
+  # nothing is atomized; `needs_review` is DERIVED, not stored (see
+  # `PageLoad.needs_review_filter?/1`).
+  @status_filters ~w(
+    all running pending finalizing cancelling awaiting_input pausing paused
+    completed failed cancelled needs_review
+  )
+  @review_filters ~w(all pending merged rejected continued)
+  @session_filters ~w(all oneshot interactive)
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -102,6 +114,10 @@ defmodule EvoDashWeb.TasksLive do
                   <option value="pending" selected={@status_filter == "pending"}>
                     {gettext("Pending")}
                   </option>
+                  <option value="finalizing" selected={@status_filter == "finalizing"}>
+                    <%!-- zh_CN: 正在收尾（生成结果/归档中，不可取消） --%>
+                    {gettext("Finalizing")}
+                  </option>
                   <option value="cancelling" selected={@status_filter == "cancelling"}>
                     {gettext("Cancelling")}
                   </option>
@@ -128,6 +144,14 @@ defmodule EvoDashWeb.TasksLive do
                   </option>
                   <option value="cancelled" selected={@status_filter == "cancelled"}>
                     {gettext("Cancelled")}
+                  </option>
+                  <%!-- Derived REVIEW-TRIAGE option, not a stored status: the
+                       store selects completed + undecided + branch-bearing
+                       tasks (PageLoad.filters/1 emits status "all" plus
+                       review_status "pending"). --%>
+                  <option value="needs_review" selected={@status_filter == "needs_review"}>
+                    <%!-- zh_CN: 待审阅：已完成但尚未做出评审决定的任务 --%>
+                    {gettext("Needs review")}
                   </option>
                 </select>
               </div>
@@ -252,7 +276,7 @@ defmodule EvoDashWeb.TasksLive do
               <span class="text-xs text-base-content/70">{gettext("Active filters:")}</span>
               <%= if @status_filter != "all" do %>
                 <span class="badge badge-primary gap-1 rounded-md">
-                  {task_status_label(@status_filter)}
+                  {status_filter_label(@status_filter)}
                   <button
                     phx-click="clear_filter"
                     phx-value-filter="status"
@@ -323,12 +347,7 @@ defmodule EvoDashWeb.TasksLive do
         <%= if !@focused_task_id and not @tasks_loading and not (@tasks_error != nil and @filtered_tasks == []) do %>
           <div class="flex items-center justify-between mb-4">
             <p class="text-sm text-base-content/60">
-              {dngettext(
-                "default",
-                "%{count} task found",
-                "%{count} tasks found",
-                length(@filtered_tasks)
-              )}
+              {count_line(@status_filter, length(@filtered_tasks))}
             </p>
           </div>
         <% end %>
@@ -411,9 +430,11 @@ defmodule EvoDashWeb.TasksLive do
                 <div class="text-center py-12 sm:py-16 text-base-content/70">
                   <.icon name="hero-inbox" class="size-10 mx-auto mb-4 text-base-content/40" />
                   <h2 class="text-lg font-medium">
-                    {if @focused_task_id,
-                      do: gettext("Task not found"),
-                      else: gettext("No tasks found")}
+                    {cond do
+                      @focused_task_id -> gettext("Task not found")
+                      @status_filter == "needs_review" -> gettext("No tasks need review")
+                      true -> gettext("No tasks found")
+                    end}
                   </h2>
                   <.link
                     :if={@focused_task_id}
@@ -423,10 +444,13 @@ defmodule EvoDashWeb.TasksLive do
                     {gettext("Task History")}
                   </.link>
                   <p :if={!@focused_task_id} class="text-sm mt-1">
-                    <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" or @session_mode_filter != "all" or (@total_count > 0 and not @show_reflect_tasks) do %>
-                      {gettext("Try adjusting your filters or search query.")}
-                    <% else %>
-                      {gettext("Tasks will appear here once you start them from the dashboard.")}
+                    <%= cond do %>
+                      <% @status_filter == "needs_review" -> %>
+                        {gettext("Finished tasks that still need a review decision appear here.")}
+                      <% @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" or @session_mode_filter != "all" or (@total_count > 0 and not @show_reflect_tasks) -> %>
+                        {gettext("Try adjusting your filters or search query.")}
+                      <% true -> %>
+                        {gettext("Tasks will appear here once you start them from the dashboard.")}
                     <% end %>
                   </p>
                 </div>
@@ -873,6 +897,12 @@ defmodule EvoDashWeb.TasksLive do
         workbench_project: nil,
         workbench_title: nil
       )
+      # URL IS STATE: the ONE place the filter assigns are seeded from the query
+      # string, so a deep link, browser back/forward and every filter event's
+      # `push_patch` converge on this single load (below) instead of an
+      # "assign + reload" pair. `show_reflect_tasks` is deliberately NOT here —
+      # it is a page-local reveal preference, never URL state.
+      |> seed_filters(params)
 
     socket =
       case socket.assigns.focused_task_id do
@@ -1032,12 +1062,16 @@ defmodule EvoDashWeb.TasksLive do
 
       case result do
         {:ok, m} ->
-          # :reflect tasks are excluded client-side after load (see
-          # PageLoad.visible_tasks/2) — the SQL WHERE builder cannot express it.
+          # The ONE post-load choke point: :reflect tasks are excluded
+          # client-side (the SQL WHERE builder cannot express "exclude type"),
+          # and the third argument keeps the `needs_review` exactness guard
+          # live (it drops any landed row whose review decision already
+          # exists — no server predicate can be narrowed further from here).
           visible =
             PageLoad.visible_tasks(
               m.tasks,
-              socket.assigns.show_reflect_tasks or not is_nil(socket.assigns.focused_task_id)
+              socket.assigns.show_reflect_tasks or not is_nil(socket.assigns.focused_task_id),
+              socket.assigns.status_filter
             )
 
           socket =
@@ -1201,32 +1235,33 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply, socket}
   end
 
+  # Every filter / search / reset / clear event computes the new values and
+  # `push_patch`es the URL; `handle_params/3` seeds them and runs the ONE load,
+  # so no event assigns-and-reloads (exactly one page load per user action).
   @impl true
   def handle_event("filter_tasks", params, socket) do
-    status_filter = params["status_filter"] || socket.assigns.status_filter
-    project_filter = params["project_filter"] || socket.assigns.project_filter
+    # Missing/unknown values (a select that was not part of this change) keep
+    # the CURRENT filter rather than resetting it.
+    status = whitelisted(params["status_filter"], @status_filters, socket.assigns.status_filter)
 
-    {:noreply,
-     socket
-     |> assign(:status_filter, status_filter)
-     |> assign(:project_filter, project_filter)
-     |> reload(1)}
+    project =
+      binary_or(params["project_filter"], socket.assigns.project_filter)
+
+    {:noreply, push_patch(socket, to: tasks_url(socket, 1, status: status, project: project))}
   end
 
   @impl true
   def handle_event("filter_review", %{"review_filter" => filter}, socket) do
-    {:noreply,
-     socket
-     |> assign(:review_status_filter, filter)
-     |> reload(1)}
+    review = whitelisted(filter, @review_filters, socket.assigns.review_status_filter)
+
+    {:noreply, push_patch(socket, to: tasks_url(socket, 1, review: review))}
   end
 
+  # `replace: true` — a keystroke must not push one history entry per debounce
+  # tick, so the back button leaves the search instead of unwinding it.
   @impl true
   def handle_event("search_tasks", %{"search_query" => query}, socket) do
-    {:noreply,
-     socket
-     |> assign(:search_query, query)
-     |> reload(1)}
+    {:noreply, push_patch(socket, to: tasks_url(socket, 1, q: query), replace: true)}
   end
 
   # Session-kind filter — whitelist match only (never an atom conversion); an
@@ -1234,8 +1269,8 @@ defmodule EvoDashWeb.TasksLive do
   # server-side (the core SQL WHERE builder has no `session_mode` predicate).
   @impl true
   def handle_event("filter_session_mode", %{"session_mode_filter" => mode}, socket)
-      when mode in ["all", "oneshot", "interactive"] do
-    {:noreply, socket |> assign(:session_mode_filter, mode) |> reload(1)}
+      when mode in @session_filters do
+    {:noreply, push_patch(socket, to: tasks_url(socket, 1, session: mode))}
   end
 
   @impl true
@@ -1258,7 +1293,10 @@ defmodule EvoDashWeb.TasksLive do
   # UNCHECKED box is absent from FormData — anything other than nil/"false"
   # means checked. Deliberately only assigns show_reflect_tasks (the phx-change
   # submits the whole form, but the other filters keep their socket assigns)
-  # and reloads through the same async path as the other filters.
+  # and reloads through the same async path as the filters. It is the ONE
+  # remaining assign + reload path on this page BECAUSE it is a page-local
+  # reveal preference, not a narrowing filter: it stays out of the URL (so a
+  # shared link never reveals chat tasks) and out of reset_filters.
   @impl true
   def handle_event("toggle_reflect_tasks", params, socket) do
     show = params["show_reflect_tasks"] not in [nil, "false"]
@@ -1286,58 +1324,47 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply, socket}
   end
 
+  # Reset = the bare `/tasks` URL (every filter back to its default). The
+  # page-local reveal toggle is NOT part of it.
   @impl true
   def handle_event("reset_filters", _params, socket) do
     {:noreply,
-     socket
-     |> assign(
-       status_filter: "all",
-       project_filter: "all",
-       search_query: "",
-       review_status_filter: "all",
-       session_mode_filter: "all"
-     )
-     |> reload(1)}
+     push_patch(
+       socket,
+       to:
+         tasks_url(socket, 1,
+           status: "all",
+           project: "all",
+           review: "all",
+           session: "all",
+           q: ""
+         )
+     )}
   end
 
   @impl true
   def handle_event("clear_filter", %{"filter" => "status"}, socket) do
-    {:noreply,
-     socket
-     |> assign(:status_filter, "all")
-     |> reload(1)}
+    {:noreply, push_patch(socket, to: tasks_url(socket, 1, status: "all"))}
   end
 
   @impl true
   def handle_event("clear_filter", %{"filter" => "project"}, socket) do
-    {:noreply,
-     socket
-     |> assign(:project_filter, "all")
-     |> reload(1)}
+    {:noreply, push_patch(socket, to: tasks_url(socket, 1, project: "all"))}
   end
 
   @impl true
   def handle_event("clear_filter", %{"filter" => "search"}, socket) do
-    {:noreply,
-     socket
-     |> assign(:search_query, "")
-     |> reload(1)}
+    {:noreply, push_patch(socket, to: tasks_url(socket, 1, q: ""))}
   end
 
   @impl true
   def handle_event("clear_filter", %{"filter" => "review"}, socket) do
-    {:noreply,
-     socket
-     |> assign(:review_status_filter, "all")
-     |> reload(1)}
+    {:noreply, push_patch(socket, to: tasks_url(socket, 1, review: "all"))}
   end
 
   @impl true
   def handle_event("clear_filter", %{"filter" => "session_mode"}, socket) do
-    {:noreply,
-     socket
-     |> assign(:session_mode_filter, "all")
-     |> reload(1)}
+    {:noreply, push_patch(socket, to: tasks_url(socket, 1, session: "all"))}
   end
 
   @impl true
@@ -1668,17 +1695,76 @@ defmodule EvoDashWeb.TasksLive do
 
   # Helpers
 
-  # Builds a tasks URL with optional node param for pagination navigation.
-  # When viewing a remote node, preserves the ?node= param so navigation
-  # stays on the same node.
-  defp tasks_url(socket, page) do
-    node_id = socket.assigns[:current_node_id]
+  # Builds the /tasks URL from the CURRENT filter assigns (`overrides` carries
+  # the value(s) being changed) — the ONE URL builder for the page, including
+  # the `?node=` param so a filter/pagination navigation stays on the same node.
+  #
+  # Only NON-DEFAULT values are emitted (page 1, status/project/review/session
+  # "all", q ""), so the plain list stays a bare `/tasks`. Every value is
+  # query-encoded because the project filter is an absolute filesystem path.
+  # Never uses `Helpers.with_node_param/2` (it appends "?") and NEVER emits
+  # `task`: a filter change while a focused `?task=<id>` view is active DROPS
+  # the focus, i.e. focus mode exits instead of silently narrowing to nothing.
+  defp tasks_url(socket, page, overrides \\ []) do
+    page = page |> to_string() |> parse_page()
+    assigns = socket.assigns
 
-    if node_id do
-      ~p"/tasks?page=#{page}&node=#{node_id}"
-    else
-      ~p"/tasks?page=#{page}"
+    status = Keyword.get(overrides, :status, assigns.status_filter)
+    project = Keyword.get(overrides, :project, assigns.project_filter)
+    review = Keyword.get(overrides, :review, assigns.review_status_filter)
+    session = Keyword.get(overrides, :session, assigns.session_mode_filter)
+    query = Keyword.get(overrides, :q, assigns.search_query)
+
+    pairs =
+      [
+        {"page", if(page > 1, do: page)},
+        {"status", non_default(status, "all")},
+        {"project", non_default(project, "all")},
+        {"review", non_default(review, "all")},
+        {"session", non_default(session, "all")},
+        {"q", non_default(query, "")},
+        {"node", Map.get(assigns, :current_node_id)}
+      ]
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+      |> Enum.map_join("&", fn {key, value} ->
+        "#{key}=#{URI.encode_www_form(to_string(value))}"
+      end)
+
+    case pairs do
+      "" -> "/tasks"
+      query_string -> "/tasks?" <> query_string
     end
+  end
+
+  defp non_default(value, default), do: if(value == default, do: nil, else: value)
+
+  # Whitelist one query-string/event value against the option vocabulary; an
+  # absent, non-binary or unknown value keeps the fallback (never an atom
+  # conversion, never a raise).
+  defp whitelisted(value, allowed, fallback) do
+    if is_binary(value) and value in allowed, do: value, else: fallback
+  end
+
+  # A project filter is an absolute OS path, so there is no static whitelist:
+  # any non-empty binary passes, and an absent/blank value keeps the fallback.
+  defp binary_or(value, _fallback) when is_binary(value) and value != "", do: value
+  defp binary_or(_value, fallback), do: fallback
+
+  # The search query is kept VERBATIM (the query string already decoded it);
+  # absent/non-binary means "no search".
+  defp seed_query(value) when is_binary(value), do: value
+  defp seed_query(_value), do: ""
+
+  # Seeds the five URL-addressed filters. Defaults match what `tasks_url/3`
+  # omits, so the URL and the assigns can never disagree.
+  defp seed_filters(socket, params) do
+    assign(socket,
+      status_filter: whitelisted(params["status"], @status_filters, "all"),
+      project_filter: binary_or(params["project"], "all"),
+      review_status_filter: whitelisted(params["review"], @review_filters, "all"),
+      session_mode_filter: whitelisted(params["session"], @session_filters, "all"),
+      search_query: seed_query(params["q"])
+    )
   end
 
   # Parses the ?page= query param into a positive integer (default 1).
@@ -1710,6 +1796,28 @@ defmodule EvoDashWeb.TasksLive do
   defp session_mode_label("oneshot"), do: gettext("One-shot tasks")
   defp session_mode_label("interactive"), do: gettext("Interactive sessions")
   defp session_mode_label(_), do: gettext("All task kinds")
+
+  # Human label for the active STATUS filter chip. `needs_review` is the derived
+  # triage value, so it has no stored-status label of its own — every other
+  # value (a stored status string) delegates to the shared helper.
+  defp status_filter_label("needs_review"), do: gettext("Needs review")
+  defp status_filter_label(status), do: task_status_label(status)
+
+  # The task count line. `needs_review` is a triage queue, so it counts "tasks
+  # that need review" instead of "tasks found"; every other filter keeps the
+  # generic wording.
+  defp count_line("needs_review", count) do
+    dngettext(
+      "default",
+      "%{count} task needs review",
+      "%{count} tasks need review",
+      count
+    )
+  end
+
+  defp count_line(_status_filter, count) do
+    dngettext("default", "%{count} task found", "%{count} tasks found", count)
+  end
 
   # Resolves an idle session's agent id from the page load's
   # `%{task_id => agent_id}` map. Tolerant of the KEY TYPE: a card posts its
