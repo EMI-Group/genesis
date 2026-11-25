@@ -3,6 +3,7 @@ defmodule EvoDashWeb.ProjectWindow do
   use EvoDashWeb, :live_component
 
   alias EvoDash.ProjectDirectories
+  alias EvoDashWeb.ProjectsLive.ProjectFlow
   alias EvoDashWeb.WorkbenchComponent
 
   @impl true
@@ -312,13 +313,7 @@ defmodule EvoDashWeb.ProjectWindow do
     do: {:noreply, assign(socket, loading: false, error: error_reason(result))}
 
   def handle_async(:project, {:ok, {:ok, project}}, socket) do
-    path =
-      WorkbenchComponent.navigation_path("/projects", project.node_id,
-        project: project.path,
-        wb_home: "1"
-      )
-
-    {:noreply, push_navigate(socket, to: path)}
+    {:noreply, push_navigate(socket, to: ProjectFlow.overview_url(project.node_id, project.path))}
   end
 
   def handle_async(:project, result, socket),
