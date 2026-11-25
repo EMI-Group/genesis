@@ -50,7 +50,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
           width="46"
           height="38"
         />
-        <h2 class="text-2xl!">{gettext("How can I help?")}</h2>
+        <h2 class="text-xl!">{gettext("How can I help?")}</h2>
       </div>
       <p class="mt-2 text-sm text-base-content/70 text-balance">
         {if @project_scoped?,
