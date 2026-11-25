@@ -26,6 +26,14 @@ defmodule EvoDashWeb.ReviewComponents.Header do
   attr(:started_at, :any, default: nil)
   attr(:finished_at, :any, default: nil)
   attr(:stats, :map, default: nil)
+  # The viewed node's display name — rendered as the page's SCOPE chip beside
+  # the project slot (project + node + task id + status is the whole identity
+  # line).
+  attr(:node_name, :string, default: nil)
+  # Whether the REVIEW-status badge (open / merged / rejected …) is meaningful:
+  # a failed task is a diagnostics record, not a review state, so its owner
+  # passes false.
+  attr(:show_review_status, :boolean, default: true)
 
   def page_header(assigns) do
     ~H"""
@@ -46,8 +54,11 @@ defmodule EvoDashWeb.ReviewComponents.Header do
           >
             {short_title(@title)}
           </h1>
-          <div class="mt-2 flex flex-wrap gap-2">
-            <span class={["badge badge-sm gap-1 shrink-0 font-medium", review_status_badge(@status)]}>
+          <div :if={@show_review_status or @task_status != nil} class="mt-2 flex flex-wrap gap-2">
+            <span
+              :if={@show_review_status}
+              class={["badge badge-sm gap-1 shrink-0 font-medium", review_status_badge(@status)]}
+            >
               <.icon name={review_status_icon(@status)} class="size-3.5" />
               {review_status_label(@status)}
             </span>
@@ -70,10 +81,29 @@ defmodule EvoDashWeb.ReviewComponents.Header do
            the same optical line. Machine-ish values are `font-mono`; only the
            human words (task type label, relative times) stay sans. --%>
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-base-content/70">
+        <%!-- The SCOPE line always renders its project slot: a repo-less task
+             (assistant/reflect) has no path at all, and that absence is stated
+             instead of silently dropping the slot. --%>
         <%= if @repo_path do %>
           <span class="flex items-center gap-1.5 min-w-0" title={@repo_path}>
             <.icon name="hero-folder" class="size-4 shrink-0" />
             <span class="font-mono text-xs truncate leading-none">{@repo_path}</span>
+          </span>
+        <% else %>
+          <span class="flex items-center gap-1.5 min-w-0">
+            <.icon name="hero-folder" class="size-4 shrink-0 text-base-content/50" />
+            <span class="text-xs leading-none">
+              <%!-- zh_CN: 没有项目路径（无仓库任务） --%>
+              {gettext("No project path")}
+            </span>
+          </span>
+        <% end %>
+        <%= if @node_name do %>
+          <span class="flex items-center gap-1.5 min-w-0">
+            <.icon name="hero-server-stack" class="size-4 shrink-0" />
+            <span class="text-xs leading-none truncate max-w-[12rem]" title={@node_name}>
+              {@node_name}
+            </span>
           </span>
         <% end %>
         <%= if @branch_name do %>
@@ -170,6 +200,187 @@ defmodule EvoDashWeb.ReviewComponents.Header do
       <% end %>
     </header>
     """
+  end
+
+  # ---------------------------------------------------------------------------
+  # task_outcome_banner/1 — the page's OUTCOME statement, rendered directly
+  # under the header so it is visible on every tab. It tells the truth for
+  # every terminal outcome, not only for a successful mergeable one:
+  #
+  #   * `:failed`    — error tint; merge/reject are unavailable, the failure
+  #                    record and (when one exists) the agent report ARE the
+  #                    record of the run.
+  #   * `:cancelled` — warning tint; preserved changes stay reviewable, and a
+  #                    cancellation that produced nothing says so.
+  #   * otherwise    — info tint: a completed task without a report (or an
+  #                    unexpected status) is stated, never implied.
+  #
+  # A completed task WITH a report renders nothing (the agent summary below is
+  # the report), and a nil outcome means "not loaded yet" — also nothing.
+  # ---------------------------------------------------------------------------
+
+  attr(:outcome, :atom, default: nil)
+  attr(:task_status, :atom, default: nil)
+  attr(:task_error, :any, default: nil)
+  attr(:has_report, :boolean, default: true)
+  attr(:has_changes, :boolean, default: false)
+  attr(:diagnostics_url, :string, default: nil)
+
+  def task_outcome_banner(assigns) do
+    assigns =
+      assign(assigns,
+        tone: banner_tone(assigns.outcome),
+        headline: banner_headline(assigns.outcome),
+        body: banner_body(assigns.outcome, assigns.has_changes, assigns.task_status),
+        error_message: error_message(assigns.task_error),
+        error_kind: error_field(assigns.task_error, :kind),
+        error_source: error_field(assigns.task_error, :source)
+      )
+
+    ~H"""
+    <div
+      :if={show_outcome_banner?(@outcome, @has_report)}
+      id="review-task-outcome"
+      data-outcome={to_string(@outcome)}
+      class={["rounded-xl border p-4 space-y-2", banner_tone_class(@tone)]}
+    >
+      <div class="flex items-start gap-2.5">
+        <.icon
+          name={banner_icon(@tone)}
+          class={"size-5 shrink-0 mt-0.5 " <> banner_text_class(@tone)}
+        />
+        <div class="min-w-0 flex-1 space-y-1.5">
+          <p class={["text-sm font-semibold", banner_text_class(@tone)]}>
+            {@headline}
+          </p>
+          <p class="text-sm text-base-content/80">
+            {@body}
+          </p>
+
+          <%= if @error_message do %>
+            <p class="text-xs font-mono whitespace-pre-wrap break-words text-base-content/80">
+              {@error_message}
+            </p>
+          <% end %>
+
+          <%= if @error_kind || @error_source do %>
+            <p class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-base-content/60">
+              <span :if={@error_kind}>
+                <%!-- zh_CN: 失败类型（如 :crash / :timeout） --%>
+                {gettext("Kind: %{kind}", kind: @error_kind)}
+              </span>
+              <span :if={@error_source}>
+                <%!-- zh_CN: 失败来源（如 :agent / :llm） --%>
+                {gettext("Source: %{source}", source: @error_source)}
+              </span>
+            </p>
+          <% end %>
+
+          <%= if @outcome in [:failed, :cancelled] and not @has_report do %>
+            <p class="text-xs text-base-content/70">
+              {gettext("No agent report was recorded for this run.")}
+            </p>
+          <% end %>
+
+          <%= if is_binary(@diagnostics_url) and String.trim(@diagnostics_url) != "" do %>
+            <.link
+              navigate={@diagnostics_url}
+              id="review-task-diagnostics"
+              class="btn btn-sm btn-outline rounded-lg gap-1.5"
+            >
+              <.icon name="hero-lifebuoy" class="size-4" />
+              <%!-- zh_CN: 打开任务诊断（任务详情与运行记录） --%>
+              {gettext("Open task diagnostics")}
+            </.link>
+          <% end %>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  # Nothing to say for "not loaded yet", and nothing for a COMPLETED task that
+  # recorded a report (that report is rendered as the agent summary).
+  defp show_outcome_banner?(nil, _has_report), do: false
+  defp show_outcome_banner?(:completed, true), do: false
+  defp show_outcome_banner?(_outcome, _has_report), do: true
+
+  defp banner_tone(:failed), do: :error
+  defp banner_tone(:cancelled), do: :warning
+  defp banner_tone(_outcome), do: :info
+
+  defp banner_tone_class(:error), do: "border-error/30 bg-error/10"
+  defp banner_tone_class(:warning), do: "border-warning/30 bg-warning/10"
+  defp banner_tone_class(_tone), do: "border-info/30 bg-info/10"
+
+  defp banner_text_class(:error), do: "text-error"
+  defp banner_text_class(:warning), do: "text-warning"
+  defp banner_text_class(_tone), do: "text-info"
+
+  defp banner_icon(:error), do: "hero-x-circle"
+  defp banner_icon(:warning), do: "hero-exclamation-triangle"
+  defp banner_icon(_tone), do: "hero-information-circle"
+
+  defp banner_headline(:failed), do: gettext("This task failed")
+  defp banner_headline(:cancelled), do: gettext("This task was cancelled")
+  defp banner_headline(_outcome), do: gettext("No agent report recorded")
+
+  defp banner_body(:failed, _has_changes, _task_status) do
+    gettext(
+      "Its work cannot be merged or rejected. The failure details and the agent report (when one was recorded) are the record of this run."
+    )
+  end
+
+  defp banner_body(:cancelled, true, _task_status) do
+    gettext("Its preserved changes can still be reviewed and merged below.")
+  end
+
+  defp banner_body(:cancelled, _has_changes, _task_status) do
+    gettext(
+      "It was cancelled before producing reviewable changes. The agent report and archive (when collected) are the record of this run."
+    )
+  end
+
+  defp banner_body(_outcome, _has_changes, task_status) do
+    gettext(
+      "This task ended as %{status} without an agent report. Check the task diagnostics for the transcript.",
+      status: current_status_label(task_status)
+    )
+  end
+
+  # The status label for the "no report" line: the LOCKED helper for a real
+  # status atom, and a lowercase "unknown" for nil/unusable input.
+  defp current_status_label(status) when is_atom(status) and not is_nil(status) do
+    EvoDashWeb.Helpers.task_status_label(status)
+  end
+
+  defp current_status_label(status) when is_binary(status) do
+    EvoDashWeb.Helpers.task_status_label(status)
+  end
+
+  defp current_status_label(_status), do: gettext("unknown")
+
+  # The failure record is untrusted decoded JSON: read one field totally (atom
+  # key first, then the string-keyed variant) and render scalars only.
+  defp error_field(task_error, key) when is_map(task_error) do
+    case Map.get(task_error, key) || Map.get(task_error, Atom.to_string(key)) do
+      nil -> nil
+      value when is_binary(value) -> blank_to_nil(value)
+      value when is_atom(value) -> Atom.to_string(value)
+      value when is_integer(value) -> Integer.to_string(value)
+      value when is_float(value) -> to_string(value)
+      _other -> nil
+    end
+  end
+
+  defp error_field(_task_error, _key), do: nil
+
+  defp error_message(task_error) when is_map(task_error), do: error_field(task_error, :message)
+  defp error_message(task_error) when is_binary(task_error), do: blank_to_nil(task_error)
+  defp error_message(_task_error), do: nil
+
+  defp blank_to_nil(value) when is_binary(value) do
+    if String.trim(value) == "", do: nil, else: value
   end
 
   @doc """

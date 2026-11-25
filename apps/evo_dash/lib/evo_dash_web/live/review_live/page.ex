@@ -124,7 +124,21 @@ defmodule EvoDashWeb.ReviewLive.Page do
                   agent_count={@agent_count}
                   started_at={@started_at}
                   finished_at={@finished_at}
-                  stats={@stats}
+                  node_name={@current_node_name}
+                  show_review_status={@outcome != :failed}
+                  stats={if EvoDashWeb.ReviewLive.Outcome.show_stats?(@stats, @outcome), do: @stats}
+                />
+
+                <%!-- The terminal-outcome banner: directly under the header so
+                     it is visible on EVERY tab. Renders nothing for a
+                     completed task that recorded a report. --%>
+                <EvoDashWeb.ReviewComponents.task_outcome_banner
+                  outcome={@outcome}
+                  task_status={@task_status}
+                  task_error={@task_error}
+                  has_report={@has_report}
+                  has_changes={not @is_no_changes}
+                  diagnostics_url={diagnostics_url(@task_id, @current_node_id)}
                 />
 
                 <!-- Page tabs (underline bar with count badges) -->
@@ -162,6 +176,7 @@ defmodule EvoDashWeb.ReviewLive.Page do
                         />
 
                         <EvoDashWeb.ReviewComponents.diff_stats_bar
+                          :if={EvoDashWeb.ReviewLive.Outcome.show_stats?(@stats, @outcome)}
                           files_count={@stats.files_count}
                           additions={@stats.additions}
                           deletions={@stats.deletions}
@@ -184,17 +199,24 @@ defmodule EvoDashWeb.ReviewLive.Page do
                           back_url={with_node_param(~p"/projects", @current_node_id)}
                           review_action={@review_action}
                           busy_repos={@busy_repos}
+                          actions_allowed={EvoDashWeb.ReviewLive.Outcome.actions_allowed?(@outcome)}
+                          task_outcome={@outcome}
                         />
 
                         <EvoDashWeb.ReviewComponents.task_actions
                           can_resume={@can_resume}
                           loading={@action_loading}
-                          branch_exists={@branch_exists}
+                          branch_exists={
+                            @branch_exists and
+                              EvoDashWeb.ReviewLive.Outcome.actions_allowed?(@outcome)
+                          }
                           has_pr={@has_pr}
                           pr_url={@pr_url}
                           show_export={EvoDashWeb.ReviewLive.ArchiveLoad.export_available?(assigns)}
                           export_url={with_node_param("/tasks/#{@task_id}/export", @current_node_id)}
-                          no_changes={@is_no_changes}
+                          no_changes={
+                            EvoDashWeb.ReviewLive.Outcome.dismissable?(@outcome, @is_no_changes)
+                          }
                         />
 
                         <EvoDashWeb.ReviewComponents.extract_skills_modal show={@show_extract_modal} />
@@ -308,5 +330,13 @@ defmodule EvoDashWeb.ReviewLive.Page do
     params = if node_id, do: Map.put(params, :node, node_id), else: params
     params = if repo_id != "primary", do: Map.put(params, :repo, repo_id), else: params
     ~p"/review/#{task_id}?#{params}"
+  end
+
+  # The outcome banner's escape hatch to the task's own diagnostics: the Tasks
+  # page focuses the task named by `?task=<id>` (and keeps the viewed node).
+  defp diagnostics_url(task_id, node_id) do
+    params = %{task: task_id}
+    params = if node_id, do: Map.put(params, :node, node_id), else: params
+    ~p"/tasks?#{params}"
   end
 end

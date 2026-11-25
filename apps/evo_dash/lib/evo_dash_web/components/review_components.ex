@@ -14,6 +14,7 @@ defmodule EvoDashWeb.ReviewComponents do
 
   # Delegates to sub-modules
   defdelegate page_header(assigns), to: EvoDashWeb.ReviewComponents.Header
+  defdelegate task_outcome_banner(assigns), to: EvoDashWeb.ReviewComponents.Header
   defdelegate task_summary(assigns), to: EvoDashWeb.ReviewComponents.Header
   defdelegate agent_summary(assigns), to: EvoDashWeb.ReviewComponents.Header
   defdelegate objective_section(assigns), to: EvoDashWeb.ReviewComponents.Header

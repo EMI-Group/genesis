@@ -7,15 +7,16 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
   use EvoDashWeb, :html
 
   # ---------------------------------------------------------------------------
-  # task_actions/1 — PRIMARY-scoped TASK-level actions row: "Continue task"
-  # (only when can_resume) + the "…" overflow menu. Per-repo merge/reject
-  # live in ReviewComponents.RepoCards.repo_cards/1.
+  # task_actions/1 — PRIMARY-scoped TASK-level actions row: the "Prepare
+  # follow-up task" action (only when can_resume) + the "…" overflow menu.
+  # Per-repo merge/reject live in ReviewComponents.RepoCards.repo_cards/1.
   #
-  # `no_changes` (a task with NO changes in ANY repo) promotes the dismissal to
-  # the PRIMARY action as "Mark as read" (the existing `ignore` event) — there
-  # are no merge/reject actions when nothing has a branch. The "…" menu then
-  # keeps only its surviving secondary item(s) with the now-redundant Ignore
-  # suppressed, and is omitted entirely when nothing is left to show.
+  # `no_changes` (a COMPLETED task with NO changes in ANY repo) promotes the
+  # dismissal to the PRIMARY action as "Mark as read" (the existing `ignore`
+  # event) — there are no merge/reject actions when nothing has a branch. The
+  # "…" menu then keeps only its surviving secondary item(s) with the
+  # now-redundant Ignore suppressed, and is omitted entirely when nothing is
+  # left to show. A failed/cancelled task never takes this branch.
   # ---------------------------------------------------------------------------
 
   attr(:can_resume, :boolean, default: false)
@@ -34,7 +35,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
         <.mark_as_read_button loading={@loading} />
 
         <%= if @can_resume do %>
-          <.continue_task_button loading={@loading} />
+          <.prepare_follow_up_button loading={@loading} />
         <% end %>
 
         <%= if @show_export do %>
@@ -50,7 +51,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
         <% end %>
       <% else %>
         <%= if @can_resume do %>
-          <.continue_task_button loading={@loading} />
+          <.prepare_follow_up_button loading={@loading} />
         <% end %>
 
         <.overflow_menu
@@ -90,12 +91,14 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
   end
 
   # ---------------------------------------------------------------------------
-  # continue_task_button/1 — secondary "Continue task" action (event: resume)
+  # prepare_follow_up_button/1 — secondary "Prepare follow-up task" action
+  # (event: resume). It does NOT resume this run: it opens a NEW task seeded
+  # from this task's existing result (see ReviewLive.TaskActions.resume/2).
   # ---------------------------------------------------------------------------
 
   attr(:loading, :boolean, default: false)
 
-  defp continue_task_button(assigns) do
+  defp prepare_follow_up_button(assigns) do
     ~H"""
     <button
       class="btn btn-sm rounded-lg gap-1.5 bg-base-200/60 hover:bg-base-200 border-0"
@@ -103,8 +106,9 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
       disabled={@loading}
     >
       <.icon name="hero-arrow-path" class="size-4" />
-      <%!-- zh_CN: 继续任务 — 从该任务的提交继续演化 --%>
-      {gettext("Continue task")}
+      <%!-- zh_CN: 准备后续任务 — 以该任务的既有结果为基础创建一个新任务（不是恢复原执行）；
+           已暂停任务的“恢复任务”(Resume) 才恢复同一个任务 --%>
+      {gettext("Prepare follow-up task")}
     </button>
     """
   end

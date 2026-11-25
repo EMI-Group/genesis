@@ -31,6 +31,10 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
   # `@review_repos` on every tab switch / keystroke / broadcast.
   alias EvoDashWeb.ReviewLive.Aggregates
 
+  # The terminal-outcome matrix (how much of the review machinery an outcome
+  # may use) — pure and total, computed from the already-fetched task below.
+  alias EvoDashWeb.ReviewLive.Outcome
+
   @doc """
   Loads all review-page data for `task_id` on `node`.
 
@@ -208,9 +212,22 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
       # The single opt-in signal for the archive: a task started WITHOUT
       # `archive: true` has no per-agent archive at all, so the Review page's
       # Archive tab is disabled and `ArchiveLoad` never issues a fetch.
-      archive_opt_in?: EvoDashWeb.ArchiveHelpers.archive_opt?(task.opts)
+      archive_opt_in?: EvoDashWeb.ArchiveHelpers.archive_opt?(task.opts),
+      # The terminal-outcome facts, read from the task row already fetched (no
+      # extra RPC): the outcome class, the structured failure record (nil unless
+      # the task failed) and whether the agent recorded a final report. The page
+      # uses them to render its outcome banner and to gate the action surface.
+      outcome: Outcome.classify(task.status),
+      task_error: normalize_task_error(task.error),
+      has_report: present_text?(agent_summary)
     }
   end
+
+  # The failure record is whatever the store decoded: a map (atom- or
+  # string-keyed) passes through untouched, anything else (including nil)
+  # reads as "no failure record".
+  defp normalize_task_error(error) when is_map(error), do: error
+  defp normalize_task_error(_error), do: nil
 
   # Builds the `@review_repos` list — one entry per reviewable repo, PRIMARY
   # FIRST. The primary entry always exists (LEGACY tasks without a `repos`
