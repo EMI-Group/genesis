@@ -287,6 +287,61 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
     end
   end
 
+  describe "handle_node_selected/2 — the node param joins the CURRENT query string" do
+    # A node switch is a view-preserving navigation: the page's URL state
+    # (filters, a focused task, a settings category) lives in the query string
+    # the page carries in `@current_path`, so the helper REBUILDS the URL around
+    # it instead of appending `?node=` to the bare route path (which would reset
+    # `/tasks?status=needs_review` to the unfiltered list).
+
+    test "a path without a query gains exactly ?node=<id>" do
+      socket = socket(%{current_path: "/agents"})
+
+      assert {:noreply, result} = NodeAware.handle_node_selected(socket, "gpu-server")
+      assert patch_to(result) == "/agents?node=gpu-server"
+    end
+
+    test "existing filters survive the node switch" do
+      socket = socket(%{current_path: "/tasks?status=needs_review&session=interactive"})
+
+      assert {:noreply, result} = NodeAware.handle_node_selected(socket, "gpu-server")
+
+      assert patch_to(result) ==
+               "/tasks?status=needs_review&session=interactive&node=gpu-server"
+    end
+
+    test "an existing node key is replaced, never duplicated" do
+      socket = socket(%{current_path: "/tasks?node=old-node&status=failed"})
+
+      assert {:noreply, result} = NodeAware.handle_node_selected(socket, "gpu-server")
+      assert patch_to(result) == "/tasks?status=failed&node=gpu-server"
+    end
+
+    test "an already URL-encoded value survives byte-for-byte" do
+      socket =
+        socket(%{current_path: "/tasks?q=needs%20review%20%26%20more&project=%2Ftmp%2Frepo"})
+
+      assert {:noreply, result} = NodeAware.handle_node_selected(socket, "gpu-server")
+
+      assert patch_to(result) ==
+               "/tasks?q=needs%20review%20%26%20more&project=%2Ftmp%2Frepo&node=gpu-server"
+    end
+
+    test "selecting local drops the node key and keeps the other params" do
+      socket = socket(%{current_path: "/tasks?status=needs_review&node=old-node"})
+
+      assert {:noreply, result} = NodeAware.handle_node_selected(socket, "local")
+      assert patch_to(result) == "/tasks?status=needs_review"
+    end
+
+    test "selecting local on a bare path yields the bare path" do
+      socket = socket(%{current_path: "/tasks"})
+
+      assert {:noreply, result} = NodeAware.handle_node_selected(socket, "local")
+      assert patch_to(result) == "/tasks"
+    end
+  end
+
   describe "load_running_and_pending_tasks/1 — node-aware source" do
     # These tests verify that the function spawns an async fetch from the
     # correct node: local `TaskRegistry.list_tasks_summary([:running, :pending,

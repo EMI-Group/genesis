@@ -1305,11 +1305,45 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   triggering a re-render via `handle_params`.
 
   Each LiveView should set the `@current_path` assign (e.g. `~p"/projects"`,
-  `~p"/agents"`) so this helper can build the correct URL.
+  `~p"/agents"`) — INCLUDING the query string of the page's current URL when
+  that URL carries page state (`/tasks?status=needs_review`, `?category=…`, …),
+  because the URL is REBUILT from it, never from the bare route path: a node
+  switch (or a switch back to `"local"`) must not reset the view. `node=<id>`
+  is put INTO the existing query string — replacing a previous `node` key,
+  keeping every other param verbatim (so an already-encoded value survives
+  byte-for-byte) and never emitting a stray `?`/`&&`. A path with no query
+  becomes exactly `<path>?node=<id>`, and `"local"` drops the `node` key
+  entirely (the bare path when it was the only param).
   """
   def handle_node_selected(socket, node_id) do
     path = socket.assigns[:current_path] || "/"
-    to = if node_id == "local", do: path, else: path <> "?node=" <> node_id
-    {:noreply, Phoenix.LiveView.push_patch(socket, to: to)}
+    {:noreply, Phoenix.LiveView.push_patch(socket, to: put_node_param(path, node_id))}
   end
+
+  # Rebuilds `path` with the `node` query param set to `node_id` (`"local"`
+  # REMOVES it), keeping the other pairs verbatim: the query string is spliced
+  # as text, never decoded/re-encoded, so an already-encoded value
+  # (`q=needs%20review`) survives unchanged. Empty segments (a trailing `?` or
+  # a `&&`) are dropped, so the result never carries a stray separator.
+  defp put_node_param(path, node_id) do
+    {base, query} =
+      case String.split(path, "?", parts: 2) do
+        [base, query] -> {base, query}
+        [base] -> {base, ""}
+      end
+
+    pairs =
+      query
+      |> String.split("&", trim: true)
+      |> Enum.reject(&(query_param_key(&1) == "node"))
+
+    pairs = if node_id == "local", do: pairs, else: pairs ++ ["node=" <> node_id]
+
+    case pairs do
+      [] -> base
+      pairs -> base <> "?" <> Enum.join(pairs, "&")
+    end
+  end
+
+  defp query_param_key(pair), do: pair |> String.split("=", parts: 2) |> hd()
 end

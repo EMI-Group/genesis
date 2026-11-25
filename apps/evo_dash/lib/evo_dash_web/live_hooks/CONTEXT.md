@@ -106,7 +106,7 @@ Deleting that context's snapshot means the destination mount's FIRST PAINT canno
 | `current_node_display_name/1` | Display name for the current node. |
 | `node_query_param/1` | `%{node: id}` for threading the node through navigation URLs. |
 | `handle_connection_status/2` | Handles `{:remote_connection_status, id, status}` broadcasts and always refreshes `@connection_statuses`. On a meaningful local↔remote transition of the viewed node (`:connected` local→remote, `:disconnected`/`:error` remote→local) it does NOT assign `@current_node` inline — it `push_patch`es the current path (preserving `?node=`) so `handle_params/3` reloads ALL page-specific node data (remote config, remote paused state, …). `:connecting`, `:bootstrapping`, duplicate and non-selected-node statuses only refresh statuses. |
-| `handle_node_selected/2` | Builds the `push_patch` for a different node selection. |
+| `handle_node_selected/2` | Builds the `push_patch` for a different node selection by putting `node=<id>` INTO the page's CURRENT query string — see "Node-switch URL rule" below. |
 | `handle_task_info/2` | Routes task PubSub messages into the trailing-edge 300 ms debounce. |
 | `debounce_task_reload/1` | Trailing-edge debounce — see "Debounced task reload". |
 | `reload_tasks/1` | Executes the debounced reload: spawns the async sidebar load and clears `:tasks_reload_pending`. |
@@ -118,6 +118,9 @@ Deleting that context's snapshot means the destination mount's FIRST PAINT canno
 | `handle_tasks_result/2` | Sidebar result seam (pure socket in/out): drops mismatched node/seq results; on a match clears `:tasks_reload_pending`, applies `{:ok, {running, pending}}` (assign + hub write) and keeps last-known state on `{:error, reason}`. |
 | `handle_remote_context_result/2` | Node-context result seam (pure socket in/out): `seq`-only guard, per-field-typed apply plus cache write, last-known values kept on error/odd payloads. |
 | `handle_info/2` | Attached `:handle_info` hook — `{:halt, socket}` for `{:node_aware_active_tasks, ...}` (→ `handle_tasks_result/2`), `{:node_aware_remote_context, ...}` (→ `handle_remote_context_result/2`), `{{:session_list_loaded, seq, node}, result}` (→ `SessionList.applied/4`), `{:node_aware_refresh_connections, target_id}` (→ `refresh_remote_assigns/2`) and `:remote_targets_changed` (→ `request_remote_context_load/1`); `{:cont, request_session_list_load(socket)}` for `:node_aware_reload_tasks` (the page's own task reload must still run); `{:cont, socket}` for all other messages. |
+
+**Node-switch URL rule** — a node switch is view-PRESERVING: `handle_node_selected/2` rebuilds the URL from the page's `@current_path`, so that assign must carry the CURRENT query string (path + `?…`) when the page's state lives there — `TaskCardComponents`-style filter pages keep `/tasks?status=needs_review&session=interactive`, Settings keeps `?category=`, Agents keeps the selected agent.
+`node=<id>` is put INTO the existing query string: a previous `node` key is REPLACED (never duplicated), every other pair is kept VERBATIM (the query is spliced as text, never decoded/re-encoded, so an already-encoded value such as `q=needs%20review` survives byte-for-byte), empty segments are dropped (no stray `?`/`&&`), a path with no query becomes exactly `<path>?node=<id>`, and selecting `"local"` REMOVES the `node` key (the bare path when it was the only param).
 
 ### `EvoDashWeb.LiveHooks.Appearance` (`appearance.ex`)
 

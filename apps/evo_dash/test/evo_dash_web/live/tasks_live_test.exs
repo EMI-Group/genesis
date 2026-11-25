@@ -1604,10 +1604,21 @@ defmodule EvoDashWeb.TasksLiveTest do
                ])
     end
 
-    test "a remote node's review href carries ?node=", %{conn: conn} do
+    test "a remote node's review href carries ?node= (finished tasks only)", %{conn: conn} do
       target_id = register_remote_target!("tasks-review-href")
 
-      id = insert_fixture!(status: :completed, branch_name: "evogit/remote-review")
+      completed = insert_fixture!(status: :completed, branch_name: "evogit/remote-review")
+
+      # A force-killed / crashed run: no result, but its salvage branch exists,
+      # so the FINISHED allowlist (`:completed` / `:cancelled` / `:failed`,
+      # repo-less `:reflect` excluded) routes it to review too — the triage
+      # BUCKET is what stays `:completed`-only, never the route.
+      failed =
+        insert_fixture!(
+          status: :failed,
+          result: nil,
+          branch_name: "evogit/remote-review-salvage"
+        )
 
       # Every node-aware read is served from the LOCAL store: the fake remote
       # node is unreachable, so the seams keep the page renderable while the
@@ -1629,7 +1640,11 @@ defmodule EvoDashWeb.TasksLiveTest do
         |> Floki.find(~s(a[href^="/review/"]))
         |> Floki.attribute("href")
 
-      assert hrefs == ["/review/#{id}?node=#{target_id}"]
+      assert Enum.sort(hrefs) ==
+               Enum.sort([
+                 "/review/#{completed}?node=#{target_id}",
+                 "/review/#{failed}?node=#{target_id}"
+               ])
     end
 
     test "the needs_review triage filter round-trips on a remote node", %{conn: conn} do
