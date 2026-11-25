@@ -19,6 +19,9 @@ The body carries EXACTLY one identity field: `prompt_cache_key`, set from `provi
 The SAME identity is sent as the `session-id` request header, which falls back to the resolved cache key when only `prompt_cache_key` is present, so body and header always agree for one agent run.
 `thread-id` and `x-client-request-id` are emitted ONLY when `provider_options[:thread_id]` is supplied; Genesis never invents a request or thread id.
 The only other headers are `authorization: Bearer <token>`, `content-type: application/json` and `accept: text/event-stream`.
+The Codex `backend-api` headers (`chatgpt-account-id`, `originator`, `openai-beta`) are omitted on purpose: the SIWC plan flow uses the public Responses endpoint, and OpenAI's token-sharing docs forbid pointing that flow at `backend-api`.
+The vendored `ReqLLM.Providers.OpenAICodex` sends them only because it targets `chatgpt.com/backend-api/codex/responses`.
+Do not add them as a cache-affinity or "Codex parity" tweak; prompt-cache routing on this endpoint is the body `prompt_cache_key`.
 The `provider_options` handed to `ResponsesAPI.build_request_body/5` is rebuilt to `[store: false, prompt_cache_key: cache_key]`, so Genesis-only keys (`siwc_account` above all) never reach the OpenAI body builder.
 Everything identity-related is resolved from the ORIGINAL call options BEFORE that rebuild, because the original list is what the headers read.
 Genesis tool schemas are wrapped into one `namespace` tool named `genesis`; only `namespace`, `web_search` and `web_search_preview` tools are accepted and any other tool type is an invalid-parameter error.
