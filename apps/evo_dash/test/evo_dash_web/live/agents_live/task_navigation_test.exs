@@ -94,17 +94,23 @@ defmodule EvoDashWeb.AgentsLive.TaskNavigationTest do
     # avoids starting a real SSH connection while the target is pending.
     send(view.pid, {:node_selected, target})
     render(view)
-    assert assert_patch(view, @async_wait_budget_ms) == local_path <> "&node=" <> target
+    assert_agents_patch(view, %{"task" => task, "node" => target})
     assert has_element?(view, "#main-content p", "Connecting to #{name}…")
     assert_task_shell(view, task, target)
     assert_agent_cards(view, [])
 
     send(view.pid, {:node_selected, "local"})
     render(view)
-    assert assert_patch(view, @async_wait_budget_ms) == local_path
+    assert_agents_patch(view, %{"task" => task})
     settle_agents(view)
     assert_task_shell(view, task)
     assert_agent_cards(view, [local_agent])
+  end
+
+  defp assert_agents_patch(view, params) do
+    uri = view |> assert_patch(@async_wait_budget_ms) |> URI.parse()
+    assert uri.path == "/agents"
+    assert URI.decode_query(uri.query || "") == params
   end
 
   defp task_agents_path(task), do: ~p"/agents?#{[task: task]}"
