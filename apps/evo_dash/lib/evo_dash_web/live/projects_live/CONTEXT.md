@@ -224,8 +224,6 @@ The batch loader sends `{:workspaces_loaded, seq, node, result}` from the SAME t
 Workspace events: `palette_mode` (`phx-value-mode="new_workspace"` enters the form and clears the member list), `toggle_workspace` (`phx-value-point`, pure expand/collapse), `toggle_workspace_member` (`phx-value-point`, APPENDS on add so click order is the member order) and `create_workspace` (`name` plus an optional `description`).
 Palette keyboard arithmetic is `Palette.item_count/3` (filtered rows + 3 actions locally, 2 remotely) and `Palette.new_workspace_index/2`; the action exists on remote nodes (unlike "Create New Project"), and the form's ordered refs, description and refusal copy come from `Workspace.member_refs/2`, `description_param/1` and `error_message/1`. A node switch resets `workspaces`, `expanded_workspaces` and `new_workspace_members`, so a remote view never shows another node's workspaces.
 
-## DELETEME2
-
 ## Test strategy (load-bearing pins only)
 
 Cadences, fixtures and seams: `test/evo_dash_web/live/CONTEXT.md` + `test/evo_dash_web/live/projects_live/CONTEXT.md`. Contracts a change must not break:
