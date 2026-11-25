@@ -176,7 +176,7 @@ Prefer unique task ids plus explicit cleanup over assumptions about global empti
 
 ### Async policy
 Census is by MODULE (the unit ExUnit parallelises), not by file; a file can appear more than once in the inventory below.
-Several files hold both kinds (`review_live_test.exs` 10 case modules, `node_context_test.exs` 4, `settings_live_test.exs` 3, `settings_live/navigation_test.exs` 2, and one async + one sync module each in `node_aware_test.exs`, `projects_live_test.exs`, `projects_live/project_flow_test.exs`, `system_live_test.exs`, `welcome_live_test.exs`, `welcome_complete_live_test.exs` and `support/config_dir_test.exs`); `live/home_live/approval_workflow_test.exs` holds two async modules.
+Several files hold both kinds (`review_live_test.exs` 10 case modules, `node_context_test.exs` 4, `settings_live_test.exs` 3, `settings_live/navigation_test.exs` 2, and one async + one sync module each in `node_aware_test.exs`, `projects_live_test.exs`, `projects_live/project_flow_test.exs`, `system_live_test.exs`, `welcome_live_test.exs` and `welcome_complete_live_test.exs`); `live/home_live/approval_workflow_test.exs` holds two async modules.
 The remaining `defmodule`s in this tree are helpers with no case template: the review/settings/system/projects `Helpers` modules, the fake `ConnectionManager` GenServers (`SettingsLiveTest.BootstrapManager`/`ConnectManager`/`StreamEndpoint`), `EvoDash.NodeContextSessionTest.StubAgent`, `EvoDashWeb.HomeLiveTest.ScriptedAgent`, `EvoDashWeb.HomeLive.ApprovalWorkflowTest.Helpers`, `EvoDashWeb.ServerStatusTestRegistry`, `SafeCallTest.SlowServer`, `EvoDash.Test.ConfigDirTest.Fixture`, and 7 in `support/*.ex`.
 ExUnit drains ALL async modules before starting any sync one, so a flip is unsafe only when a module shares a MUTABLE global with another ASYNC module.
 Config-directory isolation itself is not a reason for `async: false`: `EvoGit.Platform.config_dir/1` resolves through the `:config_dir_fun` seam per process (own dictionary, then the spawn chain — `$callers` then `$ancestors`, so a plain `GenServer` child is covered too, and LiveViewTest sets a view's `$callers` to the test pid), so a config-writing module can isolate with `setup`-time `EvoDash.Test.ConfigDir.isolate!/1` and stay async.
@@ -185,7 +185,6 @@ Sync modules and the global that forces each (per-file evidence in the child doc
 
 | File → module | Forcing global |
 |---------------|----------------|
-| `support/config_dir_test.exs` → `EvoDash.Test.ConfigDirMountedTest` | reads the real Projects configuration loader, which async `ProjectsLiveTest` replaces through global `:projects_async_load_runner` |
 | `evo_dash/active_tasks_test.exs` | junk sentinel shapes in the `{nil, node()}` `EvoDash.ActiveTasks` key that async whole-page mounts seed from |
 | `evo_dash/chatgpt_stream_test.exs` → `EvoDash.ChatGPTStreamTest` | BEAM-global `:evo_git, :config_dir_fun` override pointing at a `EvoGit.TestSupport.ChatGPTFixture` config dir |
 | `evo_dash/isolated_task_store_test.exs` | terminates/restarts the process-global `EvoGit.Store`+`TaskRegistry` pair and asserts ABSOLUTE properties of the replacement |
