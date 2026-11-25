@@ -81,13 +81,13 @@ defmodule EvoDashWeb.ProjectsLive.SeamScopeTest do
         )
       end)
 
-      assert_receive {:unrelated, nil, nil, :app_env}
+      assert_receive {:unrelated, nil, nil, :app_env}, @wait_budget_ms
     end
 
     test "a dead pid in the chain is skipped instead of crashing the read" do
       dead = spawn(fn -> :ok end)
       ref = Process.monitor(dead)
-      assert_receive {:DOWN, ^ref, :process, ^dead, _reason}
+      assert_receive {:DOWN, ^ref, :process, ^dead, _reason}, @wait_budget_ms
 
       parent = self()
 
@@ -96,7 +96,7 @@ defmodule EvoDashWeb.ProjectsLive.SeamScopeTest do
         send(parent, {:after_dead, Seam.get(@probe, :default)})
       end)
 
-      assert_receive {:after_dead, :default}
+      assert_receive {:after_dead, :default}, @wait_budget_ms
     end
   end
 
@@ -115,7 +115,7 @@ defmodule EvoDashWeb.ProjectsLive.SeamScopeTest do
 
       parent = self()
       spawn(fn -> send(parent, {:sibling, Seam.get(@probe, :production)}) end)
-      assert_receive {:sibling, :production}
+      assert_receive {:sibling, :production}, @wait_budget_ms
 
       # `delete/1` clears the override mid-test.
       EvoDash.Test.Seam.delete(@probe)
@@ -160,7 +160,7 @@ defmodule EvoDashWeb.ProjectsLive.SeamScopeTest do
         )
       end)
 
-      assert_receive {:sibling_runner, sibling_runner, sibling_default}
+      assert_receive {:sibling_runner, sibling_runner, sibling_default}, @wait_budget_ms
       assert sibling_runner != fixture
       assert is_nil(sibling_runner)
       assert sibling_default == (&Overview.load/2)
