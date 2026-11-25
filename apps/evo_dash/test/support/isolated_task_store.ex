@@ -163,7 +163,7 @@ defmodule EvoDash.Test.IsolatedTaskStore do
     # Resolve (or, on the first call of a run, build) the migrated sqlite
     # template BEFORE the production pair is touched, so a failure here can
     # never leave the process-global singletons terminated.
-    template = template_path()
+    template = store_template_path()
 
     # No log capture here: `isolate!/1` is called from a `setup` callback, and
     # ExUnit's `capture_log: true` wraps setup AND the test body in
@@ -248,7 +248,38 @@ defmodule EvoDash.Test.IsolatedTaskStore do
   @template_basename "isolated_store_template.sqlite"
   @template_sidecars ["-wal", "-shm", "-journal"]
 
-  defp template_path do
+  @doc """
+  The absolute path of the run-scoped, already-migrated sqlite TEMPLATE, or
+  `nil` when no template could be placed/proven (a caller then boots a fresh
+  database, which is correct).
+
+  Public because `EvoDash.Test.IsolatedVCT` seeds its PRIVATE per-test store from
+  this SAME artifact: one artifact per run, built once, shared read-only.
+
+  The build is serialized by a `:global` lock (a lock that cannot be taken
+  answers `nil`, i.e. the fresh-database path) because the dashboard's
+  `async: true` suites resolve it concurrently from their `setup` callbacks.
+  """
+  @spec store_template_path() :: Path.t() | nil
+  def store_template_path do
+    case :persistent_term.get(@template_key, :unset) do
+      :unset ->
+        case :global.trans({__MODULE__, :template_path}, &build_and_cache_template/0) do
+          :aborted -> nil
+          path -> path
+        end
+
+      cached ->
+        cached
+    end
+  end
+
+  # The build itself, run while holding the `:global` lock `store_template_path/0`
+  # takes. The cache is re-read INSIDE the lock, so concurrent first callers
+  # (`EvoDash.Test.IsolatedVCT` reaches this from `async: true` setups) build the
+  # artifact exactly ONCE: two builds would race on the same path — one deleting
+  # the file the other is migrating.
+  defp build_and_cache_template do
     case :persistent_term.get(@template_key, :unset) do
       :unset ->
         path = build_template!()
@@ -258,6 +289,18 @@ defmodule EvoDash.Test.IsolatedTaskStore do
       cached ->
         cached
     end
+  end
+
+  @doc """
+  Copy the run-scoped migrated template onto `sqlite_path`, so a private
+  `EvoGit.Store` booted there runs the boot migrator as a verified no-op.
+
+  Answers `:ok`. When no template is available, the target is left ABSENT and
+  the caller's store migrates the fresh file itself — correct, just slower.
+  """
+  @spec seed_store!(Path.t()) :: :ok
+  def seed_store!(sqlite_path) when is_binary(sqlite_path) do
+    seed_isolated_database!(store_template_path(), sqlite_path)
   end
 
   # The template is seeded into the ISOLATED sqlite path by a plain file copy.

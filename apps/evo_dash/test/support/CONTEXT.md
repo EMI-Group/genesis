@@ -58,6 +58,15 @@ Every other store-touching suite uses the run-wide store idiom — per-test uniq
 **Measured cost: ≈6.5 ms per `isolate!/1` call end-to-end** — ≈1.7 ms for the production-pair restart, ≈4–5 ms for the teardown's `ExUnit.CaptureLog.capture_log/2` window (the log-window setup/teardown dominates), and sub-millisecond terminate/boot/restore work.
 That figure is the reason nobody should "optimize" the helper further: at ≈174 calls per run it is ≈1.1 s of a ~18 s suite, so an `async: false` module's serialisation cost dwarfs its isolation cost.
 
+### `EvoDash.Test.IsolatedVCT` (`isolated_vct.ex`)
+`isolate!/1(opts)` gives a test a PRIVATE project registry: its own uniquely-named `EvoGit.VCT` over its own uniquely-named `EvoGit.Store` (sqlite seeded from `IsolatedTaskStore.store_template_path/0`) on a `<tmp>/evogit_vct-<os pid>-<int>-<random>` tree.
+It isolates the mount TABLE only — mounts, workspaces, members and the project cap are per-test state, so no concurrent test can see or damage them.
+It deliberately SHARES `EvoGit.PubSub`, so a mutation still broadcasts `{:vct_updated, node()}` on the same `"vct"` topic and a mounted page's broadcast-driven refresh is exercised exactly as in production.
+It exists because the registry is a run-wide, store-backed SINGLETON: without it a bare `/projects` mount auto-activates a stranger's project and `clear_projects/0` destroys other tests' fixtures mid-run.
+The designation travels through the SPAWN CHAIN: `isolate!/1` puts the instance name into the calling process dictionary under `:evogit_vct_server`, which `EvoDash.VCTScope` resolves through `$callers`/`$ancestors`, so a mounted page and its load tasks resolve the private instance with no `lib/` change.
+`isolate!/1` also calls `EvoGit.Config.Cache.invalidate/0`, because booting its store settles this test's config snapshot while `config.toml` is still empty (tests write it directly, bypassing `save_user_config/1`'s reload event).
+Teardown is ONE `on_exit` that STOPS the stack (`Supervisor.stop/1`, `:noproc` ignored) and only then removes the tree through `EvoDash.Test.FsCleanup.rm_rf!/1`; the supervisor is `Process.unlink/1`ed for the reason `IsolatedTaskStore` documents.
+**Measured cost: ≈2 ms per `isolate!/1` call** (the pre-migrated template makes the boot migrator a verified no-op), which is why `projects_live_test.exs` runs all 182 of its tests against it.
 ### `EvoDash.Test.ConfigDir` (`config_dir.ex`)
 
 Per-process config-dir isolation — the `:evo_dash` MIRROR of `EvoGit.TestSupport.ConfigDir` (which lives in `:evo_git`'s support dir and is not on this app's compile path).

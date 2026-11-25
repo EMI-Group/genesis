@@ -29,6 +29,11 @@
 # the path-keyed `EvoGit.Config` / `VersionState` caches stay cache-safe, and
 # the mounted view + its supervised load tasks inherit the override through
 # `$callers`.
+# The PROJECT REGISTRY is isolated the same way and for the same reason
+# (`EvoDash.Test.IsolatedVCT.isolate!/1`, also in `set_onboarding_completed/1`):
+# `EvoGit.VCT` is a run-wide store-backed singleton, so every module here gets
+# a private instance designated through `:evogit_vct_server` and inherited by
+# the view + its load tasks through `EvoDash.VCTScope`'s spawn-chain walk.
 
 # A minimal GenServer standing in for a real remote connection manager in
 # `EvoGit.RemoteConnection.Registry` (same pattern as
@@ -256,6 +261,14 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   def set_onboarding_completed(%{conn: conn} = _context) do
     EvoDash.Test.ConfigDir.isolate!("evogit_dashboard_test_config")
 
+    # The project registry is a run-wide, store-backed SINGLETON (`EvoGit.VCT`):
+    # without this, every mount ANY concurrently running test makes is visible
+    # to this test's page (which then auto-activates a stranger's project) and
+    # this test's `clear_projects/0` destroys other tests' fixtures. This boots
+    # a private instance and designates it through `:evogit_vct_server`, which
+    # `EvoDash.VCTScope` resolves for the mounted view and its load tasks.
+    EvoDash.Test.IsolatedVCT.isolate!()
+
     # Create the version-state file so onboarding_needed?/0 returns false.
     EvoGit.Config.VersionState.complete_onboarding()
 
@@ -278,12 +291,14 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
     :ok
   end
 
-  # Clears every mount from the process-global VCT project registry (a
-  # supervised singleton backed by the run-wide store) so tests that assert on
-  # list CONTENT are deterministic regardless of what another module inserted.
-  # A concurrent module's mount can still reappear between the wipe and the
-  # assertion, which is why content assertions only ever talk about this test's
-  # own unique paths.
+  # Forgets every mount of THIS test's own, already-isolated VCT instance
+  # (`EvoDash.Test.IsolatedVCT`), so the palette is provably empty for tests
+  # that assert on list CONTENT — several call it right after mounting, or
+  # after `seed_project/2` seeded a fixture they want gone.
+  #
+  # It cannot destroy a concurrent test's fixtures: the table it sweeps belongs
+  # to this test alone. (It USED to be a run-wide wipe, which is exactly the
+  # class of interference the instance isolation removes.)
   def clear_projects do
     for project <- EvoGit.VCT.projects() do
       _ = EvoGit.VCT.forget(project.point)
@@ -330,11 +345,12 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
     end
   end
 
-  # Mounts a project in the process-global VCT registry (returns the
+  # Mounts a project in THIS test's own VCT instance (returns the
   # `%EvoGit.VCT.Mount{}` so callers can assert its `point` instead of
-  # hardcoding `vct:///projects/<name>`) and registers on_exit cleanup so it
-  # never leaks into another test — the registry is store-backed by the
-  # run-wide `EvoGit.Store`, so mounts survive the test that made them.
+  # hardcoding `vct:///projects/<name>`) and registers on_exit cleanup so the
+  # row does not even outlive the test's own table. `EvoGit.VCT.mount/2` is
+  # called from the TEST process, which carries the instance designation
+  # (`EvoDash.Test.IsolatedVCT`), so it lands in the private table.
   def seed_project(path, name) do
     assert {:ok, mount} = EvoGit.VCT.mount(path, name: name)
 
@@ -3894,6 +3910,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {repo_path, head_sha} = git_repo_fixture!(tmp_dir, "repo1")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      # The connected mount's async batch (`AsyncLoad`) assigns `:foreign_repos`
+      # a frame later; adding a repo before it lands lets the late batch clobber
+      # the form state below.
+      await_async_loads(view)
 
       render_click(view, "add_foreign_repo", %{
         "repo_id" => "repo1",
@@ -3917,6 +3937,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {repo_path, _head_sha} = git_repo_fixture!(tmp_dir, "repo1")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      # Same shape as the writable/base_sha sibling above: mutate form state
+      # only once the mount's async batch has landed.
+      await_async_loads(view)
 
       render_click(view, "add_foreign_repo", %{
         "repo_id" => "repo1",
@@ -3934,6 +3957,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       missing = Path.join(tmp_dir, "nonexistent")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      await_async_loads(view)
 
       html =
         render_click(view, "add_foreign_repo", %{
@@ -3960,6 +3984,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       end)
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      await_async_loads(view)
 
       html =
         render_click(view, "add_foreign_repo", %{
@@ -3979,6 +4004,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {repo_path, _head_sha} = git_repo_fixture!(tmp_dir, "repo1")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      await_async_loads(view)
 
       html =
         render_click(view, "add_foreign_repo", %{
@@ -3999,6 +4025,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {repo_path, head_sha} = git_repo_fixture!(tmp_dir, "repo1")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      await_async_loads(view)
 
       render_click(view, "add_foreign_repo", %{
         "repo_id" => "repo1",
@@ -4021,6 +4048,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
     test "edit_foreign_repo with an unknown id flashes not found", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/projects")
+      await_async_loads(view)
 
       render_click(view, "edit_foreign_repo", %{"repo_id" => "x"})
 
@@ -4029,8 +4057,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:flash]["error"] == "Repo 'x' not found."
     end
 
-    # Both Save tests need a stable primary project: on a bare mount, a late
-    # VCT auto-activation can replace the foreign repo list even after Save.
+    # Both Save tests mount with an EXPLICIT primary project (plus a stubbed
+    # upstream check), so the activation continuation has already made the
+    # primary scope stable before the foreign-repo form state is mutated.
     test "save_foreign_repo updates writable/base_sha/description in place", %{
       conn: conn,
       tmp_dir: tmp_dir
@@ -5020,6 +5049,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       open_project!(view, tmp_dir)
+      # `selected_agent_id == "my-agent"` below needs `@custom_agents` to have
+      # been seeded by the mount's async batch — await it, exactly like the
+      # `evolve_simple` sibling.
+      await_async_loads(view)
 
       assert assigns(view)[:selected_agent_id] == nil
 
@@ -6052,9 +6085,9 @@ defmodule EvoDashWeb.ProjectsLiveOverviewTest do
   the restored-draft rule, workspace framing/member selection, the remote
   (viewed) node case and the recent-activity block.
 
-  `async: true`: every test isolates its own XDG config dir and temp repo,
-  deletes its own task rows, and forgets its project mounts on exit. A
-  concurrent bare `/projects` mount can still see a live fixture in VCT.
+  `async: true`: every test isolates its own XDG config dir, its own VCT
+  registry (`EvoDash.Test.IsolatedVCT`) and temp repo, and deletes its own task
+  rows, so no concurrent module sees a live fixture here.
   """
 
   use EvoDashWeb.ConnCase, async: true
@@ -6386,17 +6419,14 @@ defmodule EvoDashWeb.ProjectsLiveOverviewTest do
 
   # A workspace MEMBER mounted at a RESERVED point (`vct:///<name>` — outside
   # both `vct:///projects/…` and `vct:///workspaces/…`).
-  # Members must NOT be PROJECT mounts here: the VCT table is store-backed and
-  # RUN-WIDE, and this file's other (concurrently running) modules call
-  # `clear_projects/0`, which forgets every project mount — that repeatedly
-  # removed a project-mounted member between the seed and the page's single
-  # `workspace_entries/1` read, leaving the workspace with zero resolved
-  # members. Reserved mounts are never listed, never capped and never
-  # forgotten, so the fixture survives; and the member-resolution semantics
-  # under test (`point`-first lookup, an option value = the member's point, the
-  # first resolvable member as the execution target) are identical. The
-  # run-wide temp data dir is discarded after the suite, so the leaked reserved
-  # mount is not persisted anywhere.
+  # The table this fixture writes to belongs to THIS test alone
+  # (`EvoDash.Test.IsolatedVCT`), so a concurrent `clear_projects/0` can no
+  # longer sweep the member away between the seed and the page's
+  # `workspace_entries/1` read; the reserved point is now only a fixture
+  # choice that keeps the member out of the project list this module reads,
+  # and the member-resolution semantics under test (`point`-first lookup, an
+  # option value = the member's point, the first resolvable member as the
+  # execution target) are identical to a project mount's.
   defp seed_member!(tmp_dir, basename) do
     path = Path.join(tmp_dir, basename)
     File.mkdir_p!(path)
