@@ -322,9 +322,25 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   # so this helper steps into the composer the way a user does
   # (`enter_composer/1`): the composer these callers were written for is exactly
   # what they then exercise.
+  #
+  # It returns a SETTLED frame: see the comment in the body for why both turns'
+  # async batch is awaited before the render it hands back.
   def open_project!(view, path) do
     render_click(view, "open_project", %{"path" => path})
-    enter_composer(view)
+    _ = enter_composer(view)
+    # SETTLE THE PAGE'S OWN ASYNC WORK BEFORE RETURNING. Both turns above run
+    # the page's ONE async batch (`AsyncLoad.maybe_spawn/2` on the activation's
+    # `handle_params` and again on `compose_task`'s patch), so the frame
+    # `enter_composer/1` returns can still carry the mount defaults
+    # (`custom_agents: []`, `projects: []`, `model_selection_ready?: false`).
+    # Callers assert on exactly that batch-seeded state — on the assigns AND on
+    # the returned HTML (`assert html =~ "Bug Hunter"`) — so wait for the batch
+    # (the file's monitor-based, deadline-bounded `await_async_loads/1`) and
+    # hand back a FRESH render of the settled frame. A caller that must observe
+    # the transient LOADING state (`#model-selection-loading`) cannot use this
+    # helper; it drives the patch itself.
+    await_async_loads(view)
+    render(view)
   end
 
   # Steps from the PROJECT OVERVIEW into the task composer through its "New
@@ -928,6 +944,15 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
              "provider_profile_id" => "remote-account",
              "model" => "remote-model"
            }
+
+    # The activation continuation `push_patch`es, and THAT `handle_params` run
+    # spawns the load batch whose `projects` list the overview's selection is
+    # confirmed against (`Overview.confirmed_scope?/2` requires a matching
+    # `{path, point}` entry there) — a spawn the drain above can predate on a
+    # loaded host. Drain once more: it is ordered after every message this view
+    # has queued and waits on whatever it owns, so callers assert on a settled
+    # page instead of the frame the activation result landed in.
+    await_async_loads(view)
   end
 
   # Safety net for tests that freeze the shared, serialized task registry: a
@@ -1185,9 +1210,15 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   #
   # The activation lands on the PROJECT OVERVIEW, so the helper also steps into
   # the composer (`enter_composer/1`) and keeps returning the view.
+  #
+  # The same two turns spawn the page's async batch, so the chrome and the
+  # batch-seeded assigns (`projects`, `custom_agents`, the picker bundle) settle
+  # only a frame later: wait for them here (`await_async_loads/1`) instead of
+  # making every caller remember to.
   def open_project(view, path) do
     render_click(view, "open_project", %{"path" => path})
     _ = enter_composer(view)
+    await_async_loads(view)
 
     view
   end
@@ -6260,6 +6291,11 @@ defmodule EvoDashWeb.ProjectsLiveOverviewTest do
         live(conn, "/projects?project=" <> URI.encode(remote_path) <> "&node=" <> id)
 
       assert_remote_activation_loaded(view, id, remote_node, remote_path)
+      # The remote chrome this test asserts on is BATCH-seeded: the live
+      # "Chat with Assistant" link renders only for a CONFIRMED selection (the
+      # project list the async batch assigns) on a gate-free (connected)
+      # target, so await the settled FRAME rather than the activation frame.
+      wait_for_overview_chrome(view)
 
       assert has_element?(view, "#workbench-project-overview")
       assert has_element?(view, ~s(#workbench-project-overview[data-overview-kind="project"]))
@@ -6368,6 +6404,12 @@ defmodule EvoDashWeb.ProjectsLiveOverviewTest do
     {:ok, view, _html} = live(conn, ~p"/projects")
     render_click(view, "open_project", %{"path" => path})
     assert_patch(view, async_wait_budget())
+    # The landing `handle_params` run spawns the page's async batch (project
+    # list, picker bundle) AND the overview read; the callers below assert on
+    # the settled frame (`[data-overview-head]`, the recent-activity block, the
+    # scope identity), so drain this view's supervised loads here instead of
+    # making each test remember to.
+    await_async_loads(view)
     view
   end
 
@@ -6385,6 +6427,17 @@ defmodule EvoDashWeb.ProjectsLiveOverviewTest do
     end)
 
     view |> element("[data-overview-execution-member]") |> render()
+  end
+
+  # The remote overview chrome is derived from BATCH-seeded state: the live
+  # "Chat with Assistant" link renders only for a CONFIRMED selection
+  # (`Overview.confirmed_scope?/2` needs the `{path, point}` entry the async
+  # project batch assigns) on a gate-free (connected) target. Reading the
+  # rendered DOM through `wait_assigns/2` — the same bounded, deadline-based
+  # idiom as `wait_for_member_line/1` below — settles that frame instead of
+  # asserting on the one the activation result happened to land in.
+  defp wait_for_overview_chrome(view) do
+    wait_assigns(view, fn _assigns -> has_element?(view, "a#overview-chat-assistant") end)
   end
 
   # ONE recent-activity row as markup: the row's `<li>` chunk carrying the task
