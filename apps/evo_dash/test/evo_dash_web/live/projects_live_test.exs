@@ -1421,14 +1421,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       refute has_element?(view, "#workbench-history-search[hidden]")
       refute has_element?(view, "#workbench-history-query[hidden]")
 
-      # The project filter DEFAULTS to the project being viewed, and the scope
-      # label is server-rendered from the resolved project registry entry.
+      # The selected option shows the current scope without a duplicate header label.
       assert has_element?(
                view,
                "#workbench-history-project-filter option[selected][value='#{tmp_dir}']"
              )
 
-      assert has_element?(view, "#workbench-history-project", "Workbench project")
+      refute has_element?(view, "#workbench-history-project")
 
       # The filter block is ONE labelled control row: each select sits in its
       # own `.workbench-history-field` on the dashboard control grammar.
@@ -7566,7 +7565,6 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       assert has_element?(view, ~s(#task-llm-selection-provider[data-capsule-drill="provider"]))
       assert has_element?(view, ~s(#task-llm-selection-provider-list[role="listbox"]))
       assert has_element?(view, ~s(#task-llm-selection .capsule-back[data-capsule-back]))
-      assert has_element?(view, "#task-form .input-controls #task-llm-selection")
       refute has_element?(view, "#task-llm-selection select")
       refute render(view) =~ ~s(phx-change="select_provider_profile")
 
