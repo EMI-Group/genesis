@@ -41,8 +41,7 @@ Missing ownership/readiness fields remain compatible only for valid unstamped lo
 The mounted tests drive server-rendered events but do not execute the browser's native `<details>` opening or browser storage hooks.
 These mounted tests exercise local-node controls; they do not assert remote inline settings behavior.
 `workspaces_test.exs` checks that the palette renders the Open Project by Path and Create New Project actions, but it does not submit either regular-project form.
-The parent `../projects_live_test.exs` owns the mounted `open_project` and `create_project` success submissions, while `../projects_workbench_test.exs` pins the exact `data-workbench-default-draft` equality to the Chat with Assistant href from a settled, preregistered local project overview reached by URL.
-No test in this subtree combines either palette submission with assertions on its regular overview and exact default draft.
+The parent `../projects_live_test.exs` owns the legacy `open_project` and `create_project` success submissions, while `../projects_workbench_test.exs` drives the palette's mounted `ProjectWindow` for both modes and asserts navigation to the registered overview and exact `data-workbench-default-draft` equality to the Chat with Assistant href.
 Legacy Project profile-selection assertions expect the first configured profile id without a selection script, the empty-string Auto sentinel with a script, `{[], nil}` for no profiles without a script, and `{[], ""}` for no profiles with a script.
 Remote legacy profile loading must ignore a local `:memo_config_resolve` and degrade to `{[], nil}` on an unreachable node.
 Canonical launches distinguish nil/uninitialized selection, which locks the configured default even with rules enabled, from explicit empty-map/empty-string Auto, which removes every model lock.

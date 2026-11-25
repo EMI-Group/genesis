@@ -1,7 +1,7 @@
-# Focused mounted suite for the empty-tabs route, node/project scope, and the
-# workbench's right panels (default-closed chrome and server-side history).
+# Focused mounted suite for palette project windows, the empty-tabs route,
+# node/project scope, and the workbench's right panels.
 #
-#   * the page is driven purely from the URL. `?project=<abs path>` makes
+#   * for direct navigation, `?project=<abs path>` makes
 #     `ProjectsLive.handle_params/3` call `activate_project/2`, which sets
 #     `active_project_path` and derives the VCT identity from the loaded project
 #     list, and `Layouts.app` renders `workbench_project` / `workbench_git_project`
@@ -649,6 +649,47 @@ defmodule EvoDashWeb.ProjectsWorkbenchVctTest do
     setup_workbench(context)
   end
 
+  describe "palette project window" do
+    test "Open Project by Path lands on the registered project's overview", %{
+      conn: conn,
+      tmp_dir: root
+    } do
+      path = Path.join(root, "existing project")
+      File.mkdir!(path)
+      expect_unregistered_project(path)
+
+      view = browse_project_window(conn, "open", "Open Project by Path", path)
+
+      view
+      |> element(
+        "#workbench-project-window button[phx-click=open]:not([disabled])",
+        "Open project"
+      )
+      |> render_click()
+
+      assert_project_window_destination(view, conn, path)
+    end
+
+    test "Create New Project lands on the new project's overview", %{conn: conn, tmp_dir: root} do
+      name = "new project"
+      path = Path.join(root, name)
+      refute File.exists?(path)
+      expect_unregistered_project(path)
+
+      view = browse_project_window(conn, "create", "Create New Project", root)
+
+      assert has_element?(
+               view,
+               "#workbench-project-window button[form=workbench-project-form]:not([disabled])",
+               "Create"
+             )
+
+      view |> form("#workbench-project-form", %{"name" => name}) |> render_submit()
+
+      assert_project_window_destination(view, conn, path)
+    end
+  end
+
   test "a direct URL to an unregistered repo offers manual tasks but not scoped chat", %{
     conn: conn,
     tmp_dir: path
@@ -662,15 +703,7 @@ defmodule EvoDashWeb.ProjectsWorkbenchVctTest do
                path
              )
 
-    assert {:error, :not_found} = VCT.resolve(path)
-
-    on_exit(fn ->
-      # A failing regression must not leave its unexpected mount behind.
-      case VCT.resolve(path) do
-        {:ok, mount} -> assert :ok = VCT.forget(mount.point)
-        {:error, :not_found} -> :ok
-      end
-    end)
+    expect_unregistered_project(path)
 
     {:ok, view, html} = live(conn, ~p"/projects?#{%{project: path}}")
     refute html =~ "data-workbench-default-draft="
@@ -718,11 +751,7 @@ defmodule EvoDashWeb.ProjectsWorkbenchVctTest do
       assert has_element?(view, "#dashboard-root[data-workbench-compose=false]")
       await_confirmed_overview(view, point, task_id)
 
-      chat_link =
-        ~s|a#overview-chat-assistant[href^="/assistant?"][data-phx-link=redirect]:not([aria-disabled=true]):not([hidden])|
-
-      assert has_element?(view, chat_link, "Chat with Assistant")
-      overview = view |> render() |> Floki.parse_document!()
+      assert_scoped_default_draft(view, path)
 
       # This is the URL reached after the client closes the last open tab; no
       # client hook has to fix an incorrect server scope or display state.
@@ -735,18 +764,6 @@ defmodule EvoDashWeb.ProjectsWorkbenchVctTest do
       assert has_element?(view, "#dashboard-root[data-workbench-compose=true] #task-form")
       refute has_element?(view, "#workbench-project-overview")
       assert_no_default_draft(view)
-
-      # Take both hrefs from the SAME settled render: the draft id belongs to
-      # this navigation, and the hint must not mint a second id.
-      assert [chat_href] = Floki.attribute(overview, "a#overview-chat-assistant", "href")
-      assert %URI{path: "/assistant", query: query} = URI.parse(chat_href)
-      assert %{"wb_draft" => draft} = URI.decode_query(query)
-      assert draft =~ ~r/\A[0-9a-f]{24}\z/
-      assert chat_href == "/assistant?" <> URI.encode_query(wb_project: path, wb_draft: draft)
-
-      assert Floki.attribute(overview, "#app-layout", "data-workbench-default-draft") == [
-               chat_href
-             ]
     end
 
     test "switching the viewed node drops local scope and ignores the old target's connect event",
@@ -813,6 +830,82 @@ defmodule EvoDashWeb.ProjectsWorkbenchVctTest do
       assert_empty_project_view(view, path)
       wait_for(view, fn -> has_element?(view, row_selector(task_id)) end)
     end
+  end
+
+  defp browse_project_window(conn, mode, label, path) do
+    {:ok, view, _html} = live(conn, ~p"/projects")
+    render_hook(view, "open_project_palette", %{})
+
+    # The Workbench hook intercepts this button before its legacy phx-click
+    # and sends the rendered mode to the mounted ProjectWindow component.
+    trigger = "#project-omnibox button[data-workbench-project-window=#{mode}]"
+    rendered = view |> element(trigger, label) |> render() |> Floki.parse_fragment!()
+    assert [^mode] = Floki.attribute(rendered, "button", "data-workbench-project-window")
+
+    render_hook(with_target(view, "#workbench-project-window-component"), "prepare", %{
+      "mode" => mode
+    })
+
+    view |> form("#project-picker-path-form", %{"path" => path}) |> render_submit()
+    render_async(view, @async_wait_budget_ms)
+
+    assert has_element?(
+             view,
+             ~s(#workbench-project-window .project-picker-path [title="#{path}"]),
+             path
+           )
+
+    view
+  end
+
+  defp assert_project_window_destination(view, conn, path) do
+    # ProjectWindow uses push_navigate after its async mount, not the parent
+    # LiveView's legacy push_patch path.
+    {to, _flash} = assert_redirect(view, @async_wait_budget_ms)
+    assert File.dir?(path)
+    assert {:ok, %{path: ^path, point: point}} = VCT.resolve(path)
+    assert %URI{path: "/projects", query: query} = URI.parse(to)
+    assert URI.decode_query(query) == %{"project" => path}
+
+    {:ok, overview, _html} = live(conn, to)
+    selector = "#workbench-project-overview[data-overview-kind=project]"
+
+    wait_for(overview, fn ->
+      has_element?(overview, "#{selector} [data-overview-point]", point)
+    end)
+
+    assert has_element?(overview, "#{selector} [data-overview-path]", path)
+    assert has_element?(overview, "#dashboard-root[data-workbench-compose=false]")
+    assert_scoped_default_draft(overview, path)
+  end
+
+  defp expect_unregistered_project(path) do
+    assert {:error, :not_found} = VCT.resolve(path)
+
+    on_exit(fn ->
+      # Clean up the exact test mount even when the navigation assertion fails.
+      case VCT.resolve(path) do
+        {:ok, mount} -> assert :ok = VCT.forget(mount.point)
+        {:error, :not_found} -> :ok
+      end
+    end)
+  end
+
+  defp assert_scoped_default_draft(view, path) do
+    chat_link =
+      ~s|a#overview-chat-assistant[href^="/assistant?"][data-phx-link=redirect]:not([aria-disabled=true]):not([hidden])|
+
+    # Take both hrefs from the SAME settled render: the draft id belongs to
+    # this navigation, and the hint must not mint a second id.
+    overview = view |> render() |> Floki.parse_document!()
+    assert [link] = Floki.find(overview, chat_link)
+    assert Floki.text(link) =~ "Chat with Assistant"
+    assert [chat_href] = Floki.attribute(link, "href")
+    assert %URI{path: "/assistant", query: query} = URI.parse(chat_href)
+    assert %{"wb_draft" => draft} = URI.decode_query(query)
+    assert draft =~ ~r/\A[0-9a-f]{24}\z/
+    assert chat_href == "/assistant?" <> URI.encode_query(wb_project: path, wb_draft: draft)
+    assert Floki.attribute(overview, "#app-layout", "data-workbench-default-draft") == [chat_href]
   end
 
   defp register_project!(path) do
