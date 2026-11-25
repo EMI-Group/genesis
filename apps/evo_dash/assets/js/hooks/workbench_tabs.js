@@ -91,7 +91,9 @@ function tabURL(value, origin = TAB_BASE_URL) {
 function taskRoute(url) {
   if (!url) return null
   let id
-  if (url.pathname === "/tasks") {
+  // The global Agents inspector is not a tab; only its task-focused route
+  // aliases the live task and review destinations.
+  if (url.pathname === "/tasks" || url.pathname === "/agents") {
     id = url.searchParams.get("task")
   } else {
     const match = REVIEW_PATH.exec(url.pathname)

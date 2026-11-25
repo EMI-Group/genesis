@@ -2,7 +2,7 @@ import {projectPreview} from "./workbench_project_preview"
 import {closeAnimated} from "./disclosure_motion.js"
 import {createPanelHost} from "./workbench_panel_dom"
 import {initialPanelState, PANEL_OPEN} from "./workbench_panel"
-import {closeTab as closeTabIn, restore as restoreTabs, safeHref as safeHrefBase} from "./workbench_tabs"
+import {closeTab as closeTabIn, restore as restoreTabs, safeHref as safeHrefBase, sameScope} from "./workbench_tabs"
 import {link, railMethods, TAB_KEY} from "./workbench_rail"
 import {defaultDraftHref, exactHref, historyKey, navigationState, sameTabClick} from "./workbench_navigation"
 
@@ -37,6 +37,11 @@ function write(storage, key, data) {
 }
 
 const currentHref = () => exactHref(location)
+function navigationHref(value) {
+  if (!value) return null
+  const url = new URL(value, location.href)
+  return url.origin === location.origin ? exactHref(url) : null
+}
 const navigation = navigationState()
 let mountedWorkbench
 let navigationBound = false
@@ -53,8 +58,8 @@ function bindNavigation() {
   window.addEventListener("pageshow", event => { if (event.persisted) traverse() })
   window.addEventListener("hashchange", () => mountedWorkbench?.onNavigation())
   window.addEventListener("phx:before-navigate", event => {
-    if (event.detail?.pop || !event.detail?.href) return
-    const href = exactHref(new URL(event.detail.href, location.href))
+    const href = navigationHref(event.detail?.href)
+    if (event.detail?.pop || !href) return
     const revision = navigation.revision
     queueMicrotask(() => {
       if (event.defaultPrevented || navigation.revision !== revision) return
@@ -68,12 +73,14 @@ function bindNavigation() {
     })
   })
   window.addEventListener("phx:page-loading-start", ({detail}) => {
-    if (!["patch", "redirect"].includes(detail?.kind) || !detail.to) return
-    navigation.start(exactHref(new URL(detail.to, location.href)), repaintPending)
+    if (!["patch", "redirect"].includes(detail?.kind)) return
+    const href = navigationHref(detail.to)
+    if (!href) return
+    navigation.start(href, repaintPending)
     repaintPending()
   })
   window.addEventListener("phx:navigate", ({detail}) => {
-    if (!detail?.href || exactHref(new URL(detail.href, location.href)) !== currentHref()) return
+    if (navigationHref(detail?.href) !== currentHref()) return
     if (!detail.pop) navigation.commit(currentHref())
     repaintPending()
     mountedWorkbench?.onNavigation()
@@ -101,7 +108,7 @@ const safeHref = value => safeHrefBase(value, location.origin)
 const SYNC_DATASET_KEYS = [
   "workbenchNode", "workbenchProject", "workbenchTask", "workbenchSession",
   "workbenchDraft", "workbenchDraftProject", "workbenchPage", "workbenchTitle",
-  "workbenchDefaultDraft", "workbenchGitBranch", "workbenchStartingCommit",
+  "workbenchDefaultDraft", "workbenchGitBranch", "workbenchStartingCommit", "workbenchNodeName",
 ]
 
 // One normalised string per input: `undefined`, `null` and a missing field read
@@ -361,7 +368,8 @@ const Workbench = {
     const locations = this.el.querySelectorAll("[data-workbench-project][href]")
     const projectLink = Array.from(locations).find(anchor =>
       anchor.dataset.workbenchNode === this.node && anchor.dataset.workbenchProject === this.project)
-    this.projectName = projectLink?.dataset.workbenchProjectName || this.project.split(/[\\/]/).filter(Boolean).at(-1)
+    this.projectLabel = projectLink?.dataset.workbenchProjectName
+    this.projectName = this.projectLabel || this.project.split(/[\\/]/).filter(Boolean).at(-1)
     this.captureTab()
     this.previewTab = projectPreview.sync(this.el, this.currentTab)
     this.renderTabs()
@@ -657,7 +665,7 @@ const Workbench = {
 
   switchProject(tab) {
     const current = this.tabs.find(entry => entry.key === this.currentTab)
-    const projectChanges = !tab || tab.node !== this.node || tab.projectPath !== this.project
+    const projectChanges = !tab || !sameScope(tab, {node: this.node, projectPath: this.project})
     if (!projectChanges && !this.previewTab) return
 
     projectPreview.remember(this.el, current)
@@ -710,20 +718,21 @@ const Workbench = {
       this.focusGitDiff = true
       this.setGit(false)
     }
-    if (trigger.matches("a.workbench-project-link") &&
-        !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+    if (trigger.matches("a.workbench-project-link") && sameTabClick(event, trigger)) {
       const {workbenchNode, workbenchProject} = trigger.dataset
       const tabs = this.tabsForProject(workbenchNode, workbenchProject)
       const active = tabs.find(tab => tab.active) || tabs.at(-1)
       // A legacy conversation can be open without its server-side project.
       // Let an explicit project click open that project's home in this case.
-      if (active && active.key === this.currentTab && !this.project) return
+      const alreadyHere = active && active.key === this.currentTab && active.href === currentHref() && !navigation.moving
+      if (alreadyHere && !this.project) return
       const navigating = Boolean(this.previewTab)
-      this.switchProject(active)
-      if (active) {
+      const canRestore = safeHref(active?.href)
+      this.switchProject(canRestore ? active : undefined)
+      if (canRestore) {
         event.preventDefault()
         event.stopPropagation()
-        if (active.key !== this.currentTab || navigating) this.navigate(active.href, {key: active.key})
+        if (!alreadyHere || navigating) this.navigate(active.href, {key: active.key})
         else if (this.gitDiff) this.closeGitDiff()
         return
       }
