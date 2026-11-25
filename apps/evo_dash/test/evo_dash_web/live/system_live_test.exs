@@ -1645,7 +1645,11 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
   # Bounded `assert_receive` budget for this module's own asserts (the helper
   # module's 30 s attributes are not visible from a case module): generous for
   # this shared host, still bounded so real breakage fails loudly.
-  @receive_timeout_ms 30_000
+  # Repeated here because module attributes are per-module, not shared with the
+  # two modules above — one shared 30 s load-tolerant budget for all three.
+  @async_wait_budget_ms 30_000
+  # Older name for the same budget, kept for this module's wind-down asserts.
+  @receive_timeout_ms @async_wait_budget_ms
 
   setup do
     # Software Update card tests share the global `EvoDash.UpdateStatus` hub —
