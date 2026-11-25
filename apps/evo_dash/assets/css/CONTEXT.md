@@ -105,6 +105,7 @@ THREE layers, every value derived with `color-mix()` from the existing base/neut
 | `--surface-rail` | 0 | navigation rail tones |
 | `--surface-dock` | 0 | right-dock tone with a restrained secondary wash |
 | `--surface-canvas` | 1 | center content canvas (`#main-content`/`#main-scroll`), flat, never shadowed |
+| `--surface-text-muted` | — | opaque neutral foreground for the composer placeholders and History controls |
 | `--surface-raised` | 2 | palettes, menus, dialogs, notifications |
 | `--surface-hover` | 1 | hover fill for a surface row/card |
 | `--surface-selected` | 1 | selected fill, mixed from the accent |
@@ -135,7 +136,8 @@ The close control reserves its box and appears on hover/focus and for a current 
 `.workbench-tab-overflow` / `#workbench-tabs-overflow` is the rail-end details menu on the shared raised-menu surface.
 
 ### Right dock (`#workbench-history`, `#workbench-git`)
-Both panels use `--surface-dock`, a layer-0 secondary wash distinct from the sidebar in both themes, with one hairline and no shadow; small selected surfaces resolve their tint from the current accent locally.
+Both panels use `--surface-dock`, a layer-0 secondary wash distinct from the sidebar and canvas, with one hairline and no shadow; the light tone mixes neutral chrome and border roles before the slight secondary tint.
+The composer placeholders, History search placeholder and unselected History kind use the shared opaque `--surface-text-muted` so contrast does not depend on browser placeholder alpha or the current accent; selection retains the full content foreground.
 The `closed | open | closing` machine uses `data-panel-state` + `[hidden]` through `../js/hooks/workbench_panel*.js`.
 History follows the DOM order (project and status before search), with only `#workbench-history-rows` scrolling and two-line rows separated by spacing rather than rules.
 The `.workbench-history-switch[data-history-kind]` pill switch follows `[data-workbench-kind][aria-pressed]` for selection, wraps translated labels inside stable hit areas and animates only the pill under normal motion.

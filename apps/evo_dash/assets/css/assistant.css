@@ -23,7 +23,10 @@
 .assistant-input-card { position: relative; }
 .assistant-message-form { display: flex; flex-direction: column; min-inline-size: 0; }
 .assistant-textarea { display: block; inline-size: 100%; min-inline-size: 0; block-size: auto; min-block-size: 96px; max-block-size: min(220px, 28dvh); padding: 20px 22px 12px; border: 0; resize: vertical; background: transparent; color: var(--color-base-content); font: inherit; font-size: 16px; line-height: 1.6; outline: none; }
-.assistant-textarea::placeholder { color: color-mix(in srgb, var(--color-base-content) 55%, var(--color-base-100)); }
+.assistant-textarea::placeholder {
+  color: var(--surface-text-muted);
+  opacity: 1;
+}
 @supports (field-sizing: content) { .assistant-textarea { field-sizing: content; resize: none; } }
 .assistant-context-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 6px 12px 12px; min-inline-size: 0; }
 .assistant-context-start, .assistant-context-end { display: flex; align-items: center; gap: 4px; min-inline-size: 0; }

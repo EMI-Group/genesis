@@ -2149,7 +2149,8 @@ button, a, input, textarea, select, summary,
 }
 
 .input-prompt::placeholder {
-  color: color-mix(in oklab, var(--color-base-content) 50%, transparent);
+  color: var(--surface-text-muted);
+  opacity: 1;
 }
 
 .input-prompt:focus {

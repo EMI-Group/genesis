@@ -590,7 +590,7 @@
   min-height: var(--control-h);
   padding: calc(var(--card-pad) / 4);
   border-radius: var(--radius-field);
-  color: var(--workbench-text-muted);
+  color: var(--surface-text-muted);
   font-size: var(--text-sm);
   font-weight: 600;
   line-height: var(--text-sm--line-height);
@@ -979,6 +979,10 @@
   font-size: var(--text-xs);
 }
 .workbench-query input::placeholder { color: var(--workbench-text-muted); }
+#workbench-history-search::placeholder {
+  color: var(--surface-text-muted);
+  opacity: 1;
+}
 
 .workbench-history-project {
   margin: calc(var(--card-pad) / 8) calc(var(--card-pad) / 4) calc(var(--card-pad) / 2);

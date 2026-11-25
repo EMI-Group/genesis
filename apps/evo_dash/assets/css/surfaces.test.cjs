@@ -83,6 +83,7 @@ const TONES = [
   "--surface-rail",
   "--surface-dock",
   "--surface-canvas",
+  "--surface-text-muted",
   "--surface-hover",
   "--surface-selected",
   "--surface-raised",
@@ -367,11 +368,38 @@ test("the right dock is a shell-layer panel with ONE hairline", () => {
     assert.notEqual(palette["--surface-dock"], palette["--surface-rail"]);
     assert.match(palette["--surface-dock"], /var\(--color-secondary\) [1-9]%/,
       "the dock has a restrained secondary wash in either theme");
+    assert.match(palette["--surface-dock"], /var\(--color-base-200\)/,
+      "start with neutral chrome, not the near-white canvas");
   }
   assert.match(declared["--workbench-selected"], /var\(--color-primary\) 10%/, "accents tint local choices, not the whole dock");
   assert.equal(declared["border-inline-start"], "1px solid var(--border-hairline)");
   assert.equal(declared["box-shadow"], undefined, "the dock never floats");
   assert.equal(declared.padding, "calc(var(--card-pad) / 2)", "the panel frame uses the shared density scale");
+});
+
+test("the composer and History placeholders use the opaque muted foreground", () => {
+  for (const [file, selector] of [
+    ["app.css", ".input-prompt::placeholder"],
+    ["assistant.css", ".assistant-textarea::placeholder"],
+    ["workbench.css", "#workbench-history-search::placeholder"]
+  ]) {
+    const rules = rulesWith(selector, source[file]);
+    assert.deepEqual(merge(rules), {color: "var(--surface-text-muted)", opacity: "1"}, selector);
+  }
+  // These neutral mixes were checked in Chrome against the composer and History fills.
+  for (const [theme, weight] of [[":root", 79], ['[data-theme="dark"]', 65]]) {
+    const palette = values(rulesWith(theme)[0].body);
+    assert.equal(palette["--surface-text-muted"],
+      `color-mix(in srgb, var(--color-base-content) ${weight}%, var(--color-base-100))`,
+      "the shared text tone must be opaque and independent of the accent");
+  }
+});
+
+test("History uses the muted foreground only for the unselected kind", () => {
+  const choice = ".workbench-history-switch [data-workbench-kind]";
+  assert.equal(merge(rulesWith(choice, workbench)).color, "var(--surface-text-muted)");
+  assert.equal(merge(rulesWith(`${choice}[aria-pressed="true"]`, workbench)).color,
+    "var(--color-base-content)");
 });
 
 // --- content surfaces vs overlays -----------------------------------------
