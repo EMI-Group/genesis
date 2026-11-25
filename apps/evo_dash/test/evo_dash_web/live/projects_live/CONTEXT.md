@@ -2,9 +2,8 @@
 
 ## Intent
 
-This directory contains six ExUnit suites (seven case modules) for ProjectsLive support-module behavior without mounting a page.
-Five suites are purely `async: true`; `project_flow_test.exs` pairs an async module with the sync `ProjectFlowVctTest`.
-The mounted ProjectsLive integration suite lives in the parent directory's `projects_live_test.exs`.
+This directory contains ProjectsLive support-module unit tests and focused mounted workbench tests.
+The broader mounted ProjectsLive integration suite lives in the parent directory's `projects_live_test.exs`.
 
 ## API Surface
 
