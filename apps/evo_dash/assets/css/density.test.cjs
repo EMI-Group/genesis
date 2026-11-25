@@ -215,54 +215,85 @@ test("component stylesheets consume the ladder instead of arbitrary sizes", () =
 
 // --- shared composer chrome and control sizing -----------------------------
 
-// The named seam is optional: these selectors already cover the mounted
-// Assistant and task wrappers without requiring new classes in their markup.
-const composer = "#app-layout :is(.workbench-composer, .assistant-input-card, .help-composer, .input-layout .input-card)";
+const composerStyles = source["assistant.css"];
+const composer = "#app-layout .workbench-composer-surface:is(.workbench-composer[data-composer-kind], .workbench-composer[data-composer-kind] *)";
+const trigger = ".workbench-composer-toolbar details.capsule > .capsule-trigger";
+const advancedSummary = ".workbench-task-options #task-advanced-options > summary";
 
-test("one shared composer rule owns the resting surface across both editors", () => {
-  const shared = leafRules(app).filter(rule => rule.selectorText === composer);
+test("one flat composer surface supports both wrapper placements without decorating the whole form", () => {
+  const shared = leafRules(composerStyles).filter(rule => rule.selectorText === composer);
   assert.equal(shared.length, 1);
   const chrome = values(shared[0].body);
-  assert.match(chrome.border, /^1px solid color-mix\(.*var\(--border-hairline\)/);
+  assert.equal(chrome.border, "1px solid var(--border-hairline)");
   assert.equal(chrome["border-radius"], "var(--radius-2xl)");
-  assert.match(chrome.background, /var\(--surface-canvas\)/);
-  assert.match(chrome["box-shadow"], /^0 0 0 1px /, "a surface ring, not elevation");
-  assert.equal(chrome.transition, "var(--composer-transition, var(--composer-chrome-transition))");
+  assert.equal(chrome.background, "var(--composer-surface)");
+  assert.equal(chrome["box-shadow"], "none");
+  assert.equal(chrome.transition, "var(--composer-transition, var(--composer-focus-transition))");
 
   for (const [sheet, selector] of [
     ["assistant.css", ".assistant-input-card"],
-    ["app.css", ".help-composer"],
     ["app.css", ".input-card"],
     ["app.css", '.input-layout[data-layout="compact"] .input-card'],
     ["app.css", '.input-layout[data-layout="expanded"] .input-card']
   ]) {
-    // The leaf splitter sees commas inside :is(); ignore the shared selector and its states.
-    for (const rule of rulesWith(selector, source[sheet]).filter(rule => !rule.selectorText.startsWith(composer))) {
+    for (const rule of rulesWith(selector, source[sheet])) {
       assert.doesNotMatch(rule.body, /(?:^|[;\s])(?:border(?:-[\w-]+)?|background(?:-[\w-]+)?|box-shadow|transition)\s*:/,
         `${sheet}: ${selector} is layout-only; put chrome in the shared rule`);
     }
   }
 
-  const sizing = leafRules(app).filter(rule => "--composer-transition" in values(rule.body));
+  const sizing = leafRules(composerStyles).filter(rule => "--composer-transition" in values(rule.body));
   assert.deepEqual(sizing.map(rule => rule.selectorText), [
-    ':is(.input-card, .workbench-composer[data-composer-kind="task"])'
+    '.workbench-composer[data-composer-kind="task"]'
   ], "only the task composer animates AdaptiveInput's size changes");
-  assert.match(values(sizing[0].body)["--composer-transition"], /^min-height\b[\s\S]+var\(--composer-chrome-transition\)$/);
+  assert.match(values(sizing[0].body)["--composer-transition"], /^min-height\b[\s\S]+var\(--composer-focus-transition\)$/);
 });
 
-test("composer focus is visible on the wrapper and on the exact keyboard control", () => {
-  const [within] = blocks(`${composer}:focus-within`, app);
+test("the New Task page and composer have distinct tones in both themes", () => {
+  const page = ":is(#main-content, #main-scroll):has(#workbench-task-composer)";
+  const task = '.workbench-composer[data-composer-kind="task"]';
+  for (const prefix of ["", '[data-theme="dark"] ']) {
+    const declarationsFor = selector => values(blocks(prefix + selector, composerStyles)[0]);
+    assert.notEqual(declarationsFor(page).background, declarationsFor(task)["--composer-surface"]);
+  }
+});
+
+test("composer focus is visible on the surface and on the exact keyboard control", () => {
+  const [within] = blocks(`${composer}:focus-within`, composerStyles);
   const focus = values(within);
   assert.equal(focus["border-color"], "var(--color-primary-standalone)");
   assert.match(focus["box-shadow"], /^0 0 0 2px .*var\(--color-primary-standalone\)/);
 
-  const [keyboard] = blocks(
-    ":is(.assistant-context-bar, .help-composer-controls, .input-controls) :is(button, summary):focus-visible", app);
-  assert.equal(values(keyboard).outline, "2px solid var(--color-primary-standalone)");
+  const keyboard = ".workbench-composer-toolbar :is(button, summary):focus-visible";
+  const [focusRule] = leafRules(composerStyles).filter(rule => rule.selectorText.startsWith(`${keyboard},`));
+  assert.equal(values(focusRule.body).outline, "2px solid var(--color-primary-standalone)");
 
-  const [forced] = blocks("@media (forced-colors: active)", app);
-  const [forcedFocus] = blocks(`${composer}:focus-within`, forced);
+  const [forced] = blocks("@media (forced-colors: active)", composerStyles);
+  const [forcedFocus] = blocks(".workbench-composer-surface:focus-within", forced);
   assert.equal(values(forcedFocus).outline, "2px solid Highlight");
+});
+
+test("composer capsule summaries are flat at rest and distinct while open", () => {
+  const [summary] = blocks(trigger, composerStyles);
+  const resting = values(summary);
+  assert.equal(resting.border, "0");
+  assert.equal(resting.background, "transparent");
+  assert.equal(resting["min-block-size"], "var(--control-h-sm)");
+
+  const [opened] = blocks(".workbench-composer-toolbar details.capsule[open] > .capsule-trigger", composerStyles);
+  assert.equal(values(opened).background, "var(--surface-selected)");
+});
+
+test("inline task options flatten the toggles and keep only a division above advanced fields", () => {
+  const [toggles] = blocks(".workbench-task-options label:has(> .toggle)", composerStyles);
+  assert.equal(values(toggles).border, "0");
+  assert.equal(values(toggles).background, "transparent");
+
+  const [advanced] = blocks(".workbench-task-options #task-advanced-options", composerStyles);
+  assert.equal(values(advanced).border, "0");
+  assert.equal(values(advanced)["border-block-start"], "1px solid var(--border-hairline)");
+  const [summary] = blocks(advancedSummary, composerStyles);
+  assert.equal(values(summary)["min-block-size"], "var(--row-h)");
 });
 
 // --- right-panel scroll containment ----------------------------------------
@@ -314,6 +345,50 @@ test("the history list is the ONE scroller and the header stays put", () => {
   assert.equal(values(pinned[0].body).flex, "none");
 });
 
+test("history chrome follows the DOM and keeps controls and two-line rows readable", () => {
+  const css = source["workbench.css"];
+  for (const rule of leafRules(css).filter(rule => /workbench-history/.test(rule.selectorText))) {
+    assert.doesNotMatch(rule.body, /(?:^|;)\s*(?:order|grid-(?:area|row|column)(?:-start|-end)?|grid-template-areas)\s*:/,
+      `history's paint and focus order must agree: ${rule.selectorText}`);
+  }
+
+  const [filters] = rulesWith(".workbench-history-filters");
+  assert.equal(values(filters.body)["grid-template-columns"], "repeat(2, minmax(0, 1fr))");
+  for (const selector of [".workbench-history-filter", "#workbench-history-query"]) {
+    const [control] = rulesWith(selector);
+    assert.equal(values(control.body)["min-height"], "var(--control-h)");
+  }
+
+  const [row] = rulesWith(".workbench-history-row > .workbench-row");
+  assert.equal(values(row.body)["min-block-size"], "var(--row-h-tall)");
+  assert.doesNotMatch(row.body, /(?:^|;)\s*border(?:-block|-bottom|-top)?\s*:/, "rows use space, not dividers");
+  const [meta] = rulesWith(".workbench-history-meta");
+  assert.equal(values(meta.body)["font-size"], "var(--text-xs)");
+  assert.equal(values(meta.body)["flex-wrap"], "wrap");
+});
+
+test("the kind switch fits translated labels and takes the touch floor", () => {
+  const css = source["workbench.css"];
+  const switchRule = leafRules(css).find(rule =>
+    rule.selectorText.includes('.workbench-history-switch:is([data-history-kind="tasks"], [data-history-kind="conversations"])'));
+  assert.equal(values(switchRule.body)["grid-template-columns"], "repeat(2, minmax(0, 1fr))");
+  const button = ".workbench-history-switch [data-workbench-kind]";
+  const [choice] = rulesWith(button);
+  const declared = values(choice.body);
+  assert.equal(declared["min-height"], "var(--control-h)");
+  assert.equal(declared["min-width"], "0");
+  assert.equal(declared["overflow-wrap"], "anywhere");
+  for (const property of ["white-space", "text-overflow", "max-width", "width", "inline-size", "max-inline-size"]) {
+    assert.equal(declared[property], undefined, `a translated label must not be clipped by ${property}`);
+  }
+
+  const coarse = blocks("@media (pointer: coarse)", css).join("\n");
+  const [touch] = rulesWith(button, coarse);
+  assert.equal(values(touch.body)["min-height"], "var(--touch-target)");
+  const [search] = rulesWith("#workbench-history-search", coarse);
+  assert.equal(values(search.body)["font-size"], "16px");
+});
+
 test("only the selected Source Control view scrolls", () => {
   const [body] = rulesWith(".workbench-git-body");
   const declared = values(body.body);
@@ -354,7 +429,7 @@ test("Source Control keeps its heading, summary and view switcher at intrinsic h
   const declared = values(search.body);
   assert.equal(declared.position, "sticky", "branch search stays reachable inside the scrolling view");
   assert.equal(declared["inset-block-start"], "0");
-  assert.equal(declared.background, "var(--surface-rail)", "rows must not show through the search field");
+  assert.equal(declared.background, "var(--surface-dock)", "rows must not show through the search field");
   const [branches] = blocks("#workbench-git-branches", source["workbench.css"]);
   assert.match(values(branches)["scroll-padding-block-start"], /var\(--touch-target\)/,
     "keyboard scrolling leaves space for sticky branch search");
@@ -371,14 +446,15 @@ test("no right-panel scroller asks for smooth scrolling", () => {
 // --- the coarse-pointer recipe --------------------------------------------
 
 test("composer controls reach the touch floor for coarse pointers", () => {
-  const coarse = blocks("@media (pointer: coarse)", app).join("\n");
-  const [actions] = blocks(
-    ".assistant-context-bar :is(.assistant-icon-button, .assistant-send-button, .assistant-stop-button)", coarse);
-  assert.equal(values(actions)["min-inline-size"], "var(--touch-target)");
-  assert.equal(values(actions)["min-block-size"], "var(--touch-target)");
+  const [coarse] = blocks("@media (pointer: coarse)", composerStyles);
+  const [touchTargets] = leafRules(coarse).filter(rule =>
+    [".assistant-send-button", "#objective-file-button", "#task-launch-button", trigger]
+      .every(selector => rule.selectorText.includes(selector)));
+  assert.equal(values(touchTargets.body)["min-inline-size"], "var(--touch-target)");
+  assert.equal(values(touchTargets.body)["min-block-size"], "var(--touch-target)");
 
-  const [capsules] = blocks(":is(.assistant-context-bar, .input-controls) .capsule-trigger", coarse);
-  assert.equal(values(capsules)["min-block-size"], "var(--touch-target)");
+  const [advanced] = blocks(advancedSummary, coarse);
+  assert.equal(values(advanced)["min-block-size"], "var(--touch-target)");
 });
 
 test("a coarse pointer gets 16px inputs and a 44px row floor", () => {

@@ -183,7 +183,7 @@ test("--shell-topbar-h is defined once on #app-layout and consumed by .workbench
       .join(", ")})`
   );
   assert.equal(definitions[0].file, "workbench.css");
-  assert.equal(definitions[0].value, "3.5rem");
+  assert.equal(definitions[0].value, "var(--workbench-topbar-size, calc(var(--control-h) + var(--card-pad) / 4))");
 
   // ...and it must live on the shell root, never on a page.
   const host = leafRules("workbench.css").filter(
