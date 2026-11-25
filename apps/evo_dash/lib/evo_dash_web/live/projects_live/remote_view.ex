@@ -37,21 +37,16 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
   @doc "Renders visible Task Options and a collapsed Project Settings disclosure."
   def task_configuration(assigns) do
     ~H"""
-    <section aria-labelledby="task-options-title" class="space-y-4">
-      <h2 id="task-options-title" class="text-lg font-semibold">
-        {gettext("Task Options")}
-      </h2>
-      <EvoDashWeb.TaskFormComponents.task_options_tab
-        mode={@task_mode}
-        node_path={@task_node_path}
-        starting_commit={@task_starting_commit}
-        resume_from={@task_resume_from}
-        archive={@task_archive}
-        persist_agent_state?={@persist_agent_state?}
-        build_systems={@build_systems}
-        selected_build_system={@task_build_system}
-      />
-    </section>
+    <EvoDashWeb.TaskFormComponents.task_options_tab
+      mode={@task_mode}
+      node_path={@task_node_path}
+      starting_commit={@task_starting_commit}
+      resume_from={@task_resume_from}
+      archive={@task_archive}
+      persist_agent_state?={@persist_agent_state?}
+      build_systems={@build_systems}
+      selected_build_system={@task_build_system}
+    />
     <details
       id="workbench-task-settings"
       class={["border-t border-base-300", !@inline && "mt-4"]}
