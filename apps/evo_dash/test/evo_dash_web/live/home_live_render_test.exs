@@ -152,10 +152,8 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
            ) ==
              "Auto (by rules)"
 
-    # Placement: the picker lives in the composer card's control bar, inside
-    # the ONE `#chat-form` (its items carry their own click bindings, so no
-    # nested form or form owner is involved), and is gone from the page header
-    # along with its old standalone form.
+    # The picker lives in the composer toolbar rather than the page header.
+    # Its items carry their own click bindings, so it needs no separate form.
     assert Floki.find(dom, "#chat-composer-controls #chat-llm-selection") != []
     assert Floki.find(dom, "#chat-header #chat-llm-selection") == []
     assert Floki.find(dom, "form#chat-llm-selection-form") == []
@@ -214,20 +212,16 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     spec = %{"provider_profile_id" => "work-account", "model" => "reasoned-model"}
     dom = page(provider_profiles: profiles, model_selections: selections, model_spec: spec)
 
-    # One form owns the whole composer; nothing is nested inside it.
+    # The message form has its own submit/change events and no nested forms.
     assert attr(dom, "#chat-form", "phx-submit") == ["send_message"]
     assert attr(dom, "#chat-form", "phx-change") == ["chat_input"]
-    assert Floki.find(dom, "#chat-form #chat-form") == []
     assert Floki.find(dom, "#chat-form form") == []
 
-    # Capsule on the left, send/stop on the right, both in the control bar row
-    # that sits BELOW the textarea.
+    # The toolbar controls belong to their respective flows. The shared region
+    # placement is covered by WorkbenchComposerTest.
     assert Floki.find(dom, "#chat-composer-controls #chat-llm-selection") != []
-    assert Floki.find(dom, "#chat-composer-controls button[type='submit']") != []
     assert Floki.find(dom, "#chat-composer-controls button[phx-click='stop']") != []
-
-    assert Floki.find(dom, "#chat-form > textarea") != []
-    assert Floki.find(dom, ".assistant-input-card > #chat-form + #chat-composer-controls") != []
+    assert Floki.find(dom, "#chat-form textarea") != []
     assert Floki.find(dom, "#chat-composer-controls button[form=chat-form][type=submit]") != []
 
     # Provider rows carry their OWN click bindings, which LiveView dispatches
