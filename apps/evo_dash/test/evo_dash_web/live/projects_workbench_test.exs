@@ -632,20 +632,75 @@ defmodule EvoDashWeb.ProjectsWorkbenchVctTest.ConnectionManager do
 end
 
 defmodule EvoDashWeb.ProjectsWorkbenchVctTest do
-  # The overview draft hint requires a real VCT mount. ProjectsLiveTest clears
-  # this process-global registry and asserts on its empty project state, so
-  # neither suite can rely on that state if these tests run concurrently.
+  # ProjectsLiveTest clears the process-global VCT registry. Run serially so
+  # those clears neither delete a fixture mount nor mask an unexpected mount.
   use EvoDashWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
   import EvoDashWeb.ProjectsWorkbenchTest.Helpers
 
   alias __MODULE__.ConnectionManager
+  alias EvoGit.Adapters.Git
+  alias EvoGit.VCT
 
   @async_wait_budget_ms 30_000
 
   setup context do
     setup_workbench(context)
+  end
+
+  test "a direct URL to an unregistered repo offers manual tasks but not scoped chat", %{
+    conn: conn,
+    tmp_dir: path
+  } do
+    assert {:ok, _} = Git.run(~w(init --template= -b main), path)
+
+    assert {:ok, _} =
+             Git.run(
+               ~w(-c user.name=Workbench -c user.email=workbench@example.invalid
+                  -c core.hooksPath=.git/hooks commit --no-gpg-sign --allow-empty -m Seed),
+               path
+             )
+
+    assert {:error, :not_found} = VCT.resolve(path)
+
+    on_exit(fn ->
+      # A failing regression must not leave its unexpected mount behind.
+      case VCT.resolve(path) do
+        {:ok, mount} -> assert :ok = VCT.forget(mount.point)
+        {:error, :not_found} -> :ok
+      end
+    end)
+
+    {:ok, view, html} = live(conn, ~p"/projects?#{%{project: path}}")
+    refute html =~ "data-workbench-default-draft="
+
+    # The local batch seeds notification IDs in the same result as the VCT roster.
+    wait_for(view, fn ->
+      %{socket: %{assigns: assigns}} = :sys.get_state(view.pid, @async_wait_budget_ms)
+      assigns[:notified_task_ids_ready?] == true
+    end)
+
+    overview = "#workbench-project-overview[data-overview-kind=project]"
+    assert has_element?(view, "#{overview} [data-overview-path]", path)
+    assert {:error, :not_found} = VCT.resolve(path)
+    assert_no_default_draft(view)
+
+    # Keep the settled overview markup while exercising the real manual action.
+    overview_dom = view |> element(overview) |> render() |> Floki.parse_fragment!()
+    new_task = "#{overview} button#overview-new-task[phx-click=compose_task]:not([disabled])"
+    view |> element(new_task, "New task") |> render_click()
+
+    assert %URI{path: "/projects", query: query} =
+             view |> assert_patch(@async_wait_budget_ms) |> URI.parse()
+
+    assert URI.decode_query(query) == %{"project" => path, "wb_task" => "1"}
+    assert has_element?(view, "#dashboard-root[data-workbench-compose=true] form#task-form")
+    assert {:error, :not_found} = VCT.resolve(path)
+
+    assert Floki.find(overview_dom, "a#overview-chat-assistant[href]") == []
+    assert Floki.find(overview_dom, "button#overview-chat-assistant:not([disabled])") == []
+    assert Floki.text(overview_dom) =~ ~r/\bproject picker\b/i
   end
 
   describe "project empty-tabs route" do
@@ -662,7 +717,11 @@ defmodule EvoDashWeb.ProjectsWorkbenchVctTest do
       assert has_element?(view, "#workbench-project-overview[data-overview-kind=project]")
       assert has_element?(view, "#dashboard-root[data-workbench-compose=false]")
       await_confirmed_overview(view, point, task_id)
-      assert has_element?(view, "a#overview-chat-assistant", "Chat with Assistant")
+
+      chat_link =
+        ~s|a#overview-chat-assistant[href^="/assistant?"][data-phx-link=redirect]:not([aria-disabled=true]):not([hidden])|
+
+      assert has_element?(view, chat_link, "Chat with Assistant")
       overview = view |> render() |> Floki.parse_document!()
 
       # This is the URL reached after the client closes the last open tab; no
