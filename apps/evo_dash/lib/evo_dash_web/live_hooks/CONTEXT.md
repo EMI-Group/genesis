@@ -121,6 +121,7 @@ Deleting that context's snapshot means the destination mount's FIRST PAINT canno
 
 **Node-switch URL rule** — a node switch is view-PRESERVING: `handle_node_selected/2` rebuilds the URL from the page's `@current_path`, so that assign must carry the CURRENT query string (path + `?…`) when the page's state lives there — `TaskCardComponents`-style filter pages keep `/tasks?status=needs_review&session=interactive`, Settings keeps `?category=`, Agents keeps the selected agent.
 `node=<id>` is put INTO the existing query string: a previous `node` key is REPLACED (never duplicated), every other pair is kept VERBATIM (the query is spliced as text, never decoded/re-encoded, so an already-encoded value such as `q=needs%20review` survives byte-for-byte), empty segments are dropped (no stray `?`/`&&`), a path with no query becomes exactly `<path>?node=<id>`, and selecting `"local"` REMOVES the `node` key (the bare path when it was the only param).
+`handle_connection_status/2` obeys the SAME rule: its transition patch splices `workbench_reconnect_params` + `node` into `@current_path`'s query instead of appending a second `?`, so a filtered `/tasks?status=needs_review` keeps its filter across a connection-status change.
 
 ### `EvoDashWeb.LiveHooks.Appearance` (`appearance.ex`)
 
