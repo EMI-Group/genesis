@@ -62,6 +62,17 @@ Use `ExUnit.CaptureLog.capture_log/2` for fire-and-forget work and `with_log/2` 
 Never silence noise by raising the global Logger level.
 The one leak class the suite structurally prevents is a `EvoGit.TaskRegistry` read worker calling a store that is being stopped; keep `IsolatedTaskStore`'s ordered teardown instead of reaching for a Logger-level silencing.
 
+### Distribution start (`node()` flip) — the one global with NO seam
+- `EvoDash.NodeContext.connect/1` → `EvoGit.RemoteConnection.connect/1` (`fetch_target/1` → `ensure_started/1`, a `EvoGit.RemoteConnection.Registry` lookup that falls through to the REAL manager) → the connect worker → `EvoGit.Distribution.enable_for_remote/1` → `:net_kernel.start([:"genesis@127.0.0.1", :longnames])` when `node() == :nonode@nohost`, which flips the BEAM-global `node()` for the rest of the run.
+- Its one observable is `EvoGit.RemoteConnection.establish_tunnel_and_node/1`'s "No distribution cookie configured. Run bootstrap first to auto-generate one." line.
+- There is NO connect seam: `LiveHooks.NodeAware.initiate_remote_connect/2` (spawn at `live_hooks/node_aware.ex:456`) and `NodeSelectorComponent`'s `select_node` (spawn at `live/components/node_selector_component.ex:143`) both run it on `EvoDash.TaskSupervisor`, so the ONLY interception is a fake `ConnectionManager` registered in `EvoGit.RemoteConnection.Registry` under that exact target id AND alive for the whole test.
+- A per-test target id plus a per-test config dir does NOT defend by itself: `EvoDash.Test.ConfigDir.caller_override/1` skips a DEAD pid, so a child that runs after its test process exits resolves the run-wide default dir and answers `{:error, :not_found}` — but a child that already resolved its target and only reaches `ensure_started/1` after the test's `on_exit` stopped the fake starts the real manager and the real `ssh` port.
+- Sites that emit a connect and AWAIT the fake before the test ends: `projects_live_test`'s three `retry_remote_connection`/`connect_location` tests (the error-gate one also pins the fingerprint's ABSENCE with `with_log/2` + `refute log =~ "No distribution cookie configured"`) and `node_aware_test`'s `initiate_remote_connect/2` describe.
+- Residual, no await of the spawned connect: `settings_live_test`'s four "remote-connection async connect flow" tests that only inject the terminal broadcast.
+- A NEW connect-clicking test MUST save a per-test target id, `start_supervised!` the fake under it, click, then bounded-poll the fake's `:callers` (or `assert_receive {:remote_connect_result, …}`) before it ends — never finish with an unresolved spawned connect.
+- Hand-injected `{:node_selected, id}` is the URL-patch path only (`NodeAware.handle_node_selected/2`), never a connect; no dash test clicks `select_node`.
+- Per-site detail: `live/CONTEXT.md` (page suites) and `live_hooks/CONTEXT.md` (the shared helper).
+
 ### Deterministic waits (no fixed sleeps, no tight windows)
 Bounded polls run at a 1–2 ms cadence (`@wait_poll_ms 2`, `@poll_ms 1`); a fixed `Process.sleep` is never a wait for an async result — it survives only as a poll cadence (`@poll_ms`/`@wait_poll_ms`/`@poll_interval_ms`, 1–2 ms) or as producer/stub latency (`safe_call_test`'s `SlowServer`, `projects_live_test`'s `connect_delay_ms`, `health_controller_test`'s elapsed-wall-clock uptime model, `review_live_test.rm_rf_retry`'s filesystem backoff).
 A `receive … after N` INSIDE an injected runner/stub is a handshake-lost valve, not an await, and keeps its own budget.
