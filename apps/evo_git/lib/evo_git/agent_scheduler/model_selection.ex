@@ -176,7 +176,12 @@ defmodule EvoGit.AgentScheduler.ModelSelection do
       model_spec: model_spec,
       llm_model: Keys.get(resolved, :model_spec),
       llm_generation_params: Keys.get(resolved, :generation_params),
-      llm_context_window: Schema.LLM.context_window(runtime_profile)
+      llm_context_window: Schema.LLM.context_window(runtime_profile),
+      # The ACCOUNT provider identity (a STRING such as "openai"; nil when the
+      # schema resolved none). Used solely to attach the per-run prompt-cache
+      # identity at registration, because the resolved model spec need not
+      # carry a provider part. This is NOT the model spec.
+      provider: Keys.get(resolved, :provider)
     }
   end
 end
