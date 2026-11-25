@@ -134,7 +134,7 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest.Helpers do
     refute has_element?(view, "#app-layout[data-workbench-default-draft]")
   end
 
-  def row_selector(id), do: "[data-workbench-item][data-item-id='#{id}']"
+  def row_selector(id), do: "#workbench-history-rows [data-workbench-item][data-item-id='#{id}']"
 
   # Bounded poll on the RENDERED output: the assertion is the RENDER, not an
   # internal assign, so this catches exactly what a user would see. 2 ms
@@ -201,12 +201,14 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
       |> element("#workbench-history-filters")
       |> render_change(%{"project" => "", "status" => "completed"})
 
-      assert has_element?(view, "#workbench-history-project", "All projects")
+      refute has_element?(
+               view,
+               "#workbench-history-project-filter option[selected]:not([value=''])"
+             )
 
       render_patch(view, ~p"/projects?#{%{project: second, wb_home: "1"}}")
 
       assert_empty_project_view(view, second)
-      assert has_element?(view, "#workbench-history-project", Path.basename(second))
       wait_for(view, fn -> history_row_ids(view) == [second_id] end)
 
       # An invalid absolute path isn't a selected project, even when another
@@ -235,11 +237,11 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
   end
 
   describe "right workbench panels" do
-    test "both panels render closed with collapsed toggles and hidden chrome", %{
+    test "both panels render closed and the history header does not repeat the project name", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      {:ok, view, html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_home: "1"}}")
+      {view, html} = mount_project_page!(conn, tmp_dir)
 
       # The open/close animation is JS+CSS only, so the SERVER-rendered initial
       # markup IS the closed state — that is the correct thing to pin here.
@@ -256,14 +258,17 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
       # The overlay scrim and the drag resizer belong to the OPEN panel.
       assert has_element?(view, "#workbench-history-overlay[hidden]")
       assert has_element?(view, "#workbench-right-resize[hidden]")
+
+      # Ignore the selected option's legitimate project name. No heading or
+      # scope label in the panel should repeat it.
+      panel = view |> element("#workbench-history") |> render() |> Floki.parse_fragment!()
+      refute panel |> Floki.filter_out("select") |> Floki.text() =~ Path.basename(tmp_dir)
     end
   end
 
   describe "history filters" do
-    test "one server-side form carries the project default and the status inventory", %{
-      conn: conn,
-      tmp_dir: tmp_dir
-    } do
+    test "one server-side form places the project and status filters before search",
+         %{conn: conn, tmp_dir: tmp_dir} do
       {view, _html} = mount_project_page!(conn, tmp_dir)
 
       assert has_element?(
@@ -287,6 +292,14 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
       assert Floki.text(first_option) == "All projects"
       assert selected_option_values(project_select) == [tmp_dir]
 
+      project_name = Path.basename(tmp_dir)
+
+      assert has_element?(
+               view,
+               "#workbench-history-project-filter option[selected]",
+               project_name
+             )
+
       # The status filter offers "Any status" first, then the full inventory.
       status_select = view |> element("#workbench-history-status-filter") |> render()
 
@@ -300,13 +313,16 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
       # browser selects by default (`history_status` starts empty).
       assert selected_option_values(status_select) == []
 
-      # The kind switch renders its SERVER-side pressed state (no client hand-off).
-      assert has_element?(view, "[data-workbench-kind='task'][aria-pressed=true]")
-      assert has_element?(view, "[data-workbench-kind='chat'][aria-pressed=false]")
+      # Both selects keep their accessible labels and precede search in DOM order.
+      form = view |> element("#workbench-history-filters") |> render() |> Floki.parse_fragment!()
 
-      # Both selects are LABELLED controls on the dashboard control grammar:
-      # one two-column field row under the full-width search box, each select a
-      # `.workbench-history-filter` with its own micro label.
+      assert [_, _, "workbench-history-search"] =
+               Floki.attribute(
+                 form,
+                 "#workbench-history-project-filter, #workbench-history-status-filter, #workbench-history-search",
+                 "id"
+               )
+
       assert has_element?(
                view,
                "label.workbench-history-field[for='workbench-history-project-filter']",
@@ -322,10 +338,6 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
       assert has_element?(view, "#workbench-history-project-filter.workbench-history-filter")
       assert has_element?(view, "#workbench-history-status-filter.workbench-history-filter")
 
-      # The scope label is server-rendered text. No mount was registered, so the
-      # label is the panel's own basename fallback for the selected path.
-      assert has_element?(view, "#workbench-history-project", Path.basename(tmp_dir))
-
       # Retained sidebar hook: the recent-projects section reports its load state.
       wait_for(view, fn ->
         has_element?(view, "#workbench-projects[data-workbench-projects-loading=false]")
@@ -334,30 +346,42 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
 
     test "selecting All projects widens the scope server-side", %{conn: conn, tmp_dir: tmp_dir} do
       other_dir = make_project_dir!("evogit_workbench_other")
+      prefix = unique_phrase("widen")
 
-      current_id =
-        seed_task!(path: tmp_dir, objective: unique_phrase("current"), status: :completed)
-
-      other_id =
-        seed_task!(path: other_dir, objective: unique_phrase("other"), status: :completed)
+      current_id = seed_task!(path: tmp_dir, objective: "#{prefix} current", status: :completed)
+      other_id = seed_task!(path: other_dir, objective: "#{prefix} other", status: :completed)
 
       {view, _html} = mount_project_page!(conn, tmp_dir)
 
       # Default scope = the project being viewed.
       wait_for(view, fn -> has_element?(view, row_selector(current_id)) end)
       refute has_element?(view, row_selector(other_id))
-      assert has_element?(view, "#workbench-history-project", Path.basename(tmp_dir))
+
+      assert has_element?(
+               view,
+               "#workbench-history-project-filter option[selected]",
+               Path.basename(tmp_dir)
+             )
 
       view
       |> element("#workbench-history-filters")
-      |> render_change(%{"project" => ""})
+      |> render_change(%{"project" => "", "query" => prefix})
 
       wait_for(view, fn ->
         has_element?(view, row_selector(current_id)) and
           has_element?(view, row_selector(other_id))
       end)
 
-      assert has_element?(view, "#workbench-history-project", "All projects")
+      assert has_element?(
+               view,
+               "#workbench-history-project-filter option[value='']",
+               "All projects"
+             )
+
+      refute has_element?(
+               view,
+               "#workbench-history-project-filter option[selected]:not([value=''])"
+             )
     end
 
     test "the search box filters server-side", %{conn: conn, tmp_dir: tmp_dir} do
@@ -413,7 +437,7 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
       end)
     end
 
-    test "the kind switch shows conversations and the empty flag", %{
+    test "the segmented switch updates both pressed states and the displayed kind", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
@@ -422,31 +446,36 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
       {view, _html} = mount_project_page!(conn, tmp_dir)
 
       wait_for(view, fn -> has_element?(view, row_selector(task_id)) end)
+      assert_history_kind(view, "task")
 
       view
-      |> element("[data-workbench-kind='chat']")
+      |> element(".workbench-history-switch button", "Conversations")
       |> render_click()
 
-      # The pressed state flips SERVER-side and the task rows leave the list.
-      wait_for(view, fn ->
-        has_element?(view, "[data-workbench-kind='chat'][aria-pressed=true]") and
-          has_element?(view, "[data-workbench-kind='task'][aria-pressed=false]") and
-          not has_element?(view, row_selector(task_id))
-      end)
+      assert_history_kind(view, "chat")
 
-      # No conversation session is created here on purpose: `EvoDash.ChatHistory`
-      # is a process-wide cache that the async `home_live` / ChatHistory suites
-      # read exactly, so this module never writes it. Instead of assuming the
-      # cache is empty, a no-match query makes the empty verdict deterministic
-      # (chat rows are filtered by the SAME server-side query).
+      # ChatHistory is shared with exact-content readers in async suites. Use a
+      # no-match query to exercise the empty state without writing to the cache.
       view
       |> element("#workbench-history-filters")
       |> render_change(%{"query" => unique_phrase("no-chat")})
 
       wait_for(view, fn ->
         has_element?(view, "#workbench-history-content[data-workbench-history-empty=true]") and
-          not has_element?(view, "[data-workbench-item]")
+          history_row_ids(view) == []
       end)
+
+      view
+      |> element(".workbench-history-switch button", "Tasks")
+      |> render_click()
+
+      assert_history_kind(view, "task")
+
+      view
+      |> element("#workbench-history-filters")
+      |> render_change(%{"query" => ""})
+
+      wait_for(view, fn -> history_row_ids(view) == [task_id] end)
     end
   end
 
@@ -458,24 +487,29 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
       {view, _html} = mount_project_page!(conn, tmp_dir)
       wait_for(view, fn -> has_element?(view, row_selector(id)) end)
 
-      assert has_element?(view, "[data-workbench-item='task'][data-item-id='#{id}']")
+      assert has_element?(view, "#{row_selector(id)}[data-workbench-item='task']")
+      refute has_element?(view, "#{row_selector(id)} [class*='hero-clipboard']")
 
       # A FINISHED run opens its review page: that is where its output (diff,
       # merge/reject, archive) lives.
       assert has_element?(
                view,
-               "[data-item-id='#{id}'][data-item-title='#{objective}'][data-item-href='/review/#{id}']"
+               "#{row_selector(id)}[data-item-title='#{objective}'][data-item-href='/review/#{id}']"
              )
 
-      assert has_element?(view, "[data-item-id='#{id}'][data-item-state='Completed']")
-      assert has_element?(view, "[data-item-id='#{id}'] [data-workbench-open]")
+      assert has_element?(view, "#{row_selector(id)}[data-item-state='Completed']")
+
+      assert has_element?(
+               view,
+               "#{row_selector(id)} a[data-workbench-open][href='/review/#{id}']"
+             )
 
       # A COMPLETED row is not "active" — the attribute is only rendered for the
       # in-flight states, so its absence is the contract here.
-      refute has_element?(view, "[data-item-id='#{id}'][data-item-active]")
+      refute has_element?(view, "#{row_selector(id)}[data-item-active]")
 
       # "Load more tasks" only exists past the first 15-row page.
-      refute has_element?(view, "[data-workbench-more]")
+      refute has_element?(view, "#workbench-history-rows [data-workbench-more]")
     end
 
     test "the destination follows the lifecycle state", %{conn: conn, tmp_dir: tmp_dir} do
@@ -512,23 +546,32 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
       wait_for(view, fn -> length(history_row_ids(view)) == length(finished) + length(live) end)
 
       for {status, id} <- finished do
-        assert has_element?(view, "[data-item-id='#{id}'][data-item-href='/review/#{id}']"),
-               "expected the #{status} row to open /review/#{id}"
+        row = row_selector(id)
+        href = "/review/#{id}"
+
+        assert has_element?(view, "#{row}[data-item-href='#{href}']"),
+               "expected the #{status} row to open #{href}"
+
+        assert has_element?(view, "#{row} a[data-workbench-open][href='#{href}']")
 
         # Finished means finished: never marked active, never routed at /tasks.
-        refute has_element?(view, "[data-item-id='#{id}'][data-item-active]")
-        refute has_element?(view, "[data-item-id='#{id}'][data-item-href^='/tasks']")
+        refute has_element?(view, "#{row}[data-item-active]")
+        refute has_element?(view, "#{row}[data-item-href^='/tasks']")
       end
 
       for {status, id} <- live do
         # `?task=<id>` IS the tasks page's focus mode (it filters the page to the
         # one task and opens its card), so a live row lands on that run.
-        assert has_element?(view, "[data-item-id='#{id}'][data-item-href='/tasks?task=#{id}']"),
+        row = row_selector(id)
+        href = "/tasks?task=#{id}"
+
+        assert has_element?(view, "#{row}[data-item-href='#{href}']"),
                "expected the #{status} row to focus its run on /tasks"
 
-        refute has_element?(view, "[data-item-id='#{id}'][data-item-href^='/review/']")
+        assert has_element?(view, "#{row} a[data-workbench-open][href='#{href}']")
+        refute has_element?(view, "#{row}[data-item-href^='/review/']")
         # The in-flight statuses are the ones the presentational flag marks.
-        assert has_element?(view, "[data-item-id='#{id}'][data-item-active='true']")
+        assert has_element?(view, "#{row}[data-item-active='true']")
       end
     end
 
@@ -554,9 +597,10 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
     } do
       prefix = unique_phrase("page")
 
-      for index <- 1..17 do
-        seed_task!(path: tmp_dir, objective: "#{prefix} #{index}", status: :completed)
-      end
+      ids =
+        for index <- 1..17 do
+          seed_task!(path: tmp_dir, objective: "#{prefix} #{index}", status: :completed)
+        end
 
       {view, _html} = mount_project_page!(conn, tmp_dir)
 
@@ -564,16 +608,20 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
       |> element("#workbench-history-filters")
       |> render_change(%{"query" => prefix})
 
-      # The default page is 15 comfortable entries, and paging stays available.
+      # The first page has 15 entries; Load more retains them and appends the rest.
+      more = "#workbench-history-rows [data-workbench-more]"
+      wait_for(view, fn -> length(history_row_ids(view)) == 15 and has_element?(view, more) end)
+      first_page = history_row_ids(view)
+
+      view |> element(more) |> render_click()
+
       wait_for(view, fn ->
-        length(history_row_ids(view)) == 15 and has_element?(view, "[data-workbench-more]")
+        length(history_row_ids(view)) == 17 and not has_element?(view, more)
       end)
 
-      view |> element("[data-workbench-more]") |> render_click()
-
-      wait_for(view, fn ->
-        length(history_row_ids(view)) == 17 and not has_element?(view, "[data-workbench-more]")
-      end)
+      all_rows = history_row_ids(view)
+      assert Enum.take(all_rows, 15) == first_page
+      assert Enum.sort(all_rows) == Enum.sort(ids)
     end
   end
 
@@ -589,11 +637,22 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
     {view, html}
   end
 
+  defp assert_history_kind(view, kind) do
+    switch = "#workbench-history .workbench-history-switch[data-history-kind='#{kind}']"
+    assert has_element?(view, "#{switch} button[aria-pressed='#{kind == "task"}']", "Tasks")
+
+    assert has_element?(
+             view,
+             "#{switch} button[aria-pressed='#{kind == "chat"}']",
+             "Conversations"
+           )
+  end
+
   defp history_row_ids(view) do
     view
     |> render()
     |> Floki.parse_document!()
-    |> Floki.find("[data-workbench-item][data-item-id]")
+    |> Floki.find("#workbench-history-rows [data-workbench-item][data-item-id]")
     |> Floki.attribute("data-item-id")
   end
 
@@ -610,6 +669,43 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
     |> Floki.parse_fragment!()
     |> Floki.find("option[selected]")
     |> Floki.attribute("value")
+  end
+end
+
+defmodule EvoDashWeb.ProjectsWorkbenchConversationTest do
+  # Seeding EvoDash.ChatHistory would race the async suite's exact cache reads.
+  use EvoDashWeb.ConnCase, async: false
+
+  import Phoenix.LiveViewTest
+  import EvoDashWeb.ProjectsWorkbenchTest.Helpers
+
+  setup context do
+    setup_workbench(context)
+  end
+
+  test "a conversation row in project history opens its Assistant session", %{
+    conn: conn,
+    tmp_dir: path
+  } do
+    chat_id = System.unique_integer([:positive])
+    title = unique_phrase("chat")
+    on_exit(fn -> EvoDash.ChatHistory.delete_chat(chat_id) end)
+
+    :ok =
+      EvoDash.ChatHistory.put_state(chat_id, %{
+        transcript: [%{role: :user, text: title}],
+        workspace: %{path: path, node: node(), node_id: nil}
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: path, wb_home: "1"}}")
+    view |> element("#workbench-history-filters button", "Conversations") |> render_click()
+
+    row = "#{row_selector(chat_id)}[data-workbench-item='chat']"
+    href = "/assistant?session=#{chat_id}"
+
+    wait_for(view, fn -> has_element?(view, row) end)
+    assert has_element?(view, "#{row}[data-item-href='#{href}']")
+    assert has_element?(view, "#{row} a[data-workbench-open][href='#{href}']", title)
   end
 end
 
