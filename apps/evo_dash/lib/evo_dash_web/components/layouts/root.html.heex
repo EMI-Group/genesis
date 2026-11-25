@@ -12,12 +12,6 @@
     <meta name="csrf-token" content={get_csrf_token()} />
     <meta name="locale" content={Gettext.get_locale(EvoDashWeb.Gettext)} />
     <meta name="theme-color" content="#f6f5f4" />
-    <%!-- Cross-document view transitions: the sidebar's page links are full
-         navigations (`<a data-phx-link="redirect">`), so the browser cross-fades
-         the outgoing and incoming document with no JS and no LiveView support
-         needed. The custom `::view-transition-old/new(page)` timing lives in
-         assets/css/view_transitions.css (a CSS-package concern, not this file). --%>
-    <meta name="view-transition" content="same-origin" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <%!-- Page title: EvoX Genesis (天演 · 启元 / 天演 · 啟元) --%>
@@ -53,22 +47,6 @@
           applyTheme(theme);
         };
 
-        const prefersReducedMotion = () =>
-          window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-        // View Transitions API: a theme/accent swap repaints every themed surface
-        // at once, which reads as a flash. Feature-detected and motion-preference
-        // aware; the browser's default root cross-fade is the whole effect (no CSS
-        // needed). Only USER-driven switches route through here — the initial load
-        // stays a direct applyTheme so first paint never animates.
-        const transitionTheme = (theme) => {
-          if (typeof document.startViewTransition !== "function" || prefersReducedMotion()) {
-            setTheme(theme);
-            return;
-          }
-          document.startViewTransition(() => setTheme(theme));
-        };
-
         const updateThemeColor = (resolvedTheme) => {
           const meta = document.querySelector('meta[name="theme-color"]');
           if (meta) {
@@ -88,11 +66,11 @@
 
         // Cross-tab sync
         window.addEventListener("storage", (e) => {
-          if (e.key === "phx:theme") transitionTheme(e.newValue || "system");
+          if (e.key === "phx:theme") setTheme(e.newValue || "system");
         });
 
         // Theme toggle buttons
-        window.addEventListener("phx:set-theme", (e) => transitionTheme(e.target.dataset.phxTheme));
+        window.addEventListener("phx:set-theme", (e) => setTheme(e.target.dataset.phxTheme));
 
         // System theme change — re-resolve when in system mode
         window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {

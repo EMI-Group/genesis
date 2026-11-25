@@ -262,9 +262,9 @@ Chat-history tool calls (inline detail panel + full-message modal) render throug
 ## Notes for Agents — Agents page layout & legend tooltip
 
 At `xl+` the page fills the SHELL CONTENT BOX, never the viewport: the root `div.agents-page-layout.shell-fill` (`height: 100%` from `main#main-content`, whose definite box already excludes the persistent top bar and the main padding), then the grid rule (`overflow: hidden`), `.agents-left-col` (column flex, `overflow: hidden`), `.agents-tree-panel` (card, `flex: 1 1 0`), tree content scrolling inside `.agents-tree-panel .card-body`, and `.agents-legend` as a SIBLING of card-body at the panel bottom; below `xl` the grid rule does not apply, so the page is normal flow under `#main-scroll` inside `#app-layout`.
-**Legend tooltips use the `LegendTooltip` JS hook, NOT DaisyUI `.tooltip`**: DaisyUI's absolutely positioned, horizontally centered pseudo-element makes the long `data-tip` texts (max-width 20rem) on the right-aligned chips overflow the page-level overflow containers, and CSS-only anchoring cannot fix it (the panel is ~480 px wide at xl).
-The hook renders the tip as a `position: fixed` element appended to `document.body` — mandatory because `.agents-page-layout`'s `animate-fade-in-up` uses `animation-fill-mode: both`, so `transform: translateY(0)` PERSISTS and would trap even fixed descendants inside its `overflow: hidden`.
-Chips carry `data-tip` (gettext) + `phx-hook="LegendTooltip"` + unique ids (LiveView requires `id` for a hook), and the `tooltip` class was removed so DaisyUI's clipped tip does not double-render; the "Send Message" button tooltip (`tooltip` class, short text near the card edge) fits and stays — do not convert it.
+**Legend tooltips use the `LegendTooltip` JS hook, NOT DaisyUI `.tooltip`**: DaisyUI's absolutely positioned, horizontally centered pseudo-element can extend outside the panel at the right-aligned chips, where the page's overflow containers can clip long `data-tip` text.
+The hook appends a `position: fixed` tip to `document.body`, outside the page's overflow containers, and positions it relative to the viewport.
+Chips carry `data-tip` (gettext) + `phx-hook="LegendTooltip"` + unique ids (LiveView requires `id` for a hook) and omit the `tooltip` class to avoid duplicate tips; the "Send Message" button tooltip (`tooltip` class, short text near the card edge) fits and stays — do not convert it.
 
 ## Notes for Agents — Surface layering
 

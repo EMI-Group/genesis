@@ -5,7 +5,7 @@
 
 ## API Surface
 The template renders `@inner_content`, a localized live title, relative tracked CSS/JS assets, CSRF and locale metadata, and favicon/mobile-web-app metadata.
-Its synchronous head script resolves light/dark/system themes before paint through `html[data-theme]` and `html[data-theme-mode]`, persists `phx:theme`, handles `phx:set-theme`, and synchronizes OS and cross-tab changes.
+Its synchronous head script resolves light/dark/system themes before paint through `html[data-theme]` and `html[data-theme-mode]`, persists `phx:theme`, and applies `phx:set-theme`, OS and cross-tab changes immediately without a view transition.
 The same script persists locale via `phx:locale` and a cookie, maintains RTL direction, and handles `phx:set-locale` and `phx:persist_locale` with distinct reload semantics.
 
 ## Constraints

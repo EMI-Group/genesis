@@ -111,7 +111,7 @@ Below `lg` main content uses `pt-16` (desktop `lg:pt-4`); the fixed configuratio
 
 Motion composes the shared `assets/css/motion.css` foundation (`--motion-*` tokens, `motion-fade-*`/`motion-exit-*` keyframes, reduced-motion backstop) — no new durations/easings locally.
 - `#workbench-conversations` is the ONLY sidebar `details.motion-disclosure` + `phx-hook="DisclosureMotion"` with a stable id (LiveView refuses a hook without one), a `.workbench-row` summary with a rotating `hero-chevron-right` caret, visible in the collapsed `w-16` rail (`SidebarCollapse` hides only `.sidebar-label`); the four destination links above it are plain always-visible rows (no disclosure, no caret, no open state).
-- Page-to-page navigation is a cross-document view transition (`<meta name="view-transition" content="same-origin">`); theme switching uses `root.html.heex`'s feature-detected `transitionTheme/1` (skipped under `prefers-reduced-motion`); `#main-content` keeps `phx-hook="NodeSwitchFade"`.
+- Dashboard navigation and LiveView patches do not use browser view transitions, node switches do not fade `#main-content`, and `root.html.heex` applies theme changes immediately.
 - The project palette fades out through `phx-remove` on `#project-omnibox` — the node `projects_live.ex`'s `:if` actually removes — with `JS.hide(transition: {"motion-exit-fade", "motion-exit-visible", "opacity-0"})`, so backdrop and overlay leave as ONE unit; the identical `phx-remove` attributes on `.project-palette-backdrop` and `#project-palette` cannot fire while that ancestor `:if` exists and are kept for a future permanently mounted palette.
 - Flash toasts close symmetrically with the `AutoClearFlash` timer: `phx-click` runs `JS.push("lv:clear-flash") |> JS.remove_class("animate-toast-enter") |> JS.hide(to: "##{@id}", transition: {"motion-exit-fade", "motion-exit-visible", "motion-exit-hidden"})`, and the `remove_class` is required because `animate-toast-enter` (`fill: both`) otherwise pins opacity at 1 for good (an animation value outranks the exit classes).
 - `CoreComponents.show/2`/`hide/2` transition `opacity,transform` — never `transition-all`.
@@ -178,10 +178,8 @@ The project-settings editor implements the multi-repo read-write UI on `%EvoGit.
 - **Latent focus bug (open, benign)**: `FocusInput` re-focuses on `updated()` only when the element HAS class `focus-on-update` (inverted intent) and no markup adds it.
 - **Regression guard**: `project_components_test.exs` pins the search input's `phx-keydown`, the overlay's `phx-click-away` (+ backdrop's `phx-click`), and trigger rendering.
 
-### Shell motion — remaining gaps
+### Duration formatting
 
-- `assets/css/view_transitions.css` is `app.css`'s last `@import`: it fades the `root`/`page`/`project-swap` pseudo-elements from motion tokens, names `#main-content` as `page` and `#dashboard-root` as `project-swap`, and drops those animations under `prefers-reduced-motion`.
-- Per-patch cross-fades ride the `phx:page-loading-start(kind: "patch")`/`stop` pair + `document.startViewTransition` in `assets/js/app.js`; a SERVER-initiated `push_patch` dispatches no such events, so it gets no transition.
 - `Helpers.format_duration/1` is the ONE millisecond duration formatter (`"#{Float.round(ms / 1000, 1)}s"` for an integer — `0` → `"0.0s"` — and `""` otherwise), imported through `use EvoDashWeb, :html`; `WorkbenchActiveTasks.format_elapsed/1` is a different unit (elapsed SECONDS), not a duplicate.
 
 ### Sidebar must stay `overflow-visible` — SSH node-selector dropdown clipping

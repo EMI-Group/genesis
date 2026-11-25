@@ -2102,10 +2102,9 @@ button, a, input, textarea, select, summary,
    (flex-basis: 0% ensures it grows purely from free space distribution,
    never from content size). Containment is provided by overflow: hidden on
    the card itself — no overflow: hidden on .input-layout, which would clip
-   the card's focus ring. The TEXTAREA fills
-   the card minus the controls row (flex: 1) and scrolls INTERNALLY
-   (overflow-y: auto), so the in-flow launch panel (.input-controls) always
-   stays at the bottom of the CARD — no fragile viewport-derived offset.
+   the card's focus ring. The shared editor wrapper and its textarea both flex
+   to fill the space left by the toolbar and optional sidecars; only the
+   textarea scrolls, so the toolbar stays at the bottom of the card.
 
    `container-type: size` makes this card the size-query container the
    textarea's floor measures against (`100cqh`), which is why the floor needs
@@ -2121,6 +2120,13 @@ button, a, input, textarea, select, summary,
   min-height: 0;
   overflow: hidden;
   container-type: size;
+}
+
+.input-layout[data-layout="expanded"] .input-card > .workbench-composer-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 /* --- The textarea prompt --- */
@@ -2169,16 +2175,16 @@ button, a, input, textarea, select, summary,
    .input-controls row always stays pinned at the bottom of the card.
 
    NO max-height cap (deliberate): the textarea's height is bounded purely by
-   the card's flex containment — .input-card is a flex column with
-   flex: 1; min-height: 0; overflow: hidden, and the textarea is flex: 1
-   (flex-basis 0%, grow 1), so it absorbs ALL free card space and the controls
+   the card's flex containment — .input-card and its editor wrapper are flex
+   columns with flex: 1 and min-height: 0, and the textarea is flex: 1
+   (flex-basis 0%, grow 1), so it fills the editor and the controls
    row stays pinned at the bottom on any viewport height. (A previous
    calc(1.6em * 32) cap left the unabsorbed free space unallocated BELOW
    .input-controls on tall viewports, floating the launch panel mid-card.)
 
    Height notes:
-     * min-height: min(calc(1.6em * 10), calc(100cqh - var(--input-toolbar-budget,
-       4.5rem))) — a 10-line floor capped by what is actually left in the card.
+     * min-height: a 10-line floor capped by both the card's toolbar budget
+       and the editor's allocated height (100%), so optional sidecars also fit.
        `cqh` resolves against the expanded `.input-card`'s CONTENT BOX (the card
        is a size container), so this floor automatically tracks the workbench
        top bar, the sidebar width, the page padding and the mobile
@@ -2210,7 +2216,8 @@ button, a, input, textarea, select, summary,
   flex: 1;
   min-height: min(
     calc(1.6em * 10),
-    calc(100cqh - var(--input-toolbar-budget, 4.5rem))
+    calc(100cqh - var(--input-toolbar-budget, 4.5rem)),
+    100%
   );
   overflow-y: auto;
   scrollbar-gutter: stable;
@@ -2277,7 +2284,8 @@ button, a, input, textarea, select, summary,
   .input-layout[data-layout="expanded"] .input-prompt {
     min-height: min(
       calc(1.6em * 6),
-      calc(100cqh - var(--input-toolbar-budget, 4.5rem))
+      calc(100cqh - var(--input-toolbar-budget, 4.5rem)),
+      100%
     );
   }
 }

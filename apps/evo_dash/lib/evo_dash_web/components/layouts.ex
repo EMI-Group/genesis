@@ -489,8 +489,6 @@ defmodule EvoDashWeb.Layouts do
                 <main
                   id="main-content"
                   class="flex-1 min-h-0 px-4 sm:px-5 lg:px-6 pt-4 pb-4 w-full bg-base-100"
-                  phx-hook="NodeSwitchFade"
-                  data-node-id={@current_node_id || "local"}
                 >
                   {render_slot(@inner_block)}
                 </main>
