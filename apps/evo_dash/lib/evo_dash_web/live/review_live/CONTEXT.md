@@ -78,6 +78,12 @@ The `#review-load-error` panel (`@error`) and the `if @branch_exists and is_nil(
 The SHOW-route tab `cond` block is wrapped in one re-keyed `<div class="wizard-step-enter" id={"review-tab-" <> to_string(@review_tab)} aria-busy={@loading and @page_ready?}>`, so a tab switch replays the existing reduced-motion-safe `.wizard-step-enter` animation from `assets/css/app.css` (the same class the provider wizard uses).
 No new CSS, keyframes or hooks; all inner DOM ids/classes are unchanged, and the `:commit` detail and the branch-warning block sit outside the wrapper.
 
+## Workbench metadata
+
+The workbench uses the loaded task's raw PRIMARY repo path (also the Git pane path), objective as the task label, and the route task id; changing the active diff repo or opening a commit does not rescope it.
+`LoadData` stamps the path and objective with the serving BEAM node; `Page` keeps them during same-node reloads but withholds them on a mismatch, an active remote gate, or a remote request resolved to the local BEAM.
+An unresolved remote request with no target id does not register a local task tab.
+
 ## Page model (`:show`)
 
 - **`page_header`** — PRIMARY-scoped fields (`@primary_repo`'s `repo_path`/`branch_name`/`default_merge_target`/`commit_sha`, never the active-repo projection), `back_url = with_node_param(~p"/projects", @current_node_id)`, full title, task/review status + meta, `node_name: @current_node_name`, `show_review_status: @outcome != :failed`, `stats` gated by `Outcome.show_stats?/2`. IMMEDIATELY under it sits `task_outcome_banner` (see the section below), so the outcome is visible on every tab.

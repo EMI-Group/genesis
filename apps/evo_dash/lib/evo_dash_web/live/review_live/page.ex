@@ -11,7 +11,28 @@ defmodule EvoDashWeb.ReviewLive.Page do
   """
   use EvoDashWeb, :html
 
+  alias EvoDashWeb.RemoteGateComponents
+
   def render(assigns) do
+    remote_gate? = RemoteGateComponents.gate_active?(assigns)
+    remote_requested? = assigns[:workbench_remote_requested] == true
+    unresolved_remote? = remote_requested? and is_nil(assigns.current_node_id)
+    local_fallback? = remote_requested? and assigns.current_node == node()
+
+    # Keep same-node refreshes stable, but never send the previous node's path
+    # or a pending target's local fallback data to the workbench.
+    scope_ready? =
+      assigns.page_ready? and not remote_gate? and not local_fallback? and
+        assigns[:workbench_loaded_node] == assigns.current_node
+
+    assigns =
+      assign(assigns,
+        remote_gate?: remote_gate?,
+        shell_project: if(scope_ready?, do: assigns.workbench_project),
+        shell_title: if(scope_ready?, do: assigns[:objective]),
+        shell_task: unless(unresolved_remote?, do: assigns.task_id)
+      )
+
     ~H"""
     <EvoDashWeb.Layouts.app
       flash={@flash}
@@ -20,12 +41,10 @@ defmodule EvoDashWeb.ReviewLive.Page do
       current_node_id={@current_node_id}
       remote_targets={assigns[:remote_targets] || []}
       connection_statuses={assigns[:connection_statuses] || %{}}
-      workbench_project={@workbench_project}
-      workbench_git_project={
-        if @current_node_id || !assigns[:workbench_remote_requested], do: @workbench_project
-      }
-      workbench_task={@task_id}
-      workbench_title={assigns[:objective]}
+      workbench_project={@shell_project}
+      workbench_git_project={@shell_project}
+      workbench_task={@shell_task}
+      workbench_title={@shell_title}
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
       session_list={assigns[:session_list] || []}
@@ -38,8 +57,8 @@ defmodule EvoDashWeb.ReviewLive.Page do
       guide={@guide}
       accent_color={assigns[:accent_color] || "blue"}
     >
-      <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
-        {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
+      <%= if @remote_gate? do %>
+        {RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
         <%= if @error do %>
           <div
