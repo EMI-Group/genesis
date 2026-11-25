@@ -588,6 +588,7 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
 
           <form
             :if={@member_options != []}
+            id="overview-member-form"
             phx-change="overview_select_member"
             class="flex flex-wrap items-center gap-2"
           >

@@ -3036,7 +3036,10 @@ defmodule EvoDashWeb.ProjectsLive do
   # path (the project path, or a workspace's chosen/first-resolvable member).
   # Built through `WorkbenchComponent.navigation_path/3` so a remote context
   # carries `&node=` (never `Helpers.with_node_param/2`, which appends `?` and
-  # would corrupt the existing query).
+  # would corrupt the existing query). `wb_task=1` is load-bearing: it is what
+  # `handle_params` reads back as `compose_task?`, so a browser reload or a deep
+  # link of this URL lands in the composer instead of falling back to the
+  # overview.
   defp overview_compose_url(socket, path) do
     EvoDashWeb.WorkbenchComponent.navigation_path(
       "/projects",
