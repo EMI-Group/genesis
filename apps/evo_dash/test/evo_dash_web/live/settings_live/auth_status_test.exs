@@ -23,6 +23,14 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   import Phoenix.LiveViewTest
 
   alias EvoDashWeb.SettingsLive.AuthStatus
+  # EVERY wait on ASYNC settings work (the mount load chain, an owned config-save
+  # receipt, a save the page REFUSED) goes through the ONE shared,
+  # evidence-based await in `test/support/settings_await.ex`. It reads the page's
+  # own authoritative markers instead of sampling `config_saving` (false on every
+  # refusal, so such a wait returned instantly) or `EvoDash.TaskSupervisor` pids
+  # (empty in the gap between two chained mount loads), and it FAILS with the
+  # reason the page reported when a save is refused rather than passing quietly.
+  alias EvoDash.Test.SettingsAwait
 
   # Seeded profile ids. `profile-1` is anthropic WITH `auth_mode = "oauth"`,
   # `profile-2` is the OAuth-only `openai_codex`, `profile-3` is a plain
@@ -52,17 +60,13 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   # create it on ANY host and always reports this verdict (never "Login
   # detected"). The baseline wait below keys on it.
   @baseline_verdict "No subscription login found"
-  # Load-tolerant budget for every wait on ASYNC settings work (the mount load
-  # chain and an owned config-save receipt). Both are supervised children whose
-  # completion depends on the shared host's scheduling, so the budget is sized
-  # for a HEAVILY LOADED machine (test/CONTEXT.md documents 10-30x timing
-  # swings) instead of the ~ms-scale happy path. The waits stay bounded and
-  # still fail loudly — only the deadline moved.
+  # Load-tolerant budget for the ONE wait here that is NOT a settled-state await:
+  # the row-scoped poll for the mount-time credential verdict to REACH THE
+  # RENDER (`await_baseline_verdict/2`). It is sized for a HEAVILY LOADED machine
+  # (test/CONTEXT.md documents 10-30x timing swings) instead of the ~ms-scale
+  # happy path, stays bounded and still fails loudly — only the deadline moved.
+  # Every mount/save wait takes its budget from `SettingsAwait` instead.
   @async_wait_budget_ms 30_000
-  # `:sys.get_state/2` timeout for `assigns/1`: the LiveView can be starved for
-  # seconds on a loaded host, and `:sys.get_state/1`'s 5 s default would exit
-  # the test instead of reading the state.
-  @assigns_timeout_ms 30_000
 
   setup do
     # Per-process config isolation through the `:config_dir_fun` seam (installed
@@ -562,8 +566,12 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
                ~s(select[name="models[0][default_reasoning_effort]"] option[selected][value="high"])
              )
 
-      view |> form("#provider-profile-detail-rendered-account", cleared) |> render_submit()
-      assert await_profile_save(view) =~ "Provider profile saved."
+      assert await_save(view, "Provider profile saved.", fn ->
+               view
+               |> form("#provider-profile-detail-rendered-account", cleared)
+               |> render_submit()
+             end) =~ "Provider profile saved."
+
       assert assigns(view).flash == %{"info" => "Provider profile saved."}
       [saved] = persisted_models()
       assert saved["models"] == [%{"model" => "fixture-model", "reasoning_efforts" => []}]
@@ -621,7 +629,9 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
       before_disk = File.read!(EvoGit.Config.config_path())
       view |> form("#provider-profile-detail-rendered-account") |> render_submit()
-      refute await_profile_save(view) =~ "Provider profile saved."
+
+      refute await_save_refusal(view, "default_model must be one of") =~
+               "Provider profile saved."
 
       # Helper-only profiles are faithfully editable, but core validation still
       # requires a nested inventory containing the selected default.
@@ -647,8 +657,10 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       })
       |> render_change(%{"_target" => ["models", "0", "model"]})
 
-      view |> form("#provider-profile-detail-rendered-account") |> render_submit()
-      assert await_profile_save(view) =~ "Provider profile saved."
+      assert await_save(view, "Provider profile saved.", fn ->
+               view |> form("#provider-profile-detail-rendered-account") |> render_submit()
+             end) =~ "Provider profile saved."
+
       assert assigns(view).flash["info"] == "Provider profile saved."
       [saved] = persisted_models()
       assert saved["default_model"] == "renamed-model"
@@ -680,12 +692,14 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       |> form("#provider-profile-detail-rendered-account", %{default_model_name: " "})
       |> render_change(%{"_target" => ["default_model_name"]})
 
+      # A blank helper name is refused by the EDITOR, not by the core and not by
+      # any owned write: the draft keeps its blank value and the field error
+      # renders in the editor's own alert block. That block is the surface this
+      # test asserts, so the await is on IT (nothing async is left to wait for).
       view |> form("#provider-profile-detail-rendered-account") |> render_submit()
-      html = await_profile_save(view)
 
-      # A blank helper name is refused by the EDITOR, not by the core: the draft
-      # keeps its blank value and the field error renders in the editor's own
-      # alert block.
+      html = SettingsAwait.await_rendered(view, "#provider-profile-errors[role=alert]")
+
       assert has_element?(
                view,
                "#provider-profile-errors[role=alert]",
@@ -717,7 +731,9 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
       before_disk = File.read!(EvoGit.Config.config_path())
       view |> form("#provider-profile-detail-rendered-account") |> render_submit()
-      refute await_profile_save(view) =~ "Provider profile saved."
+
+      refute await_save_refusal(view, "default_model must be one of") =~
+               "Provider profile saved."
 
       assert assigns(view).flash["error"] =~
                ~s(default_model must be one of [], got \\"corrected-model\\")
@@ -741,8 +757,10 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       })
       |> render_change(%{"_target" => ["models", "0", "model"]})
 
-      view |> form("#provider-profile-detail-rendered-account") |> render_submit()
-      assert await_profile_save(view) =~ "Provider profile saved."
+      assert await_save(view, "Provider profile saved.", fn ->
+               view |> form("#provider-profile-detail-rendered-account") |> render_submit()
+             end) =~ "Provider profile saved."
+
       assert assigns(view).flash["info"] == "Provider profile saved."
       [saved] = persisted_models()
       assert saved["default_model"] == "corrected-model"
@@ -783,11 +801,12 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
       before = persisted_models()
       # An unrelated edit must serialize even the unopened Advanced control.
-      view
-      |> form("#provider-profile-detail-rendered-account", %{name: "Renamed account"})
-      |> render_submit()
+      assert await_save(view, "Provider profile saved.", fn ->
+               view
+               |> form("#provider-profile-detail-rendered-account", %{name: "Renamed account"})
+               |> render_submit()
+             end) =~ "Provider profile saved."
 
-      assert await_profile_save(view) =~ "Provider profile saved."
       [preserved] = persisted_models()
       assert preserved == Map.put(hd(before), "name", "Renamed account")
 
@@ -798,8 +817,11 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       |> render_change(%{"_target" => ["api_key_env_var"]})
 
       assert persisted_models() == [preserved]
-      view |> form("#provider-profile-detail-rendered-account") |> render_submit()
-      assert await_profile_save(view) =~ "Provider profile saved."
+
+      assert await_save(view, "Provider profile saved.", fn ->
+               view |> form("#provider-profile-detail-rendered-account") |> render_submit()
+             end) =~ "Provider profile saved."
+
       [edited] = persisted_models()
       assert edited == Map.put(preserved, "api_key_env_var", "NEW_ACCOUNT_KEY")
       refute Map.has_key?(edited, "api_key_env")
@@ -812,8 +834,10 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       |> form("#provider-profile-detail-rendered-account", %{api_key_env_var: ""})
       |> render_change(%{"_target" => ["api_key_env_var"]})
 
-      restored |> form("#provider-profile-detail-rendered-account") |> render_submit()
-      assert await_profile_save(restored) =~ "Provider profile saved."
+      assert await_save(restored, "Provider profile saved.", fn ->
+               restored |> form("#provider-profile-detail-rendered-account") |> render_submit()
+             end) =~ "Provider profile saved."
+
       assert persisted_models() == [Map.delete(edited, "api_key_env_var")]
 
       {:ok, cleared, _html} = mount_settings(conn, ~p"/settings")
@@ -836,13 +860,15 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       assert draft["default_model"] == "claude-opus-5-5"
       assert draft["auth_mode"] == "oauth"
 
-      render_hook(view, "save_model_profile", %{
-        "profile_id" => @oauth_profile,
-        "profile_id_new" => "renamed",
-        "name" => "Edited subscription"
-      })
+      html =
+        await_save(view, "Provider profile saved.", fn ->
+          render_hook(view, "save_model_profile", %{
+            "profile_id" => @oauth_profile,
+            "profile_id_new" => "renamed",
+            "name" => "Edited subscription"
+          })
+        end)
 
-      html = await_profile_save(view)
       assert assigns(view).flash == %{"info" => "Provider profile saved."}
       assert html =~ "Provider profile saved."
       assert assigns(view).editing_profile_id == nil
@@ -982,8 +1008,10 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       render_hook(view, "provider_wizard_change", %{"model" => "gpt-5.6-terra"})
 
       advance_wizard_to_save(view)
-      render_hook(view, "provider_wizard_save", %{})
-      await_profile_save(view)
+
+      await_save(view, "Provider account saved.", fn ->
+        render_hook(view, "provider_wizard_save", %{})
+      end)
 
       assert [profile] = persisted_models()
       assert profile["provider"] == "openai_codex"
@@ -1093,82 +1121,56 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   # Helpers
   # ───────────────────────────────────────────────────────────────────────────
 
-  # Mount funnel: every `/settings` mount kicks off async loads on
-  # `EvoDash.TaskSupervisor` (the node-data read, and — spawned BY that load's
-  # apply — the real `AuthStatus` load). A single wait round can therefore leave
-  # the auth load in flight, and a result landing after the test's own injected
-  # status would overwrite it. Wait + drain until a round finds no task.
+  # Mount funnel: the ONE shared settled-state await (`SettingsAwait`).
+  #
+  # A `/settings` mount's load chain is a SEQUENCE (node-data read → apply →
+  # the real `AuthStatus` load that apply spawns), so a round of pid sampling on
+  # `EvoDash.TaskSupervisor` can find no child in the GAP between one task
+  # exiting and the next being spawned and report "settled" on a page that is
+  # still loading. `await_settled/1` reads the page's own evidence instead: no
+  # owned write, no owned load, and the viewed scope's config snapshot APPLIED
+  # (`config_loaded_scope` matching with `auth_status_seq >= 1`, a counter the
+  # apply — not the mount seed — bumps).
   defp mount_settings(conn, path) do
     {:ok, view, html} = live(conn, path)
-    settle_mount_loads(view)
+    SettingsAwait.await_settled(view)
     {:ok, view, html}
   end
 
-  defp settle_mount_loads(view) do
-    settle_mount_loads(view, System.monotonic_time(:millisecond) + @async_wait_budget_ms)
-  end
-
-  defp settle_mount_loads(view, deadline) do
-    # Drain applies BEFORE enumerating: an applied node-data result can spawn
-    # the OAuth load, which must also finish before a test injects a verdict.
-    _ = render(view)
-    pids = mount_async_task_pids(view.pid)
-
-    if pids != [] do
-      Enum.each(pids, fn pid ->
-        ref = Process.monitor(pid)
-        remaining = max(deadline - System.monotonic_time(:millisecond), 0)
-
-        receive do
-          {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
-        after
-          remaining -> flunk("Settings async loader did not settle")
-        end
-      end)
-
-      assert System.monotonic_time(:millisecond) < deadline,
-             "Settings async load chain did not settle"
-
-      settle_mount_loads(view, deadline)
-    end
-  end
-
-  defp mount_async_task_pids(view_pid) do
-    EvoDash.TaskSupervisor
-    |> DynamicSupervisor.which_children()
-    |> Enum.flat_map(fn
-      {_, pid, _, _} when is_pid(pid) ->
-        callers = task_callers(pid)
-        if is_nil(callers) or view_pid in callers, do: [pid], else: []
-
-      _ ->
-        []
-    end)
-  end
-
-  defp task_callers(pid) do
-    case Process.info(pid, :dictionary) do
-      {:dictionary, dict} -> Keyword.get(dict, :"$callers")
-      _ -> []
-    end
-  end
-
-  # In LiveView 1.x the test View struct has no `.assigns` field, so we read
-  # them from the underlying LiveView process socket.
-  defp assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
+  # The ONE page read (a `:sys.get_state/2` round trip) stays shared.
+  defp assigns(view), do: SettingsAwait.assigns(view)
 
   # Delivers one `{:settings_auth_status_loaded, ...}` result for THIS node and
   # the CURRENT seq (both stale guards pass), then drains the mailbox via
   # render — the established direct-send pattern for async-loaded content.
   defp inject_statuses(view, statuses, target_node \\ nil) do
-    # Settle, then READ the assigns: that `:sys.get_state` round-trip drains the
-    # mailbox, which can APPLY a queued node-data result and spawn the real
-    # credential load. Settle AGAIN before capturing the seq, so no in-flight
-    # real result (same seq) can land after — and overwrite — the injected map.
-    settle_mount_loads(view)
-    _ = assigns(view)
-    settle_mount_loads(view)
-    state = assigns(view)
+    # TWO witnesses gate the injection, in this order:
+    #
+    #   1. `await_settled/1` — the mount chain finished: no owned write, no owned
+    #      load, and the viewed scope's config snapshot was APPLIED
+    #      (`config_loaded_scope` matching with `auth_status_seq >= 1`, a counter
+    #      only the apply bumps). The apply is the step that SPAWNS the real
+    #      credential load.
+    #   2. the real credential load's RESULT being applied — the apply only
+    #      starts that fire-and-forget task, so `settled?/1` cannot see it (the
+    #      shared await's documented known limit). Awaiting the assign it fills
+    #      (`:auth_statuses`, seeded `%{}`) is awaiting the very map this
+    #      injection replaces: once the real entries for the current seq are in,
+    #      no other result for that seq is in flight, so the injected map cannot
+    #      be overwritten after the assertions read it.
+    #
+    # The seq is captured after both, through the shared synchronous
+    # `:sys.get_state` read, and every earlier result the page had queued is
+    # applied before it returns.
+    SettingsAwait.await_settled(view)
+
+    SettingsAwait.await_assigns(
+      view,
+      "the mount-time credential-status load's real result to be APPLIED",
+      fn state -> map_size(state[:auth_statuses] || %{}) > 0 end
+    )
+
+    state = SettingsAwait.assigns(view)
 
     send(
       view.pid,
@@ -1210,11 +1212,12 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
     render_hook(view, "provider_wizard_change", %{"model" => params["default_model"]})
     advance_wizard_to_save(view)
-    render_hook(view, "provider_wizard_save", %{})
     # The wizard's own success flash lags its persistence (it lands with the
     # authoritative write receipt), so the created account — not the flash — is
-    # what tells a refusal apart from a save.
-    html = await_profile_save(view)
+    # what tells a refusal apart from a save; the await below settles into either
+    # terminal state and the branch reads what was actually persisted.
+    await_wizard_save(view, fn -> render_hook(view, "provider_wizard_save", %{}) end)
+    html = render(view)
 
     case current_models(view) do
       [] ->
@@ -1228,15 +1231,23 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
           render_hook(view, "edit_provider_profile", %{"profile_id" => saved["id"]})
         end
 
-        render_hook(
+        # The expansion is a "the editor is rendered now" claim: await the DETAIL
+        # element itself rather than inferring it from an unrelated assign.
+        # `profile_slug/1` is this suite's one delegate to `Row.slug/1`.
+        SettingsAwait.await_rendered(
           view,
-          "save_provider_profile",
-          params
-          |> Map.take(["auth_mode", "oauth_file"])
-          |> Map.merge(%{"profile_id" => saved["id"]})
+          "#provider-profile-detail-" <> profile_slug(saved["id"])
         )
 
-        await_profile_save(view)
+        await_save(view, "Provider profile saved.", fn ->
+          render_hook(
+            view,
+            "save_provider_profile",
+            params
+            |> Map.take(["auth_mode", "oauth_file"])
+            |> Map.merge(%{"profile_id" => saved["id"]})
+          )
+        end)
     end
   end
 
@@ -1256,28 +1267,56 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     end
   end
 
-  # Save dispatch is not persistence: wait for the owned writer receipt to
-  # clear its marker, then drain the receipt's OAuth refresh before assertions
-  # (and before teardown removes the config directory).
-  defp await_profile_save(view) do
-    deadline = System.monotonic_time(:millisecond) + @async_wait_budget_ms
-    await_profile_save(view, deadline)
-    settle_mount_loads(view)
+  # An event that STARTS a whole-file save, acknowledged only by its RECEIPT:
+  # `SettingsAwait.await_save/3` captures the pre-click baseline, runs the click,
+  # and waits for the receipt's own consequence (a bumped `llm_test_seq`, the
+  # success flash and a settled page) — so two saves with the SAME message stay
+  # distinguishable. It FAILS immediately, naming the page's reason, when the
+  # save is refused instead of timing out on a page that never changed.
+  defp await_save(view, expected_msg, click) when is_function(click, 0),
+    do: SettingsAwait.await_save(view, expected_msg, click)
+
+  # A REFUSED save is terminal too, but `await_save/3` flunks on it by design (a
+  # receipt await must never pass for a refusal). A test that EXPECTS the
+  # refusal therefore awaits the page's own refusal evidence — the error flash
+  # the failed save carries — and keeps its exact assertion on the wording.
+  defp await_save_refusal(view, fragment) do
+    SettingsAwait.await_assigns(
+      view,
+      "the configuration save to be REFUSED (an error flash naming #{inspect(fragment)})",
+      fn state ->
+        case Phoenix.Flash.get(state[:flash] || %{}, "error") do
+          error when is_binary(error) -> String.contains?(error, fragment)
+          _other -> false
+        end
+      end
+    )
+
     render(view)
   end
 
-  defp await_profile_save(view, deadline) do
-    state = assigns(view)
+  # The wizard's save event has TWO authoritative outcomes and the page applies
+  # either one itself: it CLOSES the wizard and starts the write (whose success
+  # receipt then flashes `"Provider account saved."`), or it REFUSES the draft
+  # (`auth_mode` / model validation) with an error flash and keeps the wizard
+  # open. Both are terminal, so the await accepts either — with a PRE-CLICK error
+  # baseline, so a leftover flash can never stand in for a new refusal — and the
+  # caller branches on what was actually persisted.
+  defp await_wizard_save(view, click) when is_function(click, 0) do
+    baseline_error = Phoenix.Flash.get(SettingsAwait.assigns(view)[:flash] || %{}, "error")
+    _html = click.()
 
-    if state.config_saving or state.config_save_request != nil do
-      assert System.monotonic_time(:millisecond) < deadline,
-             "provider save did not receive its authoritative completion"
+    SettingsAwait.await_assigns(
+      view,
+      ~s(the wizard save to settle into "Provider account saved." or a refusal),
+      fn state ->
+        flash = state[:flash] || %{}
 
-      receive do
-      after
-        2 -> await_profile_save(view, deadline)
+        SettingsAwait.settled?(state) and
+          (Phoenix.Flash.get(flash, "info") == "Provider account saved." or
+             Phoenix.Flash.get(flash, "error") != baseline_error)
       end
-    end
+    )
   end
 
   defp wizard_provider_step(view, provider_id) do
@@ -1298,16 +1337,16 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   #
   # `SettingsLive` loads the statuses asynchronously: `apply_node_data_results/3`
   # spawns `AuthStatus.start/2` and the result arrives later as
-  # `{:settings_auth_status_loaded, node, seq, statuses}`. The mount funnel above
-  # waits for supervised children, but the credential load is spawned BY the
-  # node-data apply — and that task SENDS its result then exits, so a funnel round
-  # can drain the mailbox, find no child, and return while the apply is still
-  # queued. The page's profile rows then render the neutral "Subscription login"
-  # label with NO verdict line, and a baseline assertion made at that instant
-  # fails (the observed full-suite flake). Waiting on the rendered verdict is
-  # event-driven and bounded — never a fixed sleep — and the caller keeps its
-  # exact `=~` assertions (only the deadline moved). Returns the last rendered
-  # html so the caller asserts on it exactly as before.
+  # `{:settings_auth_status_loaded, node, seq, statuses}`. `await_settled/1` in
+  # the mount funnel proves that load was STARTED (the apply bumps
+  # `auth_status_seq`) but not that its result was APPLIED — that is the shared
+  # await's documented known limit, because the load is fire-and-forget. The
+  # page's profile rows then render the neutral "Subscription login" label with
+  # NO verdict line, and a baseline assertion made at that instant fails (the
+  # observed full-suite flake). Waiting on the rendered verdict is event-driven
+  # and bounded — never a fixed sleep — and the caller keeps its exact `=~`
+  # assertions (only the deadline moved). Returns the last rendered html so the
+  # caller asserts on it exactly as before.
   defp await_baseline_verdict(view, profile_id, deadline \\ nil) do
     deadline = deadline || System.monotonic_time(:millisecond) + @async_wait_budget_ms
     html = render(view)

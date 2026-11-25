@@ -22,89 +22,54 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
   import Phoenix.LiveViewTest
   alias EvoDashWeb.SettingsComponents.ProviderProfiles.Row
   alias EvoDash.Test.PersistedConfig
+  alias EvoDash.Test.SettingsAwait
 
-  # Load-tolerant budgets for waits on ASYNC settings work (mount load chain,
-  # owned config-save receipt). That work runs in supervised tasks on a shared
-  # host whose scheduling swings 10-30x (test/CONTEXT.md), so the waits stay
-  # bounded but must not expire spuriously.
-  @async_wait_budget_ms 30_000
-  @assigns_timeout_ms 30_000
-
-  # Local copies of the mount/settle/save helpers: this module must COMPILE and
-  # run on its own (`mix test .../provider_panel_live_test.exs`), and the
-  # shared `EvoDashWeb.SettingsLiveTest.Helpers` module only exists once
-  # `settings_live_test.exs` is loaded, which the loader does not guarantee in
-  # alphabetical order.
+  # EVERY wait on ASYNC settings work (the mount load chain, an owned config-save
+  # receipt) goes through the ONE shared, evidence-based await in
+  # `test/support/settings_await.ex`. It reads the page's own authoritative
+  # markers — never a `config_saving` sample (false on every refusal path, so
+  # such a wait returned INSTANTLY) and never an `EvoDash.TaskSupervisor` pid
+  # drain (empty in the gap between two chained mount loads) — and it FAILS with
+  # the reason the page reported instead of asserting against a page that never
+  # changed.
   defp mount_settings(conn, path) do
     {:ok, view, html} = Phoenix.LiveViewTest.live(conn, path)
-    await_mount_async_loads(view)
+    SettingsAwait.await_settled(view)
     {:ok, view, html}
   end
 
-  defp await_mount_async_loads(view) do
-    view.pid
-    |> mount_async_task_pids()
-    |> Enum.map(&Process.monitor/1)
-    |> Enum.each(fn ref ->
-      receive do
-        {:DOWN, ^ref, :process, _pid, _reason} -> :ok
-      after
-        @async_wait_budget_ms -> :ok
+  # An event that STARTS a whole-file save is acknowledged only by ITS receipt
+  # (the success flash the handler's `success_msg` produces), never by the
+  # dispatch render, which precedes the off-process write.
+  defp save_hook(view, expected_msg, event, params) when is_binary(expected_msg) do
+    SettingsAwait.await_save(view, expected_msg, fn -> render_hook(view, event, params) end)
+  end
+
+  # A rendered CONTROL that starts a save (an account row action, a form submit)
+  # is wrapped the same way.
+  defp save_hook(view, expected_msg, click) when is_function(click, 0),
+    do: SettingsAwait.await_save(view, expected_msg, click)
+
+  # A save the CORE schema REJECTS settles with an error flash and no write, so
+  # it is awaited on THAT flash: a success receipt would flunk on the very
+  # refusal the test is pinning.
+  defp await_refusal(view, expected) do
+    SettingsAwait.await_assigns(
+      view,
+      "the refused save to flash a reason containing #{inspect(expected)}",
+      fn state ->
+        case state[:flash] do
+          %{"error" => error} when is_binary(error) -> error =~ expected
+          _other -> false
+        end
       end
-    end)
+    )
 
-    :ok
-  end
-
-  defp mount_async_task_pids(view_pid) do
-    EvoDash.TaskSupervisor
-    |> DynamicSupervisor.which_children()
-    |> Enum.flat_map(fn
-      {_, pid, _, _} when is_pid(pid) ->
-        if view_pid in task_callers(pid), do: [pid], else: []
-
-      _ ->
-        []
-    end)
-  end
-
-  defp task_callers(pid) do
-    case Process.info(pid, :dictionary) do
-      {:dictionary, dict} -> Keyword.get(dict, :"$callers", [])
-      _ -> []
-    end
-  end
-
-  # Mutations acknowledge dispatch before the off-process write completes:
-  # always assert the authoritative completion, not the dispatch render.
-  defp settings_hook(view, event, params) do
-    Phoenix.LiveViewTest.render_hook(view, event, params)
-    await_config_save(view)
-  end
-
-  defp await_config_save(view) do
-    wait_settings(view, &(not &1[:config_saving]))
     render(view)
   end
 
-  defp wait_settings(view, predicate, deadline \\ nil) do
-    deadline = deadline || System.monotonic_time(:millisecond) + @async_wait_budget_ms
-    current = assigns(view)
-
-    if predicate.(current) do
-      current
-    else
-      assert System.monotonic_time(:millisecond) < deadline,
-             "Settings did not reach the expected authoritative state"
-
-      receive do
-      after
-        2 -> wait_settings(view, predicate, deadline)
-      end
-    end
-  end
-
-  defp assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
+  # The ONE page read (a `:sys.get_state` round trip) stays shared.
+  defp assigns(view), do: SettingsAwait.assigns(view)
 
   setup do
     EvoDash.Test.ConfigDir.isolate!("evogit_settings_provider_panel_test")
@@ -125,8 +90,14 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
   defp detail_form_count(view),
     do: length(Regex.scan(~r/id="provider-profile-detail-/, render(view)))
 
-  defp open_account(view, id),
-    do: settings_hook(view, "edit_provider_profile", %{"profile_id" => id})
+  # Opening an account is a "the editor is rendered now" claim, so it awaits the
+  # DETAIL ELEMENT itself; a wait on an unrelated assign proved nothing about
+  # `editing_profile_id` being applied, so the collapsed ROW could be queried
+  # while the editor the test needs did not exist yet.
+  defp open_account(view, id) do
+    render_hook(view, "edit_provider_profile", %{"profile_id" => id})
+    SettingsAwait.await_rendered(view, detail_id(id))
+  end
 
   defp account_params(id, overrides) do
     Map.merge(
@@ -176,8 +147,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
   # A REAL form submit of the expanded account (the browser's own payload plus
   # the overrides), so the form's id, field names and submit wiring are pinned.
   defp submit_detail_form(view, id, overrides) do
-    view |> form(detail_id(id), overrides) |> render_submit()
-    await_config_save(view)
+    save_hook(view, "Provider profile saved.", fn ->
+      view |> form(detail_id(id), overrides) |> render_submit()
+    end)
   end
 
   describe "account list & expanded editor" do
@@ -197,7 +169,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       refute assigns(view).editing_profile_id == :new
       assert assigns(view).file_config == before
       assert PersistedConfig.user_config() == disk
-      settings_hook(view, "provider_wizard_cancel", %{})
+      render_hook(view, "provider_wizard_cancel", %{})
       refute has_element?(view, "#provider-wizard")
       assert detail_form_count(view) == 0
       assert assigns(view).file_config == before
@@ -238,7 +210,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       # Optional settings live in the CLOSED Advanced disclosure.
       assert has_element?(view, "details#provider-profile-advanced:not([open])")
       assert has_element?(view, ~s(input[name="concurrency"][value="3"]))
-      settings_hook(view, "cancel_edit_provider_profile", %{})
+      render_hook(view, "cancel_edit_provider_profile", %{})
       assert assigns(view).editing_profile_id == nil
       assert assigns(view).profile_form_draft == nil
       assert detail_form_count(view) == 0
@@ -308,8 +280,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       open_account(view, "second")
 
-      settings_hook(
+      save_hook(
         view,
+        "Provider profile saved.",
         "save_provider_profile",
         account_params("second", %{
           "profile_id_new" => "renamed",
@@ -325,20 +298,25 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       assert hd(stored_providers() |> Enum.at(1) |> Map.get("models"))["model"] ==
                "claude-sonnet-5-5"
 
-      view
-      |> element(
-        ~s(button[phx-click="set_default_provider_profile"][phx-value-profile_id="first"])
-      )
-      |> render_click()
+      save_hook(view, "Default provider profile saved.", fn ->
+        view
+        |> element(
+          ~s(button[phx-click="set_default_provider_profile"][phx-value-profile_id="first"])
+        )
+        |> render_click()
+      end)
 
-      await_config_save(view)
       assert PersistedConfig.user_config()["llm"]["default_provider_profile"] == "first"
 
-      view
-      |> element(~s(button[phx-click="delete_provider_profile"][phx-value-profile_id="renamed"]))
-      |> render_click()
+      html =
+        save_hook(view, "Provider profile deleted.", fn ->
+          view
+          |> element(
+            ~s(button[phx-click="delete_provider_profile"][phx-value-profile_id="renamed"])
+          )
+          |> render_click()
+        end)
 
-      html = await_config_save(view)
       assert html =~ "Provider profile deleted."
       assert Enum.map(stored_providers(), & &1["id"]) == ["first"]
       assert PersistedConfig.user_config()["llm"]["default_provider_profile"] == "first"
@@ -351,7 +329,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       open_account(view, "default")
 
-      settings_hook(
+      render_hook(
         view,
         "provider_profile_form_change",
         account_params("default", %{
@@ -371,7 +349,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       draft = assigns(view).profile_form_draft
       # Out-of-range / non-integer indexes are inert (the draft is unchanged).
       for index <- ["-1", "garbage", "999"] do
-        settings_hook(view, "remove_provider_model", %{"index" => index})
+        render_hook(view, "remove_provider_model", %{"index" => index})
         assert assigns(view).profile_form_draft == draft
       end
 
@@ -399,7 +377,10 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
         })
         |> Map.delete("models")
 
-      html = settings_hook(view, "save_provider_profile", emptied_input)
+      # The core's schema REJECTS the empty inventory, so this save settles with
+      # an error flash (and no write) rather than a success receipt.
+      render_hook(view, "save_provider_profile", emptied_input)
+      html = await_refusal(view, "default_model must be one of []")
       refute html =~ "Provider profile saved."
 
       assert assigns(view).flash["error"] =~
@@ -411,12 +392,13 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       assert assigns(view).file_config == before_config
       assert PersistedConfig.user_config() == before_disk
       # Correction: add the row back and save.
-      settings_hook(view, "add_provider_model", %{})
+      render_hook(view, "add_provider_model", %{})
       assert has_element?(view, ~s(input[name="models[0][model]"][value=""]))
 
       html =
-        settings_hook(
+        save_hook(
           view,
+          "Provider profile saved.",
           "save_provider_profile",
           Map.put(emptied_input, "models", %{"0" => %{"model" => "example"}})
         )
@@ -452,9 +434,13 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
           }
         })
 
-      settings_hook(view, "provider_profile_form_change", input)
-      view |> form(detail_id("default"), input) |> render_submit()
-      html = await_config_save(view)
+      render_hook(view, "provider_profile_form_change", input)
+
+      html =
+        save_hook(view, "Provider profile saved.", fn ->
+          view |> form(detail_id("default"), input) |> render_submit()
+        end)
+
       assert html =~ "Provider profile saved."
       [saved] = stored_providers()
       assert saved["id"] == "new"
@@ -467,9 +453,11 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
                %{"model" => "second-model", "temperature" => 0.0, "max_tokens" => 2048}
              ]
 
-      # A page reload reads DISK, not the editor's candidate.
+      # A page reload reads DISK, not the editor's candidate. A same-scope patch
+      # carries no in-flight marker (`SettingsAwait`'s documented known limit),
+      # so the settle below is the honest bound and the assertion is unchanged.
       render_patch(view, ~p"/settings?category=llm")
-      await_mount_async_loads(view)
+      SettingsAwait.await_settled(view)
       assert current_providers(view) == [saved]
       open_account(view, "new")
       assert assigns(view).editing_profile_id == "new"
@@ -497,7 +485,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       open_account(view, "first")
 
-      settings_hook(
+      render_hook(
         view,
         "provider_profile_form_change",
         account_params("first", %{"name" => "Unsaved"})
@@ -506,7 +494,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       open_account(view, "second")
       assert assigns(view).profile_form_draft["id"] == "second"
       refute assigns(view).profile_form_draft["name"] == "Unsaved"
-      settings_hook(view, "cancel_edit_provider_profile", %{})
+      render_hook(view, "cancel_edit_provider_profile", %{})
       assert assigns(view).editing_profile_id == nil
       assert assigns(view).profile_form_draft == nil
       assert assigns(view).profile_advanced_open == nil
@@ -521,8 +509,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       open_account(view, "default")
 
       html =
-        settings_hook(
+        save_hook(
           view,
+          "Provider profile saved.",
           "save_provider_profile",
           account_params("default", %{
             "provider" => "anthropic",
@@ -549,8 +538,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       open_account(view, "default")
 
       html =
-        settings_hook(
+        save_hook(
           view,
+          "Provider profile saved.",
           "save_provider_profile",
           account_params("default", %{
             "provider" => "anthropic",
@@ -573,8 +563,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       open_account(view, "default")
 
       html =
-        settings_hook(
+        save_hook(
           view,
+          "Provider profile saved.",
           "save_provider_profile",
           account_params("default", %{
             "provider" => "anthropic",
@@ -605,8 +596,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       open_account(view, "default")
 
       html =
-        settings_hook(
+        save_hook(
           view,
+          "Provider profile saved.",
           "save_provider_profile",
           account_params("default", %{
             "provider" => "anthropic",
@@ -627,8 +619,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       open_account(view, "default")
 
       html =
-        settings_hook(
+        save_hook(
           view,
+          "Provider profile saved.",
           "save_provider_profile",
           account_params("default", %{
             "provider" => "anthropic",
@@ -680,7 +673,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
 
       # The change event only snapshots the client-controlled draft; the SAVE
       # path is what parses the holiday calendar.
-      settings_hook(view, "provider_profile_form_change", %{
+      render_hook(view, "provider_profile_form_change", %{
         "profile_id" => "default",
         "profile_id_new" => "default",
         "provider" => "anthropic",
@@ -693,19 +686,20 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       # A calendar the <select> never offers must surface a translated field
       # error, never a FunctionClauseError from the reason table. The event is
       # posted directly because the rendered <select> refuses an invalid value —
-      # exactly the tampering this test covers.
-      html =
-        settings_hook(
-          view,
-          "save_provider_profile",
-          account_params("default", %{
-            "provider" => "anthropic",
-            "default_model" => "claude-sonnet-5-5",
-            "models" => [%{"model" => "claude-sonnet-5-5"}],
-            "off_peak_holidays" => "XX"
-          })
-        )
+      # exactly the tampering this test covers. The EDITOR's own parser rejects
+      # it, so the refusal is synchronous and flashes its field error.
+      render_hook(
+        view,
+        "save_provider_profile",
+        account_params("default", %{
+          "provider" => "anthropic",
+          "default_model" => "claude-sonnet-5-5",
+          "models" => [%{"model" => "claude-sonnet-5-5"}],
+          "off_peak_holidays" => "XX"
+        })
+      )
 
+      html = await_refusal(view, "Holiday calendar must be one of the offered calendars")
       assert html =~ "provider-profile-errors"
       assert html =~ "off_peak_holidays"
       assert html =~ "Holiday calendar must be one of the offered calendars"
@@ -715,8 +709,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
 
       # The happy path stays: a blank selection saves and OMITS the key.
       html =
-        settings_hook(
+        save_hook(
           view,
+          "Provider profile saved.",
           "save_provider_profile",
           account_params("default", %{
             "provider" => "anthropic",
