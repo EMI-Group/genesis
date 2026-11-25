@@ -13,7 +13,9 @@ defmodule EvoDashWeb.SettingsLive.PageState do
   It also hosts the pure, node-aware read helpers the page and its extracted
   event modules share: `safe_config_status/0`, `safe_list_targets/0`,
   `safe_connection_statuses/0`, `pending_remote_target?/1`,
-  `test_config_scope/1`, the `?category=` push_patch marker helpers
+  `test_config_scope/1`, `target_node/1` — the last two delegating to the ONE
+  config-scope derivation in `ConfigSave.scope/1`, so a LOCAL context follows
+  `node()` at call time — the `?category=` push_patch marker helpers
   (`nav_node/1`, `consume_category_patch/2`), plus the render-only
   `sandbox_backend/1`, `custom_agent_model_choices/1` and the legacy
   `remote_config_to_file_config/1` adapter.
@@ -241,6 +243,8 @@ defmodule EvoDashWeb.SettingsLive.PageState do
   one happened, then records the observed scope/phase.
   """
   def reconcile_config_scope(socket) do
+    # A LOCAL context's scope follows `node()`, so a runtime distribution
+    # start/stop changes it here and resets the page's old-scope state.
     scope = ConfigSave.scope(socket)
 
     phase =
@@ -291,16 +295,26 @@ defmodule EvoDashWeb.SettingsLive.PageState do
   describe the wrong node.
   """
   def pending_remote_target?(socket) do
+    # A LOCAL context (`current_node_id == nil`) is never pending, so a stale
+    # recorded local atom can never gate a load through this helper.
     not is_nil(socket.assigns[:current_node_id]) and
       (socket.assigns[:current_node] || node()) == node() and
       not match?(%{phase: :connected}, socket.assigns[:remote_status])
   end
 
   @doc """
-  The `{target_id, target_node}` scope a test/config read describes.
+  The `{target_id, target_node}` scope a test/config read describes — the save
+  scope, from the ONE derivation in `ConfigSave.scope/1`.
   """
-  def test_config_scope(socket) do
-    {socket.assigns[:current_node_id], socket.assigns[:current_node] || node()}
+  def test_config_scope(socket), do: ConfigSave.scope(socket)
+
+  @doc """
+  The node this page's reads and writes are scoped to RIGHT NOW (a LOCAL
+  context follows `node()`).
+  """
+  def target_node(socket) do
+    {_target_id, target_node} = ConfigSave.scope(socket)
+    target_node
   end
 
   @doc """

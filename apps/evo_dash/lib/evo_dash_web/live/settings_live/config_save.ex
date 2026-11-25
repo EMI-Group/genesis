@@ -39,6 +39,22 @@ defmodule EvoDashWeb.SettingsLive.ConfigSave do
   status is pending and must never fall through to a local write. Connection
   status must be refreshed with target changes, not carried from an old target.
 
+  A LOCAL context (`current_node_id == nil`) derives its target node from
+  `node()` at call time, never from the mount-time `:current_node` capture, so a
+  runtime distribution start/stop cannot route a local write across the
+  distribution boundary. A stale local identity — `current_node_id == nil` with a
+  recorded `:current_node` that no longer names this BEAM — is refused as
+  `:node_identity_changed` with ONE warning naming both identities. Refusing
+  (rather than silently re-resolving) is deliberate: the local config file is
+  the same disk either way, so the refusal is not about data loss — every
+  scope-keyed thing the page owns (its mount-time config snapshot, the
+  `config_loaded_scope` marker, pending loads, editor drafts) was minted against
+  a node identity that no longer names this BEAM, so `complete/2` must settle
+  such a receipt `{:stale, _}` and the page could never acknowledge or apply the
+  write; a typed refusal naming both identities (with the page re-scoping and
+  reloading) is truthful, whereas a silent re-resolve would produce an
+  unacknowledgeable write.
+
   Call `invalidate/1` BEFORE replacing a node/target's page state. It detaches
   presentation ownership but retains the live worker guard, so a scope round
   trip cannot revive the old completion or start a concurrent write. A stale
@@ -65,8 +81,21 @@ defmodule EvoDashWeb.SettingsLive.ConfigSave do
   alias EvoDashWeb.SettingsLive.{ConfigIO, ModelProfileEvents}
 
   @doc "The full target identity, including connection aliases of a BEAM node."
-  def scope(socket),
-    do: {socket.assigns[:current_node_id], socket.assigns[:current_node] || node()}
+  def scope(socket) do
+    case socket.assigns[:current_node_id] do
+      # A LOCAL context is whoever serves this page RIGHT NOW: the mount-time
+      # capture goes stale when the VM's distribution identity starts/stops.
+      nil -> {nil, node()}
+      target_id -> {target_id, socket.assigns[:current_node] || node()}
+    end
+  end
+
+  @doc "True when a LOCAL context's recorded node no longer names this BEAM."
+  def node_identity_changed?(socket) do
+    is_nil(socket.assigns[:current_node_id]) and
+      not is_nil(socket.assigns[:current_node]) and
+      socket.assigns[:current_node] != node()
+  end
 
   @doc "True while this socket owns an unsettled request or an invalidated live worker."
   def busy?(socket) do
@@ -95,6 +124,17 @@ defmodule EvoDashWeb.SettingsLive.ConfigSave do
 
       pending_scope?(socket) ->
         reject(socket, :remote_not_connected, editor_token)
+
+      node_identity_changed?(socket) ->
+        # One line, once per refused attempt: the page must be re-scoped and
+        # reloaded before a retry can describe (and acknowledge) the live node.
+        Logger.warning(
+          "Settings save refused: this page was mounted as local node " <>
+            "#{inspect(socket.assigns[:current_node])} but the VM is now " <>
+            "#{inspect(node())} (config scope is stale)."
+        )
+
+        reject(socket, :node_identity_changed, editor_token)
 
       true ->
         request = %{
@@ -131,6 +171,9 @@ defmodule EvoDashWeb.SettingsLive.ConfigSave do
   def complete(socket, {{:settings_config_saved, token, saved_scope}, result}) do
     case socket.assigns[:config_save_request] do
       %{token: ^token, scope: ^saved_scope} = request ->
+        # `saved_scope` is the request's capture of the local identity at start
+        # time, so a node-identity flip mid-flight fails this comparison and the
+        # receipt settles `{:stale, socket}` — never a bogus failure.
         if scope(socket) == saved_scope do
           settle(socket, request, result)
         else

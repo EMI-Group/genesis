@@ -57,7 +57,9 @@ defmodule EvoDashWeb.SettingsLive.AuthStatus do
   @spec start(Phoenix.LiveView.Socket.t(), [map()]) :: :ok
   def start(socket, profiles) do
     parent = self()
-    target_node = Map.get(socket.assigns, :current_node) || node()
+    # A LOCAL context must follow `node()` so the credential reads stay local
+    # (never an `:erpc` to a node identity this page merely recorded at mount).
+    target_node = EvoDashWeb.SettingsLive.PageState.target_node(socket)
     seq = Map.get(socket.assigns, :auth_status_seq, 0)
 
     _ =

@@ -255,7 +255,9 @@ defmodule EvoDashWeb.SettingsLive.CategoryEvents do
       {:noreply, put_flash(socket, :error, gettext("API key cannot be empty."))}
     else
       socket = LlmTestEvents.invalidate_llm_test(socket)
-      node = socket.assigns.current_node
+      # The derived node, so a flipped LOCAL page writes its own credentials
+      # locally instead of `:erpc`-ing to the identity it recorded at mount.
+      node = PageState.target_node(socket)
       credentials = %{credential_key => String.trim(api_key)}
 
       if node == node() do
@@ -285,20 +287,33 @@ defmodule EvoDashWeb.SettingsLive.CategoryEvents do
   def persist_file_config(file_config, socket, success_msg, opts) when is_list(opts) do
     # Never construct a new target's whole-file write from another scope's
     # snapshot. ConfigSave additionally guards pending targets and live writers.
-    if socket.assigns[:config_loaded_scope] == ConfigSave.scope(socket) do
-      case ConfigSave.start(socket, file_config, success_msg, opts) do
-        {:started, socket} ->
-          {:noreply, PageState.invalidate_config_load(socket)}
+    cond do
+      ConfigSave.node_identity_changed?(socket) ->
+        # The page's local identity moved under it: never build a whole-file write
+        # from the old scope's snapshot. Re-scope and reload so a retry runs against
+        # the live identity.
+        {:noreply,
+         socket
+         |> ModelProfileEvents.persistence_failed(Keyword.get(opts, :editor_token))
+         |> PageState.reconcile_config_scope()
+         |> PageState.start_node_data_load(Atom.to_string(socket.assigns.active_category))
+         |> save_failed_flash(:node_identity_changed)}
 
-        {:rejected, reason, socket} ->
-          {:noreply, save_failed_flash(socket, reason)}
+      socket.assigns[:config_loaded_scope] == ConfigSave.scope(socket) ->
+        case ConfigSave.start(socket, file_config, success_msg, opts) do
+          {:started, socket} ->
+            {:noreply, PageState.invalidate_config_load(socket)}
 
-        {:failed, reason, socket} ->
-          {:noreply, save_failed_flash(socket, reason)}
-      end
-    else
-      socket = ModelProfileEvents.persistence_failed(socket, Keyword.get(opts, :editor_token))
-      {:noreply, save_failed_flash(socket, :configuration_not_loaded)}
+          {:rejected, reason, socket} ->
+            {:noreply, save_failed_flash(socket, reason)}
+
+          {:failed, reason, socket} ->
+            {:noreply, save_failed_flash(socket, reason)}
+        end
+
+      true ->
+        socket = ModelProfileEvents.persistence_failed(socket, Keyword.get(opts, :editor_token))
+        {:noreply, save_failed_flash(socket, :configuration_not_loaded)}
     end
   end
 
@@ -471,7 +486,21 @@ defmodule EvoDashWeb.SettingsLive.CategoryEvents do
 
   @doc """
   The failed-config-save flash (shared with the saved-receipt handler).
+
+  `:node_identity_changed` gets its own user-facing line: the page's recorded
+  LOCAL identity no longer names this BEAM, so it was re-scoped and reloaded.
   """
+  def save_failed_flash(socket, :node_identity_changed) do
+    put_flash(
+      socket,
+      :error,
+      gettext(
+        "The dashboard's node identity changed while this page was open, so the page " <>
+          "has been re-scoped for the new identity. Please save again."
+      )
+    )
+  end
+
   def save_failed_flash(socket, reason) do
     put_flash(
       socket,
