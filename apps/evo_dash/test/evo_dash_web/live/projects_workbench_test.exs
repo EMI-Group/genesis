@@ -638,12 +638,18 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
   end
 
   defp assert_history_kind(view, kind) do
-    switch = "#workbench-history .workbench-history-switch[data-history-kind='#{kind}']"
-    assert has_element?(view, "#{switch} button[aria-pressed='#{kind == "task"}']", "Tasks")
+    indicator = Map.fetch!(%{"task" => "tasks", "chat" => "conversations"}, kind)
+    switch = "#workbench-history .workbench-history-switch[data-history-kind='#{indicator}']"
 
     assert has_element?(
              view,
-             "#{switch} button[aria-pressed='#{kind == "chat"}']",
+             "#{switch} button[data-workbench-kind=task][aria-pressed='#{kind == "task"}']",
+             "Tasks"
+           )
+
+    assert has_element?(
+             view,
+             "#{switch} button[data-workbench-kind=chat][aria-pressed='#{kind == "chat"}']",
              "Conversations"
            )
   end

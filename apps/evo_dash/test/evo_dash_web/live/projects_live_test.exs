@@ -1897,7 +1897,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       tmp_dir: tmp_dir
     } do
       {:ok, view, html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: "1"}}")
-      options = "#workbench-task-composer section[aria-labelledby=task-options-title]"
+
+      options =
+        "#workbench-task-composer section#task-options[aria-labelledby=task-options-title]"
+
       settings = "details#workbench-task-settings"
       doc = Floki.parse_document!(html)
 
@@ -1909,10 +1912,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       assert has_element?(view, "#{options} h2#task-options-title", "Task Options")
 
-      assert has_element?(
-               view,
-               "#{options} #task-options select[name=build_system][form=task-form]"
-             )
+      assert has_element?(view, "#{options} select[name=build_system][form=task-form]")
 
       assert has_element?(
                view,
