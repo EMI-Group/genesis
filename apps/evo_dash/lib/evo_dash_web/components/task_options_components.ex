@@ -5,14 +5,18 @@ defmodule EvoDashWeb.TaskOptionsComponents do
 
   def options(assigns) do
     ~H"""
-    <div
+    <section
       id="task-options"
+      aria-labelledby="task-options-title"
       class={[
         "workbench-task-options",
         @class,
         @disabled && "opacity-40 pointer-events-none select-none"
       ]}
     >
+      <h2 id="task-options-title" class="mb-4 text-lg font-semibold">
+        {gettext("Task Options")}
+      </h2>
       <%!-- zh_CN: “Project Settings” 是配置项目级选项的折叠区名称。 --%>
       <p class="workbench-task-options-description text-sm text-base-content/70">
         {gettext(
@@ -124,7 +128,7 @@ defmodule EvoDashWeb.TaskOptionsComponents do
           </div>
         </div>
       </details>
-    </div>
+    </section>
     """
   end
 
