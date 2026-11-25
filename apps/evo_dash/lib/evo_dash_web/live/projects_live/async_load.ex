@@ -79,6 +79,12 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
       current_node_id = socket.assigns[:current_node_id]
       path = socket.assigns[:active_project_path]
 
+      # A remote activation already reads the incoming project's settings. Do
+      # not spend extra RPCs refreshing the outgoing project's settings while
+      # that activation is in flight; keep the original path in the result
+      # guard so a change still retires the entire batch.
+      settings_path = if socket.assigns[:remote_project_loading], do: nil, else: path
+
       seed_terminal_ids? =
         current_node_id == nil and socket.assigns[:notified_task_ids_ready?] != true
 
@@ -103,7 +109,14 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
       # path as production store/RPC failures.
       runner =
         Application.get_env(:evo_dash, :projects_async_load_runner, fn ->
-          default_batch(node, remote?, current_node_id, path, seed_terminal_ids?, auto_activate?)
+          default_batch(
+            node,
+            remote?,
+            current_node_id,
+            settings_path,
+            seed_terminal_ids?,
+            auto_activate?
+          )
         end)
 
       scope = %{seq: seq, node_id: current_node_id, selection: selection_snapshot}
@@ -489,10 +502,9 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
 
       %{
         project_config: project_config,
-        # Captured WITH the config so the page's task-broadcast debounce can
-        # skip re-parsing unchanged settings (local File.stat; a remote path
-        # simply answers nil here and keeps the RPC-loaded config).
-        project_config_mtime: Project.project_config_mtime(path),
+        # Mtime is a local-filesystem freshness gate. The remote path could
+        # also exist on this host, so never stat it here.
+        project_config_mtime: nil,
         worktree_script: worktree_script,
         commands: commands,
         foreign_repos: foreign_repos,

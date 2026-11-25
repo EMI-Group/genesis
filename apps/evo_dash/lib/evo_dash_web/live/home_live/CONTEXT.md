@@ -23,14 +23,14 @@ Each entry names the module's load-bearing API only — the module itself is the
 - `session_actions.ex` → the ONLY module talking to the session RPCs: `url/2`, `parse_session/1`, `session_opts/2`, `start/2`, `send_message/6`, `close/3`, `load_attach/2`, `list/1`, `session_unavailable?/1`.
 - `session_list.ex` → the BODY of the sidebar **Conversations** section (`load/1`, `build_rows/3`, `spawn_load/2`, `applied/4`, `session_list/1`); the layout owns the header.
 - `send_path.ex` → send pipeline + finalize block (`send_draft/3`, `dispatch_send/5`, `apply_send_result/3`, `start_session_chat/4`, `queue_session_message/4`, `restore_send/2`, `finalize_terminal/2`, `finalize_completed/2`, `finalize_failed/2`).
-- `composer.ex` → `composer/1` card (textarea, chips + attach menu, model capsule, Send/Stop), `interrupt_button/1`; `compose_disabled?/1` / `send_blocked?/1` own the disabled states.
+- `composer.ex` → `composer/1` uses the shared `EvoDashWeb.ComposerComponents.composer/1` shell (`kind="assistant"`) once around its textarea, model capsule, Send/Stop, and attachment controls; `interrupt_button/1`, `compose_disabled?/1` and `send_blocked?/1` remain Assistant-owned.
 - `attachments.ex` / `uploads.ex` → staging, caps, `to_message/2`, `describe_error/2`; native browser upload validation/progress/`cancel_all/1`.
 - `transcript.ex` → transcript model, normalization/caps, streaming bubbles (`append_streaming_text/2`, `close_streaming/1`), `tool_entry/4`, `put_reasoning/3`.
 - `delta.ex` → PURE, TOTAL delta reducer (`new/3`, `seed/3`, `meta/0`, `apply_batch/5`).
 - `live_call.ex` → call-id-keyed projection of `:activity` replacements and appended chunks.
 - `watch.ex` → consumer-local subscription + one consumer-monitored serial worker: `ready/5`, `push/4`, `closed/4`, `snapshot_result/3`, `stream_active?/1`, `closed?/1`, `failure/1`, `detach/1`.
 - `chat_state.ex` → persisted per-chat shape (`build/1`, `persist/1,2`, `restore/1`, `draft_key/1`, `signature/1`, `write_state?/3`, `mark_write/2`) over `EvoDash.ChatHistory`.
-- `workspace.ex` / `workspace_component.ex` → selection map, VCT-token draft scope, async loads (`select_mounted/2`, `draft_project/1`, `draft_scope/1`, `apply_result/6`, `normalize/1`, `locked?/1`, `adopt_workbench_scope/1`) + the picker panel.
+- `workspace.ex` / `workspace_component.ex` → selection map, VCT-token draft scope, async loads (`select_mounted/2`, `draft_project/1`, `draft_scope/1`, `apply_result/6`, `normalize/1`, `locked?/1`, `settle_workbench_key/2`) + the picker panel.
 - `messages.ex` / `display_messages.ex` → `message_text/1` (thinking excluded), `to_entries/1`, the ONE `transcript/1` builder; bubble projection (`bubbles/1`, `user_authored?/1`).
 - `agent_stream.ex` → root-agent lookup, `message_count/1` gating, final/failed text extraction, `task_id_from_start/1`.
 - `model_select.ex` / `model_selection.ex` → snapshot loading (`load/1`, `task_opts/4`) + canonical selection state (`selection_scope/1`, `pending_remote?/1`, `assign_model_select/1`).
@@ -93,7 +93,7 @@ Reattach NEVER starts a task on read.
 ## Empty states (inside `#chat-messages`)
 
 An EMPTY transcript renders exactly one of two states inside the scroller; a non-empty one always renders `message_list/1` regardless of status.
-`ChatMessages.empty_state/1` is the greeting (`#assistant-welcome`: brand mark, "Turn ideas into working software") for a live/idle chat; `quick_actions/1` (`#assistant-quick-actions`) renders below the composer while `transcript == [] and chat_status != :ended`.
+`ChatMessages.empty_state/1` is the greeting (`#assistant-welcome`: brand mark, “How can I help?”), with project-aware copy only if the caller has a resolved project; `quick_actions/1` (`#assistant-quick-actions`) offers conversation starters that send their visible text through `send_message`.
 `ChatMessages.session_ended_state/1` (`#chat-session-ended`) is the ended state ("This session has ended.", "Start a new chat to continue.", `phx-click="new_chat"`), replacing the greeting because an ended session cannot send.
 The render wrapper carries `.assistant-column.is-empty` under the same condition (centers the column; layout in `assets/css/assistant.css`).
 
@@ -161,7 +161,7 @@ The attachment pipeline mirrors `ProjectsLive.AttachFile`:
 - pending chips carry a remove action (`chat_attachment_remove`, `phx-value-index`) and pending attachments are cleared exactly on a successful send.
 - attaching requires the LOCAL node (`current_node == node()`); a remote/pending node or a picker error only sets `attach_unavailable` and offers the manual-path form, whose reads run on the LOCAL filesystem (`attachment_pipeline.ex` → `AttachedFile.read/1`).
 
-The attach menu sits OUTSIDE `#chat-form`, and the textarea is NOT `phx-update="ignore"`, so staging a text file simply assigns the draft server-side.
+The attach menu sits OUTSIDE `#chat-form` and its upload and manual path forms are siblings of the chat form inside the shared non-form shell; the textarea is NOT `phx-update="ignore"`, so staging a text file simply assigns the draft server-side.
 `Uploads` owns native browser upload validation, progress and consumption: an empty/whitespace draft with no completed attachment cannot send, uploads in progress block every send event while leaving the draft editable, browser upload works independently of the deployment host, server-path attachment is a separate local-node-only entry, and New chat / session / node switches cancel pending uploads.
 
 ## Caps
@@ -243,7 +243,10 @@ A workspace is a GROUPING point (`vct:///workspaces/<slug>`, no OS path): its se
 Members resolve in stored order inside the same supervised `SafeCall.start/3` load as the list (never in the LiveView, never polled); a selection is LOCKED (`locked?/1`) while `session_attach_pending?` or `chat_status in [:running, :cancelling]`.
 The panel shows both identities of an active workspace selection (workspace name plus the concrete execution project) and lists missing refs; `select_mounted/2` accepts an absolute path or a VCT point (project point → that project, workspace point → the workspace scope) and keeps its "no longer open on the selected node" error.
 Draft and conversation scope identity is the VCT token (`DraftScope.project/1`-or-`DraftScope.workspace/1`, raw absolute path as the legacy fallback), so `workbench_draft_key` is `{node_id, target_node, scope_token, draft_id}`: one repo re-spelled keeps ONE draft while two points over one OS path stay separate.
-`?wb_project=` keeps carrying a PATH and is resolved server-side: when `select_mounted/2` lands a point differing from the key's token, `adopt_workbench_scope/1` re-settles the key to the point-keyed version and adopts the draft or one-shot chat under the legacy path key, deleting that retired spelling; adoption never runs while a turn is streaming or a session owns the chat, and `draft_project/1` returns the EXECUTION path (what workbench.js compares with the active project) while `draft_scope/1` returns the token.
+`?wb_project=<raw absolute OS path or VCT point>&wb_draft=<draft id>[&node=<target>]` opens a scoped draft without starting a session; the first send owns session start.
+The connected page resolves the URL's project off-process against the selected node's current mounts rather than trusting the draft's cached workspace, and never resolves a pending remote target on the local node.
+A raw project path keeps its spelling and can adopt the resolved project's point-keyed draft after a successful load; a workspace point never aliases its first member's path.
+`draft_project/1` reports the execution path (what workbench.js compares with the active project), and `draft_scope/1` reports the storage token.
 `TaskTracking` owns followed task links and action reconciliation, `TaskCard.card/1` renders them, and `TaskPicker` loads searchable paginated summaries on menu open with manual ID entry secondary; node/conversation/sequence guards reject stale responses, pending remote targets never use local data, and linked active/pausing summaries refresh every 3 s and stop at resting/terminal states.
 The shared task catalog is `EvoGit.TaskControl.Tools`; Assistant actions use real structured approvals while MCP keeps its own transport authorization.
 A failed model snapshot stays an error, never a silent Auto; pending remote targets never load local models or launch locally.
@@ -312,5 +315,5 @@ Per-suite coverage (mounted delta/`seq` cases, real-producer suites, approval an
 - Every new user-facing string is `gettext`-wrapped; Chinese comments only for short/ambiguous labels; never run `mix gettext.extract`/`merge`/`translate` during feature work.
 - `?session=` parses with `Integer.parse/1` + a positive guard; no `String.to_atom/1` on client input.
 - Never block the LiveView on a cross-node call; every async load carries a monotonic seq + node stale guard, and assistant messages remain push-only with no history polling.
-- Genesis-source availability does NOT gate chatting or sending: `SourceGate.blocked?/1` has no production caller, `ChatMessages.empty_state/1`'s `source_gate?` attr defaults to `false`, and the gate is local-nodes-only (`@current_node in [nil, node()]`); the wired path is the availability check, `download_source` and the System page card.
+- Genesis-source availability does NOT gate chatting or sending: `SourceGate.blocked?/1` has no production caller, and the gate is local-nodes-only (`@current_node in [nil, node()]`); the wired path is the availability check, `download_source` and the System page card.
 - Preserve interaction markers: `#chat-form`, `#chat-messages`, `#chat-llm-selection`, `#chat-composer-controls`, `#chat-interrupt-button`, `#chat-session-list`, `#chat-session-ended`, `#approval-status-bar`, `#approval-dialog`, `#approval-recovery-error`, `#approval-response-error`, `#approval-request-warning`, `#assistant-notifications`, `#assistant-welcome`, `#assistant-quick-actions`, `#assistant-execution-status`, `#chat-stream-error`; keep the textarea label, Send/Stop, the interrupt label and Enter/Shift+Enter semantics.

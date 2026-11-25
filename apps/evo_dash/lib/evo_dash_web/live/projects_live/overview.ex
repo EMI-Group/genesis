@@ -14,7 +14,9 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
     * `visible?/1` decides whether this surface REPLACES the composer. It is
       false for the remote-connection gate, for an explicit compose request, for
       the idle workbench and when nothing is selected (no project and no
-      resolved workspace) — the page's other render branches own those states.
+      workspace token) — the page's other render branches own those states.
+      A named workspace with unavailable details never falls back to the
+      previous project's display or execution path.
     * `scope/1` is the ONE description of the current selection:
       `%{kind: :project | :workspace, name:, path:, point:, node_label:,
       exec_path:}`. `path` is the selection's own OS path (nil for a
@@ -46,7 +48,7 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
       `{:overview_loaded, seq, node, path}` — the message therefore arrives
       NESTED as `{{:overview_loaded, seq, node, path}, result}` — and bumps the
       monotonic `:overview_load_seq`; a repeat for the same
-      `{node, path}` (already loaded, or in flight) is a no-op.
+      `{target_id, node, path}` (already loaded, or in flight) is a no-op.
     * `overview/1` renders the surface. It takes ONE `page` attribute (the
       LiveView assigns map) and derives everything from it through the helpers
       above — it never relies on implicit assigns of its own.
@@ -66,6 +68,7 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
   alias EvoDash.SafeCall
   alias EvoDashWeb.DraftScope
   alias EvoDashWeb.ProjectsLive.{ProjectFlow, StatePersistence, Workspace}
+  alias EvoDashWeb.WorkbenchComponent
 
   @runner_seam :projects_overview_runner
   @workspace_prefix "vct:///workspaces/"
@@ -82,15 +85,14 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
   @doc """
   True when the overview REPLACES the task composer: no remote-connection gate,
   no explicit compose request (`:compose_task?`), not the idle workbench, and a
-  selection to describe (an active project OR a resolved workspace scope).
+  selection to describe (an active project OR a workspace token).
   """
   @spec visible?(map()) :: boolean()
   def visible?(assigns) when is_map(assigns) do
     not EvoDashWeb.RemoteGateComponents.gate_active?(assigns) and
       not compose_task?(assigns) and
       not idle?(assigns) and
-      (not is_nil(Map.get(assigns, :active_project)) or
-         not is_nil(workspace_scope(assigns)))
+      (not is_nil(workspace_token(assigns)) or not is_nil(Map.get(assigns, :active_project)))
   end
 
   def visible?(_assigns), do: false
@@ -179,9 +181,9 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
   """
   @spec scope(map()) :: map()
   def scope(assigns) when is_map(assigns) do
-    case workspace_scope(assigns) do
-      %{} = view -> workspace_scope_map(assigns, view)
-      _ -> project_scope(assigns)
+    case workspace_token(assigns) do
+      nil -> project_scope(assigns)
+      point -> workspace_scope_map(assigns, point, workspace_scope(assigns))
     end
   end
 
@@ -206,9 +208,8 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
     }
   end
 
-  defp workspace_scope_map(assigns, view) do
-    workspace = Map.get(view, :workspace) || view
-    point = binary(Map.get(workspace, :point)) || workspace_token(assigns)
+  defp workspace_scope_map(assigns, point, view) do
+    workspace = if view, do: Map.get(view, :workspace, %{}), else: %{}
     execution = execution_member(view, Map.get(assigns, :overview_member))
 
     %{
@@ -256,10 +257,8 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
   defp workspace_slug(_point), do: nil
 
   defp node_label(assigns) do
-    case binary(Map.get(assigns, :current_node_name)) do
-      nil -> gettext("Local")
-      name -> name
-    end
+    binary(Map.get(assigns, :current_node_name)) ||
+      binary(Map.get(assigns, :current_node_id)) || gettext("Local")
   end
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -279,7 +278,7 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
       key = binary(Map.get(member, :point)) || path
 
       if is_binary(key) do
-        [%{key: key, label: member_label(member, key, path), path: path}]
+        [%{key: key, label: binary(Map.get(member, :name)) || key, path: path}]
       else
         []
       end
@@ -326,13 +325,6 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
     end
   end
 
-  defp member_label(member, key, path) do
-    case binary(Map.get(member, :name)) do
-      nil -> if is_binary(path), do: key, else: key
-      name -> name
-    end
-  end
-
   # ───────────────────────────────────────────────────────────────────────────
   # Assistant hand-off
   # ───────────────────────────────────────────────────────────────────────────
@@ -343,32 +335,23 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
 
   `wb_project` is the OS path for a project and the WORKSPACE POINT for a
   workspace — the assistant resolves the grouping point itself, so a member path
-  is never silently substituted. Blank parts are dropped, so the URL is only
-  usable when the selection has a path or a point (the caller disables the entry
-  point otherwise).
+  is never silently substituted. A project without an OS path does not fall
+  back to its VCT point. Blank query values are dropped; the overview enables
+  the link only when the selection has an execution path.
   """
   @spec assistant_path(map()) :: String.t()
-  def assistant_path(assigns) when is_map(assigns) do
-    scope = scope(assigns)
-
-    project =
-      case scope.kind do
-        :workspace -> scope.point
-        _ -> scope.exec_path || scope.point
-      end
-
-    %{
-      "wb_project" => project,
-      "wb_draft" => Map.get(assigns, :overview_draft_id),
-      "node" => Map.get(assigns, :current_node_id)
-    }
-    |> Enum.reject(fn {_key, value} -> not present?(value) end)
-    |> Map.new()
-    |> URI.encode_query()
-    |> then(&("/assistant?" <> &1))
-  end
-
+  def assistant_path(assigns) when is_map(assigns), do: assistant_path(assigns, scope(assigns))
   def assistant_path(_assigns), do: "/assistant"
+
+  defp assistant_path(assigns, scope) do
+    project = if scope.kind == :workspace, do: scope.point, else: scope.exec_path
+
+    params =
+      [wb_project: project, wb_draft: Map.get(assigns, :overview_draft_id)]
+      |> Enum.filter(fn {_key, value} -> present?(value) end)
+
+    WorkbenchComponent.navigation_path("/assistant", Map.get(assigns, :current_node_id), params)
+  end
 
   @doc """
   A fresh workbench draft id: `:crypto.strong_rand_bytes(12)` hex-encoded →
@@ -410,8 +393,7 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
     %{
       branch: binary(Map.get(snapshot, :branch)),
       commit: binary(Map.get(snapshot, :commit)),
-      subject: binary(Map.get(snapshot, :subject)),
-      changes: as_list(Map.get(snapshot, :changes))
+      subject: binary(Map.get(snapshot, :subject))
     }
   end
 
@@ -431,42 +413,54 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
   Spawns the overview read for the current selection, bumping the monotonic
   `:overview_load_seq` stale guard.
 
-  No-op (the socket unchanged) unless the page is connected, the overview is
-  visible AND the selection has an execution path — and unless this is a NEW
-  `{node, path}` (a repeat, including the same member re-selected, never
-  re-reads). The payload arrives as
-  `{{:overview_loaded, seq, node, path}, result}`; `seq`, `node` and `path` are
-  the caller's stale guards.
+  A read starts only on a connected, visible overview with a new
+  `{target_id, node, path}` key and a usable execution path. A repeat (including
+  the same member re-selected) never re-reads. A changed scope also discards
+  old metadata. The payload arrives as `{{:overview_loaded, seq, node, path},
+  result}`; `seq`, `node` and `path` are the caller's stale guards.
   """
   @spec maybe_spawn(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   def maybe_spawn(socket) do
     assigns = socket.assigns
     path = scope(assigns).exec_path
     node = Map.get(assigns, :current_node) || node()
-    key = if is_binary(path) and path != "", do: {node, path}
+    key = load_key(assigns, path)
 
-    if connected?(socket) and visible?(assigns) and not is_nil(key) and
-         Map.get(assigns, :overview_loaded_for) != key do
-      seq = (Map.get(assigns, :overview_load_seq) || 0) + 1
-      runner = runner()
+    cond do
+      not connected?(socket) or Map.get(assigns, :overview_loaded_for) == key ->
+        socket
 
-      socket
-      |> assign(
-        overview_load_seq: seq,
-        overview_loaded_for: key,
-        overview_git: nil,
-        overview_tasks: nil
-      )
-      |> tap(fn _socket ->
-        _ =
-          SafeCall.start(self(), {:overview_loaded, seq, node, path}, fn ->
-            runner.(node, path)
-          end)
-      end)
-    else
-      socket
+      true ->
+        seq = (Map.get(assigns, :overview_load_seq) || 0) + 1
+
+        socket =
+          assign(socket,
+            overview_load_seq: seq,
+            overview_loaded_for: nil,
+            overview_git: nil,
+            overview_tasks: nil
+          )
+
+        if key && visible?(assigns) do
+          runner = runner()
+
+          case SafeCall.start(self(), {:overview_loaded, seq, node, path}, fn ->
+                 runner.(node, path)
+               end) do
+            {:ok, _pid} -> assign(socket, :overview_loaded_for, key)
+            {:error, _reason} -> socket
+          end
+        else
+          socket
+        end
     end
   end
+
+  defp load_key(assigns, path) when is_binary(path) and path != "" do
+    {Map.get(assigns, :current_node_id), Map.get(assigns, :current_node) || node(), path}
+  end
+
+  defp load_key(_assigns, _path), do: nil
 
   # The runner seam is resolved AT SPAWN TIME so a test can stub the read.
   defp runner do
@@ -493,7 +487,9 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
     scope = scope(page)
     workspace_view = workspace_scope(page)
     execution = execution_member(workspace_view, Map.get(page, :overview_member))
-    git = git_snapshot_assign(page)
+    missing_refs = missing_refs(workspace_view)
+    key = load_key(page, scope.exec_path)
+    loaded_for_scope? = not is_nil(key) and Map.get(page, :overview_loaded_for) == key
 
     assigns =
       assign(assigns,
@@ -501,13 +497,13 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
         workspace_view: workspace_view,
         member_options: member_options(workspace_view),
         execution_member: execution,
-        missing_refs: missing_refs(workspace_view),
-        missing_line: missing_line(missing_refs(workspace_view)),
-        git: git,
-        tasks: task_rows(page),
-        assistant_path: assistant_path(page),
+        missing_refs: missing_refs,
+        missing_line: missing_line(missing_refs),
+        git: if(loaded_for_scope?, do: git_snapshot_assign(page)),
+        tasks: if(loaded_for_scope?, do: task_rows(page), else: []),
+        assistant_path: assistant_path(page, scope),
         kind_label: kind_label(scope.kind),
-        runnable?: is_binary(scope.exec_path) and scope.exec_path != ""
+        runnable?: not is_nil(key)
       )
 
     ~H"""
@@ -517,7 +513,7 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
       aria-labelledby="overview-title"
       data-overview-kind={@scope.kind}
     >
-      <div class="space-y-6">
+      <div class="space-y-4">
         <header class="space-y-1">
           <p class="text-2xs uppercase tracking-wide text-base-content/60">{@kind_label}</p>
           <h1 id="overview-title" class="text-xl font-semibold" data-overview-name={@scope.name}>
@@ -528,16 +524,49 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
           </p>
         </header>
 
+        <div class="flex flex-wrap items-center gap-3">
+          <button
+            id="overview-new-task"
+            type="button"
+            phx-click="compose_task"
+            class="btn btn-primary"
+            disabled={!@runnable?}
+          >
+            <.icon name="hero-plus" class="size-4" />
+            {gettext("New task")}
+          </button>
+          <.link
+            :if={@runnable?}
+            id="overview-chat-assistant"
+            navigate={@assistant_path}
+            class="btn btn-outline"
+          >
+            {gettext("Chat with Assistant")}
+          </.link>
+          <button
+            :if={!@runnable?}
+            id="overview-chat-assistant"
+            type="button"
+            class="btn btn-outline"
+            disabled
+          >
+            {gettext("Chat with Assistant")}
+          </button>
+        </div>
+
         <dl class="space-y-2 text-sm">
           <div class="flex flex-wrap items-start gap-x-3 gap-y-1">
             <dt class="w-28 shrink-0 text-base-content/60">{gettext("Path")}</dt>
             <dd class="min-w-0 flex-1 font-medium break-all" data-overview-path>
-              <%= if is_binary(@scope.path) do %>
-                {@scope.path}
-              <% else %>
-                <span class="font-normal text-base-content/70">
-                  {gettext("Grouping point — no OS path")}
-                </span>
+              <%= cond do %>
+                <% is_binary(@scope.path) -> %>
+                  {@scope.path}
+                <% @scope.kind == :workspace -> %>
+                  <span class="font-normal text-base-content/70">
+                    {gettext("Grouping point — no OS path")}
+                  </span>
+                <% true -> %>
+                  <span class="font-normal text-base-content/70">{gettext("Unavailable")}</span>
               <% end %>
             </dd>
           </div>
@@ -553,10 +582,10 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
               {@scope.node_label}
             </dd>
           </div>
-          <div :if={head_value(@git)} class="flex flex-wrap items-start gap-x-3 gap-y-1">
+          <div :if={head_line(@git)} class="flex flex-wrap items-start gap-x-3 gap-y-1">
             <dt class="w-28 shrink-0 text-base-content/60">{gettext("Branch / HEAD")}</dt>
             <dd class="min-w-0 flex-1 font-medium break-all" data-overview-head>
-              {head_value(@git)}
+              {head_line(@git)}
             </dd>
           </div>
         </dl>
@@ -566,8 +595,11 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
             <%!-- zh_CN: 工作区只是把项目分组，本身不是可运行的项目，不能作为任务执行路径 --%>
             {gettext("A workspace groups projects; it is not a runnable project.")}
           </p>
+          <p :if={is_nil(@workspace_view)} class="text-sm text-base-content/70" role="status">
+            {gettext("Workspace details are not available.")}
+          </p>
 
-          <ol class="space-y-1 text-sm">
+          <ol :if={@workspace_view} class="space-y-1 text-sm">
             <li
               :for={member <- @member_options}
               class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5"
@@ -612,16 +644,19 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
           </form>
 
           <p :if={@execution_member} class="text-sm" data-overview-execution-member>
-            {gettext("Tasks will run in %{name} (%{path})",
+            {gettext("New tasks will run in %{name} (%{path})",
               name: @execution_member.label,
               path: @execution_member.path
             )}
           </p>
+          <p :if={@execution_member} class="text-xs text-base-content/70">
+            {gettext("Chat with Assistant opens a conversation scoped to this workspace.")}
+          </p>
 
           <div
-            :if={is_nil(@execution_member)}
+            :if={@workspace_view && is_nil(@execution_member)}
             role="alert"
-            class="rounded-lg border border-error/30 bg-error/10 p-3 text-sm"
+            class="rounded-lg border border-error/30 bg-error/10 p-4 text-sm"
             data-overview-no-member
           >
             <p class="font-medium">{gettext("No workspace member resolves to a project.")}</p>
@@ -629,71 +664,28 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
           </div>
         </div>
 
-        <div class="grid gap-3 sm:grid-cols-2">
-          <div class="rounded-lg border border-base-300 p-4">
-            <button
-              id="overview-new-task"
-              type="button"
-              phx-click="compose_task"
-              class="btn btn-primary"
-              disabled={!@runnable?}
-            >
-              {gettext("New task")}
-            </button>
-            <p class="mt-2 text-xs text-base-content/70">
-              {gettext("Write the objective and choose the task options yourself.")}
-            </p>
-          </div>
-
-          <div class="rounded-lg border border-base-300 p-4">
-            <.link
-              :if={@runnable?}
-              id="overview-chat-assistant"
-              navigate={@assistant_path}
-              class="btn btn-outline"
-            >
-              {gettext("Chat with Assistant")}
-            </.link>
-            <button
-              :if={!@runnable?}
-              id="overview-chat-assistant"
-              type="button"
-              class="btn btn-outline"
-              disabled
-            >
-              {gettext("Chat with Assistant")}
-            </button>
-            <p class="mt-2 text-xs text-base-content/70">
-              <%= if @scope.kind == :workspace do %>
-                {gettext("The assistant starts a conversation scoped to this workspace.")}
-              <% else %>
-                {gettext("The assistant starts a conversation scoped to this project.")}
-              <% end %>
-            </p>
-          </div>
-        </div>
-
         <div :if={@tasks != []} class="space-y-2">
-          <h2 class="text-sm font-medium">{gettext("Recent activity")}</h2>
-          <ul class="space-y-2">
+          <h2 class="text-lg font-semibold">{gettext("Recent activity")}</h2>
+          <ul class="divide-y divide-base-300">
             <li
               :for={task <- @tasks}
-              class="flex items-start gap-3 rounded-lg border border-base-300 p-3"
+              class="flex min-h-[var(--row-h-tall)] items-center gap-3 py-2"
             >
-              <span class={"inline-flex px-2 py-0.5 text-xs " <> task_status_badge(status_atom(task.status))}>
-                {task_status_label(status_atom(task.status))}
-              </span>
-              <div class="min-w-0 flex-1 space-y-1">
-                <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-base-content/60">
-                  <span class="font-mono" data-overview-task-id={task.id}>{task.id}</span>
-                  <span>{format_datetime(task.started_at)}</span>
-                </div>
+              <% status = status_atom(Map.get(task, :status)) %>
+              <div class="min-w-0 flex-1">
                 <%= if objective = objective_text(task) do %>
                   <p class="break-words text-sm text-base-content/80">
                     {truncate_string(objective, 120)}
                   </p>
                 <% end %>
+                <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-base-content/60">
+                  <span class="break-all font-mono" data-overview-task-id={task.id}>{task.id}</span>
+                  <span>{format_datetime(Map.get(task, :started_at))}</span>
+                </div>
               </div>
+              <span class={"shrink-0 px-2 py-0.5 text-xs " <> task_status_badge(status)}>
+                {task_status_label(status)}
+              </span>
             </li>
           </ul>
         </div>
@@ -711,8 +703,16 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
 
   defp task_rows(page) do
     case Map.get(page, :overview_tasks) do
-      list when is_list(list) -> Enum.filter(list, &is_map/1)
-      _ -> []
+      list when is_list(list) ->
+        list
+        |> Enum.filter(fn
+          %{id: id} -> is_integer(id) or present?(id)
+          _ -> false
+        end)
+        |> Enum.take(@recent_task_limit)
+
+      _ ->
+        []
     end
   end
 
@@ -735,15 +735,6 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
   end
 
   defp head_line(_git), do: nil
-
-  defp head_value(git) do
-    case {git && git.branch, short_sha(git && git.commit)} do
-      {nil, nil} -> nil
-      {branch, nil} -> branch
-      {nil, sha} -> sha
-      {branch, sha} -> branch <> " @ " <> sha
-    end
-  end
 
   defp subject_line(%{subject: subject}) when is_binary(subject) and subject != "",
     do: subject

@@ -87,7 +87,7 @@ defmodule EvoDashWeb.HomeLive do
       current_node_id={@current_node_id}
       remote_targets={@remote_targets}
       connection_statuses={@connection_statuses}
-      workbench_project={(@workspace && @workspace.path) || @draft_project}
+      workbench_project={@draft_project}
       workbench_git_project={@workspace && @workspace.path}
       workbench_draft={assigns[:workbench_draft]}
       workbench_draft_project={@draft_project}
@@ -113,14 +113,22 @@ defmodule EvoDashWeb.HomeLive do
             id="chat-header"
             class="assistant-page-header"
           >
-            <div class="min-w-0 basis-full sm:basis-auto sm:flex-1">
+            <div class="min-w-0">
               <h1 class={
-                if @transcript == [], do: "sr-only", else: "text-sm font-medium text-base-content/60"
+                if @transcript == [], do: "sr-only", else: "text-sm font-medium text-base-content/70"
               }>
                 <%!-- zh_CN: Genesis Assistant 是此对话助手的名称 --%>{gettext(
                   "Genesis Assistant"
                 )}
               </h1>
+              <p
+                :if={@workspace}
+                class="flex items-center gap-1.5 text-xs text-base-content/70"
+                title={@workspace.path}
+              >
+                <.icon name="hero-folder" class="size-4 shrink-0" />
+                <span class="truncate">{@workspace.name}</span>
+              </p>
             </div>
             <button
               :if={@transcript != []}
@@ -128,7 +136,7 @@ defmodule EvoDashWeb.HomeLive do
               phx-click={if !@workspace, do: "new_chat"}
               data-workbench-new-conversation={if @workspace, do: ""}
               disabled={is_nil(@workspace) and @chat_status not in [:idle, :ended]}
-              class="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-base-content/70 hover:bg-base-200 hover:text-base-content transition-colors focus-visible:outline-2 focus-visible:outline-primary-standalone disabled:opacity-40 disabled:pointer-events-none shrink-0"
+              class="btn btn-ghost btn-sm ml-auto shrink-0 gap-1.5 rounded-lg"
             >
               <.icon name="hero-plus" class="size-4" />
               <%!-- zh_CN: "新对话" --%>{gettext("New chat")}
@@ -298,7 +306,6 @@ defmodule EvoDashWeb.HomeLive do
 
       true ->
         if connected?(socket) do
-          Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
           Phoenix.PubSub.subscribe(EvoGit.PubSub, "agents")
           Phoenix.PubSub.subscribe(EvoGit.PubSub, "approvals")
         end
