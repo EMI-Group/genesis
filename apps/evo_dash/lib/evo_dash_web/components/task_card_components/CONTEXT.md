@@ -127,6 +127,17 @@ Every component here is a pure function component re-executed on EVERY LiveView 
 - `render_result_full/1` runs only in the TasksLive modal, never on the page render.
 - A slow task-card page load is no longer explained by these components — the collapsed render is summary-only; the cost sits in the LiveView's paginated summary load and the per-card detail fetches (outside this node).
 
+## Card chrome — the CSS-owned surface system
+
+The card's chrome is the dashboard's three-layer surface system in `assets/css/surfaces.css`; the markup only supplies class names and attributes, and the wrapper carries NO background/border/shadow/hover utilities.
+`task_card/1` declares `attr(:variant, :string, default: "flat", values: ["flat", "raised"])` and writes it as `data-variant` on the root, plus `data-selected={@focused}`.
+`flat` (the default, and the only variant `/tasks` uses) is a LIST ROW: canvas fill, hairline border, `box-shadow: none`, no accent bar — a long task list must not read as a stack of elevated cards.
+`raised` is the opt-in CARD treatment (raised surface + the elevation token + the accent bar) for content read/decided as one unit; no caller uses it yet, so adding it is a caller-side attrs change only.
+The root class list is `task-card min-w-0 rounded-xl border relative z-10 group has-[[open]]:z-30` + the status `tint` from `task_card_tint/1` (the flat variant's subtle wash — the helper is unchanged).
+`task-card-accent` is the accent top-bar wrapper and `task-card-status` marks the LIVE status badge (the review badge stays a plain `badge`).
+`task-card-panel` is the recessed shell of every nested detail/options panel — Objective, Agent Message, Token & Cost Usage, Agents Spawned, Execution Logs (`<details>`) and Archived Agent Details — which therefore keep only their spacing/radius utilities (`p-4 rounded-lg`, plus `motion-disclosure` on the logs disclosure) instead of a tinted `bg-*`/`border-*`/`hover:*` simulation of depth.
+Selection, hover and `:focus-visible` are three distinct CSS treatments keyed on `data-selected`/`:hover`/`:focus-visible`; the accent belongs to the SELECTED object only, so no markup branch chooses a border or shadow for `@focused` anymore.
+
 ## Rendering Caps — task-card rows
 
 `EvoDashWeb.Helpers.blob_preview/2` / `list_preview/2` are the single source of previews (see the parent `components/CONTEXT.md` → "Blob & Collection Rendering Caps").
