@@ -438,6 +438,9 @@ const Workbench = {
       handle?.setAttribute("aria-valuemax", String(max))
       handle?.setAttribute("aria-valuenow", String(width))
     }
+    // The rail lives in the center column, so every sidebar width (a drag, a
+    // viewport resize, a sweep) can flip its overflow state.
+    this.syncTabOverflow()
   },
 
   sidebarDirection(side) {
