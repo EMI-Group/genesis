@@ -26,7 +26,8 @@ defmodule EvoDashWeb.ProjectsLive do
     Commands,
     Palette,
     Workspace,
-    ForeignRepos
+    ForeignRepos,
+    Overview
   }
 
   alias EvoDashWeb.ThemeColor
@@ -211,6 +212,12 @@ defmodule EvoDashWeb.ProjectsLive do
                 <div id="workbench-project-loading" class="workbench-idle" role="status">
                   {gettext("Loading project…")}
                 </div>
+              <% Overview.visible?(assigns) -> %>
+                <%!-- Project OVERVIEW: a project (or a VCT workspace) is
+                     selected and no compose/resume intent is in the URL, so
+                     this surface describes the selection and offers the two
+                     entry points instead of dropping into the composer. --%>
+                <Overview.overview page={assigns} />
               <% !EvoDashWeb.RemoteGateComponents.gate_active?(assigns) and
                    (@workbench_idle? or is_nil(@active_project)) -> %>
                 <div id="workbench-idle" class="workbench-idle" role="status">
@@ -574,7 +581,27 @@ defmodule EvoDashWeb.ProjectsLive do
           github_status: nil,
           github_modal_open: false,
           github_issues: GitHub.idle_issues(),
-          github_fixing: nil
+          github_fixing: nil,
+          # Project OVERVIEW surface (EvoDashWeb.ProjectsLive.Overview): shown
+          # instead of the task composer when a project or a VCT workspace is
+          # selected and the user did not explicitly ask to compose a task.
+          # `overview_workspace_point` is the URL's workspace token (nil for a
+          # project/no selection), `overview_draft_id` the per-navigation
+          # 24-char Assistant workbench draft id, `overview_member` the
+          # workspace member chosen in the overview (nil = first resolvable),
+          # and `overview_git`/`overview_tasks` the ASYNC payload (loaded by
+          # Overview.maybe_spawn/1, never on the mount path).
+          compose_task?: false,
+          overview_workspace_point: nil,
+          overview_draft_id: nil,
+          overview_git: nil,
+          overview_tasks: nil,
+          overview_load_seq: 0,
+          # `{node, exec_path}` of the last overview read: a repeat for the same
+          # target never re-reads (the async continuation points call
+          # Overview.maybe_spawn/1 too), a changed path/member does.
+          overview_loaded_for: nil,
+          overview_member: nil
         )
 
       socket = Assigns.assign_form_defaults(socket)
@@ -686,6 +713,15 @@ defmodule EvoDashWeb.ProjectsLive do
         socket
       end
 
+    # The project param of the PREVIOUS navigation, captured before the assign
+    # below so a project change can reset the overview's workspace-member
+    # choice (a member key belongs to ONE workspace).
+    prev_project_param =
+      case socket.assigns[:workbench_reconnect_params] do
+        %{"project" => project} -> project
+        _ -> nil
+      end
+
     socket =
       assign(socket,
         workbench_reconnect_params:
@@ -693,8 +729,22 @@ defmodule EvoDashWeb.ProjectsLive do
         workbench_open_requested: params["wb_open"] == "1",
         workbench_idle?:
           params["wb_home"] == "1" or
-            Enum.all?(~w(project starting_commit resume_from), &is_nil(params[&1]))
+            Enum.all?(~w(project starting_commit resume_from), &is_nil(params[&1])),
+        # Overview surface (EvoDashWeb.ProjectsLive.Overview): an explicit
+        # compose/resume intent in the URL keeps the task composer, a workspace
+        # point in `?project=` is remembered as the selection token (it never
+        # reaches path activation), and every navigation mints a FRESH
+        # Assistant workbench draft id (handle_params does not re-run on the
+        # async re-renders, so the link stays stable for the page's lifetime).
+        compose_task?: overview_compose_task?(params),
+        overview_workspace_point: overview_workspace_point(params["project"]),
+        overview_draft_id: Overview.draft_id()
       )
+
+    socket =
+      if prev_project_param != params["project"],
+        do: assign(socket, :overview_member, nil),
+        else: socket
 
     project_path = params["project"]
 
@@ -820,6 +870,13 @@ defmodule EvoDashWeb.ProjectsLive do
         do: socket,
         else: AsyncLoad.maybe_spawn(socket, prev_node_id)
 
+    # Project overview payload (git snapshot + recent tasks), spawned AFTER the
+    # activation/project-resolution blocks above so it captures the settled
+    # execution path. Off-process, and a no-op when the overview is not visible
+    # or this exact `{node, path}` was already loaded — never a blocking read on
+    # the LiveView process.
+    socket = Overview.maybe_spawn(socket)
+
     # Preserve starting_commit from URL query param (e.g. ?starting_commit=abc123)
     socket =
       case params["starting_commit"] do
@@ -861,6 +918,35 @@ defmodule EvoDashWeb.ProjectsLive do
 
     {:noreply, socket}
   end
+
+  # --- Project overview events (EvoDashWeb.ProjectsLive.Overview) ---
+
+  # PRIMARY overview entry point: leave the overview for the task composer of
+  # the SAME selection. `exec_path` is the resolved absolute OS path (for a
+  # workspace: the chosen/first-resolvable member's path), never a VCT token.
+  # A selection with no resolvable execution path cannot compose anything — the
+  # flash names the missing member refs instead of patching the URL.
+  @impl true
+  def handle_event("compose_task", _params, socket) do
+    case Overview.scope(socket.assigns).exec_path do
+      path when is_binary(path) and path != "" ->
+        {:noreply, push_patch(socket, to: overview_compose_url(socket, path))}
+
+      _ ->
+        {:noreply, put_flash(socket, :error, overview_missing_members_message(socket.assigns))}
+    end
+  end
+
+  # Workspace member choice: only the overview's execution target changes, so
+  # the payload (git snapshot + recent tasks) is re-read for the new path.
+  # Non-binary params are ignored (never an atom conversion of client input).
+  @impl true
+  def handle_event("overview_select_member", %{"overview_member" => key}, socket)
+      when is_binary(key) do
+    {:noreply, socket |> assign(:overview_member, key) |> Overview.maybe_spawn()}
+  end
+
+  def handle_event("overview_select_member", _params, socket), do: {:noreply, socket}
 
   # --- Project Management Events ---
 
@@ -1346,7 +1432,10 @@ defmodule EvoDashWeb.ProjectsLive do
       # Restore foreign repos from session AFTER activate_project, which loads
       # repos from genesis.toml. The session-restored repos are the authoritative
       # snapshot from before navigation/reload.
-      socket = StatePersistence.maybe_restore_foreign_repos(socket, params["foreign_repos"])
+      socket =
+        socket
+        |> StatePersistence.maybe_restore_foreign_repos(params["foreign_repos"])
+        |> maybe_restore_compose_task()
 
       {:noreply, socket}
     end
@@ -2607,6 +2696,31 @@ defmodule EvoDashWeb.ProjectsLive do
     {:noreply, GitHub.handle_fix_result(socket, path, node, number, result)}
   end
 
+  # Project overview payload — the continuation of Overview.maybe_spawn/1's
+  # supervised `SafeCall.start/4` read. The tag is NESTED (that is how
+  # `start/4` delivers a multi-element tag), and the result is accepted only for
+  # the CURRENT load generation, the viewed node AND the selection's execution
+  # path — a member switch, a project change or a node switch drops it. An error
+  # result leaves both blocks nil, and the render omits them (never a spinner).
+  @impl true
+  def handle_info({{:overview_loaded, seq, node, path}, result}, socket) do
+    assigns = socket.assigns
+
+    if seq == Map.get(assigns, :overview_load_seq) and
+         node == Map.get(assigns, :current_node) and
+         path == Overview.scope(assigns).exec_path do
+      {git, tasks} =
+        case result do
+          {:ok, %{git: git, tasks: tasks}} -> {git, tasks}
+          _ -> {nil, nil}
+        end
+
+      {:noreply, assign(socket, overview_git: git, overview_tasks: tasks)}
+    else
+      {:noreply, socket}
+    end
+  end
+
   # Async node-aware loads spawned by AsyncLoad.maybe_spawn/2 in
   # handle_params/3 (custom agents, canonical model picker reconciliation,
   # remote project config, the VCT projects list + the
@@ -2638,7 +2752,7 @@ defmodule EvoDashWeb.ProjectsLive do
         socket
       end
 
-    {:noreply, GitHub.maybe_check(socket)}
+    {:noreply, socket |> GitHub.maybe_check() |> Overview.maybe_spawn()}
   end
 
   # Async remote project activation — the continuation for the task spawned by
@@ -2698,7 +2812,12 @@ defmodule EvoDashWeb.ProjectsLive do
             if (params["wb_home"] == "1" or git_task_draft?(params)) and params["project"] == path do
               # The project link already updated the URL. Load node data
               # against the validated project without adding a second entry.
-              {:noreply, AsyncLoad.maybe_spawn(socket, socket.assigns.current_node_id)}
+              # The overview payload follows the freshly activated project too
+              # (this arm does not re-run handle_params).
+              {:noreply,
+               socket
+               |> AsyncLoad.maybe_spawn(socket.assigns.current_node_id)
+               |> Overview.maybe_spawn()}
             else
               {:noreply, push_patch(socket, to: project_url(socket, path))}
             end
@@ -2862,6 +2981,27 @@ defmodule EvoDashWeb.ProjectsLive do
     |> assign(:workspaces_seq, workspaces_seq)
   end
 
+  # ---------------------------------------------------------------------------
+  # Project overview surface (EvoDashWeb.ProjectsLive.Overview)
+  # ---------------------------------------------------------------------------
+
+  # True when the URL explicitly asks for the task composer: `wb_task=1`, a
+  # resume id or a starting commit. Anything else with a selected project lands
+  # on the overview instead.
+  defp overview_compose_task?(params) do
+    params["wb_task"] == "1" or present_param?(params["resume_from"]) or
+      present_param?(params["starting_commit"])
+  end
+
+  defp present_param?(value), do: is_binary(value) and String.trim(value) != ""
+
+  # The `?project=` value when it names a VCT WORKSPACE (a grouping point with no
+  # OS path). Such a token is remembered for the overview only — it never
+  # reaches path activation (the local branch rejects it as a non-absolute path,
+  # the remote branch fails its `dir?` check), and it never becomes a task path.
+  defp overview_workspace_point("vct:///workspaces/" <> _ = point), do: point
+  defp overview_workspace_point(_project), do: nil
+
   # Builds the dashboard URL for a project path. In a remote context the
   # `&node=` param is appended so the node context survives the push_patch —
   # NOTE: deliberately NOT `EvoDashWeb.Helpers.with_node_param/2`, which
@@ -2891,6 +3031,52 @@ defmodule EvoDashWeb.ProjectsLive do
        do: Regex.match?(~r/\A(?:[0-9a-f]{40}|[0-9a-f]{64})\z/, commit)
 
   defp git_task_draft?(_), do: false
+
+  # The overview's "New task" target: the composer for the overview's EXECUTION
+  # path (the project path, or a workspace's chosen/first-resolvable member).
+  # Built through `WorkbenchComponent.navigation_path/3` so a remote context
+  # carries `&node=` (never `Helpers.with_node_param/2`, which appends `?` and
+  # would corrupt the existing query).
+  defp overview_compose_url(socket, path) do
+    EvoDashWeb.WorkbenchComponent.navigation_path(
+      "/projects",
+      socket.assigns[:current_node_id],
+      project: path,
+      wb_task: "1"
+    )
+  end
+
+  # The refusal flash for a selection with no resolvable execution path (a
+  # workspace whose every member is missing) — names the missing refs.
+  defp overview_missing_members_message(assigns) do
+    case Overview.missing_refs(Overview.workspace_scope(assigns)) do
+      [] ->
+        gettext("No workspace member resolves to a project, so there is nothing to run here.")
+
+      refs ->
+        gettext("No workspace member resolves to a project. Missing: %{refs}",
+          refs: Enum.join(refs, ", ")
+        )
+    end
+  end
+
+  # A returning user with a saved draft (or a resume that was restored from the
+  # browser instead of the URL) lands in the COMPOSER, not on the overview:
+  # existing draft state always skips the overview. It only ever SETS the flag
+  # (never clears one the URL already set) and never touches the draft itself.
+  defp maybe_restore_compose_task(socket) do
+    assigns = socket.assigns
+
+    if Map.get(assigns, :compose_task?) == true do
+      socket
+    else
+      if present_param?(assigns[:task_prompt]) or present_param?(assigns[:task_resume_from]) do
+        assign(socket, :compose_task?, true)
+      else
+        socket
+      end
+    end
+  end
 
   defp use_git_task_mode(socket) do
     if git_task_draft?(socket.assigns.workbench_reconnect_params) do
