@@ -155,18 +155,25 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
-  def handle_params(params, _url, socket) do
+  def handle_params(%{"task_id" => task_id} = params, url, socket) do
     page_title =
       if socket.assigns.live_action == :commit,
         do: gettext("Commit details"),
         else: gettext("Review Changes")
 
+    # NodeAware replaces only the node query pair on switches and reconnects.
+    # Keep the actual route and raw query (not just the review landing path).
+    %URI{path: path, query: query} = URI.parse(url)
+
     socket =
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
-      |> assign(:workbench_remote_requested, params["node"] not in [nil, "", "local"])
-      |> assign(:current_path, ~p"/review/#{socket.assigns.task_id}")
-      |> assign(:page_title, page_title)
+      |> assign(
+        task_id: task_id,
+        workbench_remote_requested: params["node"] not in [nil, "", "local"],
+        current_path: URI.to_string(%URI{path: path, query: query}),
+        page_title: page_title
+      )
 
     socket =
       if socket.assigns.live_action == :show and params["tab"] == "commits" do
@@ -175,31 +182,23 @@ defmodule EvoDashWeb.ReviewLive do
         socket
       end
 
-    repo_id = params["repo"] || previous_review_repo(socket.assigns) || "primary"
+    scope = review_scope(socket.assigns)
+    repo_id = params["repo"] || previous_review_repo(socket.assigns, scope) || "primary"
+    context = {scope, socket.assigns.live_action, params["commit_sha"], repo_id}
+    previous_context = socket.assigns[:tasks_loaded_for]
 
-    context =
-      {socket.assigns.current_node, socket.assigns.live_action, params["commit_sha"], repo_id}
-
-    # Node-aware task load. `@current_node` is only resolved by assign_node
-    # above (at mount time it is still the on_mount local default), so the
-    # task fetch MUST live here — handle_params runs after mount on initial
-    # load too. Dedup guard: the load runs once per (node, route) context —
-    # a node change (pending→connected transition, manual ?node= switch) or a
-    # push_patch between the review and commit routes warrants a refetch. The
-    # load itself runs asynchronously (see start_async_load/2); the result
-    # arrives later as a {:review_data_loaded, ...} message.
+    # Load once per task, serving scope and review route. Query-only patches
+    # (e.g. a tab change) do not re-read data. Even a switch between target IDs
+    # sharing a BEAM node supersedes the prior load generation.
     socket =
-      if Map.get(socket.assigns, :tasks_loaded_for) == context do
+      if previous_context == context do
         socket
       else
         socket
-        # A genuine context change (node/task/route) discards the action-earned
-        # resolutions — they belonged to the previous load context and must
-        # never be overlaid onto a different node's freshly loaded repos.
+        |> reset_page_readiness(previous_context, scope)
+        # Resolutions from the previous context must not overlay this load.
         |> assign(:local_repo_resolutions, %{})
-        # In-flight action state belongs to the previous context too: its
-        # result message is dropped on arrival (task/node mismatch), so the
-        # in-progress markers must not survive here.
+        # Release the in-progress markers from the previous context.
         |> assign(
           review_action: nil,
           action_loading: false,
@@ -240,8 +239,8 @@ defmodule EvoDashWeb.ReviewLive do
     # re-checks materiality when it fires, so a status the page already shows
     # never re-fetches the full task row.
     socket =
-      if EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) and
-           task_id == socket.assigns.task_id do
+      if task_id == socket.assigns.task_id and not review_load_blocked?(socket.assigns) and
+           EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) do
         socket
         |> assign(:review_broadcast_status, status)
         # The reviewed task changed, so any lazily fetched per-agent result may
@@ -302,13 +301,11 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_info({:review_data_loaded, task_id, node, generation, result}, socket) do
-    # Async review-data load finished. Stale-guard: drop results for a
-    # different task/node or from an older load generation (a newer load was
-    # started since — `load_generation` only grows, so `generation < current`
-    # means stale).
+    # The generation advances even when a scope change skipped the read
+    # (e.g. disconnect), so an older same-BEAM result cannot settle this page.
     stale? =
       task_id != socket.assigns.task_id or node != socket.assigns.current_node or
-        generation < Map.get(socket.assigns, :load_generation, 0)
+        generation != socket.assigns.load_generation
 
     if stale? do
       {:noreply, socket}
@@ -463,23 +460,32 @@ defmodule EvoDashWeb.ReviewLive do
   # spinner forever — and the outcome is normalized to the two shapes the
   # handle_info consumes.
   defp start_async_load(socket, inspect_commit_sha) do
-    # Reconcile the lazily loaded archive with the (re)started load context:
-    # a task/node change invalidates the cache, a same-context reload keeps it.
-    socket = EvoDashWeb.ReviewLive.ArchiveLoad.sync_context(socket)
+    gen = socket.assigns.load_generation + 1
 
+    if review_load_blocked?(socket.assigns) do
+      # A requested target may resolve to the local BEAM while it connects.
+      # Do not read review data or reconcile a lazy archive against it.
+      assign(socket,
+        loading: false,
+        error: gettext("Task not found: the requested node is unavailable."),
+        load_generation: gen
+      )
+    else
+      spawn_review_load(socket, inspect_commit_sha, gen)
+    end
+  end
+
+  defp spawn_review_load(socket, inspect_commit_sha, gen) do
+    socket = EvoDashWeb.ReviewLive.ArchiveLoad.sync_context(socket)
     parent = self()
     node = socket.assigns.current_node
     task_id = socket.assigns.task_id
     live_action = socket.assigns.live_action
     repo_id = socket.assigns.inspect_repo_id
-    gen = Map.get(socket.assigns, :load_generation, 0) + 1
 
     socket = assign(socket, loading: true, error: nil, load_generation: gen)
 
-    # Only the CONNECTED mount spawns the load: a disconnected render has no
-    # LiveView process to receive `{:review_data_loaded, ...}`, so the task's
-    # store/git reads would always be discarded. The static render only shows
-    # the loading shell, which the assigns above already establish.
+    # A disconnected render has no LiveView process to receive the result.
     if connected?(socket) do
       Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
         result =
@@ -515,12 +521,26 @@ defmodule EvoDashWeb.ReviewLive do
   defp review_reload_material?(nil, _loaded_status), do: true
   defp review_reload_material?(status, loaded_status), do: status != loaded_status
 
-  defp previous_review_repo(%{
-         live_action: :show,
-         current_node: node,
-         tasks_loaded_for: {node, :commit, _, repo_id}
-       }),
+  defp review_scope(assigns) do
+    {assigns.task_id, assigns.current_node_id, assigns.current_node,
+     review_load_blocked?(assigns)}
+  end
+
+  defp review_load_blocked?(assigns) do
+    EvoDashWeb.RemoteGateComponents.gate_active?(assigns) or
+      (assigns.workbench_remote_requested and assigns.current_node == node())
+  end
+
+  defp reset_page_readiness(socket, {scope, _, _, _}, scope), do: socket
+
+  defp reset_page_readiness(socket, _previous_context, _scope),
+    do: assign(socket, :page_ready?, false)
+
+  defp previous_review_repo(
+         %{live_action: :show, tasks_loaded_for: {scope, :commit, _, repo_id}},
+         scope
+       ),
        do: repo_id
 
-  defp previous_review_repo(_), do: nil
+  defp previous_review_repo(_, _), do: nil
 end
