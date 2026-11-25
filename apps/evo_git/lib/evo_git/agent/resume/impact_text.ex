@@ -28,6 +28,28 @@ defmodule EvoGit.Agent.Resume.ImpactText do
   alias EvoGit.Agent.ToolBatch
 
   @doc """
+  The NEUTRAL tool-result TEXT for a subagent call of a CLEAN-FROZEN batch whose
+  child could not be re-attached (`EvoGit.Agent.Resume`'s frozen-batch path).
+
+  Nothing was interrupted there: the pause stopped the parent while it waited on
+  its children, so this text must NOT borrow the crash wording of
+  `impact(:subagent, call)` ("the parent crashed", "outcome unknown"). It states
+  what is actually true — the child was part of the pause snapshot, its durable
+  row and worktree still exist, and it simply was not re-attached — and leaves
+  the decision to the agent.
+
+  Total and pure.
+  """
+  @spec pause_lost(term()) :: String.t()
+  def pause_lost(call) do
+    """
+    Paused: this subagent was part of the pause snapshot, but it could not be re-attached on resume. Its durable row and its worktree are still recorded, so its work is not lost — it simply is not part of this batch.
+    Decide deliberately: inspect the affected paths (`git status`, `git branch --list 'evogit-agent-*'`, re-read the files) to see how far it got, and re-delegate only what is still missing (#{describe(call)}).
+    """
+    |> String.trim()
+  end
+
+  @doc """
   The synthetic tool-result TEXT for one interrupted call of `class`.
 
   `call` is a canonical `EvoGit.Agent.ToolBatch` call entry (or any map with

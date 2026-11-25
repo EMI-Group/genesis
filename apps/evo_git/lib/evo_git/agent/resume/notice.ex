@@ -38,10 +38,15 @@ defmodule EvoGit.Agent.Resume.Notice do
     * the durable restore outcome — `false` adds one sentence saying the earlier
       turns are not in this transcript.
 
-  A PAUSE resume (`:clean_pause` / `:dirty_pause`) additionally says what
-  happens to subagents on a whole-tree resume: a child that already finished
-  contributes its stored result, a child that was still running comes back from
-  its own durable checkpoint, and only a child with no durable record is lost.
+  A PAUSE resume additionally says what happens to subagents on a whole-tree
+  resume. A `:clean_pause` froze the tree: its children were part of the pause
+  snapshot, so a still-running child is re-spawned under its own durable state
+  and worktree and the parent WAITS for it (the batch is not re-issued), while a
+  genuinely finished child contributes its stored result — and the sentence never
+  uses interruption or inconsistency wording. A `:dirty_pause` describes the
+  mid-flight case: a finished child contributes its stored result, a still-running
+  one resumes from its own checkpoint, and only a child with no durable record is
+  lost.
 
   Either text is stamped `metadata[:resume_notice] => true`, which is ALSO the
   exactly-once guard: a second resumed exchange never appends a second notice to
@@ -213,10 +218,22 @@ defmodule EvoGit.Agent.Resume.Notice do
 
   defp pause_sentence(_kind), do: nil
 
-  # Durable rows outlive the processes, so a pause resume is WHOLE-TREE: a
-  # finished child contributes its stored result and a still-running one is
-  # re-spawned on its own checkpoint. Stated for BOTH pause kinds.
-  defp subagent_sentence(kind) when kind in [:clean_pause, :dirty_pause] do
+  # The CLEAN pause froze the WHOLE tree, so the batch was never interrupted:
+  # the still-running children are part of the pause snapshot, they come back
+  # under their own durable state and worktree, and the parent WAITS for them —
+  # the tool call is not re-issued and no restorable child is reported lost.
+  defp subagent_sentence(:clean_pause) do
+    "Subagents: the subagents of the batch you were waiting on were part of the pause snapshot " <>
+      "and were rebuilt when this run resumed. A child that had already finished contributes its " <>
+      "stored result; a child that was still running is re-spawned under its own durable state " <>
+      "and worktree and you now WAIT for it — the batch is not re-issued. Each unanswered subagent " <>
+      "call carries its own child's real result, and a child that could not be re-attached says " <>
+      "so plainly in its slot: no subagent result is invented."
+  end
+
+  # A `:dirty_pause` resume is a POST-RESTART pause: the run stopped mid-flight,
+  # so the batch may have been interrupted and the repair text applies.
+  defp subagent_sentence(:dirty_pause) do
     "Subagents: a child that already finished contributes its stored result, and a child that " <>
       "was still running is re-spawned and resumes from its own durable checkpoint and worktree " <>
       "base. Only a child with no durable record at all is lost, and that slot says so plainly — " <>

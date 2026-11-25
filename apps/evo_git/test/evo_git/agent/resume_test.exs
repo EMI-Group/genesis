@@ -337,7 +337,11 @@ defmodule EvoGit.Agent.ResumeTest do
       assert text =~ "worktree is exactly as it was left"
       assert text =~ "No tool call was interrupted"
       assert text =~ "contributes its stored result"
-      assert text =~ "is re-spawned and resumes from its own durable checkpoint"
+      # The clean-pause subagent sentence describes a FROZEN tree, not a
+      # re-spawn-on-own-checkpoint interruption.
+      assert text =~ "part of the pause snapshot"
+      assert text =~ "re-spawned under its own durable state and worktree"
+      assert text =~ "you now WAIT for it — the batch is not re-issued"
 
       # Exactly ONE such notice in the whole transcript.
       assert Enum.count(resumed.context.messages, &(&1.role == :user and text_of(&1) =~ "paused")) ==
@@ -346,6 +350,98 @@ defmodule EvoGit.Agent.ResumeTest do
       # The marker is cleared and the re-attach was never needed.
       assert resumed.pending_tool_batch == nil
       refute_received {:reattach, _agent_id, _count}
+    end
+
+    test "a CLEAN pause frozen on a subagent batch REBUILDS it and answers with the real texts",
+         %{tmp_dir: tmp_dir} do
+      # The other clean-pause position: the pause parked the parent INSIDE
+      # `spawn_sub_agents/2`, so the all-subagent marker is still set, NO tool
+      # result was appended and no child result was stored. Nothing was
+      # interrupted, so the batch must be rebuilt and answered for real.
+      %{repo: repo, results: results} = subagent_fixture!(tmp_dir)
+      test_pid = self()
+
+      calls = [
+        tool_call("c1", "task", %{"path" => "./src", "objective" => "do the src work"}),
+        tool_call("c2", "task", %{"path" => "./doc", "objective" => "do the doc work"})
+      ]
+
+      state =
+        state(conversation(calls),
+          agent_module: SubagentAgent,
+          repo_path: repo,
+          resume_info: clean_pause_info()
+        )
+
+      # The contract this path rests on: a pure-subagent marker + a dangling tail.
+      assert ToolBatch.calls(state.pending_tool_batch) |> length() == 2
+      assert {:ok, @turn, _calls} = Resume.dangling(state)
+
+      resumed =
+        Resume.apply(state,
+          reattach_fun: fn agent_id, count ->
+            send(test_pid, {:reattach, agent_id, count})
+            {:ok, ok_results(results)}
+          end
+        )
+
+      # (a) ONE re-attach/rebuild request for the WHOLE batch.
+      assert_received {:reattach, _agent_id, 2}
+      refute_received {:reattach, _agent_id, _count}
+      # (b) the REAL child texts and the merge note — no invented result.
+      texts = tool_texts(resumed, ["c1", "c2"])
+      assert texts["c1"] =~ "# Result"
+      assert texts["c1"] =~ "child one did the src work"
+      assert texts["c2"] =~ "child two did the doc work"
+
+      for {_id, text} <- texts do
+        refute text =~ "crashed"
+        refute text =~ "interrupted"
+        refute text =~ "outcome unknown"
+        refute text =~ "may have happened"
+      end
+
+      assert File.read!(Path.join(repo, "src/b.ex")) == "defmodule B do\nend\n"
+
+      assert Enum.any?(
+               resumed.context.messages,
+               &(&1.role == :user and text_of(&1) =~ "Successfully auto-merged")
+             )
+
+      # (c) exactly ONE neutral pause notice, and NO repair wording.
+      notices =
+        Enum.filter(
+          resumed.context.messages,
+          &(&1.role == :user and text_of(&1) =~ "paused this task and has now resumed it")
+        )
+
+      assert length(notices) == 1
+      text = text_of(List.last(resumed.context.messages))
+      refute text =~ "[RESUME]"
+      refute text =~ "crashed"
+      refute text =~ "outcome unknown"
+      refute text =~ "may have happened"
+      refute text =~ "Interrupted tool calls"
+      refute text =~ "synthetic tool result"
+      assert text =~ "part of the pause snapshot"
+      assert text =~ "the batch is not re-issued"
+
+      assert Enum.count(
+               resumed.context.messages,
+               &(&1.role == :user and text_of(&1) =~ "[RESUME]")
+             ) ==
+               0
+
+      # (d) the marker is cleared, and the transcript stays provider-valid: one
+      # `:tool` answer per unanswered call, in model call order.
+      assert resumed.pending_tool_batch == nil
+
+      answered =
+        resumed.context.messages
+        |> Enum.filter(&(&1.role == :tool))
+        |> Enum.map(& &1.tool_call_id)
+
+      assert answered == ["c1", "c2"]
     end
 
     test "a clean pause with NOTHING appended is still untouched when a notice exists" do

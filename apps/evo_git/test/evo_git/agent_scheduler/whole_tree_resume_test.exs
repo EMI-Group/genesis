@@ -24,7 +24,8 @@ defmodule EvoGit.AgentScheduler.WholeTreeResumeTest do
        (`RosterBatch.plan/4` → `SubagentRebuild.handle_rebuild/6`): the `done`
        slot contributes its STORED result with no re-spawn, the `running` slot
        is re-registered under its PERSISTED `agent_id` with its own persisted
-       spawn position and `restore_agent_state: true`;
+       spawn position and `restore_agent_state: true`, carrying the parent's
+       resume KIND and its OWN `pause_commit` as the resumed worktree base;
     7. the child results merge into the PARENT WORKTREE through the ordinary
        `EvoGit.Agent.SubagentProcessing` merge path — asserted with real git
        objects: both child files land, HEAD advances onto a merge commit, and
@@ -191,6 +192,9 @@ defmodule EvoGit.AgentScheduler.WholeTreeResumeTest do
         branch: running_branch,
         base_commit: base_sha,
         current_commit: running_sha,
+        # The pause checkpoint of the CHILD's own run: a frozen child bases its
+        # resumed worktree on THIS commit, never on the parent's.
+        pause_commit: running_sha,
         anchor_ref: EvoGit.AgentState.Anchor.ref(task_id, running_child_id),
         redispatch: %{
           "agent_type" => "read_write",
@@ -297,7 +301,7 @@ defmodule EvoGit.AgentScheduler.WholeTreeResumeTest do
       assert state.persistent_state == true
 
       # --- (6) the dangling subagent batch is rebuilt from the roster --------
-      assert {:ok, rebuild} = RosterBatch.plan(state, @turn, 2)
+      assert {:ok, rebuild} = RosterBatch.plan(state, @turn, 2, resume_kind: :clean_pause)
       assert [done_slot, running_slot] = rebuild.entries
 
       assert done_slot.status == :done
@@ -314,8 +318,10 @@ defmodule EvoGit.AgentScheduler.WholeTreeResumeTest do
       assert running_slot.spec.opts[:restore_agent_state] == true
       assert running_slot.spec.opts[:resume_current_commit] == running_sha
       assert running_slot.spec.opts[:resume_branch] == running_branch
-      ## A re-spawned child is a crash retry of ITS OWN run, never a pause.
-      refute Keyword.has_key?(running_slot.spec.opts, :resume_kind)
+      ## The re-spawned child resumes as a CHILD OF THE SAME CLEAN PAUSE: its
+      ## own checkpoint is the worktree base and it takes the no-repair path.
+      assert running_slot.spec.opts[:pause_commit] == running_sha
+      assert running_slot.spec.opts[:resume_kind] == :clean_pause
 
       from = {self(), make_ref()}
 

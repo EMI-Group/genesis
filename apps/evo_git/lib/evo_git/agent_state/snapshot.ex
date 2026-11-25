@@ -14,7 +14,9 @@ defmodule EvoGit.AgentState.Snapshot do
   splits it into the `root` record (the one whose `parent_id` is `nil`) and the
   full `agents` roster. Everything else here is a pure, TOTAL projection over
   that value, so a consumer never re-reads the database to answer a follow-up
-  question about the same snapshot.
+  question about the same snapshot. `children/3` accepts EITHER a snapshot or a
+  plain list of records, so a consumer holding only the rows reuses the same
+  filter instead of growing a private copy of it.
 
   The snapshot is DURABLE-BY-NATURE — it is built from `agent_state.sqlite`,
   which holds one row per RUNNING agent — so it survives the scheduler and even
@@ -124,13 +126,19 @@ defmodule EvoGit.AgentState.Snapshot do
   A record without an integer `spawn_index` sorts last (it cannot be placed in
   the batch), ties break on `agent_id` for determinism.
 
-  Total: a non-snapshot, a non-integer `parent_id` or an empty match answers
-  `[]`.
+  The first argument is EITHER a `%Snapshot{}` or a plain list of records
+  (a roster read the caller already has), so there is ONE implementation of this
+  filter and two consumers over one snapshot can never disagree.
+
+  Total: a non-snapshot/non-list, a non-integer `parent_id` or an empty match
+  answers `[]`.
   """
-  @spec children(t() | term(), integer() | nil, integer() | nil) :: [Record.t()]
-  def children(%__MODULE__{agents: agents}, parent_id, spawn_turn)
-      when is_list(agents) and is_integer(parent_id) do
-    agents
+  @spec children(t() | [Record.t()] | term(), integer() | nil, integer() | nil) :: [Record.t()]
+  def children(%__MODULE__{agents: agents}, parent_id, spawn_turn),
+    do: children(agents, parent_id, spawn_turn)
+
+  def children(records, parent_id, spawn_turn) when is_list(records) and is_integer(parent_id) do
+    records
     |> Enum.filter(fn record ->
       parent_id(record) == parent_id and field(record, :spawn_turn) == spawn_turn
     end)
@@ -138,7 +146,7 @@ defmodule EvoGit.AgentState.Snapshot do
     |> Enum.sort_by(fn record -> {index_sort_key(record), agent_id(record)} end)
   end
 
-  def children(_snapshot, _parent_id, _spawn_turn), do: []
+  def children(_snapshot_or_records, _parent_id, _spawn_turn), do: []
 
   @doc """
   Where a run was interrupted, from its durable in-flight batch marker.

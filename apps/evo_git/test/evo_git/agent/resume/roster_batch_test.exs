@@ -10,9 +10,11 @@ defmodule EvoGit.Agent.Resume.RosterBatchTest do
     * a `status: "done"` row CONTRIBUTES its stored result (text, commit, repo
       id, branch) and needs no re-spawn;
     * a `status: "running"` row becomes a rebuilt `%AgentSpec{}` carrying the
-      resume opts (persisted id, own base/branch/anchor, `restore_agent_state`)
-      and NO `:resume_kind` (that key means a task-level pause, which a child
-      never has);
+      resume opts (persisted id, own base/branch/anchor, `restore_agent_state`);
+      the resume KIND of the parent's batch decides the child's `:pause_commit`
+      (clean: its OWN checkpoint; dirty: an explicit `nil` that suppresses the
+      stale durable one) and adds its own `:resume_kind`, while a crash retry
+      (`nil`) adds neither key;
     * a slot with no usable row is `:missing` (the scheduler answers it as
       `{:error, :subagent_result_lost}`);
     * slots are ordered by `spawn_index`, NOT by roster order, and a row from an
@@ -182,6 +184,42 @@ defmodule EvoGit.Agent.Resume.RosterBatchTest do
     assert opts[:persistent_state] == true
     # A child is a CRASH RETRY of its own run, never a pause resume.
     refute Keyword.has_key?(opts, :resume_kind)
+  end
+
+  test "a CLEAN pause resume carries the child's own pause checkpoint and its kind" do
+    row = running_row(@child_a, 0, pause_commit: "pause-#{@child_a}")
+
+    assert {:ok, %{entries: [entry]}} =
+             plan([row], 1, plan_opts: [resume_kind: :clean_pause])
+
+    # The clean-frozen child is still RUNNING: it is re-spawned with its OWN id.
+    assert entry.status == :running
+    assert entry.agent_id == @child_a
+    spec = entry.spec
+    assert %EvoGit.AgentSpec{} = spec
+    opts = spec.opts
+    assert opts[:resume_agent_id] == @child_a
+    # Its worktree bases on its OWN pause checkpoint (the KEY's presence wins in
+    # `ResumePlan`), and it takes the clean (no-repair) path itself.
+    assert opts[:pause_commit] == "pause-#{@child_a}"
+    assert opts[:resume_kind] == :clean_pause
+    assert opts[:restore_agent_state] == true
+  end
+
+  test "a DIRTY pause resume SUPPRESSES a stale pause checkpoint" do
+    # A `pause_commit` column left over from an EARLIER pause must never be used
+    # after a crash: the key is present with `nil`, which wins over the durable
+    # fallback read.
+    row = running_row(@child_a, 0, pause_commit: "stale-pause")
+
+    assert {:ok, %{entries: [entry]}} =
+             plan([row], 1, plan_opts: [resume_kind: :dirty_pause])
+
+    assert entry.status == :running
+    opts = entry.spec.opts
+    assert Keyword.has_key?(opts, :pause_commit)
+    assert opts[:pause_commit] == nil
+    assert opts[:resume_kind] == :dirty_pause
   end
 
   test "a slot with no row is missing, and a mixed batch keeps every slot in place" do
