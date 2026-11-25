@@ -271,9 +271,11 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
 
       assert has_element?(view, "[data-workbench-item='task'][data-item-id='#{id}']")
 
+      # A FINISHED run opens its review page: that is where its output (diff,
+      # merge/reject, archive) lives.
       assert has_element?(
                view,
-               "[data-item-id='#{id}'][data-item-title='#{objective}'][data-item-href='/tasks?task=#{id}']"
+               "[data-item-id='#{id}'][data-item-title='#{objective}'][data-item-href='/review/#{id}']"
              )
 
       assert has_element?(view, "[data-item-id='#{id}'][data-item-state='Completed']")
@@ -285,6 +287,76 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
 
       # "Load more tasks" only exists past the first 15-row page.
       refute has_element?(view, "[data-workbench-more]")
+    end
+
+    test "the destination follows the lifecycle state", %{conn: conn, tmp_dir: tmp_dir} do
+      prefix = unique_phrase("dest")
+
+      # Finished runs are reviewable: their row belongs on the review page.
+      finished =
+        for status <- [:completed, :failed, :cancelled] do
+          {status, seed_task!(path: tmp_dir, objective: "#{prefix} #{status}", status: status)}
+        end
+
+      # Live runs are focused on the tasks page instead.
+      live_statuses = [
+        :pending,
+        :running,
+        :finalizing,
+        :cancelling,
+        :awaiting_input,
+        :pausing,
+        :paused
+      ]
+
+      live =
+        for status <- live_statuses do
+          {status, seed_task!(path: tmp_dir, objective: "#{prefix} #{status}", status: status)}
+        end
+
+      {view, _html} = mount_project_page!(conn, tmp_dir)
+
+      view
+      |> element("#workbench-history-filters")
+      |> render_change(%{"query" => prefix})
+
+      wait_for(view, fn -> length(history_row_ids(view)) == length(finished) + length(live) end)
+
+      for {status, id} <- finished do
+        assert has_element?(view, "[data-item-id='#{id}'][data-item-href='/review/#{id}']"),
+               "expected the #{status} row to open /review/#{id}"
+
+        # Finished means finished: never marked active, never routed at /tasks.
+        refute has_element?(view, "[data-item-id='#{id}'][data-item-active]")
+        refute has_element?(view, "[data-item-id='#{id}'][data-item-href^='/tasks']")
+      end
+
+      for {status, id} <- live do
+        # `?task=<id>` IS the tasks page's focus mode (it filters the page to the
+        # one task and opens its card), so a live row lands on that run.
+        assert has_element?(view, "[data-item-id='#{id}'][data-item-href='/tasks?task=#{id}']"),
+               "expected the #{status} row to focus its run on /tasks"
+
+        refute has_element?(view, "[data-item-id='#{id}'][data-item-href^='/review/']")
+        # The in-flight statuses are the ones the presentational flag marks.
+        assert has_element?(view, "[data-item-id='#{id}'][data-item-active='true']")
+      end
+    end
+
+    test "both destinations keep the viewed node, joined correctly" do
+      alias EvoDashWeb.WorkbenchComponent
+
+      # The row hrefs are built by `navigation_path/3`, which puts `node:` FIRST
+      # and `&`-joins any further param — the `with_node_param/2` gotcha, where a
+      # second `?` would corrupt the query.
+      assert WorkbenchComponent.navigation_path("/review/abc", "remote-7") ==
+               "/review/abc?node=remote-7"
+
+      assert WorkbenchComponent.navigation_path("/tasks", "remote-7", task: "abc") ==
+               "/tasks?node=remote-7&task=abc"
+
+      assert WorkbenchComponent.navigation_path("/review/abc", nil) == "/review/abc"
+      assert WorkbenchComponent.navigation_path("/tasks", nil, task: "abc") == "/tasks?task=abc"
     end
 
     test "the first page holds 15 rows and Load more appends the rest", %{
