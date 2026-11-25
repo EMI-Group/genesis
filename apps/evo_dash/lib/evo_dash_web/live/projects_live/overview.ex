@@ -31,13 +31,13 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
       (ordered, `key` = member VCT point or raw path) and
       `execution_member/2` picks the ONE member tasks would run in: the chosen
       key while it still resolves, else the FIRST resolved member, else nil.
-    * `assistant_path/1` builds the HomeLive workbench-draft URL
-      (`/assistant?wb_project=…&wb_draft=…[&node=…]`): `wb_project` is the OS
-      path for a project and the WORKSPACE POINT for a workspace (a member path
-      is never silently substituted — the assistant resolves the group itself).
-    * `default_draft_path/1` advertises that same URL only for a confirmed
-      explicit overview. The browser decides whether its restored tab rail is
-      empty.
+    * `assistant_path/1` returns the HomeLive workbench-draft URL for a project
+      confirmed by the loaded VCT registry or a workspace with a resolved
+      execution member. An unregistered project can compose a task but must be
+      opened through the project picker before it can hand off to the Assistant.
+    * `default_draft_path/1` adds the automatic-open policy to that same URL:
+      only a visible, explicitly selected overview can advertise it. The
+      browser decides whether its restored tab rail is empty.
     * `draft_id/0` mints the 24-lowercase-hex workbench draft id `HomeLive`
       requires (`byte_size(draft) == 24`).
     * `load/2` reads BOTH halves of the async payload off-process —
@@ -336,28 +336,30 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
   # ───────────────────────────────────────────────────────────────────────────
 
   @doc """
-  The HomeLive workbench-draft URL for the current selection
-  (`/assistant?wb_project=…&wb_draft=…[&node=…]`).
+  The HomeLive workbench-draft URL for the confirmed selection, or nil when
+  there is no usable scope or draft id. No automatic-open policy is applied.
 
-  `wb_project` is the OS path for a project and the WORKSPACE POINT for a
-  workspace — the assistant resolves the grouping point itself, so a member path
-  is never silently substituted. A project without an OS path does not fall
-  back to its VCT point. Blank query values are dropped; the overview enables
-  the link only when the selection has an execution path.
+  `wb_project` is the registered project's OS path or the WORKSPACE POINT for
+  a workspace with a resolved execution member. The Assistant resolves the
+  grouping point itself, so a member path is never silently substituted.
   """
-  @spec assistant_path(map()) :: String.t()
+  @spec assistant_path(map()) :: String.t() | nil
   def assistant_path(assigns) when is_map(assigns), do: assistant_path(assigns, scope(assigns))
-  def assistant_path(_assigns), do: "/assistant"
+  def assistant_path(_assigns), do: nil
 
-  defp assistant_path(assigns, scope) do
-    project = if scope.kind == :workspace, do: scope.point, else: scope.exec_path
+  defp assistant_path(assigns, selection) do
+    draft = Map.get(assigns, :overview_draft_id)
 
-    params =
-      [wb_project: project, wb_draft: Map.get(assigns, :overview_draft_id)]
-      |> Enum.filter(fn {_key, value} -> present?(value) end)
-
-    WorkbenchComponent.navigation_path("/assistant", Map.get(assigns, :current_node_id), params)
+    if present?(draft) and confirmed_selection?(selection, assigns) do
+      WorkbenchComponent.navigation_path("/assistant", Map.get(assigns, :current_node_id),
+        wb_project: assistant_scope(selection),
+        wb_draft: draft
+      )
+    end
   end
+
+  defp assistant_scope(%{kind: :workspace, point: point}), do: point
+  defp assistant_scope(%{kind: :project, path: path}), do: path
 
   @doc """
   The same already-minted Assistant draft URL as the overview link, or nil
@@ -387,9 +389,8 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
              ~w(wb_home wb_task wb_git_branch resume_from starting_commit),
              &Map.has_key?(params, &1)
            ),
-         %{exec_path: path} = selection <- scope(assigns),
-         true <- ProjectFlow.absolute_path_for_node?(assigns[:current_node] || node(), path),
-         true <- confirmed_selection?(selection, selected, assigns) do
+         selection <- scope(assigns),
+         true <- selected == assistant_scope(selection) do
       assistant_path(assigns, selection)
     else
       _ -> nil
@@ -398,18 +399,24 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
 
   def default_draft_path(_assigns), do: nil
 
-  defp confirmed_selection?(%{kind: :workspace, point: point}, point, _assigns), do: true
+  defp confirmed_selection?(%{exec_path: path} = selection, assigns) do
+    ProjectFlow.absolute_path_for_node?(assigns[:current_node] || node(), path) and
+      confirmed_scope?(selection, assigns)
+  end
 
-  defp confirmed_selection?(
+  # A workspace exec_path comes only from a resolved member in the loaded view.
+  defp confirmed_scope?(%{kind: :workspace, point: point}, _assigns),
+    do: not is_nil(DraftScope.workspace(point))
+
+  defp confirmed_scope?(
          %{kind: :project, path: path, point: point},
-         path,
          %{active_project_path: path, active_project: %{path: path}} = assigns
        ) do
     DraftScope.point?(point) and
       Enum.any?(as_list(assigns[:projects]), &match?(%{path: ^path, point: ^point}, &1))
   end
 
-  defp confirmed_selection?(_scope, _selected, _assigns), do: false
+  defp confirmed_scope?(_scope, _assigns), do: false
 
   @doc """
   A fresh workbench draft id: `:crypto.strong_rand_bytes(12)` hex-encoded →
@@ -548,6 +555,7 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
     missing_refs = missing_refs(workspace_view)
     key = load_key(page, scope.exec_path)
     loaded_for_scope? = not is_nil(key) and Map.get(page, :overview_loaded_for) == key
+    assistant_path = assistant_path(page, scope)
 
     assigns =
       assign(assigns,
@@ -559,7 +567,9 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
         missing_line: missing_line(missing_refs),
         git: if(loaded_for_scope?, do: git_snapshot_assign(page)),
         tasks: if(loaded_for_scope?, do: task_rows(page), else: []),
-        assistant_path: assistant_path(page, scope),
+        assistant_path: assistant_path,
+        needs_project_picker?:
+          scope.kind == :project and not is_nil(key) and is_nil(assistant_path),
         kind_label: kind_label(scope.kind),
         runnable?: not is_nil(key)
       )
@@ -594,7 +604,7 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
             {gettext("New task")}
           </button>
           <.link
-            :if={@runnable?}
+            :if={@assistant_path}
             id="overview-chat-assistant"
             navigate={@assistant_path}
             class="btn btn-outline"
@@ -602,15 +612,23 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
             {gettext("Chat with Assistant")}
           </.link>
           <button
-            :if={!@runnable?}
+            :if={is_nil(@assistant_path)}
             id="overview-chat-assistant"
             type="button"
             class="btn btn-outline"
+            aria-describedby={if @needs_project_picker?, do: "overview-assistant-project-picker"}
             disabled
           >
             {gettext("Chat with Assistant")}
           </button>
         </div>
+        <p
+          :if={@needs_project_picker?}
+          id="overview-assistant-project-picker"
+          class="text-sm text-base-content/70"
+        >
+          {gettext("Open this project through the project picker to chat with Assistant.")}
+        </p>
 
         <dl class="space-y-2 text-sm">
           <div class="flex flex-wrap items-start gap-x-3 gap-y-1">
