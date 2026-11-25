@@ -1390,9 +1390,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      assert {:ok, _} = EvoGit.VCT.mount(tmp_dir, name: "Workbench project")
+      seed_project(tmp_dir, "Workbench project")
       {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_home: "1"}}")
       render_async(view, async_wait_budget())
+      # The recent-project sidebar can render before Projects confirms the scope.
+      wait_for_projects(view, tmp_dir)
 
       assert has_element?(
                view,
@@ -1449,6 +1451,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       assert has_element?(view, "#workbench-history-content[data-workbench-history-empty=true]")
       refute has_element?(view, "#task-form")
+      refute has_element?(view, "#app-layout[data-workbench-default-draft]")
 
       {:ok, composer, _} =
         view
@@ -1462,6 +1465,30 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   end
 
   describe "opening a project" do
+    # Keep the VCT-dependent overview check in the module that clears the project roster.
+    test "Chat with Assistant links to /assistant with the project path and a draft id",
+         %{conn: conn, tmp_dir: tmp_dir} do
+      path = make_git_repo!(Path.join(tmp_dir, "overview assistant"))
+      %{point: point} = seed_project(path, "Overview Assistant")
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: path}}")
+      wait_for_projects(view, path)
+
+      overview = "#workbench-project-overview[data-overview-kind=project]"
+      assert has_element?(view, "#{overview} [data-overview-point]", point)
+
+      link =
+        view
+        |> element("#{overview} a#overview-chat-assistant", "Chat with Assistant")
+        |> render()
+        |> Floki.parse_fragment!()
+
+      assert [href] = Floki.attribute(link, "a", "href")
+      assert %URI{path: "/assistant", query: query} = URI.parse(href)
+      assert %{"wb_draft" => draft} = params = URI.decode_query(query)
+      assert params == %{"wb_project" => path, "wb_draft" => draft}
+      assert draft =~ ~r/\A[0-9a-f]{24}\z/
+    end
+
     test "can open project via palette and form submission", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
@@ -6165,32 +6192,6 @@ defmodule EvoDashWeb.ProjectsLiveOverviewTest do
       query = view |> assert_patch() |> URI.parse() |> Map.fetch!(:query) |> URI.decode_query()
       assert query["project"] == path
       assert query["wb_task"] == "1"
-    end
-
-    test "Chat with Assistant links to /assistant with the project path and a draft id",
-         %{conn: conn, tmp_dir: tmp_dir} do
-      path = repo!(Path.join(tmp_dir, "overview-assistant"))
-      view = open_overview!(conn, path)
-
-      # The query comes from `URI.encode_query/1` (keys sorted, `&` escaped as
-      # `&amp;`), so only the path prefix is predictable here — the params are
-      # asserted decoded below.
-      assert has_element?(view, ~s(a#overview-chat-assistant[href^="/assistant?"]))
-
-      href =
-        view
-        |> render()
-        |> then(&Regex.run(~r/href="([^"]*wb_project[^"]*)"/, &1))
-        |> List.last()
-        |> String.replace("&amp;", "&")
-
-      query = href |> URI.parse() |> Map.fetch!(:query) |> URI.decode_query()
-      # A PROJECT selection is scoped by its OS path (the assistant is never
-      # handed a VCT token here), plus a fresh 24-hex workbench draft id.
-      assert query["wb_project"] == path
-      assert query["node"] == nil
-      assert String.length(query["wb_draft"]) == 24
-      assert String.match?(query["wb_draft"], ~r/^[0-9a-f]{24}$/)
     end
 
     test "wb_task=1 mounts straight into the composer", %{conn: conn, tmp_dir: tmp_dir} do
