@@ -35,14 +35,14 @@ Cross-suite test mechanics: `test/evo_dash_web/live/CONTEXT.md`; widget + shared
 
 ## The Rule — nothing in the LiveView process blocks
 
-- **Reads** (`NodeContext.projects/1`, `list_task_ids`, `get_task_lite`, `list_tasks_paginated`, `get_resolved_config`, `list_custom_agents`, remote RPCs) never run in `mount/3`, `handle_params/3`, `handle_event/3` or `handle_info/2`: they run inside a `Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn -> … end)` body, are `EvoDash.SafeCall.run/1`-wrapped there, and `send/2` their result to the LiveView. A store call can take many seconds and a `GenServer.call` can EXIT (`:timeout`, dead server) — which `rescue` cannot catch, hence `SafeCall`.
+The umbrella-wide contract (spawn-only-when-connected, `EvoDash.SafeCall` as the ONLY boundary, the NESTED-tag message shape, seq/node stale guards) lives in `../CONTEXT.md` §"Async data-load & exit-safety contract"; page-specific additions:
+- **Reads** (`NodeContext.projects/1`, `list_task_ids`, `get_task_lite`, `list_tasks_paginated`, `get_resolved_config`, `list_custom_agents`, remote RPCs) never run in `mount/3`, `handle_params/3`, `handle_event/3` or `handle_info/2`: they run inside a `Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn -> … end)` body, are `EvoDash.SafeCall.run/1`-wrapped there, and `send/2` their result to the LiveView.
 - **Writes** split by cost: instant click mutations whose effect must be observable immediately (`clear_finished_tasks`, `delete_task`, `cancel_task`, the palette/form project mount `NodeContext.mount_project/3`) stay synchronous but `SafeCall`-wrapped; the slow writes (`start_task`, `run_command`, an attachment read) use the async write path, `forget_project` is optimistic + fully async, and their follow-up reload/scan work is async either way.
 
 ### Async write path (the ONE shape)
 
 Bump a monotonic seq (or record the picker id in `:attach_pending`), set its `*_running`/`*_pending` marker, spawn with `EvoDash.SafeCall.start/3,4` against `EvoDash.TaskSupervisor` (never a bare `Task.start`), then apply the result in a seq-marked (or marker-gated) `handle_info/2` that clears the marker, so the tab never blocks.
-A purely-instant validation failure stays synchronous and owns its own flash (`:attachments_over_cap`, a missing custom agent, a stale-model `{:error, reason}`, a failed `SafeCall.start` itself).
-A failed spawn clears nothing it never set (`task_launching`/`command_running` stay false) and flashes a retry-able error, so no affordance is left wedged.
+A purely-instant validation failure stays synchronous and owns its own flash (`:attachments_over_cap`, a missing custom agent, a stale-model `{:error, reason}`, a failed `SafeCall.start` itself), and a failed spawn clears nothing it never set (`task_launching`/`command_running` stay false), so no affordance is left wedged.
 The GitHub issue-fix launch is the deliberate exception: a synchronous `SafeCall.run/1` start (`GitHub.start_fix_task/3`), because it already runs off the async issues flow and its result drives the modal close.
 
 ### Async message inventory (projects_live)
