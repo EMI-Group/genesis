@@ -886,9 +886,11 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
     # before Cancel: Pause while the task is `:running`/`:pausing`, Resume for
     # `:paused`. The `action_busy` attr (a map keyed by the STRING task id,
     # value `:pause` | `:resume`) marks an async call in flight and disables
-    # BOTH of that task's buttons. The paused explainer is status-driven
-    # (`pause_kind` `:dirty` = restart-recovered → warning; `:clean`/nil →
-    # neutral) and needs NO LiveView round-trip.
+    # BOTH of that task's buttons. A pause is a SNAPSHOT of the whole task tree
+    # and a resume THAWS it in place, so the paused explainer is status-driven
+    # and needs NO LiveView round-trip: `pause_kind` `:dirty` = the pause may
+    # have cut off an in-flight tool call (a restart/lease sweep, a quiesce
+    # timeout or a forced freeze) → warning strip; `:clean`/nil → neutral strip.
     test "Pause is offered only for :running/:pausing, Resume only for :paused" do
       for status <- [:running, :pausing] do
         tree = render_action_card(%{id: "t_pause", status: status}) |> parse()
@@ -1050,7 +1052,7 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       assert "loading-xs" in class_list(spinner)
 
       assert Floki.attribute(pause, "title") ==
-               ["The agent finishes its current tool call before stopping"]
+               ["Freezes every agent of the task — an in-flight tool call finishes first"]
     end
 
     test "the pause/resume buttons of a running/paused task are enabled when nothing is in flight" do
@@ -1111,31 +1113,44 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       html = render_action_card(%{id: "t_clean", status: :paused, pause_kind: :clean})
 
       assert html =~ "bg-info/5 border border-info/20"
-      assert html =~ "Paused by you — resume continues where it stopped."
-      refute html =~ "Resumed after a restart"
-      refute html =~ "subagents that were still running"
+
+      assert html =~
+               "Paused by you — a snapshot of every agent. Resuming continues from it."
+
+      assert html =~ "a snapshot of every agent"
+      assert html =~ "Resuming continues from it."
+      refute html =~ "Resumed from a dirty pause"
 
       assert [resume] = html |> parse() |> Floki.find("button[phx-click='resume_task']")
       assert Floki.attribute(resume, "data-confirm") == []
     end
 
-    test "a dirty pause warns about inconsistent state and confirms before resuming" do
+    test "a dirty pause explains the cut-off tool call and confirms before resuming" do
       html = render_action_card(%{id: "t_dirty", status: :paused, pause_kind: :dirty})
 
       assert html =~ "bg-warning/10 border border-warning/20"
 
-      assert html =~
-               "Resumed after a restart: the last tool call may not have completed, so files and background jobs may be inconsistent. Resuming tells the agents so."
+      # The headline names the harm, its three causes and the consequence.
+      # (Fragments, not the whole sentence: HEEx escapes the apostrophe in
+      # "call's" and "Resuming tells the agents so." is the sentence tail.)
+      assert html =~ "Resumed from a dirty pause"
+      assert html =~ "the pause may have cut off an in-flight tool call"
+      assert html =~ "a restart, a quiesce timeout or a forced freeze"
+      assert html =~ "files and background jobs may be partially applied"
+      assert html =~ "Resuming tells the agents so."
 
-      assert html =~ "subagents that were still running"
-      assert html =~ "A subagent whose result was already collected is not revived"
-      assert html =~ "one with no saved record is reported as lost"
+      # A resume THAWS the snapshot in place — it continues the whole tree, so
+      # no child is dropped and a waiting parent keeps waiting.
+      assert html =~ "thaws every agent of the task with its saved context"
+      assert html =~ "a parent that was still waiting on its subagents stays waiting."
+      refute html =~ "not revived"
+      refute html =~ "reported as lost"
       refute html =~ "Paused by you"
 
       assert [resume] = html |> parse() |> Floki.find("button[phx-click='resume_task']")
 
       assert Floki.attribute(resume, "data-confirm") == [
-               "Resume anyway? The last tool call may not have completed, so files and background jobs may be inconsistent."
+               "Resume anyway? The pause may have cut off an in-flight tool call, so files and background jobs may be partially applied."
              ]
     end
 
@@ -1147,8 +1162,12 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
 
       html = render_component(&TaskCardComponents.task_card/1, task: task)
 
-      assert html =~ "Paused by you — resume continues where it stopped."
-      refute html =~ "Resumed after a restart"
+      assert html =~
+               "Paused by you — a snapshot of every agent. Resuming continues from it."
+
+      assert html =~ "a snapshot of every agent"
+      assert html =~ "Resuming continues from it."
+      refute html =~ "Resumed from a dirty pause"
 
       assert [resume] = html |> parse() |> Floki.find("button[phx-click='resume_task']")
       assert Floki.attribute(resume, "data-confirm") == []
@@ -1169,8 +1188,8 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
         html = render_action_card(%{id: "t_other", status: status, pause_kind: :dirty})
 
         refute html =~ "Paused by you"
-        refute html =~ "Resumed after a restart"
-        refute html =~ "subagents that were still running"
+        refute html =~ "Resumed from a dirty pause"
+        refute html =~ "thaws every agent of the task"
       end
     end
 
