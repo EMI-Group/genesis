@@ -39,6 +39,7 @@ Workspace framing, identity facts and DOM ids belong in `projects_live/CONTEXT.m
 ### Workbench page metadata and composers
 New Task has one `#task-form` inside the shared task composer, visible Task Options with their existing `form="task-form"` associations, and a separate Project Settings disclosure (`#workbench-task-settings`); no Configure dialog gates routine options.
 Projects publishes `#dashboard-root[data-workbench-compose]` only as active when the task form renders, `data-task-draft-project` from the URL, and `data-task-draft-scope` from `DraftScope`; the workbench Git pane uses the resolved execution member's raw OS path, not the VCT token.
+The normal Projects layout (not `/dashboard`) receives `workbench_default_draft` from `Overview.default_draft_path/1`; the recent local fallback stamps `overview_recent_project_path` only after the existing directory check and activation, and navigation or active project replacement clears it.
 Overview and composer patches for the same project reuse the loaded project/model state; the overview loads its metadata when the workspace roster first resolves an execution member and when the selected member changes.
 Assistant uses `ComposerComponents.composer/1` with `kind="assistant"` once around its existing `#chat-form`; `wb_project` plus `wb_draft` restore/select a draft on the viewed node and do not start a session until send.
 Assistant passes the draft id and its raw execution path to `Layouts.app/1`; the VCT token remains a draft-storage identity and never substitutes for an execution path.
