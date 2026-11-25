@@ -6,7 +6,7 @@
    REPLACES the stock `text-*` steps for every rule below it; the component
    stylesheets then consume `var(--text-*)` / `var(--row-h)` / `var(--control-h)`.
    It must stay OUT of the workbench→motion adjacency (pinned by
-   assistant_motion.test.cjs) and before `./view_transitions.css` (last). */
+   assistant_motion.test.cjs). */
 @import "./density.css";
 /* The surface + elevation vocabulary (three layers; overlays are the ONLY
    shadowed surfaces). Right after the scale so both the dashboard shell and the
@@ -19,11 +19,6 @@
    so it is "last" within the import block (a literal append at EOF is invalid
    and would be dropped); its !important reduced-motion backstop is order-proof. */
 @import "./motion.css";
-/* View-transition motion (page loads, theme switch, per-patch cross-fades).
-   CSS requires @import before every other rule, so "last import" is the correct
-   reading of "loaded last" — this file only styles ::view-transition-* pseudo
-   elements and names two elements, so it cannot fight the layers above it. */
-@import "./view_transitions.css";
 @source "../css";
 @source "../js";
 @source "../../lib/evo_dash_web";
@@ -384,9 +379,6 @@
 
 /* Make LiveView wrapper divs transparent for layout */
 [data-phx-session], [data-phx-teleported-src] { display: contents }
-
-/* Smooth scrolling */
-html { scroll-behavior: smooth; }
 
 /* Better scrollbar styling */
 .scrollbar-thin {
@@ -806,9 +798,7 @@ button, a, input, textarea, select, summary,
 /* Legend tooltip — rendered by the LegendTooltip JS hook as a fixed-position
    element appended to document.body. It must live outside the page layout:
    every ancestor (.agents-page-layout, .agents-left-col, #main-scroll,
-   #app-layout) clips overflow, and .agents-page-layout's persisted translateY
-   transform (animation-fill-mode: both) creates a containing block that would
-   trap even position:fixed descendants inside the layout's overflow clip. */
+   #app-layout) clips overflow. */
 .agents-legend-tip {
   position: fixed;
   z-index: 9999;
@@ -1893,16 +1883,6 @@ button, a, input, textarea, select, summary,
   right: auto;
 }
 
-/* Node switch fade animation — plays on the <main> content area when the
-   node context changes (local ↔ remote switch via the sidebar node selector) */
-@keyframes node-switch-fade {
-  0% { opacity: 0.4; }
-  100% { opacity: 1; }
-}
-.node-switch-fade {
-  animation: node-switch-fade 0.25s ease-out;
-}
-
 /* RTL: Shimmer animation direction */
 [dir="rtl"] .task-card-active {
   background-image: linear-gradient(
@@ -2489,7 +2469,7 @@ details[data-capsule-view="provider"] .capsule-view[data-view="provider"] {
   display: block;
 }
 
-/* View transitions: forward (drilling into the provider list) slides in from
+/* Capsule view switching: forward (drilling into the provider list) slides in from
    the right, the reverse variant slides in from the left when returning to the
    model list — so the direction of travel reads correctly both ways.
    The animation restarts on every switch because the switched-in view goes
@@ -2731,10 +2711,8 @@ details.capsule-sub[data-capsule-sub-state="closing"] > .capsule-list {
    transcript scrolls INSIDE it instead of pushing the composer/rail down and
    making the page itself scroll (the nested-scroll bounce).
    `overscroll-behavior: contain` stops scroll chaining at either end.
-   `scroll-behavior: auto` is load-bearing: the document sets
-   `html { scroll-behavior: smooth }` (not inherited today), and a smooth
-   behavior on THESE elements would animate every `scrollTop = scrollHeight`
-   assignment — exactly the perpetual-animation shaking the hook removes. */
+   `scroll-behavior: auto` keeps every `scrollTop = scrollHeight` assignment
+   instant rather than letting a smooth scroll fight the hook. */
 #chat-messages,
 .agent-history-scroll {
   min-height: 0;

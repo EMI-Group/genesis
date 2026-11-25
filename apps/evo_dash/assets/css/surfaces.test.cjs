@@ -172,8 +172,7 @@ test("app.css imports surfaces.css between the scale and the component sheets", 
     "./surfaces.css",
     "./assistant.css",
     "./workbench.css",
-    "./motion.css",
-    "./view_transitions.css"
+    "./motion.css"
   ]);
 });
 

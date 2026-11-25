@@ -4,7 +4,7 @@
 //   * `density.css` is imported immediately after `@import "tailwindcss"` and
 //     before every component stylesheet, so its `@theme` block REPLACES the
 //     stock Tailwind `text-*` steps; it must stay out of the pinned
-//     workbench→motion import adjacency and before `view_transitions.css`.
+//     workbench→motion import adjacency.
 //   * the ladder is one table of exact size/line-height pairs (12 px floor).
 //   * control / row / padding / gutter heights are `:root` tokens declared
 //     ONCE in density.css and consumed as `var(--…)` everywhere else.
@@ -84,8 +84,7 @@ test("density.css is imported right after Tailwind and before every component sh
     "./surfaces.css",
     "./assistant.css",
     "./workbench.css",
-    "./motion.css",
-    "./view_transitions.css"
+    "./motion.css"
   ]);
 
   // The surface/elevation layer sits between the scale and the component sheets.
@@ -93,7 +92,7 @@ test("density.css is imported right after Tailwind and before every component sh
 
   // The pinned adjacency and the last-import rule stay intact.
   assert.match(app, /@import "\.\/workbench\.css";\s*@import "\.\/motion\.css";/);
-  assert.equal(imports[imports.length - 1], "./view_transitions.css");
+  assert.equal(imports[imports.length - 1], "./motion.css");
 });
 
 // --- the type ladder -------------------------------------------------------

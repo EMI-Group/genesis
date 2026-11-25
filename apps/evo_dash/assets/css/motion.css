@@ -196,10 +196,9 @@ dialog.modal[data-dialog-state="closing"]::backdrop {
 
 /* 10. GLOBAL REDUCED-MOTION BACKSTOP — must stay the LAST rule in this file.
    Closes every remaining reduced-motion hole at once: palette-fade-in/
-   slide-down, .node-switch-fade, .task-card-active, .file-manual-input-wrap,
-   the 0.35s .input-* transitions, animate-ping/animate-pulse and
-   `html { scroll-behavior: smooth }`. Per-component guards elsewhere become
-   redundant, not wrong — keep them. */
+   slide-down, .task-card-active, .file-manual-input-wrap, the 0.35s .input-*
+   transitions and animate-ping/animate-pulse. Per-component guards elsewhere
+   become redundant, not wrong — keep them. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: .01ms !important;
