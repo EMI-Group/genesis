@@ -31,6 +31,11 @@ defmodule EvoGit.AgentScheduler.WholeTreeResumeTest do
        objects: both child files land, HEAD advances onto a merge commit, and
        the child branches are deleted as merged.
 
+  One further case isolates the GATE on that last step: a parent that was
+  waiting on ONE restored child merges that child's work ONLY once the child
+  genuinely delivers a `%Result{}` — an unanswered slot resolves no batch, the
+  collector skips it, no commit is merged and no merge note is narrated.
+
   ## Why `async: false` — the ONE forcing BEAM global
 
   Everything about this module's OWN state is per-test isolated: `EvoGit.TaskRegistryCase`
@@ -61,6 +66,7 @@ defmodule EvoGit.AgentScheduler.WholeTreeResumeTest do
 
   alias EvoGit.Agent.Result
   alias EvoGit.Agent.Resume.RosterBatch
+  alias EvoGit.AgentScheduler.Subagents
   alias EvoGit.Agent.Session.Setup
   alias EvoGit.Agent.State
   alias EvoGit.Agent.SubagentProcessing
@@ -71,6 +77,7 @@ defmodule EvoGit.AgentScheduler.WholeTreeResumeTest do
   alias EvoGit.AgentScheduler.SubagentRebuild
   alias EvoGit.AgentSpec
   alias EvoGit.AgentState
+  alias EvoGit.AgentState.Snapshot
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
 
@@ -413,6 +420,215 @@ defmodule EvoGit.AgentScheduler.WholeTreeResumeTest do
     end
   end
 
+  describe "a parent waiting on a restored child" do
+    test "an unanswered slot resolves no batch, merges nothing and narrates nothing", ctx do
+      %{
+        repo: repo,
+        state_pid: state_pid,
+        root_id: root_id,
+        running_child_id: child_id,
+        pause_sha: pause_sha,
+        base_sha: base_sha,
+        branch: branch
+      } = ctx
+
+      task_id = unique_task_id("whole_tree_gate")
+      child_branch = "evogit-agent-restored-#{root_id}"
+
+      child_sha =
+        add_child_branch!(
+          repo,
+          base_sha,
+          child_branch,
+          "src/restored.txt",
+          "restored child work\n"
+        )
+
+      seed_task!(task_id, :paused,
+        pause_kind: :clean,
+        lease_expires_at: nil,
+        opts: [path: repo, mode: "simple", archive: true, persistent_state: true],
+        result: "paused run report",
+        commit_sha: pause_sha,
+        base_sha: base_sha,
+        branch_name: branch
+      )
+
+      # The ROOT is parked WAITING on its children: the durable in-flight batch
+      # holds ONE `:subagent` call and the transcript's last assistant message is
+      # that unanswered call.
+      seed_root_run!(state_pid, task_id, root_id, ctx, branch,
+        messages: frozen_batch_root_messages(),
+        fields: %{pending_tool_batch: frozen_batch_marker()}
+      )
+
+      seed_child_run!(state_pid, task_id, child_id, %{
+        parent_id: root_id,
+        depth: 1,
+        spawn_turn: @turn,
+        spawn_index: 0,
+        status: "running",
+        objective: "durable restored child",
+        branch: child_branch,
+        base_commit: base_sha,
+        current_commit: child_sha,
+        # The child's OWN pause checkpoint: a clean freeze bases its resumed
+        # worktree on THIS commit, never on the parent's.
+        pause_commit: child_sha,
+        anchor_ref: EvoGit.AgentState.Anchor.ref(task_id, child_id)
+      })
+
+      ## The durable row proves the parent was WAITING on children, at `@turn`.
+      assert {:ok, durable_root} = AgentState.load(task_id, root_id, store: state_pid)
+      assert Snapshot.position(durable_root) == {:awaiting_children, @turn}
+
+      # --- the resume walks the same chain the clean case walks ---------------
+      assert :ok = TaskRegistry.resume_task(task_id)
+      assert_receive {:wrapper_spawned, :genesis, spawn_opts, ^task_id}, 2_000
+      assert Keyword.get(spawn_opts, :resume_kind) == :clean_pause
+      assert Keyword.get(spawn_opts, :resume_agent_id) == root_id
+      assert Keyword.get(spawn_opts, :pause_commit) == pause_sha
+
+      scheduler = start_scheduler!(ctx.id_base + 20)
+      dispatch_root!(scheduler, root_spec(repo, task_id, base_sha, spawn_opts))
+      assert wait_for_registered_id(task_id) == root_id
+
+      assert {:ok, meta} = SchedulerStore.get_sched_meta(root_id)
+      assert {:ok, row} = SchedulerStore.get_agent_state(root_id)
+
+      plan = Dispatch.resume_plan(root_id, meta.spec, meta, repo, 0)
+      assert plan.resume_kind == :clean_pause
+      assert plan.worktree_resume_from == pause_sha
+
+      worktree = Path.join([ctx.tmp_dir, ".genesis", "workers", "worker_T1_A1"])
+      git!(repo, ["worktree", "add", "-q", "-b", branch, worktree, pause_sha])
+
+      dispatch_ctx = Dispatch.build_dispatch_ctx(root_id, meta, row, plan, repo, worktree)
+      state = build_initial_state!(dispatch_ctx, row)
+
+      ## ONE child, so the dangling batch has exactly ONE slot — and it is a
+      ## child to RE-SPAWN (nothing was delivered for it yet).
+      assert {:ok, rebuild} = RosterBatch.plan(state, @turn, 1, resume_kind: :clean_pause)
+
+      assert [%{index: 0, status: :running, agent_id: child_id, result: nil} = child_slot] =
+               rebuild.entries
+
+      assert child_slot.spec.opts[:pause_commit] == child_sha
+      assert child_slot.spec.opts[:resume_kind] == :clean_pause
+
+      from = {self(), make_ref()}
+
+      assert {:noreply, _reattached} =
+               SubagentRebuild.handle_rebuild(
+                 root_id,
+                 rebuild,
+                 30_000,
+                 from,
+                 [spawn_fun: rebuild_spawn(self())],
+                 :sys.get_state(scheduler)
+               )
+
+      ## The child came back under its PERSISTED id and delivered NOTHING.
+      assert_receive {:rebuild_spawned, 0, ^child_id, registration_opts, _child_spec}
+      assert registration_opts[:agent_id] == child_id
+      assert registration_opts[:spawn_index] == 0
+      assert registration_opts[:spawn_turn] == @turn
+
+      # --- (a) the slot is UNANSWERED: the batch is not resolved --------------
+      assert {:ok, waiting} = SchedulerStore.get_sched_meta(root_id)
+      assert waiting.status == :waiting
+      assert waiting.total_sub_specs == 1
+      assert waiting.sub_agent_results == %{}
+      assert waiting.pending_sub_agents == MapSet.new([child_id])
+
+      ## The scheduler's own gate: 0 of 1 results changes nothing at all.
+      scheduler_state = :sys.get_state(scheduler)
+
+      assert %SchedulerState{} =
+               returned = Subagents.maybe_resume_parent(scheduler_state, root_id)
+
+      assert returned == scheduler_state
+
+      assert {:ok, %SchedMeta{status: :waiting, sub_agent_results: results}} =
+               SchedulerStore.get_sched_meta(root_id)
+
+      assert results == %{}
+
+      # --- (b) the merge gate: an unfinished child contributes NO child -------
+      ## A child that has not GENUINELY finished (here: a pause report) is not a
+      ## merge candidate, so nothing merges and the model is told nothing.
+      assert {[], []} =
+               SubagentProcessing.collect_mergeable_results(
+                 [{0, child_slot.spec}],
+                 [{:paused, %{agent_id: child_id, reason: :task_pause}}],
+                 "primary"
+               )
+
+      assert SubagentProcessing.perform_merge(worktree, [], "./") == nil
+      assert SubagentProcessing.build_merge_message(nil, [], "", []) == nil
+
+      ## …and the parent worktree is untouched: still at the pause checkpoint,
+      ## with the child's file absent and its branch still alive.
+      assert git!(worktree, ["rev-parse", "HEAD"]) == pause_sha
+      refute File.exists?(Path.join(worktree, "src/restored.txt"))
+      assert git!(repo, ["branch", "--list", child_branch]) != ""
+
+      # --- (c) the child GENUINELY finishes: the slot resolves ----------------
+      delivered =
+        {:ok,
+         %Result{
+           result: "restored child report",
+           commit_sha: child_sha,
+           branch: child_branch,
+           repo_id: "primary"
+         }}
+
+      :ok = Subagents.store_sub_result(root_id, child_id, delivered, child_slot.spec)
+
+      assert {:ok, filled} = SchedulerStore.get_sched_meta(root_id)
+      assert filled.sub_agent_results == %{0 => delivered}
+
+      ## 1 of 1 — the batch is resolved; the paused scheduler QUEUES the parent
+      ## `:ready` instead of dispatching it.
+      assert %SchedulerState{} = Subagents.maybe_resume_parent(:sys.get_state(scheduler), root_id)
+      assert {:ok, %SchedMeta{status: :ready}} = SchedulerStore.get_sched_meta(root_id)
+
+      assert {[merged_child], []} =
+               SubagentProcessing.collect_mergeable_results(
+                 [{0, child_slot.spec}],
+                 [delivered],
+                 "primary"
+               )
+
+      assert merged_child.commit_sha == child_sha
+
+      report = SubagentProcessing.perform_merge(worktree, [merged_child], "./")
+      assert report.status == :clean
+      assert Enum.all?(report.entries, &(&1.status == :merged))
+      :ok = SubagentProcessing.delete_merged_branches(report, worktree)
+
+      ## Real git objects: the child's file is IN the parent worktree, on top of
+      ## the pause checkpoint, in one merge commit that names the child as its
+      ## other parent — and the merged branch is gone.
+      assert File.read!(Path.join(worktree, "src/restored.txt")) == "restored child work\n"
+      assert File.read!(Path.join(worktree, "paused.txt")) == "the paused run's own work\n"
+
+      head = git!(worktree, ["rev-parse", "HEAD"])
+      refute head == pause_sha
+
+      assert [_head | merged_parents] =
+               String.split(git!(worktree, ["rev-list", "--parents", "-n", "1", "HEAD"]))
+
+      assert Enum.sort(merged_parents) == Enum.sort([pause_sha, child_sha])
+      assert git!(repo, ["branch", "--list", child_branch]) == ""
+
+      ## The standard merge note is what the model sees — once, and only now.
+      note = SubagentProcessing.build_merge_message(report, [merged_child], "", [])
+      assert is_binary(note)
+      assert note =~ "System Note: Successfully auto-merged changes from subagents."
+    end
+  end
+
   describe "a DIRTY (restart-classified) pause resumes the same task" do
     test "boot parks the live row :paused/:dirty and resume carries :dirty_pause", ctx do
       %{
@@ -517,8 +733,45 @@ defmodule EvoGit.AgentScheduler.WholeTreeResumeTest do
 
   # The durable ROOT run: full transcript + every scalar the restore owns, plus
   # the run facts a resume carries (`pause_commit`, `branch`, `anchor_ref`).
-  defp seed_root_run!(server, task_id, root_id, ctx, branch) do
+  # `:messages` and `:fields` (both optional) override/extend the base run — the
+  # frozen-batch case adds the in-flight `:subagent` marker that way.
+  defp seed_root_run!(server, task_id, root_id, ctx, branch, opts \\ []) do
     anchor_ref = EvoGit.AgentState.Anchor.ref(task_id, root_id)
+
+    fields =
+      Map.merge(
+        %{
+          depth: 0,
+          agent_module: StubAgent,
+          objective: "durable root objective",
+          node_path: "./",
+          repo_id: "primary",
+          phase: "paused",
+          turn: @turn,
+          usage: %{
+            "input_tokens" => 10,
+            "output_tokens" => 2,
+            "total_tokens" => 12,
+            "input_cost" => 0,
+            "output_cost" => 0,
+            "total_cost" => 0,
+            "cached_tokens" => 0,
+            "cache_creation_tokens" => 0
+          },
+          total_tokens: 1234,
+          compression_count: 2,
+          prompt_cache_key: "persisted-cache-key",
+          pending_inputs: ["restored pending input"],
+          current_commit: ctx.pause_sha,
+          pause_commit: ctx.pause_sha,
+          branch: branch,
+          base_commit: ctx.base_sha,
+          anchor_ref: anchor_ref,
+          archive: false,
+          repo_root: ctx.repo
+        },
+        Keyword.get(opts, :fields, %{})
+      )
 
     :ok =
       AgentState.checkpoint(
@@ -526,37 +779,8 @@ defmodule EvoGit.AgentScheduler.WholeTreeResumeTest do
         root_id,
         %{
           kind: :rewrite,
-          messages: persisted_root_messages(),
-          fields: %{
-            depth: 0,
-            agent_module: StubAgent,
-            objective: "durable root objective",
-            node_path: "./",
-            repo_id: "primary",
-            phase: "paused",
-            turn: @turn,
-            usage: %{
-              "input_tokens" => 10,
-              "output_tokens" => 2,
-              "total_tokens" => 12,
-              "input_cost" => 0,
-              "output_cost" => 0,
-              "total_cost" => 0,
-              "cached_tokens" => 0,
-              "cache_creation_tokens" => 0
-            },
-            total_tokens: 1234,
-            compression_count: 2,
-            prompt_cache_key: "persisted-cache-key",
-            pending_inputs: ["restored pending input"],
-            current_commit: ctx.pause_sha,
-            pause_commit: ctx.pause_sha,
-            branch: branch,
-            base_commit: ctx.base_sha,
-            anchor_ref: anchor_ref,
-            archive: false,
-            repo_root: ctx.repo
-          }
+          messages: Keyword.get(opts, :messages, persisted_root_messages()),
+          fields: fields
         },
         store: server
       )
@@ -596,6 +820,41 @@ defmodule EvoGit.AgentScheduler.WholeTreeResumeTest do
   end
 
   defp persisted_child_messages(child_id), do: [message(:user, "durable child #{child_id}")]
+
+  # The transcript of a root the pause froze INSIDE `spawn_sub_agents/2`: the
+  # last assistant message is the ONE unanswered `:subagent` call.
+  defp frozen_batch_root_messages do
+    [
+      message(:system, "persisted root system prompt"),
+      message(:user, "durable root turn"),
+      %ReqLLM.Message{
+        role: :assistant,
+        content: [ReqLLM.Message.ContentPart.text("spawning one subagent")],
+        tool_calls: [
+          %ReqLLM.ToolCall{
+            id: "call_0",
+            type: "function",
+            function: %{
+              name: "task",
+              arguments:
+                Jason.encode!(%{"objective" => "durable restored child", "path" => "./src"})
+            }
+          }
+        ],
+        metadata: %{turn: @turn}
+      }
+    ]
+  end
+
+  # The matching DURABLE in-flight marker: ONE call, classified `:subagent`, so
+  # `EvoGit.AgentState.Snapshot.position/1` reads `{:awaiting_children, @turn}`.
+  defp frozen_batch_marker do
+    %{
+      turn: @turn,
+      started_at: "2026-01-01T00:00:00Z",
+      calls: [%{index: 0, id: "call_0", name: "task", class: :subagent}]
+    }
+  end
 
   defp message(role, text) do
     %ReqLLM.Message{role: role, content: [ReqLLM.Message.ContentPart.text(text)]}
