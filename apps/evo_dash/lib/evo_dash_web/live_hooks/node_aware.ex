@@ -1157,6 +1157,12 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       # param. handle_params calls assign_node → resolve_node_context, which
       # now resolves to {:remote, ...} (on :connected) or :local (on
       # disconnect/error), and then reloads all page-specific data.
+      #
+      # The patch OBEYS the node-switch URL rule: the params are spliced INTO
+      # the page's current query string (`@current_path` may carry page state —
+      # `/tasks?status=needs_review` keeps its filters there), so a
+      # connection-status transition never resets the view. The reconnect
+      # params (a focused task, a settings category) join it the same way.
       path = socket.assigns[:current_path] || "/"
 
       params =
@@ -1164,7 +1170,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
             is_binary(value),
             do: {key, value}
 
-      to = path <> "?" <> URI.encode_query([{"node", current_node_id} | params])
+      to = path |> put_query_params(params) |> put_node_param(current_node_id)
       {:noreply, Phoenix.LiveView.push_patch(socket, to: to)}
     else
       {:noreply, socket}
@@ -1326,24 +1332,36 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   # (`q=needs%20review`) survives unchanged. Empty segments (a trailing `?` or
   # a `&&`) are dropped, so the result never carries a stray separator.
   defp put_node_param(path, node_id) do
-    {base, query} =
-      case String.split(path, "?", parts: 2) do
-        [base, query] -> {base, query}
-        [base] -> {base, ""}
-      end
-
-    pairs =
-      query
-      |> String.split("&", trim: true)
-      |> Enum.reject(&(query_param_key(&1) == "node"))
-
+    {base, pairs} = split_query(path)
+    pairs = Enum.reject(pairs, &(query_param_key(&1) == "node"))
     pairs = if node_id == "local", do: pairs, else: pairs ++ ["node=" <> node_id]
+    join_query(base, pairs)
+  end
 
-    case pairs do
-      [] -> base
-      pairs -> base <> "?" <> Enum.join(pairs, "&")
+  # Splices `params` (raw key/value binaries) into `path`'s query string with
+  # the SAME text-splicing rule as `put_node_param/2`: a key already present is
+  # REPLACED, every other pair is kept verbatim and empty segments are dropped,
+  # so the result never carries a second `?` or a stray separator.
+  defp put_query_params(path, []), do: path
+
+  defp put_query_params(path, params) do
+    {base, pairs} = split_query(path)
+    keys = Enum.map(params, fn {key, _value} -> key end)
+    pairs = Enum.reject(pairs, &(query_param_key(&1) in keys))
+    added = Enum.map(params, fn {key, value} -> URI.encode_query([{key, value}]) end)
+    join_query(base, pairs ++ added)
+  end
+
+  # Splits a path into its base and its non-empty query pairs (verbatim).
+  defp split_query(path) do
+    case String.split(path, "?", parts: 2) do
+      [base, query] -> {base, String.split(query, "&", trim: true)}
+      [base] -> {base, []}
     end
   end
+
+  defp join_query(base, []), do: base
+  defp join_query(base, pairs), do: base <> "?" <> Enum.join(pairs, "&")
 
   defp query_param_key(pair), do: pair |> String.split("=", parts: 2) |> hd()
 end

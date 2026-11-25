@@ -285,6 +285,79 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
       assert patch_to(result) == nil
       assert result.assigns[:remote_status] == "stale"
     end
+
+    # The connection-status patch is a view-preserving navigation, exactly like
+    # a node switch: `@current_path` may carry page state in its query string
+    # (`/tasks?status=needs_review`), so `?node=` is SPLICED INTO it rather than
+    # appended after a second `?` (which would reset the page's filters).
+    test "a connection-status patch keeps existing filters and emits exactly one ?" do
+      start_supervised!(
+        {EvoDashWeb.NodeAwareTest.ConnectionManager,
+         {"test-conn", %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      socket =
+        socket(%{
+          current_node: node(),
+          current_node_id: "test-conn",
+          current_path: "/tasks?status=needs_review"
+        })
+
+      assert {:noreply, result} =
+               NodeAware.handle_connection_status(
+                 socket,
+                 {:remote_connection_status, "test-conn",
+                  %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}
+               )
+
+      to = patch_to(result)
+      assert to == "/tasks?status=needs_review&node=test-conn"
+      assert length(String.split(to, "?")) == 2
+    end
+
+    test "a connection-status patch on a bare path becomes <path>?node=<id>" do
+      start_supervised!(
+        {EvoDashWeb.NodeAwareTest.ConnectionManager,
+         {"test-conn", %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      socket =
+        socket(%{current_node: node(), current_node_id: "test-conn", current_path: "/agents"})
+
+      assert {:noreply, result} =
+               NodeAware.handle_connection_status(
+                 socket,
+                 {:remote_connection_status, "test-conn",
+                  %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}
+               )
+
+      assert patch_to(result) == "/agents?node=test-conn"
+    end
+
+    test "a connection-status patch splices reconnect params into the query string" do
+      start_supervised!(
+        {EvoDashWeb.NodeAwareTest.ConnectionManager,
+         {"test-conn", %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      socket =
+        socket(%{
+          current_node: node(),
+          current_node_id: "test-conn",
+          current_path: "/tasks?status=needs_review&node=test-conn",
+          workbench_reconnect_params: %{"task" => "task-1"}
+        })
+
+      assert {:noreply, result} =
+               NodeAware.handle_connection_status(
+                 socket,
+                 {:remote_connection_status, "test-conn",
+                  %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}
+               )
+
+      assert patch_to(result) ==
+               "/tasks?status=needs_review&task=task-1&node=test-conn"
+    end
   end
 
   describe "handle_node_selected/2 — the node param joins the CURRENT query string" do
