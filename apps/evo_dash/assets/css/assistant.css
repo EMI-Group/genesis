@@ -121,10 +121,8 @@
 .assistant-send-button:disabled { background: color-mix(in srgb, var(--color-base-content) 18%, var(--color-base-100)); color: var(--color-base-100); opacity: .65; cursor: not-allowed; }
 @container assistant (inline-size < 540px) { .assistant-brand { gap: 12px; } .assistant-brand-mark { inline-size: 36px; block-size: 30px; } .assistant-brand h2 { font-size: var(--text-2xl); } }
 
-/* Shared Workbench Composer role classes own the chrome; the native classes
-   are fallbacks for markup without those roles. In Assistant the wrapper and
-   surface coincide; in New Task the surface is inside the AdaptiveInput layout,
-   not around the whole form. */
+/* Both variants render the shared surface inside their composer wrapper.
+   Only that surface gets chrome; the wrapper and form stay undecorated. */
 .workbench-composer[data-composer-kind] {
   --composer-surface: color-mix(in oklab, var(--surface-canvas) 96%, var(--color-base-content));
   --composer-focus-transition: border-color var(--motion-fast) var(--motion-ease-out),
@@ -142,8 +140,7 @@
   --composer-surface: color-mix(in oklab, var(--surface-canvas) 95%, var(--color-base-content));
 }
 
-#app-layout :is(.workbench-composer:is(.workbench-composer-surface, .assistant-input-card),
-  .workbench-composer :is(.workbench-composer-surface, .input-card)) {
+#app-layout .workbench-composer .workbench-composer-surface {
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-2xl);
   background: var(--composer-surface);
@@ -151,8 +148,7 @@
   transition: var(--composer-transition, var(--composer-focus-transition));
 }
 
-#app-layout :is(.workbench-composer:is(.workbench-composer-surface, .assistant-input-card),
-  .workbench-composer :is(.workbench-composer-surface, .input-card)):focus-within {
+#app-layout .workbench-composer .workbench-composer-surface:focus-within {
   border-color: var(--color-primary-standalone);
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary-standalone) 25%, transparent);
 }
@@ -194,8 +190,7 @@
 }
 
 @media (forced-colors: active) {
-  #app-layout :is(.workbench-composer:is(.workbench-composer-surface, .assistant-input-card),
-    .workbench-composer :is(.workbench-composer-surface, .input-card)):focus-within {
+  #app-layout .workbench-composer .workbench-composer-surface:focus-within {
     outline: 2px solid Highlight;
     outline-offset: -2px;
   }

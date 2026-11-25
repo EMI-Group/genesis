@@ -216,46 +216,59 @@ test("component stylesheets consume the ladder instead of arbitrary sizes", () =
 // --- shared composer chrome and control sizing -----------------------------
 
 const composerStyles = source["assistant.css"];
-const composer = "#app-layout :is(.workbench-composer:is(.workbench-composer-surface, .assistant-input-card), " +
-  ".workbench-composer :is(.workbench-composer-surface, .input-card))";
+const composer = "#app-layout .workbench-composer .workbench-composer-surface";
 const toolbar = ".workbench-composer :is(.workbench-composer-toolbar, .assistant-context-bar, .input-controls)";
 const trigger = `${toolbar} details.capsule > .capsule-trigger`;
 const webSources = join(__dirname, "../../lib/evo_dash_web");
-const readTemplate = path => readFileSync(join(webSources, path), "utf8").replace(/<%!--[^]*?--%>/g, "");
-const tags = (template, name) => template.match(new RegExp(`<${name}(?=\\s|>)[^>]*>`, "g")) ?? [];
+const readTemplate = path => readFileSync(join(webSources, path), "utf8")
+  .replace(/<%!--[^]*?--%>|<!--[^]*?-->/g, "");
+// The component calls can include an Elixir map; its => is not a tag close.
+const tags = (template, name) => template.match(new RegExp(`<${name}(?=\\s|>)(?:=>|[^>])*>`, "g")) ?? [];
 const attr = (tag, name) => tag?.match(new RegExp(`\\s${name}="([^"]*)"`))?.[1];
-const hasClass = (tag, name) => {
+const hasClass = (tag, name, prop = "class") => {
   // A literal class attribute or strings from a HEEx class expression.
-  const value = tag?.match(/\sclass=(?:"([^"]*)"|\{([^>]*)\})/);
+  const value = tag?.match(new RegExp(`\\s${prop}=(?:"([^"]*)"|\\{([^>]*)\\})`));
   const classes = value?.[1] ?? [...(value?.[2] ?? "").matchAll(/"([^"]*)"/g)].map(match => match[1]).join(" ");
   return classes.split(/\s+/).includes(name);
 };
 
 const taskForm = readTemplate("components/task_form_components.ex");
 
-test("shared composer roles target both layouts without removing their native classes", () => {
-  const assistant = readTemplate("live/home_live/composer.ex");
-  const assistantWrapper = tags(assistant, "ComposerComponents\\.composer").find(tag => attr(tag, "kind") === "assistant");
-  assert.ok(tags(taskForm, "\\.composer").some(tag => attr(tag, "kind") === "task"));
+test("shared composer roles target both variants without removing their native classes", () => {
+  const shared = readTemplate("components/composer_components.ex");
+  assert.match(shared, /<div class=\{\["workbench-composer", @class\]\} data-composer-kind=\{@kind\}/);
+  assert.match(shared, /<div class=\{\["workbench-composer-surface", @class\]\}[^>]*>\s*<\.dynamic_tag/);
+  assert.match(shared, /<\.dynamic_tag\b[^>]*tag_name=\{@editor_tag\}[^>]*class=\{\["workbench-composer-editor", @editor_class\]\}[^>]*>\s*\{render_slot\(@editor\)\}/);
+  assert.match(shared, /<\/\.dynamic_tag>\s*\{render_slot\(@before_toolbar\)\}\s*<div\b[^>]*id=\{@toolbar_id\}[^>]*class=\{\["workbench-composer-toolbar", @toolbar_class\]\}[^>]*>\s*\{render_slot\(@toolbar\)\}/);
 
-  for (const [template, parts] of [
-    [assistant, [
-      [assistantWrapper, "assistant-input-card", "surface"],
-      [tags(assistant, "textarea").find(tag => hasClass(tag, "assistant-textarea")), "assistant-textarea", "editor"],
-      [tags(assistant, "div").find(tag => attr(tag, "id") === "chat-composer-controls"), "assistant-context-bar", "toolbar"]
-    ]],
-    [taskForm, [
-      [tags(taskForm, "div").find(tag => hasClass(tag, "input-card")), "input-card", "surface"],
-      [tags(taskForm, "textarea").find(tag => attr(tag, "id") === "prompt"), "input-prompt", "editor"],
-      [tags(taskForm, "div").find(tag => hasClass(tag, "input-controls")), "input-controls", "toolbar"]
-    ]]
+  const assistant = readTemplate("live/home_live/composer.ex");
+  assert.match(assistant, /<ComposerComponents\.composer kind="assistant">\s*<ComposerComponents\.composer_surface\b/);
+  const [chatSurface] = tags(assistant, "ComposerComponents\\.composer_surface");
+  assert.ok(hasClass(chatSurface, "assistant-input-card"));
+  assert.equal(attr(chatSurface, "editor_tag"), "form");
+  assert.ok(hasClass(chatSurface, "assistant-message-form", "editor_class"));
+  assert.match(chatSurface, /"id"\s*=>\s*"chat-form"/);
+  assert.equal(attr(chatSurface, "toolbar_id"), "chat-composer-controls");
+  assert.ok(hasClass(chatSurface, "assistant-context-bar", "toolbar_class"));
+
+  assert.match(taskForm, /<\.composer\s+kind="task"[^>]*>\s*\{task_editor\(assigns\)\}/);
+  const inputLayout = taskForm.match(/(<div\b(?=[^>]*\sid="input-layout")[^>]*>)\s*<\.composer_surface\b/)?.[1];
+  assert.ok(hasClass(inputLayout, "input-layout"), "the task surface is a child of AdaptiveInput's layout");
+  assert.match(inputLayout, /\sdata-layout=\{layout\}/);
+  const [taskSurface] = tags(taskForm, "\\.composer_surface");
+  assert.ok(hasClass(taskSurface, "input-card"));
+  assert.ok(hasClass(taskSurface, "input-controls", "toolbar_class"));
+  assert.ok(hasClass(taskSurface, "flex-nowrap", "toolbar_class"));
+
+  for (const [template, id, native, hook] of [
+    [assistant, "chat-message-input", "assistant-textarea", "AssistantComposer"],
+    [taskForm, "prompt", "input-prompt", "AdaptiveInput"]
   ]) {
-    // The fallback supports a baseline without roles; partial role adoption is not valid.
-    const adoptingRoles = /\bworkbench-composer-(?:surface|editor|toolbar)\b/.test(template);
-    for (const [tag, native, role] of parts) {
-      assert.ok(hasClass(tag, native), `missing native class ${native}`);
-      if (adoptingRoles) assert.ok(hasClass(tag, `workbench-composer-${role}`), `missing shared ${role} on ${native}`);
-    }
+    const [slot] = template.match(/<:editor>[\s\S]*?<\/:editor>/) ?? [];
+    assert.ok(slot, `${id} needs an editor slot`);
+    const textarea = tags(slot, "textarea").find(tag => attr(tag, "id") === id);
+    assert.ok(hasClass(textarea, native), `missing native class ${native}`);
+    assert.equal(attr(textarea, "phx-hook"), hook);
   }
 
   const editor = ".workbench-composer :is(.workbench-composer-editor, .assistant-textarea, .input-prompt)";
@@ -263,7 +276,7 @@ test("shared composer roles target both layouts without removing their native cl
   assert.equal(values(editing)["caret-color"], "var(--color-primary-standalone)");
 });
 
-test("one flat composer surface supports both wrapper placements without decorating the whole form", () => {
+test("one flat composer surface styles the card without decorating its form or outer wrapper", () => {
   const shared = leafRules(composerStyles).filter(rule => rule.selectorText === composer);
   assert.equal(shared.length, 1);
   const chrome = values(shared[0].body);
@@ -299,6 +312,30 @@ test("one flat composer surface supports both wrapper placements without decorat
     '.workbench-composer[data-composer-kind="task"]'
   ], "only the task composer animates AdaptiveInput's size changes");
   assert.match(values(sizing[0].body)["--composer-transition"], /^min-height\b[\s\S]+var\(--composer-focus-transition\)$/);
+});
+
+test("the expanded task editor passes the card height to the scrolling textarea", () => {
+  const expanded = '.input-layout[data-layout="expanded"]';
+  const [editor] = blocks(`${expanded} .input-card > .workbench-composer-editor`, app);
+  const sizing = values(editor);
+  assert.equal(sizing.display, "flex", "the textarea must be a flex item within the editor");
+  assert.equal(sizing["flex-direction"], "column");
+  assert.equal(sizing.flex, "1", "the editor fills the space left by the sidecars and toolbar");
+  assert.equal(sizing["min-height"], "0");
+
+  const [prompt] = blocks(`${expanded} .input-prompt`, app);
+  assert.equal(values(prompt).flex, "1");
+  assert.equal(values(prompt)["overflow-y"], "auto");
+  assert.equal(values(prompt)["max-height"], undefined, "the expanded prompt has no compact cap");
+  assert.match(values(prompt)["min-height"], /,\s*100%\s*\)$/, "the floor must also fit the editor's allocation");
+  const promptSelector = `${expanded} .input-prompt`;
+  const mobile = blocks("@media (max-width: 640px)", app).find(body => body.includes(promptSelector));
+  assert.ok(mobile, "the narrow/keyboard-aware override must still target the expanded prompt");
+  const [mobilePrompt] = blocks(promptSelector, mobile);
+  assert.match(values(mobilePrompt)["min-height"], /,\s*100%\s*\)$/, "the mobile floor uses the same bound");
+
+  const [compact] = blocks('.input-layout[data-layout="compact"] .input-prompt', app);
+  assert.equal(values(compact)["max-height"], "calc(1.6em * 16)", "AdaptiveInput still measures the compact cap");
 });
 
 test("the launch hover ring reaches the enabled button in the AdaptiveInput toolbar", () => {
@@ -345,28 +382,45 @@ const taskDisclosures = ":is(#task-advanced-options, #workbench-task-settings)";
 const toggleLabels = "#task-options > .grid > label:has(> .toggle)";
 
 test("the labelled Task Options section uses the real form controls and their flat layout", () => {
-  const section = taskConfiguration.match(/<section\b(?=[^>]*\saria-labelledby="task-options-title")[^>]*>([^]*?)<\/section>/)?.[1];
-  assert.ok(section, "Task Options is labelled by its heading");
-  assert.ok(tags(section, "h2").some(tag => attr(tag, "id") === "task-options-title"));
-  assert.match(section, /<EvoDashWeb\.TaskFormComponents\.task_options_tab\b/);
+  const section = taskOptions.match(/(<section\b(?=[^>]*\sid="task-options")[^>]*>)([^]*?)<\/section>/);
+  assert.ok(section, "Task Options has its own section");
+  const headingId = attr(section[1], "aria-labelledby");
+  assert.equal(headingId, "task-options-title");
+  assert.ok(hasClass(section[1], "workbench-task-options"));
+  const [, heading, headingText] = section[2].match(/(<h2\b[^>]*>)([^]*?)<\/h2>/) ?? [];
+  assert.equal(attr(heading, "id"), headingId);
+  assert.ok(hasClass(heading, "text-lg"), "Task Options uses the section-heading scale");
+  assert.match(headingText, /gettext\("Task Options"\)/);
+  assert.match(taskConfiguration, /<EvoDashWeb\.TaskFormComponents\.task_options_tab\b/);
   assert.match(taskForm, /def task_options_tab\(assigns\) do[^]*?\|> TaskOptionsComponents\.options\(\)/);
   assert.ok(tags(taskForm, "\\.form").some(tag => attr(tag, "id") === "task-form"));
 
-  const optionsGrid = taskOptions.match(/<div\b(?=[^>]*\sid="task-options")[^>]*>\s*(<div\b[^>]*>)([^]*?)<\/div>/);
-  const advancedGrid = taskOptions.match(/<details\b(?=[^>]*\sid="task-advanced-options")[^>]*>\s*<summary\b[^]*?<\/summary>\s*(<div\b[^>]*>)/);
+  const optionsGrid = section[2].match(/^\s*<h2\b[^]*?<\/h2>\s*(?:<p\b[^]*?<\/p>\s*)?(<div\b[^>]*>)([^]*?)<\/div>/);
+  const advancedGrid = section[2].match(/<details\b(?=[^>]*\sid="task-advanced-options")[^>]*>\s*<summary\b[^]*?<\/summary>\s*(<div\b[^>]*>)([^]*?)<\/details>/);
   assert.ok(hasClass(optionsGrid?.[1], "grid"));
   assert.ok(hasClass(advancedGrid?.[1], "grid"));
   assert.match(optionsGrid[2], /\{persist_agent_state_toggle\(assigns\)\}/);
-  const fields = [...tags(taskOptions, "input"), ...tags(taskOptions, "select")];
-  for (const name of ["build_system", "archive", "node_path", "starting_commit", "resume_from"]) {
-    assert.ok(fields.some(tag => attr(tag, "name") === name && attr(tag, "form") === "task-form"),
-      `${name} belongs to the task form`);
+  for (const [grid, tagName, names] of [
+    [optionsGrid, "select", ["build_system"]],
+    [optionsGrid, "input", ["archive"]],
+    [advancedGrid, "input", ["node_path", "starting_commit", "resume_from"]]
+  ]) {
+    const fields = tags(grid[2], tagName);
+    for (const name of names) {
+      assert.ok(fields.some(tag => attr(tag, "name") === name && attr(tag, "form") === "task-form"),
+        `${name} belongs to the task form`);
+    }
   }
 
-  const labelledInputs = [...taskOptions.matchAll(/<label\b[^>]*>\s*(<input\b[^>]*>)/g)].map(match => match[1]);
-  for (const [key, value] of [["name", "archive"], ["id", "persist-agent-state-toggle"]]) {
-    assert.ok(labelledInputs.some(tag => attr(tag, key) === value &&
-      attr(tag, "type") === "checkbox" && hasClass(tag, "toggle")), `${value} has a clickable native toggle label`);
+  const persist = taskOptions.match(/def persist_agent_state_toggle\(assigns\) do([^]*?)"""\s*end/)?.[1];
+  for (const [markup, key, value] of [
+    [optionsGrid[2], "name", "archive"],
+    [persist, "id", "persist-agent-state-toggle"]
+  ]) {
+    const input = markup?.match(/<label\b[^>]*>\s*(<input\b[^>]*>)/)?.[1];
+    assert.ok(attr(input, key) === value && attr(input, "type") === "checkbox" && hasClass(input, "toggle"),
+      `${value} has a clickable native toggle label`);
+    if (key === "id") assert.equal(attr(input, "phx-click"), "toggle_persist_agent_state");
   }
 
   const [grids] = blocks(":is(#task-options, #task-advanced-options) > .grid", composerStyles);

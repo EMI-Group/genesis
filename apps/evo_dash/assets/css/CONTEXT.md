@@ -8,9 +8,9 @@
 ## API Surface
 The file contains DaisyUI light/dark themes, accent fill/standalone role tokens, shared component styles, Markdown, responsive input layout, and a final Genesis Assistant chat section.
 The Assistant section scopes reading rhythm, quiet headings/quotes, code sizing and narrow-screen spacing to `#chat-messages .md-content`, and styles the column `.help-composer` (textarea row above a `.help-composer-controls` bar holding the picker left and Send/Stop right) plus `.help-caret` without changing layout or hook contracts.
-`.workbench-composer[data-composer-kind]` scopes a common editor, not the whole form's decoration: `.workbench-composer-surface` marks the visible card, `.workbench-composer-editor` the textarea, and `.workbench-composer-toolbar` the action row.
-The shared resting card uses a hairline and no elevation, with variant-specific surface fills, a zero-blur focus ring, a forced-colors outline and touch-target floors.
-New Task retains its native `.input-card` and AdaptiveInput geometry; its card is distinct from the surrounding page, and inline `#task-options` uses flat labels and aligned fields with shared disclosure styling for Advanced options and Project Settings.
+`.workbench-composer[data-composer-kind]` scopes a common editor: the descendant `.workbench-composer-surface` is the visible card, `.workbench-composer-editor` wraps the textarea, and `.workbench-composer-toolbar` is the action row.
+Only the card gets the hairline and variant-specific fill, with no elevation, a zero-blur focus ring and a forced-colors outline; toolbar controls use the shared touch-target floor.
+New Task retains its native `.input-card` and AdaptiveInput geometry; its card is distinct from the surrounding page, and the labelled `section#task-options` uses flat toggle labels and aligned fields with shared disclosure styling for Advanced options and Project Settings.
 Mode/model capsule summaries are borderless toolbar actions with visible keyboard focus and open-state fill; their popup positioning, item styles and motion remain capsule-owned.
 Inside `#chat-messages`, `.assistant-execution-indicator` is an inline-flex status row with a static base-content label and `.assistant-execution-dot` is a fixed 0.375rem standalone-accent decorative dot.
 The dot alone breathes between opacity 1 and 0.45 over 2s; `.help-caret` remains visible at opacity 0.4 at its quietest over 1.4s.
@@ -57,8 +57,9 @@ A `height`/`min-height` derived from `100vh`/`100dvh` is forbidden inside the sh
 Viewport-anchored top-layer surfaces keep viewport units: the `dialog.modal .modal-box` caps, `.project-palette-overlay` (`position: fixed`), `.workbench-window`, `#workbench-settings-frame` and `.workbench-window-page` (the settings window's own iframe document) size themselves against the viewport, never against the content box.
 The Settings window header's "Settings server" picker (`.workbench-settings-server-picker` in `./workbench.css`) is a shrinkable flex row — `min-width: 0` plus a content-sized shrinking select, never a percentage-width (`w-full`) select in a shrink-to-fit line, which overflowed the popup document — and `./settings_window_overflow.test.cjs` pins it.
 `.agents-page-layout` fills `#main-content` at xl+ (`height: 100%`, `.shell-fill` in the markup) instead of subtracting the chrome from a viewport unit.
-The expanded `.input-card` is a size container (`container-type: size`, expanded layout only — the compact card's height is content-derived and would collapse), so the textarea floor is `min(10 lines, 100cqh - var(--input-toolbar-budget, 4.5rem))` and 6 lines on mobile.
-`100cqh` measures the card's content box, so that floor tracks the top bar, the sidebar, the page padding and the `--app-vh` keyboard override automatically, and `--input-toolbar-budget` (4.5rem ≈ the 3rem toolbar row plus slack, so the floor can only under-fill) is its single tuning point.
+The expanded `.input-card` is a size container (`container-type: size`, expanded layout only — the compact card's height is content-derived and would collapse); its direct `.workbench-composer-editor` passes the leftover flex height around the toolbar and optional sidecars down to the scrolling textarea.
+The textarea floor is the smallest of 10 lines (6 on mobile), `100cqh - var(--input-toolbar-budget, 4.5rem)` and `100%` of the allocated editor height.
+`100cqh` measures the card's content box and tracks the shell and the `--app-vh` keyboard override automatically, while the editor height caps the floor when sidecars take up space.
 
 ## Motion foundation (`motion.css`)
 `./motion.css` is the ONE shared motion vocabulary every dashboard package consumes with a single attribute or class; `app.css` imports it from its `@import` block immediately after `./workbench.css` (an `@import` must precede every other rule, so "last import" is "loaded last"), and its `!important` reduced-motion backstop makes cascade position moot.
