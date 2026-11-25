@@ -209,7 +209,7 @@ Nothing is pushed, and nothing throws, when `#workbench-settings-window` or its 
 Recency is Map insertion order (a hit is a `delete` + `set` touch), and an insert or an over-full cache evicts the OLDEST entries, never the entry just inserted, so a live handoff is never evicted by its own insert.
 `projectPreview.release()` is the teardown seam: it clears a pending handoff, empties the cache and removes the shadow-DOM host (a later `remember()` re-creates it and re-clones the stylesheets); `workbench.js`'s `destroyed()` calls it UNLESS `document.body` carries `data-workbench-project-switching` (a project-switch navigation keeps painting the old window until the new one mounts).
 Only sidebar project shortcuts start the preview handoff; the fixed overlay fits the live `#main-scroll` rectangle without scaling, and regular task-tab, history and review routes do not use it.
-Native View Transition group geometry on LiveView patches belongs to `../../css/view_transitions.css`, not the preview hook.
+The preview handoff is local to the overlay; LiveView navigation and patches do not use document-level View Transitions.
 The pure planning (`touch`/`keysToEvict`/`store`) carries no DOM and is pinned by `./workbench_project_preview.test.cjs`.
 
 ### Server→client push_event patterns
