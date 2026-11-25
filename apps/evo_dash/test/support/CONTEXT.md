@@ -2,9 +2,9 @@
 
 ## Intent
 
-Shared, production-free support modules for the EvoDash suite: the connection case template, the async-load flush helper, the two directory-picker fakes, the Store/TaskRegistry isolation helper, the per-process config-dir seam, the deadline-bounded temp-tree removal primitive, and the hermetic ChatGPT sign-in stub.
+The awaited-state helpers for the LiveView suites (the ONE settled-state/save-receipt await), the connection case template, the async-load flush helper, the two directory-picker fakes, the Store/TaskRegistry + VCT isolation helpers, the per-process config-dir and seam overrides, the deadline-bounded temp-tree removal primitive, and the hermetic ChatGPT sign-in stub.
 Compiled only in `:test` via `elixirc_paths(:test) = ["lib", "test/support"]` (`apps/evo_dash/mix.exs`).
-Nine compiled `.ex` modules carry setup, helpers and fakes only — never test logic or assertions.
+Ten compiled `.ex` modules carry setup, helpers and fakes only — never test logic or assertions.
 The directory also holds TWO test scripts, `config_dir_test.exs` and `fs_cleanup_test.exs`, which are NOT compiled (only `*.ex` is) but loaded by ExUnit like any other suite; they live here because each is the proof module for one support module of this directory.
 
 ## Routing Table

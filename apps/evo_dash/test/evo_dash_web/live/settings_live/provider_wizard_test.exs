@@ -60,88 +60,27 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
   import Phoenix.LiveViewTest
   alias EvoDashWeb.SettingsComponents.ProviderProfiles.Row
   alias EvoDash.Test.PersistedConfig
+  alias EvoDash.Test.SettingsAwait
   alias EvoDash.Test.ChatGPTLoginStub, as: ChatGPTStub
-  # Load-tolerant budgets for waits on ASYNC settings work (mount load chain,
-  # owned config-save receipt). That work runs in supervised tasks on a shared
-  # host whose scheduling swings 10-30x (test/CONTEXT.md), so the waits stay
-  # bounded but must not expire spuriously.
-  @async_wait_budget_ms 30_000
-  @assigns_timeout_ms 30_000
-  # Local copies of the mount/settle/save helpers: this module must COMPILE and
-  # run on its own (`mix test .../provider_wizard_test.exs`), and the shared
-  # `EvoDashWeb.SettingsLiveTest.Helpers` module only exists once
-  # `settings_live_test.exs` is loaded, which the loader does not guarantee in
-  # alphabetical order.
+  # EVERY wait on ASYNC settings work (the mount load chain, an owned config-save
+  # receipt) goes through the ONE shared, evidence-based await in
+  # `test/support/settings_await.ex`. It reads the page's own authoritative
+  # markers instead of sampling `config_saving` (false on every refusal) or
+  # `EvoDash.TaskSupervisor` pids (empty in the gap between two chained mount
+  # loads), and it FAILS with the reason the page reported when a save is
+  # refused rather than returning instantly.
   defp mount_settings(conn, path) do
     {:ok, view, html} = Phoenix.LiveViewTest.live(conn, path)
-    await_mount_async_loads(view)
+    SettingsAwait.await_settled(view)
     {:ok, view, html}
   end
 
-  defp await_mount_async_loads(view) do
-    view.pid
-    |> mount_async_task_pids()
-    |> Enum.map(&Process.monitor/1)
-    |> Enum.each(fn ref ->
-      receive do
-        {:DOWN, ^ref, :process, _pid, _reason} -> :ok
-      after
-        @async_wait_budget_ms -> :ok
-      end
-    end)
+  # An event that STARTS a whole-file save, acknowledged only by its receipt.
+  defp save_hook(view, expected_msg, fun) when is_function(fun, 0),
+    do: SettingsAwait.await_save(view, expected_msg, fun)
 
-    :ok
-  end
-
-  defp mount_async_task_pids(view_pid) do
-    EvoDash.TaskSupervisor
-    |> DynamicSupervisor.which_children()
-    |> Enum.flat_map(fn
-      {_, pid, _, _} when is_pid(pid) ->
-        if view_pid in task_callers(pid), do: [pid], else: []
-
-      _ ->
-        []
-    end)
-  end
-
-  defp task_callers(pid) do
-    case Process.info(pid, :dictionary) do
-      {:dictionary, dict} -> Keyword.get(dict, :"$callers", [])
-      _ -> []
-    end
-  end
-
-  # Mutations acknowledge dispatch before the off-process write completes:
-  # always assert the authoritative completion, not the dispatch render.
-  defp settings_hook(view, event, params) do
-    Phoenix.LiveViewTest.render_hook(view, event, params)
-    await_config_save(view)
-  end
-
-  defp await_config_save(view) do
-    wait_settings(view, &(not &1[:config_saving]))
-    render(view)
-  end
-
-  defp wait_settings(view, predicate, deadline \\ nil) do
-    deadline = deadline || System.monotonic_time(:millisecond) + @async_wait_budget_ms
-    current = assigns(view)
-
-    if predicate.(current) do
-      current
-    else
-      assert System.monotonic_time(:millisecond) < deadline,
-             "Settings did not reach the expected authoritative state"
-
-      receive do
-      after
-        2 -> wait_settings(view, predicate, deadline)
-      end
-    end
-  end
-
-  defp assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
+  # The ONE page read (a `:sys.get_state` round trip) stays shared.
+  defp assigns(view), do: SettingsAwait.assigns(view)
 
   setup do
     EvoDash.Test.ConfigDir.isolate!("evogit_settings_provider_wizard_test")
@@ -153,7 +92,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
     # the task can be killed before it runs and the notification is lost
     # forever. Inject the suite's load-tolerant budget so the product can never
     # kill a stub call (production keeps its own 15 s default).
-    Process.put(:chatgpt_signin_call_timeout_ms, @async_wait_budget_ms)
+    Process.put(:chatgpt_signin_call_timeout_ms, SettingsAwait.async_wait_budget_ms())
     :ok
   end
 
@@ -187,8 +126,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
   end
 
   defp save_wizard(view) do
-    view |> element(wizard_button("provider_wizard_save")) |> render_click()
-    await_config_save(view)
+    save_hook(view, "Provider account saved.", fn ->
+      view |> element(wizard_button("provider_wizard_save")) |> render_click()
+    end)
   end
 
   # provider card → auth → model (custom) → reasoning/schedule → Save.
@@ -212,33 +152,25 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
   end
 
   # Bounded wait for the sign-in poll's ONE result to be APPLIED by the
-  # LiveView (the poll runs off-process in a supervised task). `receive after
-  # 2` is the suite's poll cadence, never a fixed wait.
+  # LiveView (the poll runs off-process in a supervised task); the shared await
+  # names the phase it waited for in its failure message.
   defp await_sign_in(view, phase) do
-    await_sign_in(view, phase, System.monotonic_time(:millisecond) + @async_wait_budget_ms)
-  end
-
-  defp await_sign_in(view, phase, deadline) do
-    state = assigns(view)
-    sign_in = (state[:provider_wizard] || %{})[:chatgpt_sign_in] || %{}
-
-    if Map.get(sign_in, :phase) == phase do
-      render(view)
-    else
-      assert System.monotonic_time(:millisecond) < deadline,
-             "ChatGPT sign-in never reached #{inspect(phase)}"
-
-      receive do
-      after
-        2 -> :ok
+    SettingsAwait.await_assigns(
+      view,
+      "the ChatGPT sign-in to reach #{inspect(phase)}",
+      fn state ->
+        sign_in = (state[:provider_wizard] || %{})[:chatgpt_sign_in] || %{}
+        Map.get(sign_in, :phase) == phase
       end
+    )
 
-      await_sign_in(view, phase, deadline)
-    end
+    render(view)
   end
 
   # ── account helpers ────────────────────────────────────────────────────────
-  defp current_providers(view), do: get_in(assigns(view).file_config, [:llm, :providers]) || []
+  defp current_providers(view),
+    do: get_in(SettingsAwait.assigns(view).file_config, [:llm, :providers]) || []
+
   defp stored_providers, do: get_in(PersistedConfig.user_config(), ["llm", "providers"]) || []
   defp stored_profile(id), do: Enum.find(stored_providers(), &(&1["id"] == id))
   defp row_id(id), do: "#provider-profile-" <> Row.slug(id)
@@ -249,13 +181,19 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
   defp detail_form_count(view),
     do: length(Regex.scan(~r/id="provider-profile-detail-/, render(view)))
 
-  defp open_account(view, id),
-    do: settings_hook(view, "edit_provider_profile", %{"profile_id" => id})
+  # Opening an account is a "the editor is rendered now" claim, so it awaits the
+  # DETAIL ELEMENT itself. A wait on an unrelated assign (the old
+  # `config_saving` sample) proved nothing about `editing_profile_id` being
+  # applied, so the surface could be missing when the test queried it.
+  defp open_account(view, id) do
+    render_hook(view, "edit_provider_profile", %{"profile_id" => id})
+    SettingsAwait.await_rendered(view, detail_id(id))
+  end
 
   # `edit_provider_profile` TOGGLES, and a save/add-model already expands the
   # account it touched — collapse would hide the very editor under test.
   defp ensure_open(view, id) do
-    if assigns(view).editing_profile_id == id,
+    if SettingsAwait.assigns(view).editing_profile_id == id,
       do: render(view),
       else: open_account(view, id)
   end
@@ -292,8 +230,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
   end
 
   defp submit_detail_form(view, id, overrides) do
-    view |> form(detail_id(id), overrides) |> render_submit()
-    await_config_save(view)
+    save_hook(view, "Provider profile saved.", fn ->
+      view |> form(detail_id(id), overrides) |> render_submit()
+    end)
   end
 
   defp count_occurrences(html, needle),
@@ -388,8 +327,16 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
       wizard_next(view)
       choose_custom_model(view, "proxy-large")
       wizard_next(view)
-      save_wizard(view)
+      # The third save is awaited through ITS OWN receipt, exactly like the
+      # first: identical success flashes must not be mistaken for this save.
+      html = save_wizard(view)
+      assert html =~ "Provider account saved."
       third = stored_profile("openai-compatible")
+
+      assert third,
+             "the openai-compatible account was not persisted; the config " <>
+               "directory holds #{inspect(Enum.map(stored_providers(), & &1["id"]))}"
+
       assert third["name"] == "OpenAI-Compatible API"
       assert third["provider"] in ["openai_compatible", "openai"]
       assert third["base_url"] == "https://proxy.example.test/v1"
@@ -435,7 +382,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
       assert has_element?(view, "#provider-wizard")
       # Nothing was persisted by any of the navigation.
       assert stored_providers() == []
-      settings_hook(view, "provider_wizard_cancel", %{})
+      # A pure UI event (no save): `render_hook` is a synchronous round trip, so
+      # the close is already applied when it returns — the refute is conclusive.
+      render_hook(view, "provider_wizard_cancel", %{})
       refute has_element?(view, "#provider-wizard")
       assert stored_providers() == []
     end
@@ -541,11 +490,12 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
                ~s|#provider-model-form-second button[phx-click="provider_model_save"]:not([disabled])|
              )
 
-      view
-      |> element(~s(#provider-model-form-second button[phx-click="provider_model_save"]))
-      |> render_click()
-
-      html = await_config_save(view)
+      html =
+        save_hook(view, "Model added to the provider account.", fn ->
+          view
+          |> element(~s(#provider-model-form-second button[phx-click="provider_model_save"]))
+          |> render_click()
+        end)
 
       assert html =~ "Model added to the provider account."
       second = stored_profile("second")
@@ -636,8 +586,10 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
       preset_click.()
       assert has_element?(view, "#provider-schedule-applied")
       assert assigns(view).profile_form_draft["concurrency"] == 4
-      # A later form edit makes the applied recommendation stale.
-      html = settings_hook(view, "provider_profile_form_change", %{"concurrency" => "9"})
+      # A later form edit makes the applied recommendation stale. A form change
+      # starts no save, so its OWN render (a synchronous round trip) is the
+      # evidence — never a config-save wait.
+      html = render_hook(view, "provider_profile_form_change", %{"concurrency" => "9"})
       assert html =~ "modified after applying"
       assert assigns(view).profile_form_draft["concurrency"] == "9"
       # Undo is still offered and restores the PRE-APPLY schedule verbatim.
