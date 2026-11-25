@@ -183,15 +183,6 @@ The page owns the `:persist_agent_state?` assign, defaulted `true` by `Assigns.a
 `StatePersistence.maybe_persist_state/1` pushes `persist_agent_state?` and `restore_state` restores it through `maybe_restore_persist_agent_state/2`, which accepts `true`/`false` and their string forms and leaves the assign untouched otherwise, so the ON default survives a payload without the key (unlike `maybe_restore_task_archive/2`).
 `LaunchOptions.apply/2` ALWAYS puts the `:persistent_state` opt explicitly — the boolean assign verbatim, any non-boolean/nil assign (GitHub fix, restored payload, older browser state) as `true` — so the opt is self-describing and covers both `TaskSubmit.build_opts/6` and the GitHub fix path; `review_live/actions.ex` (resume / extract-skills / auto-resolve) and the Assistant/`HomeLive` session path deliberately omit it and inherit the core default (`true`).
 
-## Payload-vs-consumed gaps
-
-- `get_resolved_config` / `load_model_profiles_from_config/2` transfer the whole resolved config and full `Schema.model_profiles/1` maps; `list_custom_agents` transfers definitions + script + script_status (only ids and script non-empty-ness consumed); `read_project_config` transfers the whole genesis.toml (`"worktree"`, `"script"`, `"commands"`, `"foreign_repos"` consumed); `github_upstream`'s `url` is never read (only `owner`, `repo`, `gh_available`).
-- `NodeContext.projects/1` transfers `%EvoGit.VCT.Mount{point, path, name, kind, last_opened_at}` rows newest first; `last_opened_at`/`kind` are never read here (the VCT owns ordering), `point` only as an active project's display identity.
-
-## Path autocomplete & Windows handling
-
-`Project.path_suggestions/3` matches typed text against the loaded project mounts' OS paths as a case-insensitive SUBSTRING (infix), deduped over `ProjectFlow.absolute_path_for_node?/2`, capped at 8 with project paths first; filesystem entries come from `EvoGit.PathSuggestions.suggest/1` (local) or `NodeContext.list_path_suggestions/2` (remote), so `<dir>/` lists that directory and `~` lists home identically on both branches. Backslashes normalize to `/` before suggestion/dir checks; the expanded path is what gets validated (`NodeContext.dir?/2` remotely, `File.dir?/1` locally), stored in the URL and registered in the VCT.
-
 ## Memory
 
 The page keeps summary maps only: `projects` (`%EvoGit.VCT.Mount{}` rows, display-only), `notified_task_ids` (a `MapSet` of ids), plus the sidebar lists owned by `NodeAware`. No full `%TaskInfo{}` row is retained; notification titles are computed in the spawned scan and discarded after `push_event`.
