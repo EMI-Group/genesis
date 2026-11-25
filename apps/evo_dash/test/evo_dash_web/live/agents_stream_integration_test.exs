@@ -21,10 +21,12 @@ end
 # Snapshots and batches match the core contract, but do not replace real Session
 # producer/consumer integration coverage.
 defmodule EvoDashWeb.AgentsStreamIntegrationTest do
-  # These BEAM-global app-env seams overlap the async AgentsLiveTest loaders:
-  # :agents_list_runner, :agents_config_runner and :agents_history_runner.
-  # :agents_watch_runner / :agents_unwatch_runner also control supervised workers.
-  # Restore them only after the mounted consumer and its worker have exited.
+  # Synchronous because of the BEAM-global app-env seams this file still shares
+  # with the async AgentsLiveTest loaders: :agents_list_runner,
+  # :agents_config_runner and :agents_history_runner.
+  # Its watch/unwatch fixtures are chain-scoped instead
+  # (`EvoDash.Test.Seam.put/2` + `EvoDash.Seam.get/2`), so they reach only this
+  # test's mounted pages and their supervised workers.
   use EvoDashWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
@@ -32,18 +34,16 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
   alias EvoGit.Agent.Stream.Snapshot
 
   @budget 30_000
-  @seams [
+  @app_env_seams [
     :agents_list_runner,
     :agents_config_runner,
-    :agents_history_runner,
-    :agents_watch_runner,
-    :agents_unwatch_runner
+    :agents_history_runner
   ]
 
   setup do
     owner = self()
     id = System.unique_integer([:positive]) + 20_000_000
-    saved = Map.new(@seams, &{&1, Application.fetch_env(:evo_dash, &1)})
+    saved = Map.new(@app_env_seams, &{&1, Application.fetch_env(:evo_dash, &1)})
     calls = :atomics.new(2, [])
     Process.put(:inspector_runner_calls, calls)
     EvoDash.Test.ConfigDir.isolate!()
@@ -54,7 +54,7 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
 
     Application.put_env(:evo_dash, :agents_config_runner, fn _ -> {:ok, %{}} end)
 
-    Application.put_env(:evo_dash, :agents_watch_runner, fn target, agent, consumer ->
+    EvoDash.Test.Seam.put(:agents_watch_runner, fn target, agent, consumer ->
       :atomics.add(calls, 1, 1)
 
       case request(owner, {:watch, target, agent, consumer}) do
@@ -63,7 +63,7 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
       end
     end)
 
-    Application.put_env(:evo_dash, :agents_unwatch_runner, fn target, agent, consumer ->
+    EvoDash.Test.Seam.put(:agents_unwatch_runner, fn target, agent, consumer ->
       send(owner, {:unwatch, target, agent, consumer})
       :ok
     end)

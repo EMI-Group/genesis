@@ -2,13 +2,14 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # async: true — the scheduler ETS tables this file seeds
   # (:evogit_sched_meta / :evogit_agent_summary) are shared across the whole
   # cohort, so each test seeds its agent under a UNIQUE id (see `agent_id/0`)
-  # instead of a fixed literal. The `:agents_*` runner app-env seams are not
-  # driven by other ASYNC modules (stream transport suites own them in sync
-  # modules), and the one real core write (send_agent_message)
-  # contains its own broadcast: its transport is stubbable through the
-  # `:agents_send_message_runner` call-time seam, and the SINGLE test that
-  # deliberately drives the real scheduler write contains and drains the bulk
-  # broadcast it emits (see `drain_agents_bulk_signal/1`).
+  # instead of a fixed literal. The inspector watch/unwatch runners are
+  # chain-scoped (`EvoDash.Test.Seam.put/2`), the remaining `:agents_*` runner
+  # app-env seams are not driven by another ASYNC module (the stream transport
+  # suites that also write them are sync), and the one real core write
+  # (send_agent_message) contains its own broadcast: its transport is
+  # stubbable through the `:agents_send_message_runner` call-time seam, and the
+  # SINGLE test that deliberately drives the real scheduler write contains and
+  # drains the bulk broadcast it emits (see `drain_agents_bulk_signal/1`).
   use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
 
@@ -52,7 +53,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # Seed the selected live watch, not an independent history RPC. Even an
     # ETS-only summary has a synthetic atomic checkpoint in this page suite.
     install_snapshot_runner(fn _node, _id -> [] end)
-    Application.put_env(:evo_dash, :agents_unwatch_runner, fn _, _, _ -> :ok end)
+    EvoDash.Test.Seam.put(:agents_unwatch_runner, fn _, _, _ -> :ok end)
     history_reads = :atomics.new(1, [])
     Process.put(:agents_live_history_reads, history_reads)
 
@@ -3937,15 +3938,15 @@ defmodule EvoDashWeb.AgentsLiveTest do
     element |> Floki.attribute("class") |> Enum.join(" ")
   end
 
-  # Deletes ALL the AgentsLive env seams (each is resolved at call time inside
+  # Deletes the AgentsLive APP-ENV seams (each is resolved at call time inside
   # the async tasks, so a leaked value would leak into later tests). The
   # commit-graph seam is resolved at SPAWN time too, so it is cleared as well.
+  # `:agents_watch_runner` / `:agents_unwatch_runner` are NOT here: they are
+  # chain-scoped through `EvoDash.Test.Seam.put/2` and never touch app env.
   defp clear_agents_env do
     for key <- [
           :agents_list_runner,
           :agents_history_runner,
-          :agents_watch_runner,
-          :agents_unwatch_runner,
           :agents_config_runner,
           :agents_commit_graph_runner,
           :agents_send_message_runner
@@ -4341,10 +4342,12 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # Supply the core's atomic watch envelope; each successful registration or
   # reconciliation gets a monotonic watermark and the complete checkpoint.
   # The serial production watch worker still owns registration and teardown.
+  # Chain-scoped (`EvoDash.Test.Seam.put/2`), so the fixture reaches only the
+  # pages this test mounts and the workers those pages spawn.
   defp install_snapshot_runner(messages_runner) do
     watermark = :atomics.new(1, [])
 
-    Application.put_env(:evo_dash, :agents_watch_runner, fn target, id, _consumer ->
+    EvoDash.Test.Seam.put(:agents_watch_runner, fn target, id, _consumer ->
       messages = messages_runner.(target, id)
       seq = :atomics.add_get(watermark, 1, 1)
 

@@ -29,7 +29,10 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
   different target is registered; reattaching the same target never lets an
   old unregister remove its newer registration. The worker passes the LIVEVIEW
   pid to both runners, never its own pid. Runner seams are
-  `:agents_watch_runner` / `:agents_unwatch_runner`, both `(node, id, pid)`.
+  `:agents_watch_runner` / `:agents_unwatch_runner`, both `(node, id, pid)`,
+  resolved through `EvoDash.Seam.get/2` on the resolving process' spawn chain,
+  so an override reaches only the consumer that installed it and the worker it
+  spawned while an unrelated page and its worker resolve the production RPC.
 
   `detach/1` also works from `terminate/2` as best-effort cleanup. The worker
   monitors the consumer, and core sessions independently monitor that same pid.
@@ -52,7 +55,7 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
 
   require Logger
 
-  alias EvoDash.{NodeContext, SafeCall, TaskSupervisor}
+  alias EvoDash.{NodeContext, SafeCall, Seam, TaskSupervisor}
   alias EvoDashWeb.AgentsLive.{RuntimeStream, Scope}
   alias EvoGit.Agent.Stream.Snapshot
 
@@ -412,18 +415,8 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
           id: stream.agent_id,
           token: stream.token,
           snapshot_request: 0,
-          watch:
-            Application.get_env(
-              :evo_dash,
-              :agents_watch_runner,
-              &NodeContext.register_agent_watcher/3
-            ),
-          unwatch:
-            Application.get_env(
-              :evo_dash,
-              :agents_unwatch_runner,
-              &NodeContext.unregister_agent_watcher/3
-            )
+          watch: Seam.get(:agents_watch_runner, &NodeContext.register_agent_watcher/3),
+          unwatch: Seam.get(:agents_unwatch_runner, &NodeContext.unregister_agent_watcher/3)
         }
 
         command(socket, {:desired, stream.token, desired})
@@ -600,12 +593,7 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
             %{
               node: target_node,
               id: id,
-              unwatch:
-                Application.get_env(
-                  :evo_dash,
-                  :agents_unwatch_runner,
-                  &NodeContext.unregister_agent_watcher/3
-                )
+              unwatch: Seam.get(:agents_unwatch_runner, &NodeContext.unregister_agent_watcher/3)
             }
           end
 

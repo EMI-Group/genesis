@@ -1,7 +1,10 @@
 defmodule EvoDashWeb.AgentsStreamWatchLifecycleTest do
-  # Forcing globals: :evo_dash :agents_watch_runner / :agents_unwatch_runner
-  # are BEAM-global RPC seams, shared with every real StreamWatch worker.
-  use ExUnit.Case, async: false
+  # async: true — no BEAM-global is written. The `:agents_watch_runner` /
+  # `:agents_unwatch_runner` fixtures live in the isolated consumer's own
+  # process dictionary and resolve through `EvoDash.Seam.get/2`, so the serial
+  # worker this consumer spawns inherits them via its `$callers` entry while
+  # every other page and worker in the VM resolves the production RPC.
+  use ExUnit.Case, async: true
 
   import Phoenix.LiveViewTest, only: [render_component: 2]
 
@@ -11,22 +14,27 @@ defmodule EvoDashWeb.AgentsStreamWatchLifecycleTest do
   @timeout 30_000
   @old_node :inspector_old@host
   @new_node :inspector_new@host
-  @seams [:agents_watch_runner, :agents_unwatch_runner]
 
   setup do
     owner = self()
-    previous = Map.new(@seams, &{&1, Application.fetch_env(:evo_dash, &1)})
     # Unlinked bookkeeping survives the test process, so on_exit can await ALL
-    # workers before restoring the global seams, including after an assertion fails.
+    # workers before the consumer stops, including after an assertion fails.
     {:ok, workers} = Agent.start(fn -> MapSet.new() end)
 
-    for {key, kind} <- [agents_watch_runner: :watch, agents_unwatch_runner: :unwatch] do
-      Application.put_env(:evo_dash, key, fn target_node, id, consumer ->
-        rpc(owner, kind, target_node, id, consumer)
-      end)
-    end
+    consumer =
+      spawn(fn ->
+        # The consumer is the LiveView-equivalent subscriber: it resolves the
+        # runners for the worker it spawns, and `Task.Supervisor.start_child/2`
+        # passes that spawn chain on as `$callers`. Installing them HERE instead
+        # of on app env keeps this fixture invisible to every other process.
+        for {key, kind} <- [agents_watch_runner: :watch, agents_unwatch_runner: :unwatch] do
+          Process.put(key, fn target_node, id, consumer ->
+            rpc(owner, kind, target_node, id, consumer)
+          end)
+        end
 
-    consumer = spawn(fn -> consume(socket(), owner, workers) end)
+        consume(socket(), owner, workers)
+      end)
 
     on_exit(fn ->
       consumer_monitor = Process.monitor(consumer)
@@ -39,13 +47,6 @@ defmodule EvoDashWeb.AgentsStreamWatchLifecycleTest do
       end
 
       Agent.stop(workers)
-
-      for {key, value} <- previous do
-        case value do
-          {:ok, runner} -> Application.put_env(:evo_dash, key, runner)
-          :error -> Application.delete_env(:evo_dash, key)
-        end
-      end
     end)
 
     %{consumer: consumer}
@@ -407,6 +408,28 @@ defmodule EvoDashWeb.AgentsStreamWatchLifecycleTest do
     release(expect_rpc(:unwatch, @old_node, id, consumer, worker), :ok)
     stop_and_await(consumer, worker)
     refute_receive {:rpc, _, _, _, _, _, _}, 0
+  end
+
+  test "the runner fixtures never reach app env or a process outside the consumer" do
+    # The whole isolation contract of this module: a page or worker that is not
+    # descended from the consumer resolves the production watcher RPC, so no
+    # foreign process can deliver an `{:rpc, ...}` into a later test's mailbox.
+    assert Application.fetch_env(:evo_dash, :agents_watch_runner) == :error
+    assert Application.fetch_env(:evo_dash, :agents_unwatch_runner) == :error
+
+    parent = self()
+
+    spawn(fn ->
+      send(
+        parent,
+        {:foreign_runners, EvoDash.Seam.get(:agents_watch_runner),
+         EvoDash.Seam.get(:agents_unwatch_runner)}
+      )
+    end)
+
+    assert_receive {:foreign_runners, watch, unwatch}, @timeout
+    assert watch == nil
+    assert unwatch == nil
   end
 
   defp socket do

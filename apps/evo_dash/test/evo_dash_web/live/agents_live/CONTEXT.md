@@ -54,7 +54,7 @@ Checkpoint-part suppression is driven ONLY by the current call's authoritative `
 The reducer suite retains independent response/thinking byte budgets, exact-boundary and UTF-8-safe copied-prefix assertions, cumulative omissions, bounded tool descriptors/names and uncapped checkpoint fidelity.
 These reducer contracts do not assert a UI no-thinking label; production presentation and mounted page/component suites own that display contract.
 The actual serialized watch/unwatch worker, consumer-death cleanup and blocked-RPC A-to-B-to-A race are exercised by the parent `../agents_stream_watch_lifecycle_test.exs`, not this child's command-capture fixture.
-Those synchronous worker tests own BEAM-global `:agents_watch_runner` and `:agents_unwatch_runner` seams; this child's async tests never replace them.
+Those worker tests install `:agents_watch_runner` and `:agents_unwatch_runner` only in their own consumer's process dictionary (`EvoDash.Test.Seam.put/2`/`Process.put/2` + `EvoDash.Seam.get/2`), so this child's async tests never see them.
 `ready/5` rejects a foreign viewed node before issuing worker commands, rejects obsolete same-target tokens without unregistering the current watch, and cleans up obsolete successful registrations for another agent on the current node.
 A snapshot explicitly naming another agent fails with `:snapshot_agent_mismatch` before adopting its seq, clears buffered deltas and permits explicit attach retry.
 A duplicate ready result cannot replace an established snapshot even when its seq is newer; the registration watermark takes precedence over the snapshot's embedded seq.
