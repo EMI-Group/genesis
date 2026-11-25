@@ -18,10 +18,9 @@
 .assistant-empty-heading { padding-block: 20px 28px; text-align: center; }
 .assistant-empty-heading h2 { font-size: var(--text-3xl); font-weight: 500; letter-spacing: -0.025em; line-height: 1.3; color: var(--color-base-content); text-wrap: balance; }
 .assistant-compose { flex-shrink: 0; inline-size: 100%; padding-block: 8px; }
-/* A layer-1 CONTENT surface: the hairline is the only edge — no elevation
-   shadow (depth belongs to overlays; see surfaces.css). */
-.assistant-input-card { position: relative; border: 1px solid var(--border-hairline); border-radius: 26px; background: var(--color-base-100); box-shadow: none; transition: border-color 150ms; }
-.assistant-input-card:focus-within { border-color: color-mix(in srgb, var(--color-base-content) 26%, transparent); }
+/* The shared Workbench Composer rules style this surface. It remains the
+   positioning anchor for the narrow-layout menus. */
+.assistant-input-card { position: relative; }
 .assistant-message-form { display: flex; flex-direction: column; min-inline-size: 0; }
 .assistant-textarea { display: block; inline-size: 100%; min-inline-size: 0; block-size: auto; min-block-size: 96px; max-block-size: min(220px, 28dvh); padding: 20px 22px 12px; border: 0; resize: vertical; background: transparent; color: var(--color-base-content); font: inherit; font-size: 16px; line-height: 1.6; outline: none; }
 .assistant-textarea::placeholder { color: color-mix(in srgb, var(--color-base-content) 55%, var(--color-base-100)); }
@@ -64,7 +63,6 @@
   .assistant-column { padding-inline: 16px; }
   .assistant-empty-heading h2 { font-size: var(--text-2xl); }
   .assistant-empty-heading { padding-block-end: 22px; }
-  .assistant-input-card { border-radius: 21px; }
   .assistant-textarea { padding-inline: 16px; min-block-size: 90px; }
   .assistant-context-bar { gap: 2px; padding-inline: 8px; }
   .assistant-context-start { gap: 0; }

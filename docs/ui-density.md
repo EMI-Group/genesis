@@ -106,8 +106,9 @@ header  { flex: none; }
 list    { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 ```
 
-Only the list scrolls — never the panel, never the page, when the shell already owns the viewport height.
-The `#workbench-history` / `#workbench-git` panels follow this shape: heading and filters stay fixed, `#workbench-history-rows` and `.workbench-git-body` are the scrollers.
+Only the active content view scrolls — never the panel, never the page, when the shell already owns the viewport height.
+History (`#workbench-history`) keeps its heading and filters fixed and scrolls `#workbench-history-rows`.
+Source Control (`#workbench-git`) keeps its summary and switcher at intrinsic height; `.workbench-git-body` passes the remaining height to the active Changes, Branches or Commits view without scrolling itself. Branch search stays at the top of its view.
 The reference implementation for a bounded in-page scroller is the commit graph's `.cg-scroll` chain (`.shell-fill` → `flex: 1 1 0; min-height: 0` → `overflow: auto`).
 A scroller never gets `scroll-behavior: smooth`, and it keeps `overscroll-behavior: contain`.
 

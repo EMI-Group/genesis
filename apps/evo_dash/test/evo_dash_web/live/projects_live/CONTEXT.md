@@ -2,9 +2,8 @@
 
 ## Intent
 
-This directory contains six ExUnit suites (seven case modules) for ProjectsLive support-module behavior without mounting a page.
-Five suites are purely `async: true`; `project_flow_test.exs` pairs an async module with the sync `ProjectFlowVctTest`.
-The mounted ProjectsLive integration suite lives in the parent directory's `projects_live_test.exs`.
+This directory contains ProjectsLive support-module unit tests and focused mounted workbench tests.
+The broader mounted ProjectsLive integration suite lives in the parent directory's `projects_live_test.exs`.
 
 ## API Surface
 
@@ -16,10 +15,15 @@ The mounted ProjectsLive integration suite lives in the parent directory's `proj
 - `async_load_selection_test.exs` covers `AsyncLoad.handle_result/5` node/path/target/generation guards, the pending-remote `default_batch/6` early return, canonical bundle projection, late user-choice preservation, pending restore reconciliation and same-node stale-provider removal.
   A dropped/stale result now settles instead of returning silently: a socket holding no usable bundle records `:model_selection_superseded` / `:model_selection_pending_remote` with readiness false (never `ready? == false` with no error), a socket holding an applied, owned valid bundle keeps readiness with no error, and a result map lacking the `:model_selection` key lands its other keys while recording `:model_selection_missing`.
 
+- `inline_settings_test.exs` follows the rendered New task patch, checks mode-specific form controls and persistence, and exercises foreign-repository validation and add/edit/remove through the rendered inline Project Settings forms.
+- `shared_composer_test.exs` follows both rendered overview entry points, checks the task composer and its quality-control persistence event, and changes the Assistant form to prove the unsent project draft survives a remount without a session.
+
 ## Constraints
 
-Every module except `EvoDashWeb.ProjectsLive.ProjectFlowVctTest` uses `async: true` and requires no LiveView mounts or database fixtures.
-`ProjectFlowVctTest` is `async: false` because the `EvoGit.VCT` mount table is a BEAM-global singleton persisted on the run-wide test store; it never clears the table and only forgets the row it created.
+Tests default to `async: true`.
+`ProjectFlowVctTest` is synchronous because it writes the shared `EvoGit.VCT` mount table and only forgets its own fixture.
+`AssistantComposerTest` is synchronous because its connected Assistant mount writes `EvoDash.ChatHistory` and it seeds a VCT mount for draft scope.
+The manual composer and inline settings mounts select projects through the URL without changing VCT or launching a task.
 The canonical-selection suites use in-memory config maps and sockets, never app-env runner overrides, task launches, network calls or global state mutations.
 Canonical bundle fixtures call the public `Project.load_model_selection_from_config/2` API rather than mocking the core resolver.
 `ProjectTest` isolates configuration per process with `EvoDash.Test.ConfigDir.isolate!/1` and can inject local resolved configuration through `Process.put(:memo_config_resolve, config)`.
@@ -34,6 +38,10 @@ Missing ownership/readiness fields remain compatible only for valid unstamped lo
 
 ## Coverage Boundaries
 
+The mounted tests drive server-rendered events but do not execute the browser's native `<details>` opening or browser storage hooks.
+These mounted tests exercise local-node controls; they do not assert remote inline settings behavior.
+`workspaces_test.exs` checks that the palette renders the Open Project by Path and Create New Project actions, but it does not submit either regular-project form.
+The parent `../projects_live_test.exs` owns the legacy `open_project` and `create_project` success submissions, while `../projects_workbench_test.exs` drives the palette's mounted `ProjectWindow` for both modes and asserts navigation to the registered overview and exact `data-workbench-default-draft` equality to the Chat with Assistant href.
 Legacy Project profile-selection assertions expect the first configured profile id without a selection script, the empty-string Auto sentinel with a script, `{[], nil}` for no profiles without a script, and `{[], ""}` for no profiles with a script.
 Remote legacy profile loading must ignore a local `:memo_config_resolve` and degrade to `{[], nil}` on an unreachable node.
 Canonical launches distinguish nil/uninitialized selection, which locks the configured default even with rules enabled, from explicit empty-map/empty-string Auto, which removes every model lock.

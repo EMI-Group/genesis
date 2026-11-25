@@ -59,8 +59,10 @@ defmodule EvoDashWeb.TaskFormComponents do
   persistence is purely client-side (the StatePersistence input watcher in
   app.js).
 
-  The top bar (Zone 1) and the collapsible Project Settings / Advanced Options
-  panels live OUTSIDE this component in the dashboard layout.
+  Routine task options and the optional advanced disclosure sit below the
+  editor, associated with `task-form`. A page that renders its own Task Options
+  section sets `show_options={false}` and renders `task_options_tab/1` there
+  instead. Project settings belong to the page.
 
   Passing `provider_profiles`, `model_selections`, or a non-empty `model_spec`
   moves the shared `LLMSelectionComponents.llm_selection/1` capsule INSIDE the
@@ -76,6 +78,9 @@ defmodule EvoDashWeb.TaskFormComponents do
   # zh_CN: Evolution → "演进", Prompt → "提示词", Commit → "提交", Branch → "分支"
 
   use EvoDashWeb, :html
+
+  import EvoDashWeb.ComposerComponents, only: [composer: 1]
+  alias EvoDashWeb.TaskOptionsComponents
 
   @short_objective_threshold 1200
 
@@ -120,10 +125,8 @@ defmodule EvoDashWeb.TaskFormComponents do
   # server re-seeds the attribute
   # from its possibly-stale @task_prompt (a MutationObserver on .input-layout
   # catches any server re-render, e.g. toggling mode/model, converging with
-  # no loop and zero network events). The top-bar controls (Build System
-  # select, Archive checkbox, Advanced Options inputs) are rendered OUTSIDE
-  # this form element in the dashboard, so they MUST carry form="task-form"
-  # to associate with it.
+  # no loop and zero network events). Options stay outside the form element,
+  # so submit-time inputs carry form="task-form" to associate with it.
   # ---------------------------------------------------------------------------
 
   attr(:prompt, :string, default: "")
@@ -133,9 +136,8 @@ defmodule EvoDashWeb.TaskFormComponents do
   attr(:resume_from, :string, default: "")
   attr(:disabled, :boolean, default: false)
   attr(:launch_disabled, :boolean, default: false)
+  attr(:show_options, :boolean, default: true, doc: "Render built-in task options.")
   attr(:archive, :boolean, default: false)
-  # INERT, exactly like :archive — never read in this component's HEEx; the
-  # visual control lives only in task_options_tab/1, the assign is the truth.
   attr(:persist_agent_state?, :boolean, default: true)
   attr(:provider_profiles, :list, default: [])
   attr(:model_selections, :list, default: [])
@@ -156,6 +158,26 @@ defmodule EvoDashWeb.TaskFormComponents do
   slot(:controls)
 
   def task_form(assigns) do
+    ~H"""
+    <.composer kind="task" class="w-full flex-1 flex flex-col min-h-0">
+      {task_editor(assigns)}
+      <div :if={@show_options && !@disabled} class="mx-auto mt-3 w-full max-w-3xl shrink-0 px-4">
+        <.task_options_tab
+          mode={@mode}
+          node_path={@node_path}
+          starting_commit={@starting_commit}
+          resume_from={@resume_from}
+          archive={@archive}
+          persist_agent_state?={@persist_agent_state?}
+          build_systems={@build_systems}
+          selected_build_system={@selected_build_system}
+        />
+      </div>
+    </.composer>
+    """
+  end
+
+  defp task_editor(assigns) do
     assigns =
       assign(
         assigns,
@@ -943,19 +965,8 @@ defmodule EvoDashWeb.TaskFormComponents do
     end
   end
 
-  # ---------------------------------------------------------------------------
-  # task_options_tab/1 — "Task Options" tab content for the config dropdown.
-  #
-  # Consolidates the former separate top-bar controls (Build System select,
-  # Archive toggle) and the Advanced Options panel (Starting Node, Starting
-  # Commit, Resume from) into a single tab. All form-associated inputs carry
-  # form="task-form" since they live OUTSIDE the task_form's <.form> element.
-  #
-  # Mode-specific behaviour:
-  #   * Build System + Archive — shown for all modes.
-  #   * Starting Node / Starting Commit / Resume from — evolve-family modes
-  #     only (evolve + custom agent).
-  # ---------------------------------------------------------------------------
+  # Options are a sibling of #task-form, with submit-time fields associated by
+  # form="task-form". Only the persistence toggle updates an assign directly.
 
   attr(:mode, :string, default: "genesis_new")
   attr(:node_path, :string, default: "")
@@ -970,154 +981,14 @@ defmodule EvoDashWeb.TaskFormComponents do
   attr(:disabled, :boolean, default: false)
 
   def task_options_tab(assigns) do
-    ~H"""
-    <div class={[
-      "space-y-4 transition-opacity",
-      @disabled && "opacity-40 pointer-events-none select-none"
-    ]}>
-      <%!-- Build System (genesis modes only) --%>
-      <%= if String.starts_with?(@mode, "genesis") do %>
-        <div class="form-control">
-          <label class="label pb-1">
-            <span class="label-text font-medium text-sm">{gettext("Build System")}</span>
-          </label>
-          <select
-            name="build_system"
-            form="task-form"
-            class="select select-bordered select-sm w-full"
-          >
-            <option value="">{gettext("No build system")}</option>
-            <%= for bs <- @build_systems do %>
-              <option value={to_string(bs.id)} selected={@selected_build_system == to_string(bs.id)}>
-                {bs.name}
-              </option>
-            <% end %>
-          </select>
-        </div>
-      <% end %>
-
-      <%!-- Evolve-family specific advanced options (evolve + custom agent) --%>
-      <%= if evolve_family_mode?(@mode) do %>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div class="form-control">
-            <label class="label pb-1">
-              <span class="label-text font-medium text-sm">{gettext("Starting Node")}
-              <.tip text={
-                gettext(
-                  "The subdirectory within the project to start evolution from. Use './' for root."
-                )
-              } /></span>
-            </label>
-            <input
-              type="text"
-              name="node_path"
-              form="task-form"
-              value={@node_path}
-              class="input input-bordered input-sm w-full font-mono"
-              placeholder={gettext("e.g., ./src/components")}
-            />
-          </div>
-          <div class="form-control">
-            <label class="label pb-1">
-              <span class="label-text font-medium text-sm">{gettext("Starting Commit")}
-              <.tip text={
-                gettext("A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD.")
-              } /></span>
-            </label>
-            <input
-              type="text"
-              name="starting_commit"
-              form="task-form"
-              value={@starting_commit}
-              class="input input-bordered input-sm w-full font-mono"
-              placeholder={gettext("e.g., abc1234 or HEAD")}
-            />
-          </div>
-        </div>
-        <div class="form-control">
-          <label class="label pb-1">
-            <span class="label-text font-medium text-sm">{gettext("Resume from")}
-            <.tip text={
-              gettext(
-                "The ID of a previous task to continue from. Injects the previous task's context (commits, objective, and result) into this task's objective."
-              )
-            } /></span>
-          </label>
-          <input
-            type="text"
-            name="resume_from"
-            form="task-form"
-            value={@resume_from}
-            class="input input-bordered input-sm w-full font-mono"
-            placeholder="a1b2c3d4"
-          />
-        </div>
-      <% end %>
-
-      <%!-- Archive toggle (all modes) --%>
-      <label
-        class="flex items-center gap-3 cursor-pointer bg-base-200/40 rounded-lg p-2.5 border border-base-200"
-        title={gettext("Archive agent details")}
-      >
-        <input
-          type="checkbox"
-          name="archive"
-          value="true"
-          form="task-form"
-          class="toggle toggle-sm toggle-primary"
-          checked={@archive}
-        />
-        <div class="flex-1">
-          <span class="text-sm font-medium block">{gettext("Archive agent detail")}</span>
-          <span class="text-xs text-base-content/70">
-            {gettext("Collect per-agent metadata for review")}
-          </span>
-        </div>
-      </label>
-      <%!-- Persist agent state toggle (all modes) --%>
-      <.persist_agent_state_toggle persist_agent_state?={@persist_agent_state?} />
-    </div>
-    """
+    assigns
+    |> assign(:advanced?, evolve_family_mode?(assigns.mode))
+    |> TaskOptionsComponents.options()
   end
 
-  # ---------------------------------------------------------------------------
-  # persist_agent_state_toggle/1 — "Task Options" tab control next to the
-  # Archive toggle, rendered for ALL modes.
-  #
-  # The checkbox deliberately carries NO `name` attribute and NO `form=`
-  # association, and that is load-bearing: `<.form id="task-form"
-  # phx-submit="task_submit">` has NO `phx-change`, and task_options_tab/1
-  # renders OUTSIDE that form, so form params are an unreliable channel. The
-  # ASSIGN is the single source of truth: each `phx-click` sends
-  # `%{"value" => "true"}` when the checkbox ends up CHECKED and omits the
-  # `"value"` key when it ends up UNCHECKED; the server toggles the assign and
-  # the submit reads the assign (LaunchOptions.put_persistent_state/2).
-  # ---------------------------------------------------------------------------
   attr(:persist_agent_state?, :boolean, default: true)
 
-  def persist_agent_state_toggle(assigns) do
-    ~H"""
-    <label
-      class="flex items-center gap-3 cursor-pointer bg-base-200/40 rounded-lg p-2.5 border border-base-200"
-      title={gettext("Save agent state so work survives a restart")}
-    >
-      <input
-        id="persist-agent-state-toggle"
-        type="checkbox"
-        class="toggle toggle-sm toggle-primary"
-        checked={@persist_agent_state?}
-        phx-click="toggle_persist_agent_state"
-      />
-      <div class="flex-1">
-        <%!-- zh_CN: agent → "代理", persist → "持久化", state → "状态" --%>
-        <span class="text-sm font-medium block">{gettext("Persist agent state")}</span>
-        <span class="text-xs text-base-content/70">
-          {gettext(
-            "Save agent checkpoints so work survives a restart; turn off to skip persistence writes"
-          )}
-        </span>
-      </div>
-    </label>
-    """
-  end
+  # No name or form association: the launch path reads the server assign.
+  def persist_agent_state_toggle(assigns),
+    do: TaskOptionsComponents.persist_agent_state_toggle(assigns)
 end

@@ -23,7 +23,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   """
 
   use Gettext, backend: EvoDashWeb.Gettext
-  import Phoenix.Component, only: [assign: 3]
+  import Phoenix.Component, only: [assign: 2, assign: 3]
   import Phoenix.LiveView, only: [put_flash: 3, push_patch: 2]
   import EvoDashWeb.Helpers, only: [mode_info_message: 1]
 
@@ -32,6 +32,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   alias EvoDash.SafeCall
   alias EvoDashWeb.ProjectsLive.AsyncLoad
   alias EvoDashWeb.ProjectsLive.Project
+  alias EvoDashWeb.WorkbenchComponent
 
   # ───────────────────────────────────────────────────────────────────────────
   # Path normalization
@@ -262,9 +263,8 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   def mount_point_for(_projects, _path), do: nil
 
   # The ONE mount-registration call shape of this module: mounts `path` in the
-  # node's VCT project registry and returns the registered mount's `vct:` point
-  # (or nil when the mount failed, which degrades to rendering the plain OS
-  # path).
+  # node's VCT project registry and returns the registered mount (or nil when
+  # registration failed, which degrades to rendering the plain OS path).
   #
   # `NodeContext.mount_project/3` ALREADY returns `{:ok, %EvoGit.VCT.Mount{}}`
   # — it unwraps `EvoGit.AgentScheduler.RemoteAPI`'s own `{:ok, _}` for both the
@@ -277,10 +277,9 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   #
   # The call stays inside `EvoDash.SafeCall`: a `GenServer.call` to a
   # dead/timed-out store EXITS the caller, which must never crash the page.
-  @spec mount_project_point(node(), String.t(), String.t() | nil) :: String.t() | nil
-  defp mount_project_point(node, path, name) do
+  defp mount_project(node, path, name) do
     case SafeCall.run(fn -> NodeContext.mount_project(node, path, name) end) do
-      {:ok, {:ok, %{point: point}}} when is_binary(point) -> point
+      {:ok, {:ok, %EvoGit.VCT.Mount{} = mount}} -> mount
       _ -> nil
     end
   end
@@ -378,19 +377,19 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
 
       {:ok, expanded} ->
         if File.dir?(expanded) do
-          # Exit-safe store calls (see mount_project_point/3): a `GenServer.call`
-          # to a dead/timed-out store EXITS the LiveView, so a mount failure is
-          # tolerated (the project-list reload falls back to the currently shown
-          # list). The mount's returned VCT point is unused here — the reload
-          # below is the authoritative project list.
-          mount_project_point(node(), expanded, Path.basename(expanded))
+          # Prime the patch with the mount returned by the write. The VCT
+          # broadcast and connected batch refresh the authoritative roster,
+          # including evictions, without a second synchronous store call.
+          projects = socket.assigns[:projects] || []
 
           projects =
-            SafeCall.run(
-              fn -> NodeContext.projects(node()) end,
-              socket.assigns[:projects] || []
-            )
-            |> AsyncLoad.filter_absolute_projects()
+            case mount_project(node(), expanded, Path.basename(expanded)) do
+              %EvoGit.VCT.Mount{point: point} = mount ->
+                [mount | Enum.reject(projects, &match?(%{point: ^point}, &1))]
+
+              nil ->
+                projects
+            end
 
           socket =
             socket
@@ -398,10 +397,8 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
             |> assign(:project_palette_open, false)
             |> assign(:palette_mode, :menu)
 
-          # Push URL params to persist the project across navigation —
-          # `project_url/2`, deliberately NOT
-          # `EvoDashWeb.Helpers.with_node_param/2`.
-          {:noreply, push_patch(socket, to: project_url(socket, expanded))}
+          {:noreply,
+           push_patch(socket, to: overview_url(socket.assigns[:current_node_id], expanded))}
         else
           {:noreply, put_flash(socket, :error, on_missing_message)}
         end
@@ -482,7 +479,18 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
            )}
 
         {:ok, expanded} ->
-          {:noreply, spawn_remote_project_activation(socket, expanded)}
+          # Reusing a same-path URL activation skips the spawn's palette close,
+          # but an explicit open still dismisses the palette and owns the result.
+          {:noreply,
+           socket
+           |> spawn_remote_project_activation(expanded)
+           |> assign(
+             remote_project_open_requested: expanded,
+             project_palette_open: false,
+             palette_mode: :menu,
+             palette_search: "",
+             palette_selected_index: 0
+           )}
       end
     end
   end
@@ -556,10 +564,27 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
       end)
 
       socket
+      |> assign(:remote_project_open_requested, nil)
       |> assign(:project_palette_open, false)
       |> assign(:palette_mode, :menu)
     end
   end
+
+  @doc """
+  Returns the ordinary overview URL for a successful explicit remote open or
+  palette selection, or nil when the activation came from the URL, the mount
+  failed, or the current URL is already the ordinary overview. The parent must
+  clear the open request on navigation and after settling an owned result.
+  """
+  def remote_open_overview_url(socket, path, %{active_project: %{path: path, point: point}})
+      when is_binary(point) and point != "" do
+    if socket.assigns[:remote_project_open_requested] == path and
+         socket.assigns[:workbench_reconnect_params] != %{"project" => path} do
+      overview_url(socket.assigns[:current_node_id], path)
+    end
+  end
+
+  def remote_open_overview_url(_socket, _path, _results), do: nil
 
   @doc """
   Converts persisted/in-memory foreign-repo data into `%EvoGit.Core.ForeignRepo{}`
@@ -669,7 +694,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   # try/rescue.
   defp remote_project_load(node, expanded) do
     if NodeContext.dir?(node, expanded) do
-      mount_point = mount_project_point(node, expanded, nil)
+      mount = mount_project(node, expanded, nil)
 
       projects =
         AsyncLoad.filter_absolute_projects_for_node(node, NodeContext.projects(node))
@@ -696,7 +721,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
            name: Path.basename(expanded),
            # Display-only mount point from the mount just registered above (no
            # extra read); nil degrades to rendering the plain OS path.
-           point: mount_point
+           point: mount && mount.point
          },
          active_project_path: expanded,
          task_mode: mode,
@@ -711,14 +736,11 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
     end
   end
 
-  # Builds the dashboard URL for a project path. In a remote context the
-  # `&node=` param is appended so the node context survives the push_patch —
-  # NOTE: deliberately NOT `EvoDashWeb.Helpers.with_node_param/2`, which
-  # appends with `?` and would corrupt the existing `?project=` query.
-  defp project_url(socket, path) do
-    case socket.assigns[:current_node_id] do
-      nil -> "/projects?project=#{URI.encode(path)}"
-      node_id -> "/projects?project=#{URI.encode(path)}&node=#{node_id}"
-    end
+  @doc """
+  Builds the ordinary project overview URL, preserving the target node and raw
+  selection but not the previous page's close, palette or compose intent.
+  """
+  def overview_url(node_id, path) do
+    WorkbenchComponent.navigation_path("/projects", node_id, project: path)
   end
 end

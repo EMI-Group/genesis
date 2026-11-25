@@ -11,12 +11,10 @@
 //     another stylesheet.
 //   * `surfaces.css` declares no size, padding or gap: `density.css` stays the
 //     only owner of the scale.
-//   * the workbench tab strip has ONE declaration per selector group — one
-//     `.workbench-tab`, one `.workbench-tab-link`, one `.workbench-top` flex
-//     rule — with a NATIVE active tab (canvas fill, top-only radius, a negative
-//     bottom margin joining it to the canvas) and no `inset 0 -2px` underline.
-//   * the published behaviour hooks (`[data-preview="true"]`, the rail-end
-//     overflow menu) are styled here.
+//   * the compact rail centers one tab silhouette with distinct resting,
+//     current and pending treatments; the inset canvas owns its own frame.
+//   * the published behaviour hooks (preview, optional kind icons, and the
+//     rail-end overflow menu) have CSS treatments without requiring new markup.
 //   * content surfaces carry NO elevation (only `var(--elev-*)` where a surface
 //     legitimately lifts); overlays consume `var(--elev-2)` / `var(--elev-3)`.
 //
@@ -204,46 +202,76 @@ test("the tab strip has ONE declaration per selector group", () => {
   }
 });
 
-test("the active tab is continuous with the canvas", () => {
-  const [current] = rulesWith(".workbench-tab.is-current", workbench);
-  assert.ok(current, "the active tab rule is missing");
-  const declared = values(current.body);
-
-  assert.equal(declared.background, "var(--surface-canvas)",
-    "the active tab takes the canvas fill");
-  assert.equal(declared["margin-block-end"], "-1px",
-    "the active tab joins the canvas through a negative bottom margin");
-  assert.equal(declared["border-block-end-color"], "var(--surface-canvas)",
-    "the tab's bottom border paints over the bar's hairline in the canvas colour");
-  assert.equal(declared["border-color"], "var(--border-hairline)",
-    "the sides and the top carry the hairline");
-  assert.equal(declared["box-shadow"], undefined, "the active tab carries no shadow");
-  assert.equal(declared["z-index"], "1", "the active tab paints above the bar's hairline");
-
-  // Top-only rounding, on the shared radius token, for BOTH the base slab and
-  // the active tab (the hover silhouette matches the active shape).
+test("current and pending tabs have distinct treatments within a stable silhouette", () => {
   const [tab] = rulesWith(".workbench-tab", workbench, {exactSelectorText: true});
-  const radius = values(tab.body)["border-radius"];
-  assert.equal(radius, "var(--radius-tab) var(--radius-tab) 0 0");
-  assert.equal(values(current.body)["border-radius"], undefined,
-    "the active tab inherits the slab's top-only rounding instead of re-declaring it");
+  const resting = values(tab.body);
+  assert.equal(resting["border-radius"], "var(--radius-field)");
+  assert.equal(resting.border, "1px solid transparent", "reserve the border even before selection");
+  assert.equal(resting["font-size"], "var(--text-xs)");
+
+  const current = rulesWith(".workbench-tab.is-current", workbench);
+  const pending = rulesWith('.workbench-tab[data-pending="true"]', workbench);
+  assert.equal(current.length, 1);
+  assert.equal(pending.length, 1);
+  assert.ok(pending[0].selectors.includes(".workbench-tab.is-pending"));
+  assert.deepEqual(values(current[0].body), {
+    background: "var(--surface-canvas)",
+    "border-color": "var(--border-hairline)",
+    color: "var(--color-base-content)",
+    "font-weight": "600"
+  });
+  assert.deepEqual(values(pending[0].body), {
+    background: "var(--workbench-selected)",
+    "border-color": "var(--color-primary-standalone)",
+    color: "var(--color-base-content)"
+  });
+
+  const [dot] = ruleContaining(':is([data-pending="true"], .is-pending) .workbench-tab-link::after', workbench);
+  const indicator = values(dot.body);
+  assert.equal(indicator.content, '""', "pending adds a static decorative marker");
+  assert.equal(indicator.position, "absolute", "the marker must not shift the title");
+  assert.ok(parseFloat(indicator["inline-size"]) > 0, "an empty pseudo-element needs a visible size");
+  assert.equal(indicator["inline-size"], indicator["block-size"]);
+  assert.equal(indicator["border-radius"], "50%");
+  assert.equal(indicator.background, "var(--color-primary-standalone)");
+  assert.doesNotMatch(dot.body, /\banimation(?:-[\w-]+)?\s*:/);
 });
 
-test("the strip bottom-aligns its tabs and scrolls without smooth scrolling", () => {
+test("the compact rail centers tabs and contains horizontal overflow", () => {
   const [strip] = rulesWith(".workbench-tabs", workbench, {exactSelectorText: true});
   const declared = values(strip.body);
   assert.equal(declared["overflow-x"], "auto");
+  assert.equal(declared["overflow-y"], "hidden");
+  assert.equal(declared["overscroll-behavior-inline"], "contain");
   assert.equal(declared["scrollbar-width"], "thin");
-  assert.equal(declared["align-items"], "flex-end");
+  assert.equal(declared["align-items"], "center");
   assert.equal(declared["align-self"], "stretch");
-  // The 1px padding absorbs the active tab's -1px margin inside the scroller.
-  assert.equal(declared["padding-block-end"], "1px");
-  assert.equal(declared["margin-block-end"], "-1px");
-  assert.doesNotMatch(strip.body, /scroll-behavior:\s*smooth/);
+  assert.equal(declared.flex, "0 1 auto", "the strip shrinks to make room for its sibling controls");
+  assert.equal(declared["min-width"], "0");
+  assert.doesNotMatch(strip.body, /scroll-behavior:\s*smooth|margin-block-end:\s*-/);
 
   const [tab] = rulesWith(".workbench-tab", workbench, {exactSelectorText: true});
-  assert.equal(values(tab.body)["align-self"], "flex-end");
+  assert.equal(values(tab.body).flex, "0 0 auto", "scroll rather than squeeze a tab");
   assert.equal(values(tab.body)["block-size"], "var(--row-h-sm)");
+
+  const [rail] = rulesWith(".workbench-tab-rail", workbench);
+  assert.equal(values(rail.body)["min-width"], "0", "the rail must shrink with the shell");
+  const [empty] = rulesWith(".workbench-tabs:empty", workbench);
+  assert.equal(values(empty.body).display, "none", "an empty strip adds no space beside Create");
+});
+
+test("the inset canvas owns the hairline instead of joining the active tab", () => {
+  const [bar] = rulesWith(".workbench-top", workbench, {exactSelectorText: true});
+  const top = values(bar.body);
+  assert.doesNotMatch(bar.body, /\bborder-(?:bottom|block-end)\s*:/);
+  assert.equal(top["padding-inline"], "calc(var(--page-gutter) / 2)");
+
+  const [canvas] = rulesWith(".workbench-top + .workbench-content-stack", workbench);
+  const frame = values(canvas.body);
+  assert.equal(frame["margin-inline"], top["padding-inline"], "align the canvas with the top bar gutter");
+  assert.equal(frame.border, "1px solid var(--border-hairline)");
+  assert.equal(frame.background, "var(--surface-canvas)");
+  assert.equal(frame["box-shadow"], undefined);
 });
 
 test("the close button reveals on hover/focus and is always visible when current", () => {
@@ -275,6 +303,16 @@ test("the published tab hooks are styled", () => {
   );
   assert.equal(previewClose.length, 1, "a preview tab reveals its close control on hover");
 
+  // The kind seam is optional in the DOM; only the icon gets a kind accent.
+  for (const [kind, tone] of [
+    ["draft", "var(--color-primary-standalone)"],
+    ["assistant", "var(--color-primary-standalone)"],
+    ["diff", "var(--color-info)"]
+  ]) {
+    const [icon] = rulesWith(`.workbench-tab[data-kind="${kind}"] .workbench-tab-icon`, workbench);
+    assert.deepEqual(values(icon.body), {color: tone}, `${kind} changes only the icon color`);
+  }
+
   // The rail-end overflow menu: the class AND its id are styled.
   const menu = leafRules(workbench).filter(rule =>
     rule.selectors.includes(".workbench-tab-overflow") &&
@@ -282,6 +320,9 @@ test("the published tab hooks are styled", () => {
   );
   assert.equal(menu.length, 1, "#workbench-tabs-overflow / .workbench-tab-overflow must be styled");
   assert.equal(values(menu[0].body).position, "relative");
+  assert.equal(values(menu[0].body).flex, "none", "the overflow control never shrinks into the strip");
+  const [create] = rulesWith(".workbench-create", workbench);
+  assert.equal(values(create.body).flex, "none", "the Create control never shrinks into the strip");
 
   // Its panel reuses the create menu's surface + elevation family.
   const panel = values(rulesWith(".workbench-tab-overflow > .workbench-create-menu", workbench)[0].body);
@@ -299,7 +340,7 @@ test("the right dock is a shell-layer panel with ONE hairline", () => {
   assert.equal(declared.background, "var(--surface-rail)");
   assert.equal(declared["border-inline-start"], "1px solid var(--border-hairline)");
   assert.equal(declared["box-shadow"], undefined, "the dock never floats");
-  assert.equal(declared.padding, ".55rem .6rem", "one consistent panel frame stays");
+  assert.equal(declared.padding, "calc(var(--card-pad) / 2)", "the panel frame uses the shared density scale");
 });
 
 // --- content surfaces vs overlays -----------------------------------------

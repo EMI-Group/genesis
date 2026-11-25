@@ -41,6 +41,8 @@ function cleanState(overrides = {}) {
       workbenchDraft: '',
       workbenchDraftProject: '',
       workbenchPage: 'dashboard',
+      workbenchTitle: 'Draft subject',
+      workbenchDefaultDraft: '/assistant?wb_project=/tmp/project&wb_draft=1234567890abcdef12345678',
       workbenchGitBranch: 'main',
       workbenchStartingCommit: 'abc123',
     },
@@ -86,6 +88,8 @@ test('identical inputs decide identically — repeated patches cost no sweep', (
     workbenchSession: '',
     workbenchTask: '',
     workbenchProject: '/tmp/project',
+    workbenchTitle: state.dataset.workbenchTitle,
+    workbenchDefaultDraft: state.dataset.workbenchDefaultDraft,
     workbenchNode: 'local',
   };
   assert.equal(workbenchSyncNeeded(reordered, state), false);

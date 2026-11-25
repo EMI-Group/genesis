@@ -191,6 +191,7 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
       selected_file: nil,
       repo_path: primary.repo_path,
       workbench_project: primary.repo_path,
+      workbench_loaded_node: node,
       objective: objective,
       commits: primary.commits,
       task_usage: task.usage,

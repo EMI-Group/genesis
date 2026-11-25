@@ -471,6 +471,24 @@ defmodule EvoDashWeb.ProjectGit do
 
   defp github_slug(_status), do: nil
 
+  defp branch_count_label(total, limit) when total > limit,
+    do: gettext("%{shown} of %{total} branches", shown: limit, total: total)
+
+  defp branch_count_label(total, _limit),
+    do: ngettext("%{count} branch", "%{count} branches", total)
+
+  attr(:label, :string, required: true)
+  attr(:status, :string, required: true)
+
+  defp section_heading(assigns) do
+    ~H"""
+    <h3 class="mx-2 mb-2 flex items-baseline justify-between gap-2 text-sm font-semibold">
+      <span>{@label}</span>
+      <span class="workbench-git-count text-xs text-base-content/70">{@status}</span>
+    </h3>
+    """
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -485,7 +503,7 @@ defmodule EvoDashWeb.ProjectGit do
       }
       data-workbench-git-target={if @target, do: Atom.to_string(@target)}
     >
-      <div class="workbench-section-heading workbench-git-heading">
+      <header class="workbench-section-heading workbench-git-heading">
         <div class="min-w-0 flex-1">
           <p class="workbench-git-eyebrow text-2xs uppercase">{gettext("Source control")}</p>
           <h2 class="truncate text-sm font-semibold" title={@project}>
@@ -494,7 +512,7 @@ defmodule EvoDashWeb.ProjectGit do
           <div :if={@snapshot || @head} class="workbench-git-branchbar">
             <button
               type="button"
-              class="workbench-git-chip"
+              class="workbench-git-chip min-h-(--control-h-sm) pointer-coarse:min-h-(--touch-target)"
               phx-click="git_section"
               phx-value-section="branches"
               phx-target={@myself}
@@ -538,75 +556,96 @@ defmodule EvoDashWeb.ProjectGit do
             <.icon name="hero-x-mark" class="size-4" />
           </button>
         </div>
+      </header>
+
+      <div
+        :if={@snapshot && (@snapshot[:commit] || @snapshot[:upstream])}
+        class="workbench-git-summary flex-none"
+        title={@snapshot.root}
+      >
+        <p :if={@snapshot[:commit]} class="workbench-git-summary-line">
+          <code class="workbench-git-summary-sha font-mono">{short_commit(@snapshot.commit)}</code>
+          <span class="min-w-0 flex-1 truncate" title={@snapshot.subject}>{@snapshot.subject}</span>
+        </p>
+        <%!-- Git 术语：当前分支跟踪的上游引用。 --%>
+        <p :if={@snapshot[:upstream]} class="workbench-git-summary-line">
+          <span class="sr-only">{gettext("Upstream")}: </span>
+          <.icon name="hero-arrow-up-right" class="size-3.5 shrink-0 self-center" />
+          <span class="min-w-0 flex-1 truncate" title={@snapshot.upstream}>{@snapshot.upstream}</span>
+        </p>
       </div>
+
+      <%!-- Keep the three columns; their row height is independent of the scroller. --%>
+      <div
+        :if={@snapshot}
+        class="workbench-segmented workbench-git-views mt-2 flex-none"
+        role="group"
+        aria-label={gettext("Git views")}
+      >
+        <button
+          :for={
+            {section, label} <- [
+              {"changes", gettext("Changes")},
+              {"branches", gettext("Branches")},
+              {"commits", gettext("Commits")}
+            ]
+          }
+          type="button"
+          class="min-h-(--control-h-sm) pointer-coarse:min-h-(--touch-target)"
+          aria-pressed={to_string(@section == section)}
+          phx-click="git_section"
+          phx-target={@myself}
+          phx-value-section={section}
+        >
+          <span class="wrap-anywhere text-xs">{label}</span>
+        </button>
+      </div>
+
+      <.form
+        :if={@snapshot && @section == "branches"}
+        for={%{}}
+        id="workbench-git-search"
+        class="mt-2 flex-none"
+        phx-change="git_search"
+        phx-target={@myself}
+      >
+        <.input
+          type="search"
+          name="query"
+          id="workbench-git-query"
+          value={@query}
+          autocomplete="off"
+          aria-controls="workbench-git-branches"
+          aria-label={gettext("Search branches")}
+          placeholder={gettext("Search branches")}
+          class="workbench-git-search"
+        />
+      </.form>
 
       <p :if={@target == nil} class="workbench-hint">
         {gettext("Connect to see the project's Git status.")}
       </p>
-      <p :if={@busy == :snapshot && !@snapshot && !@error} class="workbench-hint" role="status">
-        {gettext("Loading Git status…")}
+      <p :if={@busy == :snapshot && !@error} class="workbench-hint" role="status">
+        {if @snapshot, do: gettext("Refreshing Git status…"), else: gettext("Loading Git status…")}
       </p>
-      <EvoDashWeb.Components.Skeleton.row
-        :if={@busy == :snapshot && !@snapshot && !@error}
-        count={3}
-        class="px-1.5"
-      />
       <p :if={@error} class="workbench-git-error" role="alert">{@error}</p>
 
-      <div :if={@snapshot} class="workbench-git-body" aria-busy={to_string(@busy != nil)}>
-        <div
-          :if={@snapshot[:commit] || @snapshot[:upstream]}
-          class="workbench-git-summary"
-          title={@snapshot.root}
-        >
-          <p :if={@snapshot[:commit]} class="workbench-git-summary-line">
-            <code class="workbench-git-summary-sha font-mono text-2xs">
-              {short_commit(@snapshot.commit)}
-            </code>
-            <span class="min-w-0 flex-1 truncate" title={@snapshot.subject}>
-              {@snapshot.subject}
-            </span>
-          </p>
-          <p :if={@snapshot[:upstream]} class="workbench-git-summary-line">
-            <span class="min-w-0 flex-1 truncate" title={@snapshot.upstream}>
-              {@snapshot.upstream}
-            </span>
-            <span
-              :if={tracking_count(@snapshot, :ahead)}
-              class="workbench-git-delta"
-              title={gettext("Ahead of upstream")}
-            >↑{tracking_count(@snapshot, :ahead)}</span>
-            <span
-              :if={tracking_count(@snapshot, :behind)}
-              class="workbench-git-delta"
-              title={gettext("Behind upstream")}
-            >↓{tracking_count(@snapshot, :behind)}</span>
-          </p>
-        </div>
+      <div class="workbench-git-body content-start" aria-busy={to_string(@busy != nil)}>
+        <EvoDashWeb.Components.Skeleton.row
+          :if={@busy == :snapshot && !@snapshot && !@error}
+          count={3}
+          class="px-1.5"
+        />
 
-        <div
-          class="workbench-segmented workbench-git-views"
-          role="group"
-          aria-label={gettext("Git views")}
-        >
-          <button
-            :for={
-              {section, label} <- [
-                {"changes", gettext("Changes")},
-                {"branches", gettext("Branches")},
-                {"commits", gettext("Commits")}
-              ]
-            }
-            type="button"
-            aria-pressed={to_string(@section == section)}
-            phx-click="git_section"
-            phx-target={@myself}
-            phx-value-section={section}
-          >{label}</button>
-        </div>
-
-        <div :if={@section == "changes"} id="workbench-git-changes">
-          <p :if={@snapshot.changes == []} class="workbench-hint">
+        <div :if={@snapshot && @section == "changes"} id="workbench-git-changes">
+          <% change_count = length(@snapshot.changes) %>
+          <%!-- Git 术语：当前签出的文件及其改动。 --%>
+          <.section_heading
+            :if={change_count > 0}
+            label={gettext("Working tree")}
+            status={ngettext("%{count} change", "%{count} changes", change_count)}
+          />
+          <p :if={change_count == 0} class="workbench-hint">
             {gettext("Working tree is clean.")}
           </p>
           <section :for={{kind, files} <- file_groups(@snapshot.changes)} class="workbench-git-group">
@@ -641,7 +680,7 @@ defmodule EvoDashWeb.ProjectGit do
             <button
               :if={length(files) > limit}
               type="button"
-              class="workbench-git-more"
+              class="workbench-git-more min-h-(--control-h-sm) pointer-coarse:min-h-(--touch-target)"
               phx-click="git_more_files"
               phx-value-kind={kind}
               phx-target={@myself}
@@ -651,11 +690,17 @@ defmodule EvoDashWeb.ProjectGit do
           </section>
         </div>
 
-        <div :if={@section == "commits"} id="workbench-git-history">
+        <div :if={@snapshot && @section == "commits"} id="workbench-git-history">
           <% history = @history || %{} %>
+          <% rows = history[:rows] || [] %>
+          <.section_heading
+            :if={rows != []}
+            label={gettext("Commit history")}
+            status={ngettext("%{count} commit loaded", "%{count} commits loaded", length(rows))}
+          />
           <p :if={history[:loading?]} class="workbench-hint" role="status">{gettext("Loading…")}</p>
           <EvoDashWeb.Components.Skeleton.row
-            :if={history[:loading?]}
+            :if={history[:loading?] && rows == []}
             count={3}
             class="px-1.5 pt-1"
           />
@@ -663,18 +708,21 @@ defmodule EvoDashWeb.ProjectGit do
             <p>{history.error}</p>
             <button
               type="button"
-              class="workbench-git-more"
+              class="workbench-git-more min-h-(--control-h-sm) pointer-coarse:min-h-(--touch-target)"
               phx-click="git_retry_history"
               phx-target={@myself}
             >
               {gettext("Retry")}
             </button>
           </div>
-          <p :if={history[:rows] == [] && !history[:loading?]} class="workbench-hint">
+          <p
+            :if={history[:rows] == [] && !history[:loading?] && !history[:error]}
+            class="workbench-hint"
+          >
             {gettext("No commits on this branch.")}
           </p>
           <button
-            :for={commit <- history[:rows] || []}
+            :for={commit <- rows}
             type="button"
             class="workbench-row workbench-git-history-entry"
             aria-pressed={
@@ -696,7 +744,7 @@ defmodule EvoDashWeb.ProjectGit do
           <button
             :if={history[:more?] && !history[:loading?]}
             type="button"
-            class="workbench-git-more"
+            class="workbench-git-more min-h-(--control-h-sm) pointer-coarse:min-h-(--touch-target)"
             phx-click="git_more_commits"
             phx-target={@myself}
           >{gettext("Show more commits")}</button>
@@ -755,19 +803,14 @@ defmodule EvoDashWeb.ProjectGit do
           </section>
         </.portal>
 
-        <div :if={@section == "branches"} id="workbench-git-branches">
-          <.form for={%{}} id="workbench-git-search" phx-change="git_search" phx-target={@myself}>
-            <.input
-              type="search"
-              name="query"
-              id="workbench-git-query"
-              value={@query}
-              autocomplete="off"
-              aria-label={gettext("Search branches")}
-              placeholder={gettext("Search branches")}
-              class="workbench-git-search"
-            />
-          </.form>
+        <div :if={@snapshot && @section == "branches"} id="workbench-git-branches">
+          <% matches = Enum.filter(@snapshot.branches, &matches_branch?(&1, @query)) %>
+          <% match_count = length(matches) %>
+          <.section_heading
+            :if={match_count > 0}
+            label={gettext("Branch list")}
+            status={branch_count_label(match_count, @branch_limit)}
+          />
 
           <div :if={@branch} class="workbench-git-branch-actions">
             <code title={String.replace_invalid(@branch.name)}>{String.replace_invalid(@branch.name)}</code>
@@ -792,8 +835,7 @@ defmodule EvoDashWeb.ProjectGit do
             >{gettext("Start task from branch")}</button>
           </div>
 
-          <% matches = Enum.filter(@snapshot.branches, &matches_branch?(&1, @query)) %>
-          <p :if={matches == []} class="workbench-hint">{gettext("No matching branches.")}</p>
+          <p :if={match_count == 0} class="workbench-hint">{gettext("No matching branches.")}</p>
           <button
             :for={branch <- Enum.take(matches, @branch_limit)}
             type="button"
@@ -819,7 +861,7 @@ defmodule EvoDashWeb.ProjectGit do
               <.icon name="hero-check" class="size-3.5" />
             </span>
           </button>
-          <p :if={length(matches) > @branch_limit} class="workbench-hint">
+          <p :if={match_count > @branch_limit} class="workbench-hint">
             {gettext("Search to narrow the branch list.")}
           </p>
         </div>

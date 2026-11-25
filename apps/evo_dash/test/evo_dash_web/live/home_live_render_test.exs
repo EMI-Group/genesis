@@ -260,14 +260,24 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     assert text(dom, "[role='alert']") =~ "Model selection is unavailable."
   end
 
-  test "empty hero uses the existing Genesis light and dark marks with the product slogan" do
+  test "empty hero uses the Genesis light and dark marks with the Assistant greeting" do
     dom = page()
-    assert text(dom, "#assistant-welcome h2") == "Turn ideas into working software"
+    assert text(dom, "#assistant-welcome h2") == "How can I help?"
+
+    assert text(dom, "#assistant-welcome p") ==
+             "Share an idea, ask a question, or tell me what’s not working."
+
     assert attr(dom, "#assistant-welcome img.block", "src") == ["/images/logo.svg"]
     assert attr(dom, "#assistant-welcome img.hidden", "src") == ["/images/logo-alt.svg"]
     assert attr(dom, "#assistant-welcome img", "alt") == ["Genesis", "Genesis"]
     assert Floki.find(dom, "button[form='chat-form'][type='submit'][disabled]") != []
     assert Floki.find(dom, "#chat-form textarea[disabled]") == []
+
+    scoped = page(workspace: %{path: "/example", name: "Example", missing: []})
+    assert text(scoped, "#assistant-welcome h2") == "How can I help?"
+
+    assert text(scoped, "#assistant-welcome p") ==
+             "Ask about this project, share an idea, or talk through a problem."
   end
 
   test "empty chat offers actionable prompts below the composer" do
@@ -484,8 +494,8 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     refute echo_class =~ "chat-entry"
     assert Floki.find(dom, "#chat-queued-echo-1 [phx-click]") == []
 
-    # The empty greeting is still the only thing in the transcript.
-    assert text(dom, "#chat-messages h2") == "Turn ideas into working software"
+    # With no transcript entries, the greeting remains above the echoes.
+    assert text(dom, "#chat-messages #assistant-welcome h2") == "How can I help?"
   end
 
   test "an empty queue renders no echo container at all" do

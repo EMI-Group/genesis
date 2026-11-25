@@ -2095,62 +2095,15 @@ button, a, input, textarea, select, summary,
   transition: min-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* --- The single card containing BOTH the textarea and the controls row ---
-   Decoration is UNIFIED on this base rule so both layouts render identically:
-   an accent-tinted border, the FAINT 2px accent ring at low alpha (a subtle
-   hint, not a prominent ring) and the two-layer accent glow (a mid glow with
-   negative spread plus a wide, very-low-alpha bloom) so the accent reads as an
-   accent BEHIND the card. There is deliberately NO elevation shadow here: the
-   card is a layer-1 content surface (see surfaces.css) and only overlays carry
-   `--elev-*`; the ring/bloom are GLOWS, not depth. The 2px accent top edge is a
-   ::before pseudo-element (below). The card has NO overflow: hidden, so nothing
-   clips the ::before — it carries its own border-radius (1rem 1rem 0 0) to
-   follow the card's top corners. */
+/* Keep the textarea and toolbar in one card; the shared Workbench Composer
+   rules own its appearance in both layouts. */
 .input-card {
   position: relative;
   display: flex;
   flex-direction: column;
-  border-radius: 1rem;
-  background: color-mix(in oklab, var(--color-base-100) 80%, transparent);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid color-mix(in oklch, var(--project-accent) 25%, var(--color-base-300));
-  box-shadow:
-    0 0 0 2px color-mix(in oklch, var(--project-accent) 15%, transparent),
-    0 0 90px -18px color-mix(in oklch, var(--project-accent) 25%, transparent),
-    0 0 160px 20px color-mix(in oklch, var(--project-accent) 12%, transparent);
-  transition: min-height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    box-shadow 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    border-color 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Accent top-edge gradient on the input card (shared by BOTH layouts).
-   position: absolute + top: 0 within the relative card; the card has no
-   overflow: hidden, so the ::before only needs its own border-radius to
-   match the card's top corners — nothing is clipped. */
-.input-card::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  border-radius: 1rem 1rem 0 0;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    var(--project-accent) 30%,
-    var(--project-accent) 70%,
-    transparent 100%
-  );
-  opacity: 0.4;
-  pointer-events: none;
-}
-
-/* Layout A (compact): centered, floating, modest size. Only sizing and
-   centering live here — the accent border, layered glow, and top-edge
-   gradient are shared on the base .input-card / .input-card::before rules
-   above, so compact and expanded render identically. */
+/* Layout A (compact): centered, modest size. Only sizing and centering live here. */
 .input-layout[data-layout="compact"] .input-card {
   max-width: 48rem;
   margin-left: auto;
@@ -2167,8 +2120,8 @@ button, a, input, textarea, select, summary,
 /* Layout B (expanded): the card fills available height via flex: 1
    (flex-basis: 0% ensures it grows purely from free space distribution,
    never from content size). Containment is provided by overflow: hidden on
-   the card itself — no overflow: hidden on .input-layout, which avoids
-   clipping the card's box-shadow glow into a rectangle. The TEXTAREA fills
+   the card itself — no overflow: hidden on .input-layout, which would clip
+   the card's focus ring. The TEXTAREA fills
    the card minus the controls row (flex: 1) and scrolls INTERNALLY
    (overflow-y: auto), so the in-flow launch panel (.input-controls) always
    stays at the bottom of the CARD — no fragile viewport-derived offset.
@@ -2945,24 +2898,11 @@ dialog.modal .modal-box :not(pre) > code {
      grown states. */
   align-items: stretch;
   padding: 0 0.5rem;
-  border: 1px solid var(--border-hairline);
   min-width: 0;
-  border-radius: 1.25rem;
-  background-color: var(--color-base-100);
-  /* A content surface: the hairline is the only edge, the bootstrapped 1px drop
-     shadow is gone (depth belongs to overlays — see surfaces.css). The accent
-     RING on :focus-within below is a focus glow, not elevation. */
-  transition: border-color 150ms ease, box-shadow 150ms ease;
-}
-.help-composer:focus-within {
-  border-color: var(--color-primary-standalone);
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary-standalone) 20%, transparent);
 }
 .help-composer textarea {
   padding-inline: 0.75rem;
   scrollbar-width: thin;
-  /* Avoid an invisible caret against the active accent on either theme. */
-  caret-color: var(--color-primary-standalone);
 }
 /* Control bar under the textarea: vertically centered picker capsule on the
    left, Send/Stop group pushed right. */
@@ -2973,9 +2913,59 @@ dialog.modal .modal-box :not(pre) > code {
   min-width: 0;
   padding: 0 0.25rem 0.375rem;
 }
-.help-composer-controls button:focus-visible {
+
+/* === Workbench Composer === */
+/* Add .workbench-composer to the surface that wraps the textarea AND toolbar.
+   Bridge both existing wrappers and match the specificity of the task-card
+   override in workbench.css; the shared rule comes later in the cascade.
+   The zero-blur ring marks this layer-1 surface without giving it elevation. */
+#app-layout :is(.workbench-composer, .assistant-input-card, .help-composer, .input-layout .input-card) {
+  --composer-chrome-transition: border-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out);
+  border: 1px solid color-mix(in oklab, var(--color-primary) 16%, var(--border-hairline));
+  border-radius: var(--radius-2xl);
+  background: color-mix(in oklab, var(--color-primary) 4%, var(--surface-canvas));
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-primary) 9%, transparent);
+  transition: var(--composer-transition, var(--composer-chrome-transition));
+}
+
+/* Preserve AdaptiveInput's size transition without adding it to Assistant. */
+:is(.input-card, .workbench-composer[data-composer-kind="task"]) {
+  --composer-transition: min-height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    var(--composer-chrome-transition);
+}
+
+#app-layout :is(.workbench-composer, .assistant-input-card, .help-composer, .input-layout .input-card):focus-within {
+  border-color: var(--color-primary-standalone);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary-standalone) 25%, transparent);
+}
+
+#app-layout :is(.assistant-textarea, .input-prompt, .help-composer textarea) {
+  caret-color: var(--color-primary-standalone);
+}
+
+/* The surface ring shows focus within the editor; the outline identifies the
+   precise toolbar control when tabbing. Padding leaves room in expanded mode. */
+:is(.assistant-context-bar, .help-composer-controls, .input-controls) :is(button, summary):focus-visible {
   outline: 2px solid var(--color-primary-standalone);
   outline-offset: 3px;
+}
+
+@media (forced-colors: active) {
+  #app-layout :is(.workbench-composer, .assistant-input-card, .help-composer, .input-layout .input-card):focus-within {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
+@media (pointer: coarse) {
+  .assistant-context-bar :is(.assistant-icon-button, .assistant-send-button, .assistant-stop-button) {
+    min-inline-size: var(--touch-target);
+    min-block-size: var(--touch-target);
+  }
+  :is(.assistant-context-bar, .input-controls) .capsule-trigger {
+    min-block-size: var(--touch-target);
+  }
 }
 
 /* /assistant only: no heading rules or quote panels competing with the answer.
@@ -3058,7 +3048,6 @@ dialog.modal .modal-box :not(pre) > code {
 }
 .help-caret { animation: help-blink 1.4s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
-  .help-composer { transition: none; }
   .help-caret,
   #chat-messages .assistant-execution-dot {
     animation: none;

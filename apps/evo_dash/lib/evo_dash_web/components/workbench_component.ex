@@ -361,7 +361,7 @@ defmodule EvoDashWeb.WorkbenchComponent do
           data-workbench-project-row
           class="workbench-project-entry"
         >
-          <% href = navigation_path("/projects", host.id, project: project.path, wb_home: "1") %>
+          <% href = navigation_path("/projects", host.id, project: project.path) %>
           <% active = host.id == @node_id and project.path == @project %>
           <div class="workbench-project-heading">
             <.link

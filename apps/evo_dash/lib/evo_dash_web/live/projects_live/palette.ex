@@ -12,12 +12,8 @@ defmodule EvoDashWeb.ProjectsLive.Palette do
   (+1) and New Workspace (+2); on a remote node Create New Project is hidden, so
   New Workspace is +1.
   """
-  use Gettext, backend: EvoDashWeb.Gettext
   import Phoenix.Component, only: [assign: 3]
-  import Phoenix.LiveView, only: [put_flash: 3, push_patch: 2]
 
-  alias EvoDash.NodeContext
-  alias EvoDash.SafeCall
   alias EvoDashWeb.ProjectsLive.Project
   alias EvoDashWeb.ProjectsLive.ProjectFlow
 
@@ -112,49 +108,12 @@ defmodule EvoDashWeb.ProjectsLive.Palette do
     new_workspace_index = new_workspace_index(action_base, remote?(socket))
 
     cond do
-      index < action_base and index < length(filtered) ->
-        # Activate the selected project via push_patch (node-aware:
-        # remote contexts validate/register on the remote node and carry the
-        # `&node=` param so the node context survives the patch)
+      index < action_base ->
+        # Use the same node-aware validation and query encoding as a row click.
         project = Enum.at(filtered, index)
-
-        # Never `Path.expand` against the VM cwd: registry projects are absolute-path
-        # filtered at assignment, but a stale/relative entry would cwd-join
-        # on Windows (Tauri install dir). A relative selection just doesn't
-        # open — same UX as a failed open, without the cwd join.
-        case ProjectFlow.normalize_project_path(project.path) do
-          {:ok, expanded} ->
-            if socket.assigns[:current_node_id] != nil do
-              activate_remote_project(socket, expanded)
-            else
-              if File.dir?(expanded) do
-                # Exit-safe write: a registry `GenServer.call` can time
-                # out/exit and must never crash the page. The projects list
-                # itself is reloaded by the AsyncLoad batch the push_patch
-                # below spawns, so no synchronous re-read is needed here.
-                SafeCall.run(fn ->
-                  NodeContext.mount_project(node(), expanded, Path.basename(expanded))
-                end)
-
-                socket
-                |> assign(:project_palette_open, false)
-                |> assign(:palette_mode, :menu)
-                |> push_patch(to: "/projects?project=#{URI.encode(expanded)}")
-              else
-                socket
-                |> assign(:project_palette_open, false)
-                |> put_flash(
-                  :error,
-                  gettext("Directory does not exist: %{path}", path: project.path)
-                )
-              end
-            end
-
-          {:error, _reason} ->
-            socket
-            |> assign(:project_palette_open, false)
-            |> put_flash(:error, gettext("Directory does not exist: %{path}", path: project.path))
-        end
+        socket = assign(socket, :project_palette_open, false)
+        {:noreply, socket} = ProjectFlow.select_project(socket, %{"path" => project.path})
+        socket
 
       index == action_base ->
         socket
@@ -187,39 +146,6 @@ defmodule EvoDashWeb.ProjectsLive.Palette do
   end
 
   def handle_key(socket, _key, _mode), do: socket
-
-  # Remote palette selection — ASYNC. The synchronous part is only the gate
-  # guard; the RPC-heavy sequence (remote dir? validation, project mount +
-  # list reload, config/mode/foreign-repo loading) runs OUTSIDE the
-  # LiveView process via ProjectFlow.spawn_remote_project_activation/2 so the
-  # UI never blocks on the 6-7 cross-node round-trips per palette Enter. The
-  # palette closes immediately at spawn; the result arrives as a
-  # `{:async_remote_project, node, path, result}` message handled by
-  # ProjectsLive.handle_info/2, which stale-guards it, applies the assigns,
-  # resets the GitHub state when the project changed, and push_patches the
-  # `&node=` URL so handle_params re-runs in the same remote context.
-  @spec activate_remote_project(Phoenix.LiveView.Socket.t(), String.t()) ::
-          Phoenix.LiveView.Socket.t()
-  def activate_remote_project(socket, expanded) do
-    # Gate guard (defense in depth): while the selected remote target is
-    # pending/failed, `@current_node` is still the LOCAL BEAM node — validating
-    # or registering the path here would leak into the local filesystem and
-    # the local VCT project registry. Close the palette and surface an error.
-    if EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) do
-      socket
-      |> assign(:project_palette_open, false)
-      |> assign(:palette_mode, :menu)
-      |> put_flash(
-        :error,
-        gettext(
-          "Cannot open project: remote node %{name} is not connected. Retry the connection first.",
-          name: socket.assigns[:current_node_name] || "remote"
-        )
-      )
-    else
-      ProjectFlow.spawn_remote_project_activation(socket, expanded)
-    end
-  end
 
   defp remote?(socket), do: socket.assigns[:current_node_id] != nil
 end

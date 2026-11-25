@@ -515,7 +515,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, _view, html} = live(conn, "/assistant")
 
       assert page_heading(html) == "Genesis Assistant"
-      assert html =~ "Turn ideas into working software"
+      assert html =~ "How can I help?"
 
       # Match the hook's exact localized label contract for every browser state.
       host = html |> Floki.parse_document!() |> Floki.find("#assistant-notifications")
@@ -546,25 +546,25 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert disabled?(html, ~s(button[phx-click="stop"]))
     end
 
-    test "empty state renders the greeting and four operator suggestion chips", %{conn: conn} do
+    test "empty state renders the greeting and four conversation starters", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/assistant")
 
-      # ChatGPT-style empty state: greeting + 4 suggestion chips, each wired to
-      # the send_message event with its message text as the phx-value (so
-      # clicking a chip submits it through the existing handle_event clause).
-      assert html =~ "Turn ideas into working software"
+      # Each starter sends its message text through the existing send_message handler.
+      assert html =~ "How can I help?"
 
       chips =
         html
         |> Floki.parse_document!()
-        |> Floki.find(~s(button[phx-click="send_message"][phx-value-message]))
+        |> Floki.find(
+          ~s(#assistant-quick-actions button[phx-click="send_message"][phx-value-message])
+        )
 
-      assert length(chips) == 4
-
-      assert html =~ ~s(phx-value-message="Show my running tasks")
-      assert html =~ ~s(phx-value-message="Check system status and capacity")
-      assert html =~ ~s(phx-value-message="Start a task for me")
-      assert html =~ ~s(phx-value-message="Explain how tasks are scheduled")
+      assert Floki.attribute(chips, "phx-value-message") == [
+               "Help me shape a feature idea",
+               "Help me understand an error",
+               "Walk me through some code",
+               "Help me write a test"
+             ]
     end
   end
 
@@ -709,7 +709,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # No optimistic bubbles, no task, still idle.
       assert assigns(view).chat_status == :idle
       assert assigns(view).chat_task_id == nil
-      assert html =~ "Turn ideas into working software"
+      assert html =~ "How can I help?"
       assert EvoGit.TaskRegistry.get_task(fixture_id) != nil
       assert length(EvoGit.Store.safe_select_all_tasks(EvoGit.Store)) == 1
     end
@@ -769,7 +769,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).chat_status == :idle
 
       html = render_click(view, "new_chat", %{})
-      assert html =~ "Turn ideas into working software"
+      assert html =~ "How can I help?"
       assert assigns(view).chat_status == :idle
       assert assigns(view).chat_task_id == nil
       refute disabled?(html, ~s(button[type="submit"]))
@@ -796,7 +796,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       new_id = assigns(view).chat_id
 
       assert new_id != nil and new_id != old_id
-      assert html =~ "Turn ideas into working software"
+      assert html =~ "How can I help?"
       assert assigns(view).transcript == []
       assert assigns(view).chat_status == :idle
       assert assigns(view).chat_task_id == nil
@@ -819,7 +819,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       html = render_click(view, "new_chat", %{})
       new_id = assigns(view).chat_id
 
-      assert html =~ "Turn ideas into working software"
+      assert html =~ "How can I help?"
       assert EvoDash.ChatHistory.current_chat_id() == new_id
       assert length(EvoDash.ChatHistory.list_chats()) == 10
       refute first_id in EvoDash.ChatHistory.list_chats()
@@ -2563,13 +2563,15 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, view, _html} = live(conn, "/assistant")
 
       send_and_await_terminal(view, fn ->
-        view |> element(~s(button[phx-value-message="Show my running tasks"])) |> render_click()
+        view
+        |> element(~s(button[phx-value-message="Help me shape a feature idea"]))
+        |> render_click()
       end)
 
       task = only_reflect_task()
       assert_task_selection(task, work_spec())
       assert opt(task, :mode) == "reflect"
-      assert opt(task, :objective) == "Show my running tasks"
+      assert opt(task, :objective) == "Help me shape a feature idea"
       cleanup_task_on_exit(task.id)
     end
 
@@ -2579,13 +2581,15 @@ defmodule EvoDashWeb.HomeLiveTest do
       render_change(view, "select_provider_profile", %{"provider_profile_id" => ""})
 
       send_and_await_terminal(view, fn ->
-        view |> element(~s(button[phx-value-message="Start a task for me"])) |> render_click()
+        view
+        |> element(~s(button[phx-value-message="Help me understand an error"]))
+        |> render_click()
       end)
 
       task = only_reflect_task()
       assert_auto_task(task)
       assert opt(task, :mode) == "reflect"
-      assert opt(task, :objective) == "Start a task for me"
+      assert opt(task, :objective) == "Help me understand an error"
       cleanup_task_on_exit(task.id)
     end
 
@@ -2595,7 +2599,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       render_change(view, "select_reasoning_effort", %{"reasoning_effort" => "2"})
       old_chat_id = assigns(view).chat_id
       html = render_click(view, "new_chat", %{})
-      assert html =~ "Turn ideas into working software"
+      assert html =~ "How can I help?"
       assert assigns(view).chat_id != old_chat_id
       assert assigns(view).transcript == []
       assert assigns(view).model_spec == work_spec("high")
@@ -2905,7 +2909,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       html = render_click(view, "stop", %{})
       assert assigns(view).chat_status == :idle
       assert assigns(view).chat_task_id == nil
-      assert html =~ "Turn ideas into working software"
+      assert html =~ "How can I help?"
     end
   end
 
@@ -4963,7 +4967,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # Patching back to "/assistant" (no ?node=) switches to local → a NEW chat.
       html = render_patch(view, "/assistant")
       assert assigns(view).current_node == node()
-      assert html =~ "Turn ideas into working software"
+      assert html =~ "How can I help?"
       assert assigns(view).chat_status == :idle
       assert assigns(view).chat_task_id == nil
       new_id = assigns(view).chat_id
@@ -5063,7 +5067,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       refute html =~ "Download the Genesis source to start chatting."
       refute disabled?(html, ~s(textarea[name="message"]))
       assert disabled?(html, ~s(button[form="chat-form"][type="submit"]))
-      assert html =~ "Show my running tasks"
+      assert html =~ "Help me shape a feature idea"
     end
   end
 
@@ -5724,7 +5728,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # `handle_params` reattaches on the FIRST connected render, so the CACHED
       # conversation is already visible (not an empty state).
       assert html =~ "cached text"
-      refute html =~ "Turn ideas into working software"
+      refute html =~ "How can I help?"
       assert assigns(view).session_id == session_id
       assert assigns(view).session_mode == :interactive
 
@@ -5918,8 +5922,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       # Nothing was cached and nothing was fetched, so the ended-session state
       # replaces the greeting (whose suggestion chips could only send doomed
       # messages) and offers the explicit New-chat affordance.
-      refute html =~ "Turn ideas into working software"
-      refute present?(html, ~s(#chat-messages button[phx-value-message]))
+      refute html =~ "How can I help?"
+      refute present?(html, "#assistant-quick-actions")
       assert present?(html, "#chat-session-ended")
       assert html =~ "This session has ended."
       assert present?(html, ~s(#chat-session-ended button[phx-click="new_chat"]))

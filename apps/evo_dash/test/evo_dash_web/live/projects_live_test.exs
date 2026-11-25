@@ -1390,9 +1390,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      assert {:ok, _} = EvoGit.VCT.mount(tmp_dir, name: "Workbench project")
+      seed_project(tmp_dir, "Workbench project")
       {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_home: "1"}}")
       render_async(view, async_wait_budget())
+      # The recent-project sidebar can render before Projects confirms the scope.
+      wait_for_projects(view, tmp_dir)
 
       assert has_element?(
                view,
@@ -1449,6 +1451,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       assert has_element?(view, "#workbench-history-content[data-workbench-history-empty=true]")
       refute has_element?(view, "#task-form")
+      refute has_element?(view, "#app-layout[data-workbench-default-draft]")
 
       {:ok, composer, _} =
         view
@@ -1462,32 +1465,49 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   end
 
   describe "opening a project" do
+    # Keep the VCT-dependent overview check in the module that clears the project roster.
+    test "Chat with Assistant links to /assistant with the project path and a draft id",
+         %{conn: conn, tmp_dir: tmp_dir} do
+      path = make_git_repo!(Path.join(tmp_dir, "overview assistant"))
+      %{point: point} = seed_project(path, "Overview Assistant")
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: path}}")
+      wait_for_projects(view, path)
+
+      overview = "#workbench-project-overview[data-overview-kind=project]"
+      assert has_element?(view, "#{overview} [data-overview-point]", point)
+
+      link =
+        view
+        |> element("#{overview} a#overview-chat-assistant", "Chat with Assistant")
+        |> render()
+        |> Floki.parse_fragment!()
+
+      assert [href] = Floki.attribute(link, "a", "href")
+      assert %URI{path: "/assistant", query: query} = URI.parse(href)
+      assert %{"wb_draft" => draft} = params = URI.decode_query(query)
+      assert params == %{"wb_project" => path, "wb_draft" => draft}
+      assert draft =~ ~r/\A[0-9a-f]{24}\z/
+    end
+
     test "can open project via palette and form submission", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/projects")
+      # An explicit starting project prevents VCT auto-activation from resetting the palette.
+      initial_path = Path.join(tmp_dir, "initial")
+      File.mkdir!(initial_path)
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: initial_path, wb_open: "1"}}")
 
-      # Open the palette and switch to open-path mode
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
+      view |> element("#project-omnibox button[phx-value-mode=open_path]") |> render_click()
 
-      # Submit the form with a path
       view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      |> form("#palette-body-open_path form[phx-submit=open_project]", path: tmp_dir)
+      |> render_submit()
 
-      # The activation lands on the project overview; step into the composer
-      # (the surface this test pins) exactly as a user does.
+      assert_patch(view, ~p"/projects?#{%{project: tmp_dir}}")
+
       enter_composer(view)
 
-      # Expand the project settings panel (the click's own render IS the html
-      # below — a second full `render/1` would re-render the same DOM)
-      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-
-      # Project should be active — task form enabled
-      assert html =~ "task-launch-button"
-      # Project settings should show config info
-      assert html =~ "Foreign Repositories"
-      # Example-task help block hides once a project is open
-      refute html =~ "example-task-objective"
+      assert has_element?(view, "#task-form #task-launch-button")
+      assert has_element?(view, "#workbench-task-settings h3", "Foreign Repositories")
+      refute has_element?(view, "#example-task-objective")
     end
 
     test "detects genesis_new mode for empty directory", %{conn: conn, tmp_dir: tmp_dir} do
@@ -1534,12 +1554,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # lives in the composer, so step into it like a user.
       enter_composer(view)
 
-      # Expand the project settings panel (the click's own render IS the html
-      # below — a second full `render/1` would re-render the same DOM)
-      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-
-      # Empty directory has no genesis.toml — shows defaults message
-      assert html =~ "No genesis.toml" or html =~ "using global defaults"
+      assert has_element?(
+               view,
+               "details#workbench-task-settings p",
+               "No genesis.toml — using global defaults"
+             )
     end
 
     test "project settings shows no foreign repos by default", %{conn: conn, tmp_dir: tmp_dir} do
@@ -1556,12 +1575,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # lives in the composer, so step into it like a user.
       enter_composer(view)
 
-      # Expand the project settings panel (the click's own render IS the html
-      # below — a second full `render/1` would re-render the same DOM)
-      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-
-      # No foreign repos registered (scheduler not running in tests)
-      assert html =~ "No foreign repositories registered"
+      assert has_element?(
+               view,
+               "details#workbench-task-settings p",
+               "No foreign repositories registered"
+             )
     end
 
     test "local project opening stays synchronous (no async loading flag)", %{
@@ -1590,14 +1608,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     test "activates project from URL query param", %{conn: conn, tmp_dir: tmp_dir} do
       # `wb_task=1` is the explicit compose request, so this mount targets the
       # task composer (selecting a project alone lands on the overview).
-      {:ok, _view, html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: "1"}}")
+      {:ok, view, html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: "1"}}")
 
-      # Project should be active
       assert html =~ Path.basename(tmp_dir)
-      # Task form should be present
-      assert html =~ "task-launch-button"
-      # Project settings should be shown
-      assert html =~ "Project Settings"
+      assert has_element?(view, "#task-form #task-launch-button")
+      assert has_element?(view, "details#workbench-task-settings > summary", "Project Settings")
     end
   end
 
@@ -1807,16 +1822,12 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         ]
       })
 
-      # Expand the project settings panel (the click's own render IS the html
-      # below — a second full `render/1` would re-render the same DOM)
-      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-
-      # Foreign repos should be restored and visible in the project settings.
-      # The component renders repo.id and repo.root for each foreign repo.
-      assert html =~ "original"
-      assert html =~ "/Source/original-proj"
-      assert html =~ "reference"
-      assert html =~ "/Source/ref"
+      # Native <details> already renders its content. No LiveView toggle event
+      # is involved in opening the disclosure in the browser.
+      for {id, path} <- [{"original", "/Source/original-proj"}, {"reference", "/Source/ref"}] do
+        assert has_element?(view, "#workbench-task-settings span.badge", id)
+        assert has_element?(view, "#workbench-task-settings span[title='#{path}']", path)
+      end
     end
 
     test "restore_state with empty foreign repos does not error", %{conn: conn, tmp_dir: tmp_dir} do
@@ -1829,12 +1840,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         "foreign_repos" => []
       })
 
-      # Expand the project settings panel (the click's own render IS the html
-      # below — a second full `render/1` would re-render the same DOM)
-      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-
-      # No repos restored — shows the empty state message
-      assert html =~ "No foreign repositories registered"
+      assert has_element?(
+               view,
+               "details#workbench-task-settings p",
+               "No foreign repositories registered"
+             )
     end
   end
 
@@ -1883,28 +1893,37 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       clear_projects()
     end
 
-    test "the composer opens settings without a project path selector", %{
+    test "the composer exposes one set of inline options without a project path selector", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      # This test is ABOUT the composer, so it asks for it explicitly.
-      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: "1"}}")
+      {:ok, view, html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: "1"}}")
+      options = "#workbench-task-composer section[aria-labelledby=task-options-title]"
+      settings = "details#workbench-task-settings"
+      doc = Floki.parse_document!(html)
 
+      assert [_] = Floki.find(doc, "#task-form")
+      assert [_] = Floki.find(doc, "#task-options")
+      assert [_] = Floki.find(doc, "#persist-agent-state-toggle")
+      assert [_] = Floki.find(doc, "select[name=build_system]")
       refute has_element?(view, ".project-palette-trigger")
 
-      assert has_element?(
-               view,
-               "#task-form .input-card button[aria-controls=workbench-task-settings]"
-             )
-
-      assert has_element?(view, "dialog#workbench-task-settings:not([open])", "Task Options")
-      assert has_element?(view, "dialog#workbench-task-settings", "Project Settings")
+      assert has_element?(view, "#{options} h2#task-options-title", "Task Options")
 
       assert has_element?(
                view,
-               "dialog#workbench-task-settings select[name=build_system][form=task-form]"
+               "#{options} #task-options select[name=build_system][form=task-form]"
              )
 
+      assert has_element?(
+               view,
+               "#{settings}:not([open]) > summary#workbench-task-settings-title",
+               "Project Settings"
+             )
+
+      refute has_element?(view, "#{settings} [form=task-form]")
+      refute has_element?(view, "#task-form [aria-controls=workbench-task-settings]")
+      refute has_element?(view, "dialog#workbench-task-settings")
       refute has_element?(view, "#task-form dialog")
     end
   end
@@ -3294,7 +3313,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert html =~ ~s(data-node-id="#{id}")
 
       refute html =~ ~s(phx-click="open_project_palette")
-      refute html =~ ~s(data-workbench-task-settings)
+      refute has_element?(view, "#task-options")
+      refute has_element?(view, "#workbench-task-settings")
     end
 
     test "open_project_palette event is ignored while the gate is active", %{conn: conn} do
@@ -4138,8 +4158,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
     test "cancel_edit_foreign_repo clears the edit assigns", %{conn: conn, tmp_dir: tmp_dir} do
       {repo_path, _head_sha} = git_repo_fixture!(tmp_dir, "repo1")
+      stub_github_upstream_check!()
 
-      {:ok, view, _html} = live(conn, ~p"/projects")
+      # An explicit primary path prevents deferred VCT auto-activation from
+      # replacing the foreign-repo list between Add and Edit.
+      {:ok, view, _html} = live(conn, ~p"/projects?#{[project: tmp_dir, wb_task: "1"]}")
+      assert assigns(view)[:active_project_path] == tmp_dir
+      assert has_element?(view, "#task-form")
 
       render_click(view, "add_foreign_repo", %{
         "repo_id" => "repo1",
@@ -5577,71 +5602,6 @@ defmodule EvoDashWeb.ProjectsLiveTest do
                )
     end
 
-    # A batch that is still running is what makes the form render the
-    # "Loading models…" status. That status must offer a retry (a lost batch is
-    # not the only reason the form can sit there) and the retry must re-run the
-    # batch instead of being refused while loading.
-    test "the loading state offers a retry that re-runs the batch", %{
-      conn: conn,
-      tmp_dir: tmp_dir
-    } do
-      test_pid = self()
-
-      install_reporting_async_load_runner(fn ->
-        receive do
-          :release -> :ok
-        after
-          5_000 -> :ok
-        end
-
-        EvoDashWeb.ProjectsLive.AsyncLoad.default_batch(node(), false, nil, nil, true, false)
-      end)
-
-      # `wb_task=1`: the composer owns the picker controls asserted below.
-      {:ok, view, _html} = live(conn, ~p"/projects?#{[project: tmp_dir, wb_task: "1"]}")
-
-      first_task = await_view_batch(view.pid)
-      assert first_task != view.pid
-      assert first_task != test_pid
-
-      assert assigns(view)[:model_selection_ready?] == false
-      assert assigns(view)[:model_selection_error] == nil
-
-      html = render(view)
-      assert html =~ ~s(id="model-selection-loading")
-      assert html =~ "Loading models…"
-
-      assert has_element?(view, "#model-selection-loading-retry[phx-click=retry_model_selection]")
-
-      # The retry is NOT refused while the first batch is still running.
-      render_click(element(view, "#model-selection-loading-retry"))
-
-      second_task = await_view_batch(view.pid)
-      assert second_task != first_task
-
-      # Still loading (both batches are blocked), still retryable.
-      assert assigns(view)[:model_selection_ready?] == false
-      assert has_element?(view, "#model-selection-loading")
-
-      # Release both: whichever result lands last settles the picker. The
-      # stale one is either applied first (then superseded by the newer scope)
-      # or dropped against an already-applied bundle, which keeps it usable —
-      # so the settled state is always launchable with no recorded error.
-      send(first_task, :release)
-      send(second_task, :release)
-
-      # Drain BOTH children before reading: `wait_assigns` alone can return on
-      # the first applied result while the other is still in flight.
-      await_async_loads(view)
-
-      assert assigns(view)[:model_selection_ready?] == true
-      assert assigns(view)[:model_selection_error] == nil
-      refute has_element?(view, "#model-selection-loading")
-      refute has_element?(view, "#model-selection-loading-retry")
-      # An empty (but loaded) inventory renders the explicit setup action.
-      assert has_element?(view, "#task-model-setup")
-    end
-
     # `handle_params/3` skips its batch while `workbench_project_selection` is
     # set (the activation owns it), so the `{:registered, ...}` continuation
     # must spawn the batch ITSELF — and keep the selection in place for the
@@ -6174,32 +6134,6 @@ defmodule EvoDashWeb.ProjectsLiveOverviewTest do
       assert query["wb_task"] == "1"
     end
 
-    test "Chat with Assistant links to /assistant with the project path and a draft id",
-         %{conn: conn, tmp_dir: tmp_dir} do
-      path = repo!(Path.join(tmp_dir, "overview-assistant"))
-      view = open_overview!(conn, path)
-
-      # The query comes from `URI.encode_query/1` (keys sorted, `&` escaped as
-      # `&amp;`), so only the path prefix is predictable here — the params are
-      # asserted decoded below.
-      assert has_element?(view, ~s(a#overview-chat-assistant[href^="/assistant?"]))
-
-      href =
-        view
-        |> render()
-        |> then(&Regex.run(~r/href="([^"]*wb_project[^"]*)"/, &1))
-        |> List.last()
-        |> String.replace("&amp;", "&")
-
-      query = href |> URI.parse() |> Map.fetch!(:query) |> URI.decode_query()
-      # A PROJECT selection is scoped by its OS path (the assistant is never
-      # handed a VCT token here), plus a fresh 24-hex workbench draft id.
-      assert query["wb_project"] == path
-      assert query["node"] == nil
-      assert String.length(query["wb_draft"]) == 24
-      assert String.match?(query["wb_draft"], ~r/^[0-9a-f]{24}$/)
-    end
-
     test "wb_task=1 mounts straight into the composer", %{conn: conn, tmp_dir: tmp_dir} do
       path = repo!(Path.join(tmp_dir, "overview-wb-task"))
 
@@ -6518,10 +6452,11 @@ defmodule EvoDashWeb.ProjectsLiveOverviewTest do
 end
 
 defmodule EvoDashWeb.ProjectsLiveSyncTest do
-  # `async: false` — every test here mutates a MUTABLE process-wide global that
-  # another `async: true` module also reads or writes, and ExUnit drains ALL
-  # async modules before it starts any sync one, so a write here can never race
-  # them:
+  # `async: false` — these tests depend on process-wide state or events that
+  # async modules can change. ExUnit drains all async modules first:
+  #
+  #   * broadcasts on the global `"config"` topic can spawn a batch in the
+  #     same mounted view as the Retry click, even for another test's config dir.
   #
   #   * `:sys.suspend(EvoGit.TaskRegistry)` — freezing the one serialized registry
   #     would deadlock any concurrent suite that touches it.
@@ -6572,6 +6507,76 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
 
   setup [:setup_temp_dir, :set_onboarding_completed, :reset_active_tasks_hub]
   setup_all [:install_git_template]
+
+  # Retry must start a fresh batch even when the original is still running.
+  test "the loading state offers a retry that re-runs the batch", %{conn: conn, tmp_dir: tmp_dir} do
+    test_pid = self()
+    release = make_ref()
+
+    install_reporting_async_load_runner(fn ->
+      owner_ref = Process.monitor(test_pid)
+
+      receive do
+        ^release ->
+          Process.demonitor(owner_ref, [:flush])
+          EvoDashWeb.ProjectsLive.AsyncLoad.default_batch(node(), false, nil, nil, true, false)
+
+        {:DOWN, ^owner_ref, :process, ^test_pid, _reason} ->
+          # Don't leave a blocked child or run a load after the test has failed.
+          Process.exit(self(), :kill)
+      end
+    end)
+
+    # `wb_task=1`: the composer owns the picker controls asserted below.
+    {:ok, view, _html} = live(conn, ~p"/projects?#{[project: tmp_dir, wb_task: "1"]}")
+
+    first_task = await_view_batch(view.pid)
+    assert first_task != view.pid
+    assert first_task != test_pid
+
+    assert assigns(view)[:model_selection_ready?] == false
+    assert assigns(view)[:model_selection_error] == nil
+
+    html = render(view)
+    assert html =~ ~s(id="model-selection-loading")
+    assert html =~ "Loading models…"
+
+    assert has_element?(view, "#model-selection-loading-retry[phx-click=retry_model_selection]")
+
+    first_seq = assigns(view)[:projects_load_seq]
+    render_click(element(view, "#model-selection-loading-retry"))
+    retry_seq = assigns(view)[:projects_load_seq]
+    assert retry_seq > first_seq
+
+    second_task = await_view_batch(view.pid)
+    assert second_task != first_task
+
+    # Both batches are blocked; the loading state stays retryable.
+    assert assigns(view)[:model_selection_ready?] == false
+    assert has_element?(view, "#model-selection-loading")
+
+    # Only Retry can make the picker ready: keep the original blocked until
+    # the new generation applies, then drain the now-stale original result.
+    send(second_task, release)
+
+    wait_assigns(view, fn assigns ->
+      assigns[:projects_load_seq] == retry_seq and assigns[:model_selection_ready?] == true and
+        assigns[:model_selection_error] == nil
+    end)
+
+    assert Process.alive?(first_task)
+    send(first_task, release)
+    await_async_loads(view)
+    refute Process.alive?(first_task)
+
+    assert assigns(view)[:projects_load_seq] == retry_seq
+    assert assigns(view)[:model_selection_ready?] == true
+    assert assigns(view)[:model_selection_error] == nil
+    refute has_element?(view, "#model-selection-loading")
+    refute has_element?(view, "#model-selection-loading-retry")
+    # An empty (but loaded) inventory renders the explicit setup action.
+    assert has_element?(view, "#task-model-setup")
+  end
 
   # Moved here from the async module: a connected `HomeLive` mount writes the
   # process-wide `EvoDash.ChatHistory` table, which the async

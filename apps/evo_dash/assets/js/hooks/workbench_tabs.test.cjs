@@ -23,10 +23,10 @@ const end = src.indexOf('// WorkbenchTabs hook:');
 assert.ok(start !== -1 && end > start, 'pure tab store block not found in workbench_tabs.js');
 const source = src.slice(start, end);
 const {
-  MAX_TABS_PER_PROJECT, alwaysPinned, tabKey, tabsForProject, safeHref, restore,
+  MAX_TABS_PER_PROJECT, alwaysPinned, tabKey, tabGroup, tabsForProject, safeHref, restore,
   openTab, pinTab, closeTab, cycleTab, activate,
 } = vm.runInContext(`${source}
-  ({MAX_TABS_PER_PROJECT, alwaysPinned, tabKey, tabsForProject, safeHref, restore,
+  ({MAX_TABS_PER_PROJECT, alwaysPinned, tabKey, tabGroup, tabsForProject, safeHref, restore,
     openTab, pinTab, closeTab, cycleTab, activate});`, vm.createContext({URL}));
 
 const NODE = 'local';
@@ -35,7 +35,7 @@ const OTHER = '/tmp/other';
 
 // A tab as `Workbench.captureTab()` builds it (before the store normalises it).
 function tab(kind, id, spec = {}) {
-  const projectPath = spec.projectPath || PROJECT;
+  const projectPath = spec.projectPath ?? PROJECT;
   return {
     kind,
     id,
@@ -57,7 +57,7 @@ const draft = (id, spec) => tab('draft', id, {
   href: `/assistant?node=local&wb_draft=${id}&wb_project=${encodeURIComponent(PROJECT)}`, ...spec,
 });
 const projectTab = (spec = {}) => tab('project', '', {
-  projectPath: '', project: PROJECT,
+  projectPath: PROJECT, project: PROJECT,
   href: `/projects?node=local&project=${encodeURIComponent(PROJECT)}&wb_task=1`, ...spec,
 });
 const assistantTab = (spec) => tab('assistant', '', {href: `/assistant?node=local`, ...spec});
@@ -136,27 +136,69 @@ test('draft, project, assistant and diff tabs are always pinned', () => {
   assert.equal(first(tabs).id, 'a');
 });
 
-test('re-opening an open tab is a no-op, by key and by href', () => {
+test('re-opening an open tab updates in place by canonical key or same-kind href', () => {
   let tabs = openTab([], task('a'), {preview: true});
   const before = keys(tabs);
-  tabs = openTab(tabs, task('a'), {preview: true});
+  const stale = task('a', {title: 'other'});
+  stale.key = tabKey(NODE, PROJECT, 'task', 'a-twin');
+  tabs = openTab(tabs, stale, {preview: true});
   assert.equal(count(tabs), 1);
-  assert.deepEqual(keys(tabs), before);
-
-  // The SAME href under another key is the same view: select it, add no twin.
-  const twin = task('a', {title: 'other'});
-  twin.key = tabKey(NODE, PROJECT, 'task', 'a-twin');
-  tabs = openTab(tabs, twin);
-  assert.equal(count(tabs), 1);
-  assert.deepEqual(keys(tabs), before, 'the first key keeps the view');
-  assert.equal(tabs[0].title, 'other', 'the newer metadata still updates in place');
+  assert.deepEqual(keys(tabs), before, 'the route decides the task key');
+  assert.equal(tabs[0].title, 'other');
   assert.equal(tabs[0].active, true);
 
-  // A tab of another KIND with the same href is a different view (opened pinned
-  // here, so the preview slot is not the thing under test).
-  const chatTwin = chat('a', {href: '/tasks?node=local&task=a'});
-  tabs = openTab(tabs, chatTwin, {preview: false});
-  assert.equal(count(tabs), 2);
+  tabs = openTab(tabs, chat('a'));
+  tabs = openTab(tabs, chat('legacy-alias', {href: chat('a').href}));
+  assert.equal(count(tabs), 2, 'non-task tabs still dedupe by same-kind href');
+  assert.equal(tabs[1].key, chat('a').key);
+  tabs = openTab(tabs, assistantTab({href: chat('a').href}));
+  assert.equal(count(tabs), 3, 'another kind with the same non-task href remains separate');
+});
+
+test('the live, review and commit routes share one canonical task key', () => {
+  const node = 'remote-target';
+  const key = tabKey(node, PROJECT, 'task', 't #1');
+  assert.equal(key, tabKey(node, '', 'task', 't #1'));
+  assert.equal(key, tabKey(node, OTHER, 'task', 't #1'));
+  assert.notEqual(key, tabKey('other-target', PROJECT, 'task', 't #1'));
+  assert.equal(tabKey('local', PROJECT, 'task', 'a'), tabKey('', '', 'task', 'a'));
+
+  const live = '/tasks?task=t+%231&node=remote-target';
+  const review = '/review/t%20%231?node=remote-target&file=a%20b';
+  const commit = '/review/t%20%231/commit/abcdef?file=a%20b&node=remote-target#diff';
+  let tabs = openTab([], task('pending-assign', {href: live, projectPath: ''}), {preview: true});
+  assert.equal(tabs[0].key, key);
+  assert.equal(tabs[0].projectPath, '');
+  tabs = pinTab(tabs, key);
+  tabs = openTab(tabs, tab('review', 'stale', {href: review}), {preview: true});
+  assert.equal(tabs[0].href, review);
+  assert.equal(tabs[0].projectPath, PROJECT);
+  tabs = openTab(tabs, tab('commit', 'abcdef', {href: commit, projectPath: '', project: 'unscoped'}), {preview: true});
+  assert.equal(count(tabs), 1);
+  assert.equal(tabs[0].key, key);
+  assert.equal(tabs[0].kind, 'task');
+  assert.equal(tabs[0].id, 't #1');
+  assert.equal(tabs[0].node, node);
+  assert.equal(tabs[0].href, commit);
+  assert.equal(tabs[0].preview, false);
+  assert.equal(tabs[0].project, 'project');
+  assert.equal(ids(tabsForProject(tabs, node, PROJECT)), 't #1');
+  assert.equal(count(tabsForProject(tabs, node, '')), 0);
+  assert.equal(count(tabsForProject(tabs, 'other-target', PROJECT)), 0);
+
+  tabs = openTab(tabs, task('t #1', {href: '/tasks?task=t+%231&node=other-target'}));
+  assert.equal(count(tabs), 2, 'another node can have the same task id');
+});
+
+test('a preview that learns its scope replaces the destination preview, not pinned tabs', () => {
+  let tabs = openTab([], task('unknown', {projectPath: ''}), {preview: true});
+  tabs = openTab(tabs, task('pinned'));
+  tabs = openTab(tabs, chat('known-preview'), {preview: true});
+  tabs = openTab(tabs, task('unknown'), {preview: true});
+  assert.equal(ids(tabs), 'unknown,pinned');
+  assert.equal(first(tabs).id, 'unknown');
+  assert.equal(first(tabs).active, true);
+  assert.equal(count(tabsForProject(tabs, NODE, PROJECT)), 2);
 });
 
 test('close reports the right neighbour, else the left, else nothing', () => {
@@ -234,6 +276,27 @@ test('Alt+Arrow cycling wraps, is project-scoped and starts at the near end', ()
   assert.equal(cycleTab(withOther, NODE, OTHER, 'missing', 1).id, 'x');
 });
 
+test('the rail groups tab types in fixed order, preserving order within each group', () => {
+  const groupKinds = ['project', 'task', 'assistant', 'draft', 'chat', 'diff', 'unknown'];
+  assert.deepEqual(groupKinds.map(tabGroup), ['project', 'task', 'chat', 'chat', 'chat', 'diff', 'other']);
+  assert.equal(tabGroup(undefined), 'other');
+
+  let tabs = openTab([], chat('c1'));
+  tabs = openTab(tabs, task('t1'));
+  tabs = openTab(tabs, draft('d1'));
+  tabs = openTab(tabs, projectTab());
+  tabs = openTab(tabs, task('t2'));
+  tabs = openTab(tabs, assistantTab());
+  tabs = openTab(tabs, task('other', {projectPath: OTHER}));
+  const rail = tabsForProject(tabs, NODE, PROJECT);
+  assert.equal(kinds(rail), 'project,task,task,chat,draft,assistant');
+  assert.equal(ids(rail), ',t1,t2,c1,d1,');
+  assert.equal(ids(tabs), 'c1,t1,d1,,t2,,other', 'grouping does not reorder the raw store');
+  assert.equal(cycleTab(tabs, NODE, PROJECT, task('t2').key, 1).id, 'c1');
+  assert.equal(cycleTab(tabs, NODE, PROJECT, chat('c1').key, -1).id, 't2');
+  assert.equal(closeTab(tabs, task('t2').key).focus.id, 'c1', 'close follows visual order');
+});
+
 test('restore round-trips a persisted list', () => {
   let tabs = openTab([], task('a'), {preview: true});
   tabs = openTab(tabs, draft('d1'));
@@ -272,6 +335,38 @@ test('restore migrates the legacy wb_workspace scope and rebuilds stale keys', (
   );
 });
 
+test('restore merges legacy task aliases, keeping scope and pin but the last exact href', () => {
+  const live = {...task('a', {project: 'Known project'}), preview: false};
+  live.key = JSON.stringify([NODE, PROJECT, 'task', 'a']);
+  const review = {...tab('review', 'wrong-id', {projectPath: '', href: '/review/a?file=a%20b'}), preview: true};
+  const commit = {
+    ...tab('commit', 'abcdef', {projectPath: '', href: '/review/a/commit/abcdef?file=a%20b&node=local#diff'}),
+    preview: true,
+    active: true,
+  };
+  const remote = {...task('a', {href: '/tasks?task=a&node=other-target'}), preview: true};
+  const tabs = restore([live, review, commit, remote]);
+  assert.equal(count(tabs), 2);
+  const [local, otherNode] = Array.from(tabs);
+  assert.equal(local.key, tabKey('', PROJECT, 'task', 'a'));
+  assert.equal(local.id, 'a');
+  assert.equal(local.kind, 'task');
+  assert.equal(local.node, '');
+  assert.equal(local.projectPath, PROJECT);
+  assert.equal(local.project, 'Known project');
+  assert.equal(local.preview, false);
+  assert.equal(local.active, true);
+  assert.equal(local.href, commit.href);
+  assert.equal(otherNode.key, tabKey('other-target', PROJECT, 'task', 'a'));
+  assert.equal(otherNode.preview, true);
+  assert.equal(JSON.stringify(restore(JSON.stringify(tabs))), JSON.stringify(tabs), 'migration is idempotent');
+
+  const [knownLast] = Array.from(restore([commit, live]));
+  assert.equal(knownLast.href, live.href, 'latest route wins regardless of route type');
+  assert.equal(knownLast.projectPath, PROJECT);
+  assert.equal(knownLast.preview, false);
+});
+
 test('restore dedupes by key (last wins) and rejects untrusted hrefs', () => {
   const first = {...task('a'), title: 'first'};
   const second = {...task('a'), title: 'second'};
@@ -285,6 +380,11 @@ test('restore dedupes by key (last wins) and rejects untrusted hrefs', () => {
     'javascript:alert(1)',
     '/phoenix/dashboard',
     '/review',
+    '/review/a/commit',
+    '/review/a/other/b',
+    '/review/%FF',
+    '/tasks',
+    '/tasks?task=',
     '',
     null,
     undefined,
@@ -337,6 +437,14 @@ test('the per-project cap evicts in the documented order', () => {
   assert.equal(count(drafts), MAX_TABS_PER_PROJECT);
   assert.equal(ids(drafts).includes('d0'), false, 'the oldest draft is evicted last-resort');
   assert.equal(ids(drafts).endsWith(',extra'), true);
+
+  // Group order is NOT eviction age: the oldest chat goes before a newer project tab.
+  let grouped = openTab([], chat('oldest'));
+  grouped = openTab(grouped, projectTab());
+  for (let i = 0; i < MAX_TABS_PER_PROJECT - 1; i += 1) grouped = openTab(grouped, task(`t${i}`));
+  assert.equal(count(grouped), MAX_TABS_PER_PROJECT);
+  assert.equal(grouped.some(entry => entry.id === 'oldest'), false);
+  assert.equal(tabsForProject(grouped, NODE, PROJECT)[0].kind, 'project');
 
   // The cap is per project: another project keeps all of its own tabs.
   let twoProjects = fill(MAX_TABS_PER_PROJECT);

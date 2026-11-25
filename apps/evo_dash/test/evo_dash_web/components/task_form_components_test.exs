@@ -114,7 +114,13 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
         )
 
       doc = parse(html)
-      [controls] = Floki.find(doc, ".input-controls")
+
+      assert [form] =
+               Floki.find(doc, ".workbench-composer[data-composer-kind=task] form#task-form")
+
+      assert [controls] = Floki.find(form, ".input-controls")
+      # The Issues entry point is in Source Control, never the composer toolbar.
+      assert Floki.find(controls, "[phx-click=open_github_issues]") == []
 
       # Interactive controls in document order: the attach-kind dropdown's "+"
       # <summary> trigger first (bottom-left — inside the wrapping
@@ -749,30 +755,60 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
     end
   end
 
-  # task_options_tab/1 — the "Task Options" dropdown tab. Mode gating contract:
-  # Build System renders for genesis* modes only; Starting Node / Starting
-  # Commit / Resume from render for the evolve family (evolve* + custom_agent);
-  # the Archive toggle renders for all modes.
-  describe "task_options_tab/1 rendering" do
-    test "custom_agent mode shows evolve-family advanced options and hides the genesis build-system select" do
-      html =
-        render_component(&EvoDashWeb.TaskFormComponents.task_options_tab/1, mode: "custom_agent")
+  # Routine options sit below the editor in every mode; only the evolve
+  # family gets the Advanced options disclosure.
+  describe "inline task options" do
+    test "custom_agent advanced controls are outside the editor but belong to its form" do
+      tree =
+        render_component(&TaskFormComponents.task_form/1,
+          mode: "custom_agent",
+          starting_commit: "release/2026",
+          resume_from: "task-1",
+          archive: true
+        )
+        |> parse()
 
-      assert html =~ "Starting Node"
-      assert html =~ "Starting Commit"
-      assert html =~ "Resume from"
-      refute html =~ "Build System"
+      assert [composer] = Floki.find(tree, ".workbench-composer[data-composer-kind=task]")
+      assert [form] = Floki.find(composer, "form#task-form[phx-submit=task_submit]")
+      assert Floki.find(form, "#task-options") == []
+      assert [options] = Floki.find(composer, "#task-options")
+      assert [_] = Floki.find(options, "input[name=archive][form=task-form][checked]")
+      assert Floki.find(options, "select[name=build_system]") == []
+      assert [advanced] = Floki.find(options, "details#task-advanced-options[open]")
+      assert [_] = Floki.find(advanced, "label[for=task-node-path]")
+      assert [_] = Floki.find(advanced, "label[for=task-starting-commit]")
+      assert [_] = Floki.find(advanced, "label[for=task-resume-from]")
+
+      assert Floki.attribute(advanced, "input[form=task-form]", "name") ==
+               ~w(node_path starting_commit resume_from)
+
+      assert Floki.attribute(advanced, "input[form=task-form]", "value") ==
+               ["", "release/2026", "task-1"]
     end
 
-    test "genesis_new mode shows the build-system select and hides advanced options" do
-      html =
-        render_component(&EvoDashWeb.TaskFormComponents.task_options_tab/1,
-          mode: "genesis_new"
-        )
+    test "genesis modes show the form-associated build system instead of Advanced options" do
+      for mode <- ["genesis_new", "genesis_existing"] do
+        tree =
+          render_component(&TaskFormComponents.task_options_tab/1,
+            mode: mode,
+            build_systems: [%{id: "mix", name: "Mix"}],
+            selected_build_system: "mix"
+          )
+          |> parse()
 
-      assert html =~ "Build System"
-      refute html =~ "Starting Commit"
-      refute html =~ "Resume from"
+        assert [_] = Floki.find(tree, "#task-options input[name=archive][form=task-form]")
+
+        assert [_] =
+                 Floki.find(
+                   tree,
+                   "#task-options select[name=build_system][form=task-form] option[value=mix][selected]"
+                 )
+
+        assert Floki.find(
+                 tree,
+                 "#task-advanced-options, input[name=starting_commit], input[name=resume_from]"
+               ) == []
+      end
     end
 
     # Persist-agent-state toggle: rendered for ALL modes next to the Archive

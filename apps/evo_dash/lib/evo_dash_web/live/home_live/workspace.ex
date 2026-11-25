@@ -87,16 +87,15 @@ defmodule EvoDashWeb.HomeLive.Workspace do
     case assigns[:workbench_draft_key] do
       {node_id, node, token, draft} = key when is_binary(token) and is_binary(draft) ->
         settled = draft_token(selection)
-        path = DraftScope.path(selection)
+        aliases = draft_aliases(selection)
 
-        if is_nil(settled) or token not in Enum.reject([settled, path], &is_nil/1) do
+        if is_nil(settled) or token not in aliases do
           {key, []}
         else
           legacy =
-            [token, path]
-            |> Enum.reject(&(is_nil(&1) or &1 == settled))
-            |> Enum.uniq()
-            |> Enum.map(&{node_id, node, &1, draft})
+            for alias_token <- aliases,
+                alias_token != settled,
+                do: {node_id, node, alias_token, draft}
 
           {{node_id, node, settled, draft}, legacy}
         end
@@ -109,9 +108,8 @@ defmodule EvoDashWeb.HomeLive.Workspace do
   @doc """
   True when the open workbench tab already addresses `project` + `draft`.
 
-  `project` is whatever the `?wb_project=` param carries (a path or a point);
-  the CURRENT selection's token and execution path are accepted aliases, so a
-  re-keyed (point-scoped) tab is never wiped by a repeated path-spelled param.
+  `project` is the URL path or point. A project path aliases its resolved
+  project point, never a workspace point whose first member shares that path.
   """
   def open_tab?(assigns, project, draft) do
     case assigns[:workbench_draft_key] do
@@ -274,10 +272,12 @@ defmodule EvoDashWeb.HomeLive.Workspace do
   workspace point resolves to the workspace selection.
   """
   def select_mounted(socket, key) do
-    case socket.assigns.workspace do
-      %{path: ^key} -> socket
-      %{point: ^key} -> socket
-      _ -> load(socket, {:mounted, key})
+    if locked?(socket.assigns) do
+      assign(socket, workspace: restore(socket.assigns[:workspace], scope(socket.assigns)))
+    else
+      # The URL's identity wins over a cached selection that may have changed
+      # mounts or workspace members since the draft was last opened.
+      socket |> assign(workspace: nil) |> load({:mounted, key})
     end
   end
 
@@ -297,9 +297,7 @@ defmodule EvoDashWeb.HomeLive.Workspace do
           if locked?(socket.assigns) do
             socket
           else
-            socket
-            |> assign(workspace: workspace, workspace_open: false, workspace_error: nil)
-            |> ChatState.persist()
+            assign(socket, workspace: workspace, workspace_open: false, workspace_error: nil)
           end
 
         {_, {:ok, {:error, message}}} ->
@@ -322,14 +320,19 @@ defmodule EvoDashWeb.HomeLive.Workspace do
   def member_label(ref) when is_binary(ref) and ref != "", do: ref
   def member_label(_ref), do: gettext("Unknown project")
 
-  # The token and the param name the same project when they are the same
-  # spelling, or when BOTH belong to the resolved selection's identity family
-  # (its point and its execution path).
   defp same_project?(token, project, selection) do
-    family =
-      Enum.reject([draft_token(selection), DraftScope.path(selection)], &is_nil/1)
+    aliases = draft_aliases(selection)
+    token == project or (token in aliases and project in aliases)
+  end
 
-    token == project or (token in family and project in family)
+  defp draft_aliases(selection) do
+    if point = DraftScope.workspace(selection) do
+      [point]
+    else
+      Enum.uniq(
+        Enum.reject([DraftScope.project(selection), DraftScope.path(selection)], &is_nil/1)
+      )
+    end
   end
 
   defp load(socket, operation) do
@@ -360,32 +363,28 @@ defmodule EvoDashWeb.HomeLive.Workspace do
   defp operation_kind({kind, _argument}), do: kind
 
   defp mounted(node_id, target, key) when is_binary(key) do
-    cond do
-      workspace_point?(key) -> workspace_scope(node_id, target, key)
-      DraftScope.point?(key) -> mounted_point(node_id, target, key)
-      true -> mounted_path(node_id, target, key)
-    end
+    if workspace_point?(key),
+      do: workspace_scope(node_id, target, key),
+      else: mounted_project(node_id, target, key)
   end
 
   defp mounted(_node_id, _target, _key), do: no_longer_open()
 
-  defp mounted_path(node_id, target, path) do
-    with {:ok, projects} <- project_mounts(target),
-         %{} = mount <- Enum.find(projects, &match?(%{path: ^path}, &1)) do
+  defp mounted_project(node_id, target, key) do
+    point? = DraftScope.point?(key)
+
+    with :ok <- ready_target(node_id, target),
+         true <- point? or ProjectFlow.absolute_path_for_node?(target, key),
+         {:ok, projects} <- project_mounts(target),
+         %{} = mount <- Enum.find(projects, &matches_mount?(&1, key, point?)) do
       {:ok, project_selection(node_id, target, mount)}
     else
       _ -> no_longer_open()
     end
   end
 
-  defp mounted_point(node_id, target, point) do
-    with {:ok, projects} <- project_mounts(target),
-         %{} = mount <- Enum.find(projects, &(mount_point(&1) == point)) do
-      {:ok, project_selection(node_id, target, mount)}
-    else
-      _ -> no_longer_open()
-    end
-  end
+  defp matches_mount?(mount, key, true), do: mount_point(mount) == key
+  defp matches_mount?(mount, key, false), do: mount.path == key
 
   defp workspace_scope(node_id, target, point) do
     with :ok <- ready_target(node_id, target),

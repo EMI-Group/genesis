@@ -214,6 +214,58 @@ test("component stylesheets consume the ladder instead of arbitrary sizes", () =
   assert.match(source["assistant.css"], /\.assistant-textarea \{[^}]*font-size: 16px;/);
 });
 
+// --- shared composer chrome and control sizing -----------------------------
+
+// The named seam is optional: these selectors already cover the mounted
+// Assistant and task wrappers without requiring new classes in their markup.
+const composer = "#app-layout :is(.workbench-composer, .assistant-input-card, .help-composer, .input-layout .input-card)";
+
+test("one shared composer rule owns the resting surface across both editors", () => {
+  const shared = leafRules(app).filter(rule => rule.selectorText === composer);
+  assert.equal(shared.length, 1);
+  const chrome = values(shared[0].body);
+  assert.match(chrome.border, /^1px solid color-mix\(.*var\(--border-hairline\)/);
+  assert.equal(chrome["border-radius"], "var(--radius-2xl)");
+  assert.match(chrome.background, /var\(--surface-canvas\)/);
+  assert.match(chrome["box-shadow"], /^0 0 0 1px /, "a surface ring, not elevation");
+  assert.equal(chrome.transition, "var(--composer-transition, var(--composer-chrome-transition))");
+
+  for (const [sheet, selector] of [
+    ["assistant.css", ".assistant-input-card"],
+    ["app.css", ".help-composer"],
+    ["app.css", ".input-card"],
+    ["app.css", '.input-layout[data-layout="compact"] .input-card'],
+    ["app.css", '.input-layout[data-layout="expanded"] .input-card']
+  ]) {
+    // The leaf splitter sees commas inside :is(); ignore the shared selector and its states.
+    for (const rule of rulesWith(selector, source[sheet]).filter(rule => !rule.selectorText.startsWith(composer))) {
+      assert.doesNotMatch(rule.body, /(?:^|[;\s])(?:border(?:-[\w-]+)?|background(?:-[\w-]+)?|box-shadow|transition)\s*:/,
+        `${sheet}: ${selector} is layout-only; put chrome in the shared rule`);
+    }
+  }
+
+  const sizing = leafRules(app).filter(rule => "--composer-transition" in values(rule.body));
+  assert.deepEqual(sizing.map(rule => rule.selectorText), [
+    ':is(.input-card, .workbench-composer[data-composer-kind="task"])'
+  ], "only the task composer animates AdaptiveInput's size changes");
+  assert.match(values(sizing[0].body)["--composer-transition"], /^min-height\b[\s\S]+var\(--composer-chrome-transition\)$/);
+});
+
+test("composer focus is visible on the wrapper and on the exact keyboard control", () => {
+  const [within] = blocks(`${composer}:focus-within`, app);
+  const focus = values(within);
+  assert.equal(focus["border-color"], "var(--color-primary-standalone)");
+  assert.match(focus["box-shadow"], /^0 0 0 2px .*var\(--color-primary-standalone\)/);
+
+  const [keyboard] = blocks(
+    ":is(.assistant-context-bar, .help-composer-controls, .input-controls) :is(button, summary):focus-visible", app);
+  assert.equal(values(keyboard).outline, "2px solid var(--color-primary-standalone)");
+
+  const [forced] = blocks("@media (forced-colors: active)", app);
+  const [forcedFocus] = blocks(`${composer}:focus-within`, forced);
+  assert.equal(values(forcedFocus).outline, "2px solid Highlight");
+});
+
 // --- right-panel scroll containment ----------------------------------------
 
 test("the right panels are flex columns that never scroll themselves", () => {
@@ -263,14 +315,50 @@ test("the history list is the ONE scroller and the header stays put", () => {
   assert.equal(values(pinned[0].body).flex, "none");
 });
 
-test("the git pane scrolls inside its body, under a pinned heading", () => {
+test("only the selected Source Control view scrolls", () => {
   const [body] = rulesWith(".workbench-git-body");
   const declared = values(body.body);
-  assert.equal(declared["overflow-y"], "auto");
-  assert.equal(declared["min-height"], "0");
+  assert.equal(declared.display, "flex");
+  assert.equal(declared["flex-direction"], "column");
   assert.equal(declared.flex, "1 1 auto");
-  assert.equal(declared["overscroll-behavior"], "contain");
-  assert.equal(declared.display, "grid", "the body stays the summary/segmented grid");
+  assert.equal(declared["min-height"], "0");
+  assert.equal(declared.overflow, "hidden", "the body clips instead of scrolling its controls");
+
+  const view = ".workbench-git-body > :is(#workbench-git-changes, #workbench-git-branches, #workbench-git-history)";
+  const scrollOwners = Object.values(source).flatMap(leafRules).filter(rule => {
+    // The portaled diff is outside the dock and owns a separate scroller.
+    if (!/#workbench-git(?![\w-])|[.#]workbench-git-(?!diff\b)/.test(rule.selectorText)) return false;
+    return declarations(rule.body).some(([key, value]) =>
+      /^overflow(?:-[xy]|-block|-inline)?$/.test(key) && /\b(auto|scroll|overlay)\b/.test(value));
+  });
+  assert.deepEqual(scrollOwners.map(rule => rule.selectorText), [view]);
+  assert.deepEqual(values(scrollOwners[0].body), {
+    flex: "1 1 auto",
+    "min-height": "0",
+    "overflow-y": "auto",
+    "overscroll-behavior": "contain"
+  });
+});
+
+test("Source Control keeps its heading, summary and view switcher at intrinsic height", () => {
+  for (const selector of [
+    "#workbench-git-content .workbench-section-heading",
+    ".workbench-git-summary",
+    ".workbench-git-views"
+  ]) {
+    const flex = rulesWith(selector).flatMap(rule => declarations(rule.body))
+      .filter(([key]) => key === "flex").map(([, value]) => value);
+    assert.deepEqual(flex, ["none"], `${selector} must not grow or shrink with the list`);
+  }
+
+  const [search] = rulesWith("#workbench-git-search");
+  const declared = values(search.body);
+  assert.equal(declared.position, "sticky", "branch search stays reachable inside the scrolling view");
+  assert.equal(declared["inset-block-start"], "0");
+  assert.equal(declared.background, "var(--surface-rail)", "rows must not show through the search field");
+  const [branches] = blocks("#workbench-git-branches", source["workbench.css"]);
+  assert.match(values(branches)["scroll-padding-block-start"], /var\(--touch-target\)/,
+    "keyboard scrolling leaves space for sticky branch search");
 });
 
 test("no right-panel scroller asks for smooth scrolling", () => {
@@ -282,6 +370,17 @@ test("no right-panel scroller asks for smooth scrolling", () => {
 });
 
 // --- the coarse-pointer recipe --------------------------------------------
+
+test("composer controls reach the touch floor for coarse pointers", () => {
+  const coarse = blocks("@media (pointer: coarse)", app).join("\n");
+  const [actions] = blocks(
+    ".assistant-context-bar :is(.assistant-icon-button, .assistant-send-button, .assistant-stop-button)", coarse);
+  assert.equal(values(actions)["min-inline-size"], "var(--touch-target)");
+  assert.equal(values(actions)["min-block-size"], "var(--touch-target)");
+
+  const [capsules] = blocks(":is(.assistant-context-bar, .input-controls) .capsule-trigger", coarse);
+  assert.equal(values(capsules)["min-block-size"], "var(--touch-target)");
+});
 
 test("a coarse pointer gets 16px inputs and a 44px row floor", () => {
   const [coarse] = blocks("@media (pointer: coarse)");
