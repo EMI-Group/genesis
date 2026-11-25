@@ -170,8 +170,8 @@ A repo-less run (no repository) and a `persistent_state: false` task never ancho
 
 ## Known Issues — Query & Write Amplification
 
-- Every checkpoint supplies the session's whole field projection, so `redispatch`/`objective` are Jason-encoded and every supplied column rewritten each turn although only the volatile half changed (`agent/session/persistence.ex`).
-- `update_volatile/4` has NO producer yet: `EvoGit.Agent.Session.Persistence` still sends one full checkpoint per turn, so the constant-shape per-turn `UPDATE` is shipped but unused. Wiring it is a session-package change and must keep the `pause_commit`/`result` exclusions (their own writes are `put_pause_commit/4` and `mark_done/5`).
+- Per-turn writes are ALREADY the volatile projection (`agent/session/persistence.ex`: `write_checkpoint`/`write_volatile_boundary` send `Map.merge(volatile_fields(state), anchor)`), so `redispatch`/`objective` are Jason-encoded only by `initial_snapshot/1` (row creation) and `resync/1`, never each turn.
+- Each turn boundary still re-encodes `:usage`/`:pending_inputs`/`:pending_tool_batch` JSON and rewrites all nine volatile columns together, because the volatile projection is supplied whole (REPLACE semantics require it).
 - `agent_states_status_completed_at_index` is indexed on a column no query filters, yet every `mark_done` maintains it (migration `000001_create_agent_state.exs`).
 
 ## Notes for Agents
