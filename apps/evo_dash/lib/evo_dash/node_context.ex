@@ -935,7 +935,14 @@ defmodule EvoDash.NodeContext do
 
   @spec projects(node()) :: [project_entry()]
   def projects(node) do
-    result = call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :projects, [])
+    # The project registry IS the core's VCT, whose instance is a PER-PROCESS
+    # designation; `EvoDash.VCTScope.scoped/1` carries the instance designated
+    # by this call's spawn chain into the call (inert in production, where
+    # nothing designates one).
+    result =
+      EvoDash.VCTScope.scoped(fn ->
+        call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :projects, [])
+      end)
 
     result =
       if missing_project_api?(result, :projects),
@@ -955,7 +962,8 @@ defmodule EvoDash.NodeContext do
   @spec mount_project(node(), String.t(), String.t() | nil) ::
           {:ok, project_entry()} | {:error, term()}
   def mount_project(node, path, name) do
-    result = EvoGit.RemoteNode.mount_project(node, path, name)
+    result =
+      EvoDash.VCTScope.scoped(fn -> EvoGit.RemoteNode.mount_project(node, path, name) end)
 
     if missing_project_api?(result, :mount_project) do
       with {:ok, basename} <- call_remote(node, Path, :basename, [path]),
@@ -986,7 +994,7 @@ defmodule EvoDash.NodeContext do
   """
   @spec forget_project(node(), term()) :: :ok | {:error, term()}
   def forget_project(node, key) do
-    result = EvoGit.RemoteNode.forget_project(node, key)
+    result = EvoDash.VCTScope.scoped(fn -> EvoGit.RemoteNode.forget_project(node, key) end)
 
     if missing_project_api?(result, :forget_project) and is_binary(key) do
       with {:ok, :absolute} <- call_remote(node, Path, :type, [key]),
@@ -1047,7 +1055,7 @@ defmodule EvoDash.NodeContext do
   """
   @spec workspaces(node()) :: [EvoGit.VCT.Mount.t()]
   def workspaces(node) do
-    EvoGit.RemoteNode.workspaces(node)
+    EvoDash.VCTScope.scoped(fn -> EvoGit.RemoteNode.workspaces(node) end)
   end
 
   @doc """
@@ -1066,7 +1074,7 @@ defmodule EvoDash.NodeContext do
   """
   @spec workspace_entries(node()) :: [EvoGit.VCT.workspace_entry()]
   def workspace_entries(node) do
-    EvoGit.RemoteNode.workspace_entries(node)
+    EvoDash.VCTScope.scoped(fn -> EvoGit.RemoteNode.workspace_entries(node) end)
   end
 
   @doc """
@@ -1090,7 +1098,9 @@ defmodule EvoDash.NodeContext do
   @spec create_workspace(node(), String.t(), [map()], keyword()) ::
           {:ok, EvoGit.VCT.Mount.t()} | {:error, term()}
   def create_workspace(node, name, members, opts) do
-    EvoGit.RemoteNode.create_workspace(node, name, members, opts)
+    EvoDash.VCTScope.scoped(fn ->
+      EvoGit.RemoteNode.create_workspace(node, name, members, opts)
+    end)
   end
 
   @doc """
@@ -1110,7 +1120,7 @@ defmodule EvoDash.NodeContext do
   @spec workspace_members(node(), term()) ::
           {:ok, EvoGit.VCT.workspace_resolution()} | {:error, term()}
   def workspace_members(node, point_or_name) do
-    EvoGit.RemoteNode.workspace_members(node, point_or_name)
+    EvoDash.VCTScope.scoped(fn -> EvoGit.RemoteNode.workspace_members(node, point_or_name) end)
   end
 
   @doc """
@@ -1125,7 +1135,7 @@ defmodule EvoDash.NodeContext do
   """
   @spec workspaces_for(node(), term()) :: [EvoGit.VCT.Mount.t()]
   def workspaces_for(node, project) do
-    EvoGit.RemoteNode.workspaces_for(node, project)
+    EvoDash.VCTScope.scoped(fn -> EvoGit.RemoteNode.workspaces_for(node, project) end)
   end
 
   @doc """

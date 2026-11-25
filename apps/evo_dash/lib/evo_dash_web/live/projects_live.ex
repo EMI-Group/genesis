@@ -625,8 +625,9 @@ defmodule EvoDashWeb.ProjectsLive do
           # `{config_dir, generation}` of the last `{:config_reloaded, node,
           # dir, generation}` broadcast that actually re-spawned the picker
           # batch (nil before the first one): a repeat or older generation for
-          # the same config dir never spawns again, a different dir is a new
-          # identity.
+          # the same config dir never spawns again. Only this page's OWN config
+          # dir is ever handled (see the handler), so a foreign dir cannot
+          # write this assign at all.
           config_generation: nil,
           config_tab: "task_options",
           remote?: false
@@ -2517,19 +2518,31 @@ defmodule EvoDashWeb.ProjectsLive do
     end
   end
 
-  # A config change on THIS page's node invalidates the canonical picker
-  # bundle: the core broadcasts `{:config_reloaded, node, dir, generation}`
-  # once per content-fingerprint change on the `"config"` topic, so a Settings
-  # save (or any other writer) refreshes the provider/model inventory instead
-  # of leaving the task form in its "Loading models…" state until a remount.
+  # A config change on THIS page's node AND in THIS page's own config dir
+  # invalidates the canonical picker bundle: the core broadcasts
+  # `{:config_reloaded, node, dir, generation}` once per content-fingerprint
+  # change on the `"config"` topic, so a Settings save (or any other writer)
+  # refreshes the provider/model inventory instead of leaving the task form in
+  # its "Loading models…" state until a remount.
+  # DIR OWNERSHIP: a broadcast is consumed only when `dir` is the page's OWN
+  # config dir — `EvoGit.Config.config_dir/0`, resolved here in the page's
+  # process so it walks the page's spawn chain. A foreign dir belongs to another
+  # instance: it can neither invalidate this page's bundle nor change this
+  # node's config status, so it skips BOTH the batch spawn and the
+  # `:load_config_status` self-send. Production runs exactly ONE config dir, so
+  # the condition is a no-op there; on a host running several (isolated test
+  # dirs, a future multi-instance host) it stops a foreign broadcast from
+  # clearing the picker's ready state.
   # A remote target's config never arrives here (the broadcast comes from the
   # publishing BEAM), and the connection gate owns the pending/connecting UX —
   # a batch spawned then would be dropped by the pending guard.
   @impl true
   def handle_info({:config_reloaded, node, dir, generation}, socket) do
     node_matches? = node == (socket.assigns[:current_node] || node())
+    own_config_dir? = dir == EvoGit.Config.config_dir()
 
-    if node_matches? and not ModelSelectionScope.pending_remote?(socket.assigns) and
+    if node_matches? and own_config_dir? and
+         not ModelSelectionScope.pending_remote?(socket.assigns) and
          not EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) do
       if stale_config_generation?(socket.assigns[:config_generation], dir, generation) do
         {:noreply, socket}
@@ -2867,8 +2880,10 @@ defmodule EvoDashWeb.ProjectsLive do
     end
   end
 
-  # A repeat or OLDER generation for the same config dir is not a new change; a
-  # different dir is a new identity.
+  # A repeat or OLDER generation for the same config dir is not a new change.
+  # The third clause only relaxes generations across a CHANGED dir: the
+  # `{:config_reloaded, …}` handler already drops a foreign dir, so this can
+  # only see this page's own dir before and after such a change.
   defp stale_config_generation?(nil, _dir, _generation), do: false
   defp stale_config_generation?({dir, handled}, dir, generation), do: generation <= handled
   defp stale_config_generation?(_handled, _dir, _generation), do: false
