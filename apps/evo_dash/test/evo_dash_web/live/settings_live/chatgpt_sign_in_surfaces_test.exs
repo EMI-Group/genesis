@@ -38,6 +38,7 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
   import Phoenix.LiveViewTest
 
   alias EvoDash.Test.ChatGPTLoginStub, as: ChatGPTStub
+  alias EvoDash.Test.SettingsAwait
   alias EvoDashWeb.SettingsComponents.ProviderProfiles.Row
   alias EvoDashWeb.SettingsLive.ChatGPTSignInState
 
@@ -45,11 +46,11 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
   @flow_url "https://auth.openai.com/detail"
   @flow_id "flow-1"
 
-  # Load-tolerant budgets: the mount load chain and every owned write run in
-  # supervised tasks on a shared host whose scheduling swings 10-30x
-  # (test/CONTEXT.md). The waits stay bounded and still fail loudly.
+  # The assertion-side receive budget. The WAITS themselves go through the ONE
+  # shared `EvoDash.Test.SettingsAwait` (which owns their budgets,
+  # `async_wait_budget_ms/0`); this attribute is only what an `assert_receive`
+  # tolerates on a shared host whose scheduling swings 10-30x (test/CONTEXT.md).
   @async_wait_budget_ms 30_000
-  @assigns_timeout_ms 30_000
 
   setup do
     EvoDash.Test.ConfigDir.isolate!("evogit_settings_chatgpt_surfaces_test")
@@ -62,67 +63,25 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
     # the task can be killed before it runs and the notification is lost
     # forever. Inject the suite's load-tolerant budget so the product can never
     # kill a stub call (production keeps its own 15 s default).
-    Process.put(:chatgpt_signin_call_timeout_ms, @async_wait_budget_ms)
+    Process.put(:chatgpt_signin_call_timeout_ms, SettingsAwait.async_wait_budget_ms())
     :ok
   end
 
   # ── mount + async settles ──────────────────────────────────────────────────
+  # EVERY wait on ASYNC settings work (the mount load chain, the page's own
+  # settle after a flow verdict) goes through the ONE shared, evidence-based
+  # await in `test/support/settings_await.ex`. It reads the page's own
+  # authoritative markers instead of sampling `EvoDash.TaskSupervisor` pids —
+  # that sample could also pick up ANOTHER module's unattributed child (a nil
+  # `$callers`), and it is empty in the gap between two chained mount loads.
   defp mount_settings(conn, path) do
     {:ok, view, html} = live(conn, path)
-    settle_mount_loads(view)
+    SettingsAwait.await_settled(view)
     {:ok, view, html}
   end
 
-  defp settle_mount_loads(view) do
-    settle_mount_loads(view, System.monotonic_time(:millisecond) + @async_wait_budget_ms)
-  end
-
-  defp settle_mount_loads(view, deadline) do
-    # Drain applies BEFORE enumerating: an applied node-data result can spawn
-    # the OAuth load, which must also finish before a test injects a verdict.
-    _ = render(view)
-    pids = mount_async_task_pids(view.pid)
-
-    if pids != [] do
-      Enum.each(pids, fn pid ->
-        ref = Process.monitor(pid)
-        remaining = max(deadline - System.monotonic_time(:millisecond), 0)
-
-        receive do
-          {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
-        after
-          remaining -> flunk("Settings async loader did not settle")
-        end
-      end)
-
-      assert System.monotonic_time(:millisecond) < deadline,
-             "Settings async load chain did not settle"
-
-      settle_mount_loads(view, deadline)
-    end
-  end
-
-  defp mount_async_task_pids(view_pid) do
-    EvoDash.TaskSupervisor
-    |> DynamicSupervisor.which_children()
-    |> Enum.flat_map(fn
-      {_, pid, _, _} when is_pid(pid) ->
-        callers = task_callers(pid)
-        if is_nil(callers) or view_pid in callers, do: [pid], else: []
-
-      _ ->
-        []
-    end)
-  end
-
-  defp task_callers(pid) do
-    case Process.info(pid, :dictionary) do
-      {:dictionary, dict} -> Keyword.get(dict, :"$callers")
-      _ -> []
-    end
-  end
-
-  defp assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
+  # The ONE page read (a `:sys.get_state` round trip) stays shared.
+  defp assigns(view), do: SettingsAwait.assigns(view)
 
   # ── config fixtures ────────────────────────────────────────────────────────
   # An `openai_codex` account whose managed credential path can neither be read
@@ -159,35 +118,32 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
 
   # ── panel helpers ──────────────────────────────────────────────────────────
   defp slug(id), do: Row.slug(id)
+  defp detail_form(id), do: "provider-profile-detail-#{slug(id)}"
   defp detail_panel(id), do: "provider-detail-#{slug(id)}-chatgpt"
   defp status_panel(id), do: "provider-status-#{slug(id)}-chatgpt"
   defp row_id(id), do: "#provider-profile-#{slug(id)}"
 
+  # Opening an account is a "the EDITOR is rendered now" claim, so it awaits the
+  # expanded detail element itself. The old wait on the save-busy flag proved
+  # nothing about `editing_profile_id` being applied (`config_saving` is false on
+  # every refused write, so it returned instantly) — the test then queried the
+  # COLLAPSED summary row, where the sign-in surfaces are never rendered.
   defp open_account(view, id) do
     render_hook(view, "edit_provider_profile", %{"profile_id" => id})
-    await_config_save(view)
+    SettingsAwait.await_rendered(view, "#" <> detail_form(id))
   end
 
-  defp await_config_save(view) do
-    wait_settings(view, &(not &1[:config_saving]))
-    render(view)
-  end
+  # `edit_provider_profile` TOGGLES, so this is the COLLAPSE claim. No element
+  # witnesses an ABSENCE, and the authoritative marker of "collapsed" is the page
+  # assign itself — the documented `await_assigns/4` escape hatch.
+  defp close_account(view, id) do
+    render_hook(view, "edit_provider_profile", %{"profile_id" => id})
 
-  defp wait_settings(view, predicate, deadline \\ nil) do
-    deadline = deadline || System.monotonic_time(:millisecond) + @async_wait_budget_ms
-    current = assigns(view)
-
-    if predicate.(current) do
-      current
-    else
-      assert System.monotonic_time(:millisecond) < deadline,
-             "Settings did not reach the expected authoritative state"
-
-      receive do
-      after
-        2 -> wait_settings(view, predicate, deadline)
-      end
-    end
+    SettingsAwait.await_assigns(
+      view,
+      "the expanded account #{inspect(id)} to collapse (editing_profile_id cleared)",
+      fn assigns -> is_nil(assigns[:editing_profile_id]) end
+    )
   end
 
   defp attr(html, name) do
@@ -263,7 +219,8 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
   # `:pending` from the empty queue — which this file cannot use: the poll task
   # (`EvoDashWeb.LLMSetup.ChatGPTSignIn.start_poll/2`) runs under
   # `EvoDash.TaskSupervisor` with the view in its `:"$callers"`, so a flow that
-  # never terminates makes `settle_mount_loads/1` sit on its whole budget.
+  # never terminates keeps a credential load (and the page's own apply chain)
+  # busy for its whole budget.
   # The gate therefore answers `:pending` while it is CLOSED and the flow's
   # verdict as soon as the TEST opens it — the waiting phase is a stable state
   # for as long as the test needs, and the page's own poll then delivers the
@@ -293,64 +250,35 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
   defp open_status_gate(%{counter: counter}), do: :counters.put(counter, 1, 1)
 
   # ── bounded sign-in waits (event-driven, never a fixed sleep) ─────────────
+  #
+  # The flow call and its poll both run OFF-PROCESS, so every phase claim is a
+  # wait on the APPLIED page state through the ONE shared await, whose failure
+  # message names the phase, the surface and the state the page really reached.
   defp await_page_sign_in(view, phase, surface) do
-    await_page_sign_in(
+    SettingsAwait.await_assigns(
       view,
-      phase,
-      surface,
-      System.monotonic_time(:millisecond) + @async_wait_budget_ms
+      "the ChatGPT sign-in to reach #{inspect(phase)} on #{inspect(surface)}",
+      fn assigns ->
+        state = assigns[:chatgpt_sign_in] || %{}
+        Map.get(state, :phase) == phase and surface == ChatGPTSignInState.surface(state)
+      end
     )
   end
 
-  defp await_page_sign_in(view, phase, surface, deadline) do
-    state = assigns(view)[:chatgpt_sign_in] || %{}
-    current_phase = Map.get(state, :phase)
-
-    if current_phase == phase and surface == ChatGPTSignInState.surface(state) do
-      render(view)
-    else
-      assert System.monotonic_time(:millisecond) < deadline,
-             "ChatGPT sign-in never reached #{inspect(phase)} on #{inspect(surface)} " <>
-               "(was #{inspect(current_phase)} on #{inspect(ChatGPTSignInState.surface(state))}, " <>
-               "state #{inspect(state)})"
-
-      receive do
-      after
-        2 -> :ok
-      end
-
-      await_page_sign_in(view, phase, surface, deadline)
-    end
-  end
-
-  # A bounded wait for the page's START-FAILURE verdict (`:error` phase on
-  # `surface`), answering the applied state so the reason is assertable.
+  # The page's START-FAILURE verdict (`:error` phase on `surface`), answering the
+  # applied state so the reason is assertable.
   defp await_start_failure(view, surface) do
-    await_start_failure(
-      view,
-      surface,
-      System.monotonic_time(:millisecond) + @async_wait_budget_ms
-    )
-  end
+    assigns =
+      SettingsAwait.await_assigns(
+        view,
+        "the ChatGPT sign-in to report a start failure on #{inspect(surface)}",
+        fn assigns ->
+          state = assigns[:chatgpt_sign_in] || %{}
+          Map.get(state, :phase) == :error and surface == ChatGPTSignInState.surface(state)
+        end
+      )
 
-  defp await_start_failure(view, surface, deadline) do
-    state = assigns(view)[:chatgpt_sign_in] || %{}
-
-    if Map.get(state, :phase) == :error and surface == ChatGPTSignInState.surface(state) do
-      _ = render(view)
-      state
-    else
-      assert System.monotonic_time(:millisecond) < deadline,
-             "ChatGPT sign-in never reported a start failure on #{inspect(surface)} " <>
-               "(state #{inspect(state)})"
-
-      receive do
-      after
-        2 -> :ok
-      end
-
-      await_start_failure(view, surface, deadline)
-    end
+    assigns[:chatgpt_sign_in] || %{}
   end
 
   # ── auth-status injection (the auth_status_test pattern) ──────────────────
@@ -359,16 +287,13 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
   # supervised task. That task captures the `:auth_status_seq` the page bumped
   # BEFORE spawning it, so its `{:settings_auth_status_loaded, …}` carries
   # exactly the seq an injector reads — the page's stale guard cannot tell the
-  # two apart, and whichever arrives LAST wins. Settling the real load first is
-  # therefore necessary but NOT sufficient: a load still in flight (or spawned
-  # while applying a queued result) delivers the same seq and overwrites the
-  # injected verdict, which is the intermittent failure this helper removes.
+  # two apart, and whichever arrives LAST wins. So the injection is PROVEN to be
+  # the last writer instead of assumed:
   #
-  # So the injection is PROVEN to be the last writer instead of assumed:
-  #
-  #   1. settle every in-flight apply (the real load task's DOWN AND the
-  #      mailbox-draining `:sys.get_state` round-trip that can apply a queued
-  #      result and spawn the next real load),
+  #   1. settle the page (`EvoDash.Test.SettingsAwait.await_settled/1`: no owned
+  #      save, no owned load, the viewed scope's snapshot applied) and read it
+  #      through the `:sys.get_state` round trip, which applies every queued
+  #      result — including one that spawns the NEXT real load,
   #   2. inject with the page's CURRENT seq — the only value its stale guard
   #      accepts,
   #   3. settle again and re-read: a real result that landed after the injection
@@ -376,10 +301,10 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
   #      always precedes its spawn), and either one simply repeats the injection
   #      against the seq the page now holds.
   #
-  # Once step 3 sees BOTH an unmoved seq and the injected map, no real load can
-  # still be in flight (step 1's settle proved none was running, and any new one
-  # must bump the seq first), so the injected verdict is what the assertions
-  # render. The loop is bounded and event-driven — never a sleep.
+  # The credential load itself is fire-and-forget (no in-flight assign — a known
+  # limit documented in `EvoDash.Test.SettingsAwait`), so a load still in flight
+  # can only ever produce a LOUD overwrite flunk below, never a silent pass. The
+  # loop is bounded and event-driven — never a sleep.
   defp inject_statuses(view, statuses, target_node \\ nil) do
     inject_statuses(
       view,
@@ -390,11 +315,11 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
   end
 
   defp inject_statuses(view, statuses, target_node, deadline) do
-    # Drain applies BEFORE enumerating: that round-trip can apply a queued
-    # result and spawn the real credential load, which must also finish.
-    settle_mount_loads(view)
+    # Drain applies BEFORE injecting: that round-trip can apply a queued result
+    # and spawn another real credential load.
+    SettingsAwait.await_settled(view)
     _ = assigns(view)
-    settle_mount_loads(view)
+    SettingsAwait.await_settled(view)
     state = assigns(view)
 
     send(
@@ -405,7 +330,7 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
 
     _ = render(view)
     # Prove the injected verdict is the page's LAST writer.
-    settle_mount_loads(view)
+    SettingsAwait.await_settled(view)
     settled = assigns(view)
 
     cond do
@@ -605,11 +530,11 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
       open_status_gate(gate)
       await_page_sign_in(view, :ok, {:detail, @profile_id})
 
-      # Settle the success path's supervised credential reload (and any queued
-      # config/node-data apply) BEFORE reading the page, so these assertions —
-      # and the injection below, which the real load would otherwise overwrite
-      # with the same seq — see one quiet page.
-      settle_mount_loads(view)
+      # Settle the success path's owned work (and any queued config/node-data
+      # apply) BEFORE reading the page, so these assertions — and the injection
+      # below, which a real credential result would otherwise overwrite — see one
+      # quiet page.
+      SettingsAwait.await_settled(view)
 
       # The connected registration lands in the expanded account's detached
       # draft (never the wizard's).
@@ -677,10 +602,10 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
       await_page_sign_in(view, :ok, {:status, @profile_id})
 
       # This surface reads the REAL credential load (it injects nothing), so the
-      # only ordering hazard is rendering/reading while the success path's
-      # supervised reload (or a queued config/node-data apply) is still in
-      # flight: settle it first so every assertion below sees the quiet page.
-      settle_mount_loads(view)
+      # only ordering hazard is rendering/reading while the success path's owned
+      # work (or a queued config/node-data apply) is still in flight: settle it
+      # first so every assertion below sees the quiet page.
+      SettingsAwait.await_settled(view)
 
       assert assigns(view).profile_form_draft["siwc_account"] == "work-status"
       refute has_element?(view, "#" <> status_panel(@profile_id) <> "-waiting")
@@ -989,9 +914,9 @@ defmodule EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest do
       await_page_sign_in(view, :waiting, {:detail, @profile_id})
       assert has_element?(view, "#" <> detail_panel(@profile_id) <> "-waiting")
 
-      # `edit_provider_profile` toggles the open row closed.
-      render_hook(view, "edit_provider_profile", %{"profile_id" => @profile_id})
-      await_config_save(view)
+      # `edit_provider_profile` toggles the open row closed — an ASSIGN claim, not
+      # a busy-flag sample: `editing_profile_id` is what the collapse assigns.
+      close_account(view, @profile_id)
       assert_receive {:chatgpt_stub, :cancel, @flow_id}, @async_wait_budget_ms
 
       assert assigns(view).editing_profile_id == nil
