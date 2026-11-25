@@ -26,17 +26,12 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
 
   alias EvoDashWeb.HomeLive.UserMessage
 
-  attr(:source_gate?, :boolean,
+  attr(:project_scoped?, :boolean,
     default: false,
-    doc:
-      "true when the Genesis-source gate blocks chatting — swaps the suggestion " <>
-        "chips for a short note pointing at the Download button"
+    doc: "whether the conversation has a resolved project, already named in the surrounding UI"
   )
 
-  # Renders the empty state (no transcript entries yet): brand logo mark
-  # (light/dark variants), greeting, and the four suggestion chips —
-  # OR, when the Genesis-source gate blocks chatting, a short note instead of
-  # the chips (chips would only start a doomed `:reflect` task).
+  # The quick actions render separately below the composer.
   def empty_state(assigns) do
     ~H"""
     <div id="assistant-welcome" class="assistant-empty-heading">
@@ -55,8 +50,13 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
           width="46"
           height="38"
         />
-        <h2>{gettext("Turn ideas into working software")}</h2>
+        <h2 class="text-2xl!">{gettext("How can I help?")}</h2>
       </div>
+      <p class="mt-2 text-sm text-base-content/70 text-balance">
+        {if @project_scoped?,
+          do: gettext("Ask about this project, share an idea, or talk through a problem."),
+          else: gettext("Share an idea, ask a question, or tell me what’s not working.")}
+      </p>
     </div>
     """
   end
@@ -66,32 +66,31 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
     <div
       id="assistant-quick-actions"
       class="assistant-quick-actions"
+      role="group"
       aria-label={gettext("Conversation starters")}
     >
-      <.suggestion_chip message={gettext("Show my running tasks")}>
+      <.suggestion_chip message={gettext("Help me shape a feature idea")}>
         <.icon
           name="hero-light-bulb"
           class="size-4 shrink-0 text-base-content/60 group-hover:text-base-content"
         />
       </.suggestion_chip>
-      <%!-- zh_CN: "检查系统状态与容量" --%>
-      <.suggestion_chip message={gettext("Check system status and capacity")}>
+      <.suggestion_chip message={gettext("Help me understand an error")}>
         <.icon
           name="hero-magnifying-glass"
           class="size-4 shrink-0 text-base-content/60 group-hover:text-base-content"
         />
       </.suggestion_chip>
-      <%!-- zh_CN: "帮我启动一个任务" --%>
-      <.suggestion_chip message={gettext("Start a task for me")}>
+      <.suggestion_chip message={gettext("Walk me through some code")}>
         <.icon
-          name="hero-puzzle-piece"
+          name="hero-code-bracket"
           class="size-4 shrink-0 text-base-content/60 group-hover:text-base-content"
         />
       </.suggestion_chip>
-      <%!-- zh_CN: "解释任务是如何被调度的" --%>
-      <.suggestion_chip message={gettext("Explain how tasks are scheduled")}>
+      <%!-- zh_CN: 指编写软件测试 --%>
+      <.suggestion_chip message={gettext("Help me write a test")}>
         <.icon
-          name="hero-map"
+          name="hero-beaker"
           class="size-4 shrink-0 text-base-content/60 group-hover:text-base-content"
         />
       </.suggestion_chip>
@@ -246,7 +245,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
       type="button"
       phx-click="send_message"
       phx-value-message={@message}
-      class="assistant-quick-action group"
+      class="assistant-quick-action group pointer-coarse:min-h-[var(--touch-target)]"
     >
       {render_slot(@inner_block)}
       {@message}
