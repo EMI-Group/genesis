@@ -122,6 +122,11 @@ defmodule EvoDashWeb.ProjectsLive do
             (@workbench_project_selection && @workbench_project_selection.path) ||
               @remote_project_loading || git_project,
           else: git_project %>
+      <% new_conversation? =
+        !remote_gate? and !ModelSelectionScope.pending_remote?(assigns) and
+          is_nil(@remote_project_loading) and is_nil(@workbench_project_selection) and
+          workbench_project == Overview.scope(assigns).exec_path and
+          not is_nil(Overview.assistant_path(assigns)) %>
       <EvoDashWeb.Layouts.app
         flash={@flash}
         current_page={:dashboard}
@@ -130,6 +135,7 @@ defmodule EvoDashWeb.ProjectsLive do
         remote_targets={assigns[:remote_targets] || []}
         connection_statuses={assigns[:connection_statuses] || %{}}
         workbench_project={workbench_project}
+        workbench_new_conversation?={new_conversation?}
         workbench_default_draft={Overview.default_draft_path(assigns)}
         workbench_git_project={if workbench_project == git_project, do: git_project}
         workbench_git_branch={@workbench_reconnect_params["wb_git_branch"]}

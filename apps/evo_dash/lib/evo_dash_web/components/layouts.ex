@@ -49,6 +49,11 @@ defmodule EvoDashWeb.Layouts do
     doc: "the Assistant draft URL offered by a confirmed project or workspace overview"
   )
 
+  attr(:workbench_new_conversation?, :boolean,
+    default: true,
+    doc: "when false, omits the scoped New conversation button from the Create menu"
+  )
+
   attr(:workbench_git_project, :string, default: nil)
   attr(:github_status, :map, default: nil, doc: "the active project's GitHub upstream status")
   attr(:workbench_git_branch, :string, default: nil)
@@ -405,7 +410,12 @@ defmodule EvoDashWeb.Layouts do
                       <.icon name="hero-clipboard-document" class="size-4 shrink-0" />
                       {gettext("New task")}
                     </.link>
-                    <button type="button" class="workbench-row" data-workbench-new-conversation>
+                    <button
+                      :if={@workbench_new_conversation?}
+                      type="button"
+                      class="workbench-row"
+                      data-workbench-new-conversation
+                    >
                       <.icon name="hero-chat-bubble-left" class="size-4 shrink-0" />
                       {gettext("New conversation")}
                     </button>
