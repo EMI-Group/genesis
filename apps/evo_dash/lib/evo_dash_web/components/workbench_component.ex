@@ -394,7 +394,6 @@ defmodule EvoDashWeb.WorkbenchComponent do
       assign(assigns,
         rows: rows,
         filter_options: options,
-        project_label: project_filter_label(options, assigns.history_project),
         status_options: @history_statuses,
         first_load?:
           assigns.project && assigns.target && is_nil(assigns.result) && assigns.loading
@@ -408,7 +407,6 @@ defmodule EvoDashWeb.WorkbenchComponent do
       aria-label={gettext("Project history")}
       data-workbench-history-empty={if @result != nil and @rows == [] and !@error, do: "true"}
     >
-      <div id="workbench-history-project" class="workbench-history-project">{@project_label}</div>
       <p :if={@project && !@target} class="workbench-hint">
         {gettext("Connect to see this project's history.")}
       </p>
@@ -423,19 +421,6 @@ defmodule EvoDashWeb.WorkbenchComponent do
         phx-submit="history_filters"
         phx-target={@myself}
       >
-        <label id="workbench-history-query" class="workbench-query workbench-history-query">
-          <.icon name="hero-magnifying-glass" class="size-4 shrink-0" />
-          <input
-            id="workbench-history-search"
-            type="search"
-            name="query"
-            value={@history_query}
-            placeholder={gettext("Search history")}
-            aria-label={gettext("Search history")}
-            autocomplete="off"
-            phx-debounce="300"
-          />
-        </label>
         <div class="workbench-history-filters">
           <label class="workbench-history-field" for="workbench-history-project-filter">
             <span class="workbench-history-field-label">{gettext("Project")}</span>
@@ -476,7 +461,25 @@ defmodule EvoDashWeb.WorkbenchComponent do
             </select>
           </label>
         </div>
-        <div class="workbench-segmented" role="group" aria-label={gettext("History type")}>
+        <label id="workbench-history-query" class="workbench-query workbench-history-query">
+          <.icon name="hero-magnifying-glass" class="size-4 shrink-0" />
+          <input
+            id="workbench-history-search"
+            type="search"
+            name="query"
+            value={@history_query}
+            placeholder={gettext("Search history")}
+            aria-label={gettext("Search history")}
+            autocomplete="off"
+            phx-debounce="300"
+          />
+        </label>
+        <div
+          class="workbench-segmented workbench-history-switch"
+          data-history-kind={if @history_kind == "task", do: "tasks", else: "conversations"}
+          role="group"
+          aria-label={gettext("History type")}
+        >
           <button
             type="button"
             data-workbench-kind="task"
@@ -519,16 +522,11 @@ defmodule EvoDashWeb.WorkbenchComponent do
           data-item-state={status_label(row.status)}
         >
           <.link navigate={row.href} class="workbench-row" title={row.title} data-workbench-open>
-            <span class="workbench-history-kind" aria-hidden="true">
-              <.icon
-                name={
-                  if row.kind == "task", do: "hero-clipboard-document", else: "hero-chat-bubble-left"
-                }
-                class="size-4"
-              />
+            <span :if={row.kind == "chat"} class="workbench-history-kind" aria-hidden="true">
+              <.icon name="hero-chat-bubble-left" class="size-4" />
             </span>
             <div class="workbench-history-label">
-              <span class="workbench-history-title line-clamp-2 text-sm">{row.title}</span>
+              <span class="workbench-history-title truncate text-sm">{row.title}</span>
               <span class="workbench-history-meta text-xs">
                 <span
                   class={["workbench-status", task_status_dot_class(row.status)]}
@@ -828,16 +826,6 @@ defmodule EvoDashWeb.WorkbenchComponent do
 
   defp effective_project_options(_options, project) do
     ensure_project_option([], project)
-  end
-
-  defp project_filter_label(_options, filter) when filter in [nil, ""],
-    do: gettext("All projects")
-
-  defp project_filter_label(options, filter) do
-    case Enum.find(options, &(&1.path == filter)) do
-      %{name: name} when is_binary(name) and name != "" -> name
-      _ -> Path.basename(filter)
-    end
   end
 
   # -- recent projects ------------------------------------------------------

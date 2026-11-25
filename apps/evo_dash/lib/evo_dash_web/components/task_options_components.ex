@@ -5,9 +5,25 @@ defmodule EvoDashWeb.TaskOptionsComponents do
 
   def options(assigns) do
     ~H"""
-    <div id="task-options" class={[@disabled && "opacity-40 pointer-events-none select-none"]}>
-      <div class="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <label :if={String.starts_with?(@mode, "genesis")} class="grid gap-1 text-sm font-medium">
+    <div
+      id="task-options"
+      class={[
+        "workbench-task-options",
+        @class,
+        @disabled && "opacity-40 pointer-events-none select-none"
+      ]}
+    >
+      <%!-- zh_CN: “Project Settings” 是配置项目级选项的折叠区名称。 --%>
+      <p class="workbench-task-options-description text-sm text-base-content/70">
+        {gettext(
+          "These options apply to this run. Use Project Settings for shared configuration and repositories."
+        )}
+      </p>
+      <div class="workbench-task-options-fields grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <label
+          :if={String.starts_with?(@mode, "genesis")}
+          class="workbench-task-option-field grid gap-1 text-sm font-medium"
+        >
           {gettext("Build System")}
           <select name="build_system" form="task-form" class="select select-bordered select-sm w-full">
             <option value="">{gettext("No build system")}</option>
@@ -20,7 +36,7 @@ defmodule EvoDashWeb.TaskOptionsComponents do
             </option>
           </select>
         </label>
-        <label class="flex min-h-[var(--row-h-tall)] cursor-pointer items-center gap-3 rounded-lg border border-base-300 px-3 py-2">
+        <label class="workbench-task-option-toggle flex min-h-[var(--row-h-tall)] cursor-pointer items-center gap-3">
           <input
             type="checkbox"
             name="archive"
@@ -42,26 +58,19 @@ defmodule EvoDashWeb.TaskOptionsComponents do
       <details
         :if={@advanced?}
         id="task-advanced-options"
-        class="group motion-disclosure mt-3 rounded-lg border border-base-300"
+        class="workbench-task-options-advanced group motion-disclosure"
         open={prefilled?([@node_path, @starting_commit, @resume_from])}
         phx-hook="DisclosureMotion"
         phx-mounted={JS.ignore_attributes("open")}
       >
         <%!-- zh_CN: Advanced options → "高级选项"（任务的起始节点、提交和续作设置） --%>
-        <summary class="workbench-row flex cursor-pointer items-center gap-2 rounded-lg px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-primary-standalone">
+        <summary class="workbench-task-options-advanced-summary workbench-row cursor-pointer font-medium focus-visible:outline-2 focus-visible:outline-primary-standalone">
           <.icon name="hero-chevron-right" class="size-4 shrink-0 group-open:rotate-90" />
           {gettext("Advanced options")}
         </summary>
-        <div class="grid grid-cols-1 gap-3 px-3 pb-3 sm:grid-cols-2 lg:grid-cols-3">
-          <div class="grid gap-1">
-            <div class="flex items-center gap-1 text-sm font-medium">
-              <label for="task-node-path">{gettext("Starting Node")}</label>
-              <.tip text={
-                gettext(
-                  "The subdirectory within the project to start evolution from. Use './' for root."
-                )
-              } />
-            </div>
+        <div class="workbench-task-options-advanced-fields grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div class="workbench-task-option-field grid content-start gap-1">
+            <label for="task-node-path" class="text-sm font-medium">{gettext("Starting Node")}</label>
             <input
               type="text"
               id="task-node-path"
@@ -70,9 +79,14 @@ defmodule EvoDashWeb.TaskOptionsComponents do
               value={@node_path}
               class="input input-bordered input-sm w-full font-mono"
               placeholder={gettext("e.g., ./src/components")}
+              aria-describedby="task-node-path-help"
             />
+            <p id="task-node-path-help" class="text-xs text-base-content/70">
+              <%!-- zh_CN: 起始节点是相对于项目根目录的子目录；留空即从根目录开始。 --%>
+              {gettext("Use a path relative to the project root. Leave blank to start at the root.")}
+            </p>
           </div>
-          <div class="grid gap-1">
+          <div class="workbench-task-option-field grid content-start gap-1">
             <div class="flex items-center gap-1 text-sm font-medium">
               <label for="task-starting-commit">{gettext("Starting Commit")}</label>
               <.tip text={
@@ -89,7 +103,7 @@ defmodule EvoDashWeb.TaskOptionsComponents do
               placeholder={gettext("e.g., abc1234 or HEAD")}
             />
           </div>
-          <div class="grid gap-1">
+          <div class="workbench-task-option-field grid content-start gap-1">
             <div class="flex items-center gap-1 text-sm font-medium">
               <label for="task-resume-from">{gettext("Resume from")}</label>
               <.tip text={
@@ -117,7 +131,7 @@ defmodule EvoDashWeb.TaskOptionsComponents do
   def persist_agent_state_toggle(assigns) do
     ~H"""
     <label
-      class="flex min-h-[var(--row-h-tall)] cursor-pointer items-center gap-3 rounded-lg border border-base-300 px-3 py-2"
+      class="workbench-task-option-toggle flex min-h-[var(--row-h-tall)] cursor-pointer items-center gap-3"
       title={gettext("Save agent state so work survives a restart")}
     >
       <input
