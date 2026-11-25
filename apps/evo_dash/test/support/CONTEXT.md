@@ -4,7 +4,7 @@
 
 Shared, production-free support modules for the EvoDash suite: the connection case template, the async-load flush helper, the two directory-picker fakes, the Store/TaskRegistry isolation helper, the per-process config-dir seam, the deadline-bounded temp-tree removal primitive, and the hermetic ChatGPT sign-in stub.
 Compiled only in `:test` via `elixirc_paths(:test) = ["lib", "test/support"]` (`apps/evo_dash/mix.exs`).
-Eight compiled `.ex` modules carry setup, helpers and fakes only — never test logic or assertions.
+Nine compiled `.ex` modules carry setup, helpers and fakes only — never test logic or assertions.
 The directory also holds TWO test scripts, `config_dir_test.exs` and `fs_cleanup_test.exs`, which are NOT compiled (only `*.ex` is) but loaded by ExUnit like any other suite; they live here because each is the proof module for one support module of this directory.
 
 ## Routing Table
@@ -86,6 +86,14 @@ Proof + usage contract, all three levels asserted empirically in `config_dir_tes
 `EvoDash.Test.ConfigDirMountedTest` owns the positive mounted proof and is `async: true`: the Projects runner seams resolve through `EvoDash.Seam.get/2` on the caller's spawn chain, so another test's `:projects_async_load_runner` fixture cannot bypass its real configuration load.
 The mounted proof asserts that no foreign batch runner is installed, checks the view's `$callers` chain, waits with a bounded poll for the real Projects `model_selection_ready?`, checks its sole canonical provider and selected spec, and verifies Settings' isolated config path and rendered provider action.
 The shared fixture helper is defined before the async module, creates a unique config directory per test and never changes process-wide state; config-directory isolation itself remains async-safe.
+
+### `EvoDash.Test.PersistedConfig` (`persisted_config.ex`)
+
+`user_config/0` answers the user config of the CALLING test's own config directory from that directory's CURRENT bytes (`EvoGit.Config.Cache.reload/0`).
+It exists because the production read `EvoGit.Config.user_config/0` answers a BEAM-global `:persistent_term` snapshot kept per config DIRECTORY, whose content is whichever refresh stored LAST (a save's synchronous reload, an explicit `Cache.reload/0,1`, or a `Cache.get/1` miss build), while a Settings pin asserts the persisted file.
+`Cache.reload/0` builds from disk and answers ITS OWN build (the stored snapshot only when the two fingerprints, i.e. the content, are identical), so the value is correct even if another process stores a different snapshot immediately afterwards, and the pin still covers the RAM path the dashboard reads.
+The directory resolves at call time in the calling process, so the per-test `EvoDash.Test.ConfigDir` override keeps every reload inside that test's own directory.
+Used by the Settings suites' "what got persisted" assertions (`live/settings_live/provider_panel_live_test.exs`, `live/settings_live/provider_wizard_test.exs`).
 
 ### `EvoDash.Test.Seam` (`seam.ex`)
 `put/2` installs an `EvoDash.Seam` override in the CALLING process dictionary (in an ExUnit test: the test process) and registers an `on_exit` restore; `delete/1` clears it mid-test and `put_all/1` installs a keyword list.

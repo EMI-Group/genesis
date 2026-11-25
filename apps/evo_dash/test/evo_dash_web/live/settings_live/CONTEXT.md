@@ -6,6 +6,7 @@ Focused pure-helper, provider-account panel/wizard and credential-status page co
 The nine suites declare 184 tests; every module is `async: true` except the 6 mounted tests of the sync `NavigationLiveTest`.
 Pure helpers neither mount pages nor start shared services.
 Config-directory isolation is per process (`EvoDash.Test.ConfigDir.isolate!/1` through the `:config_dir_fun` seam), never a BEAM-global `XDG_CONFIG_HOME` write.
+A "what got persisted" pin reads through `EvoDash.Test.PersistedConfig.user_config/0` (one forced `EvoGit.Config.Cache.reload/0` of the test's own directory) instead of the bare `EvoGit.Config.user_config/0` term, because that map is a BEAM-global `:persistent_term` entry per config directory whose content depends on which refresh stored last.
 
 ## API Surface
 

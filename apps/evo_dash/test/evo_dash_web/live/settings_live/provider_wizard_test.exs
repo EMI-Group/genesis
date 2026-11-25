@@ -22,6 +22,11 @@
 # from the `:config_dir_fun` seam (`EvoDash.Test.ConfigDir.isolate!/1`,
 # installed by `test_helper.exs`), never from a BEAM-global `XDG_CONFIG_HOME`
 # write.
+# Every "what got persisted" pin reads through `EvoDash.Test.PersistedConfig`
+# (a forced snapshot build of THIS test's directory), never the bare
+# `EvoGit.Config.user_config/0` snapshot term: that map lives in the BEAM-global
+# `:persistent_term` `EvoGit.Config.Cache` entry per directory, so its content
+# depends on which refresh stored LAST, and a pin must describe the directory.
 # A per-test stand-in for `EvoDash.ChatGPTLogin` (the SIWC flow module) lives in
 # `test/support/chatgpt_login_stub.ex` (`EvoDash.Test.ChatGPTLoginStub`), injected
 # through `EvoDashWeb.LLMSetup.ChatGPTSignIn.login_module/0`'s CALL-TIME
@@ -54,6 +59,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
   use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   alias EvoDashWeb.SettingsComponents.ProviderProfiles.Row
+  alias EvoDash.Test.PersistedConfig
   alias EvoDash.Test.ChatGPTLoginStub, as: ChatGPTStub
   # Load-tolerant budgets for waits on ASYNC settings work (mount load chain,
   # owned config-save receipt). That work runs in supervised tasks on a shared
@@ -233,7 +239,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
 
   # ── account helpers ────────────────────────────────────────────────────────
   defp current_providers(view), do: get_in(assigns(view).file_config, [:llm, :providers]) || []
-  defp stored_providers, do: get_in(EvoGit.Config.user_config(), ["llm", "providers"]) || []
+  defp stored_providers, do: get_in(PersistedConfig.user_config(), ["llm", "providers"]) || []
   defp stored_profile(id), do: Enum.find(stored_providers(), &(&1["id"] == id))
   defp row_id(id), do: "#provider-profile-" <> Row.slug(id)
   defp detail_id(id), do: "#provider-profile-detail-" <> Row.slug(id)
@@ -356,7 +362,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderWizardTest do
       refute first["name"] =~ "4.6"
       # The first account becomes the default profile, and the saved account
       # is the expanded one (the wizard hands its successor a closed state).
-      assert EvoGit.Config.user_config()["llm"]["default_provider_profile"] == "zai"
+      assert PersistedConfig.user_config()["llm"]["default_provider_profile"] == "zai"
       assert assigns(view).editing_profile_id == "zai"
       assert has_element?(view, detail_id("zai"))
       # A SECOND account of the same provider gets a suffixed id AND name.

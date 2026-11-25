@@ -12,10 +12,16 @@
 # from the `:config_dir_fun` seam (`EvoDash.Test.ConfigDir.isolate!/1`,
 # installed by `test_helper.exs`), never from a BEAM-global `XDG_CONFIG_HOME`
 # write.
+# Every "what got persisted" pin reads through `EvoDash.Test.PersistedConfig`
+# (a forced snapshot build of THIS test's directory), never the bare
+# `EvoGit.Config.user_config/0` snapshot term: that map lives in the BEAM-global
+# `:persistent_term` `EvoGit.Config.Cache` entry per directory, so its content
+# depends on which refresh stored LAST, and a pin must describe the directory.
 defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
   use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   alias EvoDashWeb.SettingsComponents.ProviderProfiles.Row
+  alias EvoDash.Test.PersistedConfig
 
   # Load-tolerant budgets for waits on ASYNC settings work (mount load chain,
   # owned config-save receipt). That work runs in supervised tasks on a shared
@@ -110,7 +116,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
 
   # ── helpers ────────────────────────────────────────────────────────────────
   defp current_providers(view), do: get_in(assigns(view).file_config, [:llm, :providers]) || []
-  defp stored_providers, do: get_in(EvoGit.Config.user_config(), ["llm", "providers"]) || []
+  defp stored_providers, do: get_in(PersistedConfig.user_config(), ["llm", "providers"]) || []
   defp row_id(id), do: "#provider-profile-" <> Row.slug(id)
   defp detail_id(id), do: "#provider-profile-detail-" <> Row.slug(id)
   # Counts the rendered expanded account forms in the WHOLE document, so the
@@ -183,19 +189,19 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       assert has_element?(view, ~s(button[phx-click="add_provider_profile"]))
       assert detail_form_count(view) == 0
       before = assigns(view).file_config
-      disk = EvoGit.Config.user_config()
+      disk = PersistedConfig.user_config()
       view |> element(~s(button[phx-click="add_provider_profile"])) |> render_click()
       # The creation affordance is the WIZARD — no account form and no :new draft.
       assert has_element?(view, "#provider-wizard")
       assert detail_form_count(view) == 0
       refute assigns(view).editing_profile_id == :new
       assert assigns(view).file_config == before
-      assert EvoGit.Config.user_config() == disk
+      assert PersistedConfig.user_config() == disk
       settings_hook(view, "provider_wizard_cancel", %{})
       refute has_element?(view, "#provider-wizard")
       assert detail_form_count(view) == 0
       assert assigns(view).file_config == before
-      assert EvoGit.Config.user_config() == disk
+      assert PersistedConfig.user_config() == disk
     end
 
     test "a saved account renders its own row, expands in place and keeps Advanced closed", %{
@@ -290,7 +296,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       assert profile["models"] == [%{"model" => "claude-sonnet-5-5"}]
       assert stored_providers() == [profile]
       # The canonical save never writes a legacy `[[llm.models]]` shadow block.
-      refute Map.has_key?(EvoGit.Config.user_config()["llm"], "models")
+      refute Map.has_key?(PersistedConfig.user_config()["llm"], "models")
     end
 
     test "rename, default toggle and delete use the rendered account actions", %{conn: conn} do
@@ -313,7 +319,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
         })
       )
 
-      assert EvoGit.Config.user_config()["llm"]["default_provider_profile"] == "renamed"
+      assert PersistedConfig.user_config()["llm"]["default_provider_profile"] == "renamed"
       assert Enum.map(stored_providers(), & &1["id"]) == ["first", "renamed"]
       # The renamed account keeps its models (a rename is not a reset).
       assert hd(stored_providers() |> Enum.at(1) |> Map.get("models"))["model"] ==
@@ -326,7 +332,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       |> render_click()
 
       await_config_save(view)
-      assert EvoGit.Config.user_config()["llm"]["default_provider_profile"] == "first"
+      assert PersistedConfig.user_config()["llm"]["default_provider_profile"] == "first"
 
       view
       |> element(~s(button[phx-click="delete_provider_profile"][phx-value-profile_id="renamed"]))
@@ -335,7 +341,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       html = await_config_save(view)
       assert html =~ "Provider profile deleted."
       assert Enum.map(stored_providers(), & &1["id"]) == ["first"]
-      assert EvoGit.Config.user_config()["llm"]["default_provider_profile"] == "first"
+      assert PersistedConfig.user_config()["llm"]["default_provider_profile"] == "first"
     end
 
     test "model row actions preserve unsaved nested input and reject an emptied collection", %{
@@ -384,7 +390,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       # The browser omits `models` entirely after the last removal; the draft's
       # authoritative [] must be rejected instead of inventing a model row.
       before_config = assigns(view).file_config
-      before_disk = EvoGit.Config.user_config()
+      before_disk = PersistedConfig.user_config()
 
       emptied_input =
         account_params("default", %{
@@ -403,7 +409,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       assert assigns(view).profile_form_draft["models"] == []
       assert assigns(view).profile_form_draft["name"] == "Typed name"
       assert assigns(view).file_config == before_config
-      assert EvoGit.Config.user_config() == before_disk
+      assert PersistedConfig.user_config() == before_disk
       # Correction: add the row back and save.
       settings_hook(view, "add_provider_model", %{})
       assert has_element?(view, ~s(input[name="models[0][model]"][value=""]))
@@ -536,7 +542,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       assert profile["off_peak_days"] == ["mon", "fri"]
       [window] = profile["peak_hours"]
       assert (Map.get(window, "days") || Map.get(window, :days)) == ["mon", "tue"]
-      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "providers"]) |> hd()
+      file_profile = get_in(PersistedConfig.user_config(), ["llm", "providers"]) |> hd()
       assert file_profile["off_peak_days"] == ["mon", "fri"]
       assert hd(file_profile["peak_hours"])["days"] == ["mon", "tue"]
       # Plug collapses a SINGLE checked chip to a bare string — must be wrapped.
@@ -556,7 +562,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
         )
 
       assert html =~ "Provider profile saved."
-      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "providers"]) |> hd()
+      file_profile = get_in(PersistedConfig.user_config(), ["llm", "providers"]) |> hd()
       assert file_profile["off_peak_days"] == ["weekends"]
       assert hd(file_profile["peak_hours"])["days"] == ["mon"]
     end
@@ -588,7 +594,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       refute Map.has_key?(window, "days") or Map.has_key?(window, :days)
       assert Map.get(window, "start") == "09:00"
       assert Map.get(window, "end") == "12:00"
-      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "providers"]) |> hd()
+      file_profile = get_in(PersistedConfig.user_config(), ["llm", "providers"]) |> hd()
       refute Map.has_key?(file_profile, "off_peak_days")
       assert hd(file_profile["peak_hours"]) == %{"start" => "09:00", "end" => "12:00"}
     end
@@ -614,7 +620,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
       assert html =~ "Provider profile saved."
       [profile] = current_providers(view)
       assert hd(profile["models"])["context_window"] == 128_000
-      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "providers"]) |> hd()
+      file_profile = get_in(PersistedConfig.user_config(), ["llm", "providers"]) |> hd()
       assert hd(file_profile["models"])["context_window"] == 128_000
       # Re-save with a blank value: the key must be OMITTED (never nil), so the
       # core's default applies, while every other key survives.
@@ -634,7 +640,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
         )
 
       assert html =~ "Provider profile saved."
-      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "providers"]) |> hd()
+      file_profile = get_in(PersistedConfig.user_config(), ["llm", "providers"]) |> hd()
       refute Map.has_key?(hd(file_profile["models"]), "context_window")
       assert file_profile["default_model"] == "claude-sonnet-5-5"
       assert hd(file_profile["models"])["model"] == "claude-sonnet-5-5"
@@ -656,13 +662,13 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelLiveTest do
 
       html = submit_detail_form(view, "default", %{"off_peak_holidays" => "CN"})
       assert html =~ "Provider profile saved."
-      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "providers"]) |> hd()
+      file_profile = get_in(PersistedConfig.user_config(), ["llm", "providers"]) |> hd()
       assert file_profile["off_peak_holidays"] == "CN"
       # Blank selection OMITS the key entirely.
       open_account(view, "default")
       html = submit_detail_form(view, "default", %{"off_peak_holidays" => ""})
       assert html =~ "Provider profile saved."
-      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "providers"]) |> hd()
+      file_profile = get_in(PersistedConfig.user_config(), ["llm", "providers"]) |> hd()
       refute Map.has_key?(file_profile, "off_peak_holidays")
     end
 
