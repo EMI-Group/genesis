@@ -2,11 +2,10 @@
 //
 // Exercises the PURE patch-sync probe behind `Workbench.updated()` — "does the
 // O(the whole shell) sweep have to re-run after this LiveView patch?" — without
-// a browser bundle. The sweep itself (the tab rail, every project row's window
-// list, every history row's current marker, the panel states, the sidebar
-// widths, the Git label, the create menu) carries no decision of its own; it
-// only executes the plan this probe returns, which is why the DOM half needs no
-// seam here.
+// a browser bundle. The sweep itself (the tab rail, every history row's current
+// marker, the panel states, the sidebar widths, the Git label, the create menu)
+// carries no decision of its own; it only executes the plan this probe returns,
+// which is why the DOM half needs no seam here.
 //
 // Matching the sidebar_collapse.test.cjs convention, the block between the
 // source's markers is sliced out and run through node:vm, so the real shipped
@@ -31,7 +30,7 @@ const {workbenchSyncNeeded, syncStateSignature} = vm.runInContext(
 
 // One coherent probe state: exactly what the DOM half builds after a sweep
 // (the layout dataset, the Git pane's own inputs, the sidebar flags the empty
-// state reads, the two JS-written re-render markers and the list shapes).
+// state reads, the JS-written re-render marker and the list shapes).
 function cleanState(overrides = {}) {
   return {
     dataset: {
@@ -50,7 +49,6 @@ function cleanState(overrides = {}) {
     historyEmpty: undefined,
     accent: 'blue',
     tabsMarked: '["task-1",[]]',
-    windowsMarked: true,
     lists: [
       {name: 'items', count: 3, head: 'task-1', tail: 'task-3'},
       {name: 'projects', count: 2, head: '/tmp/a', tail: '/tmp/project'},
@@ -142,14 +140,6 @@ test('a re-created tab rail (its JS marker gone) is dirty', () => {
   const base = cleanState();
   assert.equal(workbenchSyncNeeded(cleanState({tabsMarked: undefined}), base), true);
   assert.equal(workbenchSyncNeeded(cleanState({tabsMarked: '["task-2",[]]'}), base), true);
-});
-
-test('a project row whose window container has no marker is dirty', () => {
-  const base = cleanState();
-  assert.equal(workbenchSyncNeeded(cleanState({windowsMarked: false}), base), true);
-  // The reverse direction (markers present again) is dirty too: the row list
-  // changed, so the sweep has to repaint the current markers.
-  assert.equal(workbenchSyncNeeded(base, cleanState({windowsMarked: false})), true);
 });
 
 test('the list shapes are signals — count, head, tail and which list', () => {

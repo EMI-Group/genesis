@@ -2,6 +2,8 @@ import {projectPreview} from "./workbench_project_preview"
 import {closeAnimated} from "./disclosure_motion.js"
 import {createPanelHost} from "./workbench_panel_dom"
 import {initialPanelState, PANEL_OPEN} from "./workbench_panel"
+import {alwaysPinned, openTab, pinTab as pinTabIn, closeTab as closeTabIn, cycleTab,
+  tabsForProject as tabsForProjectIn, restore as restoreTabs, safeHref as safeHrefBase} from "./workbench_tabs"
 
 const TAB_KEY = "genesis-workbench.tabs.v1"
 const ACCENT_KEY = "genesis-workbench.accent"
@@ -58,58 +60,44 @@ function link(href, label, className) {
   return anchor
 }
 
-function safeHref(value) {
-  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) return false
-  const url = new URL(value, location.origin)
-  return url.origin === location.origin &&
-    (/^\/(projects|tasks|assistant)$/.test(url.pathname) || url.pathname.startsWith("/review/"))
-}
+// A persisted href may only be followed inside THIS dashboard; the rule itself
+// is the tab store's (`workbench_tabs.js`), bound here to the live origin.
+const safeHref = value => safeHrefBase(value, location.origin)
 
 // --- Workbench: pure sync probe --------------------------------------------
 // Decides whether `sync()` — the shell sweep — has to re-run after a LiveView
-// patch. `#app-layout` is the hook's element, so EVERY patch anywhere in the
-// shell reaches `updated()`: a streaming assistant delta, an Active Tasks
-// refresh, one history row's status label. `sync()` is a set of full-subtree
-// `querySelectorAll` walks plus per-row writes (the tab rail, every project
-// row's windows, every history row's current marker, the panel states, the
-// sidebar widths, the Git label, the create menu), so running it per patch made
-// list CONTENT updates pay for the whole shell.
-//
-// So `updated()` probes first: it builds the plain `state` object described
-// below with property reads only (no `querySelectorAll`, no geometry), and
-// `workbenchSyncNeeded` compares it with the state recorded after the last
-// sweep. Everything here is DOM-free, so the planner is directly testable
-// (hooks/workbench.test.cjs slices this block).
+// patch. EVERY patch in the shell reaches `updated()`, while `sync()` is a set
+// of full-subtree `querySelectorAll` walks plus per-row writes (the rail, every
+// history row's current marker, the panel states, the sidebar widths, the Git
+// label, the create menu), so running it per patch made CONTENT updates pay for
+// the whole shell. `updated()` probes first: the `state` object below is built
+// from property reads only (no `querySelectorAll`, no geometry) and compared
+// with the state recorded after the last sweep. Everything here is DOM-free, so
+// the planner is testable (hooks/workbench.test.cjs slices this block).
 
-// The dataset fields `captureTab()` derives the current tab from — its key,
-// href and title. A navigation that changes ANY of them must sweep, because the
-// tab rail, the per-row current markers and the preview handoff all follow the
-// current tab.
+// The dataset fields `captureTab()` derives the current tab from — its key, href
+// and title. A navigation changing ANY of them must sweep: the rail, the per-row
+// current markers and the preview handoff all follow the current tab.
 const SYNC_DATASET_KEYS = [
   "workbenchNode", "workbenchProject", "workbenchTask", "workbenchSession",
   "workbenchDraft", "workbenchDraftProject", "workbenchPage",
   "workbenchGitBranch", "workbenchStartingCommit",
 ]
 
-// One normalised string per input: `undefined`, `null` and a missing field all
-// read the same, so no probe result depends on key order or on `dataset` vs a
-// hand-built object.
+// One normalised string per input: `undefined`, `null` and a missing field read
+// the same, so no probe result depends on key order or `dataset` vs a literal.
 function probeText(value) {
   return value === undefined || value === null ? "" : String(value)
 }
 
 // One workbench/sidebar list's shape: its name, child count, and the head and
 // tail row identities (property reads, never a sweep).
-//
-// WHY count + head + tail is sufficient: the project sidebar list is
-// RECENCY-ordered — a mounted project is inserted (or moved) at the HEAD — and
-// the ONE `[data-workbench-item]` list (`#workbench-history-rows`) is PAGED, so
-// a page is appended at the TAIL and a filter/kind change replaces the whole
-// list. A mid-list-only change that leaves count, head and tail identical
-// therefore cannot occur. The only hook-owned state on a history row is its
-// current marker, which derives from {kind, item id}, so a row that is neither
-// head nor tail can only become current by being re-rendered as part of a NEW
-// list (which moves the head or the count).
+// WHY count + head + tail is sufficient: the project sidebar is RECENCY-ordered
+// (a mounted project is inserted or moved at the HEAD) and the ONE
+// `[data-workbench-item]` history list is PAGED (append at the TAIL, a filter
+// or kind change replaces the whole list), so a mid-list-only change keeping all
+// three identical cannot occur; a history row's only hook-owned state is its
+// current marker, which derives from {kind, item id}.
 function probeListShape(list) {
   if (!list) return ["", "", "", ""]
   return [probeText(list.name), probeText(list.count),
@@ -118,20 +106,14 @@ function probeListShape(list) {
 
 // Everything `sync()` reads, as one comparable string: the layout dataset, the
 // Git pane's own inputs (the diff title that creates the diff tab, the branch
-// label, and the scope `syncGitStatus` refreshes on), the sidebar flags
-// `syncEmptyState` reads, the two JS-written re-render markers, and the list
-// shapes.
-//
-// THE RESET MARKERS: `applyAccent` writes `data-accent-color` on this hook's
-// element (the server renders the configured accent too, so the two differ
-// exactly when localStorage carries an override — and when they do not differ,
-// re-applying is a no-op), while `renderTabs` / `renderProjectWindows` write
-// `data-signature` on the tab rail and on each project's window container (the
-// server never renders it). The rail and the window containers are
-// `phx-update="ignore"`, so LiveView leaves an existing one alone in place — a
-// MISSING marker therefore means a NEW element (a re-rendered header, a project
-// row the async side list just added), which is exactly the case the sweep has
-// to repaint.
+// label, the scope `syncGitStatus` refreshes on), the sidebar flags
+// `syncEmptyState` reads, the JS-written re-render marker, and the list shapes.
+// THE RESET MARKER: `applyAccent` writes `data-accent-color` on this element (the
+// server renders the accent too, so the two differ exactly when localStorage
+// carries an override) and `renderTabs` writes `data-signature` on the rail,
+// which the server never renders — and the rail is `phx-update="ignore"`, so a
+// missing marker means a NEW element (a re-rendered header), exactly the case
+// the sweep has to repaint.
 function syncStateSignature(state) {
   if (!state) return ""
   const data = state.dataset || {}
@@ -142,14 +124,13 @@ function syncStateSignature(state) {
     probeText(git.diff), probeText(git.head), probeText(git.scope),
     probeText(git.target),
     probeText(state.projectsLoading), probeText(state.historyEmpty),
-    probeText(state.accent), probeText(state.tabsMarked), state.windowsMarked === true,
+    probeText(state.accent), probeText(state.tabsMarked),
     lists.map(probeListShape),
   ])
 }
 
-// The planner `updated()` uses. `applied` is the state recorded at the end of
-// the last sweep, so it is `undefined` until `mounted()`'s unconditional first
-// `sync()` — a first mount is always dirty, exactly like `sidebar_collapse.js`.
+// The planner `updated()` uses. `applied` is the state recorded at the end of the
+// last sweep, so a first mount is always dirty, exactly like `sidebar_collapse.js`.
 // Total: a missing state is "nothing to fix" and never throws.
 function workbenchSyncNeeded(state, applied) {
   if (!state) return false
@@ -161,31 +142,8 @@ function workbenchSyncNeeded(state, applied) {
 
 const Workbench = {
   mounted() {
-    this.tabs = read(sessionStorage, TAB_KEY, [])
-    if (!Array.isArray(this.tabs)) this.tabs = []
-    const restored = new Map()
-    for (const tab of this.tabs) {
-      if (!tab || !safeHref(tab.href)) continue
-      const url = new URL(tab.href, location.origin)
-      const legacy = url.searchParams.has("wb_workspace")
-      url.searchParams.delete("wb_workspace")
-      tab.node = url.searchParams.get("node") || ""
-      tab.projectPath = typeof tab.projectPath === "string" ? tab.projectPath : ""
-      if (tab.kind === "project") {
-        if (url.searchParams.get("wb_task") !== "1") continue
-        const project = url.searchParams.get("project")
-        if (!project) continue
-        tab.id = ""
-        tab.projectPath = project
-        tab.key = JSON.stringify([tab.node, project, "project", ""])
-        if (legacy) tab.title = tab.project || tab.title
-      } else if (tab.kind === "draft") {
-        tab.projectPath = url.searchParams.get("wb_project") || ""
-      }
-      tab.href = url.pathname + url.search
-      restored.set(tab.key, tab)
-    }
-    this.tabs = [...restored.values()]
+    // The persisted list is untrusted input the store normalises and re-keys.
+    this.tabs = restoreTabs(read(sessionStorage, TAB_KEY, []), safeHref)
     write(sessionStorage, TAB_KEY, this.tabs)
     this.media = matchMedia(WIDE)
     this.reduceMotion = matchMedia("(prefers-reduced-motion: reduce)")
@@ -201,10 +159,10 @@ const Workbench = {
       this.syncSidebarWidths()
       projectPreview.reposition(this.el)
       this.positionCreateMenu()
+      this.syncTabOverflow()
     }
     this.onResize = () => {
-      // A narrower viewport turns the docked panel into an overlay drawer; an
-      // unexpected drawer appearing on resize is not a remembered preference.
+      // A narrower viewport makes the docked panel an overlay drawer — and that is not a remembered preference.
       if (!this.media.matches) {
         this.historyOpen = false
         this.gitOpen = false
@@ -213,23 +171,35 @@ const Workbench = {
     }
     this.onClick = event => this.click(event)
     this.onPointerDown = event => {
-      this.pressedBackdrop =
-        event.target.matches("dialog.workbench-window[open]")
-          ? event.target
-          : null
+      this.pressedBackdrop = event.target.matches("dialog.workbench-window[open]") ? event.target : null
       this.beginSidebarResize(event)
     }
     this.onPointerMove = event => this.moveSidebarResize(event)
     this.onPointerEnd = event => this.endSidebarResize(event)
     this.onCreateToggle = event => {
       if (event.target.id === "workbench-create" && event.target.open) this.positionCreateMenu()
+      if (event.target.id === "workbench-tabs-overflow" && event.target.open) this.renderOverflowTabs()
     }
     this.onOutsideCreate = event => {
       const menu = this.el.querySelector("#workbench-create[open]")
       if (menu && !menu.contains(event.target)) menu.open = false
+      const overflow = this.el.querySelector("#workbench-tabs-overflow[open]")
+      if (overflow && !overflow.contains(event.target)) overflow.open = false
+    }
+    // Middle click PINS a preview tab (the only keep-open gesture): no autoscroll, no new tab.
+    this.onTabMouseDown = event => {
+      if (event.button === 1 && event.target.closest("#workbench-tabs .workbench-tab")) event.preventDefault()
+    }
+    this.onTabAuxClick = event => {
+      const item = event.button === 1 && event.target.closest("#workbench-tabs .workbench-tab")
+      if (!item?.dataset.tabKey) return
+      event.preventDefault()
+      event.stopPropagation()
+      this.pinTab(item.dataset.tabKey)
     }
     this.onKey = event => {
       if (this.resizeSidebarWithKey(event)) return
+      if (this.cycleTabWithKey(event)) return
       if (event.key === "Enter" && event.target.closest(".project-palette-overlay")) {
         const action = this.el.querySelector(".project-palette-item[data-selected='true'][data-workbench-project-window]")
         if (action) {
@@ -240,6 +210,13 @@ const Workbench = {
         }
       }
       if (event.key !== "Escape" || event.defaultPrevented) return
+      const overflow = event.target.closest("#workbench-tabs-overflow[open]")
+      if (overflow) {
+        overflow.open = false
+        overflow.querySelector("summary")?.focus()
+        event.preventDefault()
+        return
+      }
       const create = event.target.closest("#workbench-create[open]")
       if (create) {
         create.open = false
@@ -278,16 +255,13 @@ const Workbench = {
     }
     this.onSettingsClose = () => {
       this.settingsFrame?.removeAttribute("src")
-      // Every close edge of the settings window (the close button, a backdrop
-      // click, Escape and the iframe's `genesis:close-settings-window`
-      // postMessage) releases the <dialog> through closeAnimated -> its own
-      // close(), so this ONE listener sees them all. A config save made in the
-      // window is the only edge that also covers a REMOTE target (a remote
-      // write never reaches this BEAM's config PubSub), so the Projects task
-      // page re-runs its model-selection load whenever the previewed page
-      // carries `[data-task-draft-scope]` — the marker every Projects render
-      // mounts on `#dashboard-root` and no other page renders, so the event can
-      // never land as an unhandled one.
+      // Every close edge (the close button, a backdrop click, Escape and the
+      // iframe's postMessage) releases the <dialog> through closeAnimated -> its
+      // own close(), so this ONE listener sees them all. A config save made here
+      // is the only edge that also covers a REMOTE target (whose write never
+      // reaches this BEAM's config PubSub), so the Projects task page re-runs its
+      // model load — gated on `[data-task-draft-scope]`, the marker only that
+      // page renders, so the event can never land as an unhandled one.
       if (this.el.querySelector("[data-task-draft-scope]")) {
         this.pushEvent("retry_model_selection", {})
       }
@@ -295,11 +269,11 @@ const Workbench = {
     this.settingsWindow?.addEventListener("close", this.onSettingsClose)
     window.addEventListener("message", this.onWindowMessage)
     this.el.addEventListener("click", this.onClick)
+    this.el.addEventListener("mousedown", this.onTabMouseDown)
+    this.el.addEventListener("auxclick", this.onTabAuxClick)
     this.el.addEventListener("pointerdown", this.onPointerDown)
     this.el.addEventListener("pointermove", this.onPointerMove)
-    this.el.addEventListener("pointerup", this.onPointerEnd)
-    this.el.addEventListener("pointercancel", this.onPointerEnd)
-    this.el.addEventListener("lostpointercapture", this.onPointerEnd)
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) this.el.addEventListener(type, this.onPointerEnd)
     this.el.addEventListener("toggle", this.onCreateToggle, true)
     window.addEventListener("resize", this.onViewportResize)
     document.addEventListener("click", this.onOutsideCreate)
@@ -308,17 +282,14 @@ const Workbench = {
     this.media.addEventListener("change", this.onResize)
     window.addEventListener("phx:page-loading-stop", this.onNavigation)
     window.addEventListener("storage", this.onStorage)
-    // Undefined until the sweep below records it, so the probe reports "dirty"
-    // for this first, unconditional sync (see the pure block at the top).
+    // Undefined until the sweep records it, so the probe reports "dirty" here.
     this.appliedSyncState = undefined
     this.sync()
     if (this.projectSidebarNav) this.projectSidebarNav.scrollTop = projectSidebarScrollTop
   },
 
   updated() {
-    // Cheap probe FIRST: a patch that only replaced list CONTENT (a streamed
-    // tool delta, a refreshed Active Tasks row, one history label) cannot
-    // change any sync input, and the sweep is O(the whole shell).
+    // Cheap probe FIRST: a CONTENT-only patch cannot change any sync input.
     if (workbenchSyncNeeded(this.syncState(), this.appliedSyncState)) this.sync()
   },
 
@@ -327,11 +298,11 @@ const Workbench = {
     this.settingsWindow?.removeEventListener("close", this.onSettingsClose)
     window.removeEventListener("message", this.onWindowMessage)
     this.el.removeEventListener("click", this.onClick)
+    this.el.removeEventListener("mousedown", this.onTabMouseDown)
+    this.el.removeEventListener("auxclick", this.onTabAuxClick)
     this.el.removeEventListener("pointerdown", this.onPointerDown)
     this.el.removeEventListener("pointermove", this.onPointerMove)
-    this.el.removeEventListener("pointerup", this.onPointerEnd)
-    this.el.removeEventListener("pointercancel", this.onPointerEnd)
-    this.el.removeEventListener("lostpointercapture", this.onPointerEnd)
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) this.el.removeEventListener(type, this.onPointerEnd)
     this.el.removeEventListener("toggle", this.onCreateToggle, true)
     window.removeEventListener("resize", this.onViewportResize)
     document.removeEventListener("click", this.onOutsideCreate)
@@ -342,13 +313,10 @@ const Workbench = {
     window.removeEventListener("storage", this.onStorage)
     this.panelHost.destroy()
     // Release the preview snapshot cache + its shadow-DOM host — but NEVER mid
-    // handoff: `release()` clears a pending handoff, and the overlay host lives
-    // on `document.body`, OUTSIDE this hook's element, precisely so a
-    // project-switch navigation keeps painting the old window while the new one
-    // mounts. Destroying the hook must not yank it. A handoff is in flight
-    // exactly while the body carries `data-workbench-project-switching` (set by
-    // `show()`, cleared by `clear()`/`sync()`); a later mount re-creates the
-    // host, and the pending timer or the next `sync()` clears the marker.
+    // handoff: `release()` clears a pending handoff, and the host lives on
+    // `document.body`, OUTSIDE this hook's element, so a project switch keeps
+    // painting the old window. In flight ⟺ the body carries the marker (set by
+    // `show()`, cleared by `clear()`/`sync()`).
     if (!document.body.hasAttribute("data-workbench-project-switching")) projectPreview.release()
   },
 
@@ -366,26 +334,21 @@ const Workbench = {
     this.captureTab()
     this.previewTab = projectPreview.sync(this.el, this.currentTab)
     this.renderTabs()
-    this.renderProjectWindows()
     this.renderHistory()
     this.syncEmptyState()
-    // The first sync only SEEDS the panel: a stored open preference must not
-    // play its entrance animation on page load.
+    // The first sync only SEEDS the panel: no entrance animation on load.
     this.syncHistoryPanel(this.panelReady)
     this.panelReady = true
     this.syncSidebarWidths()
     this.syncGitStatus()
     this.syncGitDiffFocus()
     this.positionCreateMenu()
-    // Record what the shell now reflects — the probe's baseline for the next
-    // patch. Taken at the END, once every marker this sweep writes is in place.
+    // The probe's baseline, taken once every marker of this sweep is in place.
     this.appliedSyncState = this.syncState()
   },
 
-  // The probe inputs for `updated()` (see the pure block at the top): property
-  // reads only — one `querySelector` per marker family, `childElementCount` and
-  // `firstElementChild`/`lastElementChild` for each list. No
-  // `querySelectorAll`, no geometry, nothing per-row.
+  // The probe inputs for `updated()` (pure block above): property reads only —
+  // one `querySelector` per marker family, and child count + head/tail per list.
   syncState() {
     const el = this.el
     const data = el.dataset || {}
@@ -408,7 +371,7 @@ const Workbench = {
       })
     }
     // The recency-ordered project sidebar list: `syncEmptyState` reads whether
-    // it has rows, and every new row brings an unmarked window container.
+    // it has rows.
     const projectList = el.querySelector(".workbench-project-list")
     if (projectList) {
       const path = row => row?.querySelector(".workbench-project-link")?.dataset.workbenchProject
@@ -428,7 +391,6 @@ const Workbench = {
       historyEmpty: history?.dataset.workbenchHistoryEmpty,
       accent: data.accentColor,
       tabsMarked: el.querySelector("#workbench-tabs")?.dataset.signature,
-      windowsMarked: !el.querySelector("[data-workbench-project-windows]:not([data-signature])"),
       lists,
     }
   },
@@ -614,48 +576,61 @@ const Workbench = {
   },
 
   tabsForProject(node, projectPath) {
-    return this.tabs.filter(tab => tab.node === node && tab.projectPath === projectPath)
+    return tabsForProjectIn(this.tabs, node, projectPath)
+  },
+
+  // The scope the rail shows: the mounted project, else the current tab's own
+  // project (a legacy conversation can be open without one).
+  projectScopePath() {
+    return this.project || this.tabs.find(tab => tab.key === this.currentTab)?.projectPath || ""
   },
 
   visibleTabs() {
-    const current = this.tabs.find(tab => tab.key === this.currentTab)
-    return this.tabsForProject(this.node, this.project || current?.projectPath || "")
+    return this.tabsForProject(this.node, this.projectScopePath())
   },
 
+  // Only `task`/`chat` tabs open as PREVIEWS — one disposable slot per project;
+  // every other kind is pinned from the start.
   saveTab(tab) {
-    const projectTabs = this.tabsForProject(tab.node, tab.projectPath)
-    const index = this.tabs.findIndex(entry => entry.key === tab.key)
-    for (const entry of projectTabs) delete entry.active
-    tab.active = true
-
-    if (index < 0) {
-      if (projectTabs.length >= 40) this.tabs = this.tabs.filter(entry => entry !== projectTabs[0])
-      this.tabs.push(tab)
-    } else {
-      this.tabs[index] = tab
-    }
+    this.tabs = openTab(this.tabs, tab, {preview: !alwaysPinned(tab.kind)})
     write(sessionStorage, TAB_KEY, this.tabs)
+  },
+
+  pinTab(key) {
+    this.tabs = pinTabIn(this.tabs, key)
+    write(sessionStorage, TAB_KEY, this.tabs)
+    this.renderTabs()
+  },
+
+  railActiveKey() {
+    return this.previewTab?.key || (this.gitDiff ? GIT_DIFF_TAB : this.currentTab)
+  },
+
+  // The rail's tabs; the client-only Git diff view is appended last.
+  railTabs() {
+    const tabs = this.previewTab
+      ? this.tabsForProject(this.previewTab.node, this.previewTab.projectPath) : this.visibleTabs()
+    if (!this.gitDiff || this.previewTab) return tabs
+    return [...tabs, {key: GIT_DIFF_TAB, kind: "diff", title: this.gitDiff, project: this.projectName}]
   },
 
   renderTabs() {
     const rail = this.el.querySelector("#workbench-tabs")
     if (!rail) return
-
-    const activeKey = this.previewTab?.key || (this.gitDiff ? GIT_DIFF_TAB : this.currentTab)
-    const preview = {key: GIT_DIFF_TAB, kind: "diff", title: this.gitDiff, project: this.projectName}
-    const projectTabs = this.previewTab
-      ? this.tabsForProject(this.previewTab.node, this.previewTab.projectPath) : this.visibleTabs()
-    const tabs = this.gitDiff && !this.previewTab ? [...projectTabs, preview] : projectTabs
+    const activeKey = this.railActiveKey()
+    const tabs = this.railTabs()
     const signature = JSON.stringify([activeKey, tabs])
     if (rail.dataset.signature === signature) return
     rail.dataset.signature = signature
     const focused = document.activeElement
     const focusedKey = rail.contains(focused) ? focused.closest("[data-tab-key]")?.dataset.tabKey : null
-    const focusedClose = focused?.matches(".workbench-tab-close")
+    const hint = this.el.dataset.workbenchKeepOpen || "Keep this tab open"
     rail.replaceChildren(...tabs.map(tab => {
+      const current = tab.key === activeKey
+      const preview = tab.preview === true
       const item = element("div", "workbench-tab")
       item.dataset.tabKey = tab.key
-      const current = tab.key === activeKey
+      if (preview) item.dataset.preview = "true"
       const anchor = tab.kind === "diff" ? element("span", "workbench-tab-link") : link(tab.href, "", "workbench-tab-link")
       const icon = element("span", `${TAB_ICONS[tab.kind] || TAB_ICONS.project} workbench-tab-icon`)
       icon.setAttribute("aria-hidden", "true")
@@ -663,6 +638,10 @@ const Workbench = {
       const duplicates = tabs.some(other => other.key !== tab.key && other.title === tab.title)
       if (duplicates && tab.location) anchor.append(element("span", "workbench-tab-instance", tab.location))
       anchor.title = [tab.location, tab.project, tab.title].filter(Boolean).join(" / ")
+      if (preview) {
+        anchor.title += ` · ${hint}`
+        anchor.setAttribute("aria-description", hint)
+      }
       if (current) anchor.setAttribute("aria-current", "page")
       const close = element("button", "workbench-tab-close")
       const closeIcon = element("span", "hero-x-mark")
@@ -674,44 +653,70 @@ const Workbench = {
       close.setAttribute("aria-label", this.el.dataset.workbenchClose + " " + tab.title)
       item.classList.toggle("is-current", current)
       item.append(anchor, close)
-      if (focusedKey === tab.key) queueMicrotask(() => (focusedClose ? close : anchor).focus({preventScroll: true}))
+      if (focusedKey === tab.key) queueMicrotask(() => (focused?.matches(".workbench-tab-close") ? close : anchor).focus({preventScroll: true}))
       return item
     }))
     rail.querySelector(".is-current")?.scrollIntoView({block: "nearest", inline: "nearest"})
+    this.syncTabOverflow()
+    this.syncTabRailHints()
   },
 
-  renderProjectWindows() {
-    const activeKey = this.previewTab?.key || this.currentTab
-    const active = this.previewTab || {node: this.node, projectPath: this.project}
-    this.el.querySelectorAll("[data-workbench-project-row]").forEach(row => {
-      const projectLink = row.querySelector(".workbench-project-link")
-      const project = projectLink.dataset
-      const selected = active.node === project.workbenchNode && active.projectPath === project.workbenchProject
-      if (selected) projectLink.setAttribute("aria-current", "page")
-      else projectLink.removeAttribute("aria-current")
-      projectLink.classList.toggle("is-current", selected)
-      const windows = row.querySelector("[data-workbench-project-windows]")
-      const tabs = this.tabsForProject(project.workbenchNode, project.workbenchProject)
-      const signature = JSON.stringify([tabs.some(tab => tab.key === activeKey) && activeKey, tabs])
-      if (windows.dataset.signature === signature) return
-      windows.dataset.signature = signature
-      const focusedKey = windows.contains(document.activeElement) && document.activeElement.dataset.workbenchWindow
-      windows.replaceChildren(...tabs.map(tab => {
-        const anchor = link(tab.href, "", "workbench-row workbench-project-window-link")
-        const icon = element("span", `${TAB_ICONS[tab.kind]} workbench-tab-icon`)
-        icon.setAttribute("aria-hidden", "true")
-        anchor.append(icon, element("span", "truncate", tab.title))
-        anchor.dataset.workbenchWindow = tab.key
-        anchor.dataset.workbenchOpen = ""
-        anchor.title = tab.title
-        if (tab.key === activeKey) {
-          anchor.setAttribute("aria-current", "page")
-          anchor.classList.add("is-current")
-        }
-        if (tab.key === focusedKey) queueMicrotask(() => anchor.focus({preventScroll: true}))
-        return anchor
-      }))
-    })
+  // The rail-end overflow menu is SERVER-rendered and only driven here: it
+  // exists while the strip actually scrolls, and its list mirrors the rail.
+  syncTabOverflow() {
+    const rail = this.el.querySelector("#workbench-tabs")
+    const overflow = this.el.querySelector("#workbench-tabs-overflow")
+    if (!rail || !overflow) return
+    const overflows = rail.children.length > 0 && rail.scrollWidth > rail.clientWidth + 1
+    overflow.hidden = !overflows
+    if (!overflows) overflow.open = false
+    else if (overflow.open) this.renderOverflowTabs()
+  },
+
+  // One `.workbench-row` per stored tab of THIS project: the client-only Git
+  // view is not a stored tab, so it is never listed.
+  renderOverflowTabs() {
+    const list = this.el.querySelector("#workbench-tabs-overflow-list")
+    if (!list) return
+    const activeKey = this.railActiveKey()
+    list.replaceChildren(...this.railTabs().filter(tab => tab.kind !== "diff").map(tab => {
+      const anchor = link(tab.href, "", "workbench-row")
+      const icon = element("span", `${TAB_ICONS[tab.kind] || TAB_ICONS.project} workbench-tab-icon`)
+      icon.setAttribute("aria-hidden", "true")
+      anchor.dataset.workbenchTabOverflowKey = tab.key
+      anchor.title = [tab.location, tab.project, tab.title].filter(Boolean).join(" / ")
+      if (tab.key === activeKey) anchor.setAttribute("aria-current", "page")
+      anchor.append(icon, element("span", "truncate", tab.title))
+      return anchor
+    }))
+  },
+
+  // Both rail hints are server-rendered translations: read them defensively.
+  syncTabRailHints() {
+    const hints = [this.el.dataset.workbenchNextTab, this.el.dataset.workbenchPrevTab].filter(Boolean)
+    const rail = this.el.querySelector("#workbench-tabs")
+    if (hints.length) rail?.setAttribute("aria-description", hints.join(" · "))
+    else rail?.removeAttribute("aria-description")
+  },
+
+  // Alt+Left/Right cycles this project's tabs, but ONLY from inside the rail.
+  cycleTabWithKey(event) {
+    const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0
+    if (!step || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.defaultPrevented) return false
+    if (!event.target.closest("#workbench-tabs, #workbench-tabs-overflow")) return false
+    if (event.target.closest('input, textarea, select, [contenteditable], [contenteditable="true"]')) return false
+    const next = cycleTab(this.tabs, this.node, this.projectScopePath(), this.currentTab, step)
+    if (!next) return false
+    event.preventDefault()
+    event.stopPropagation()
+    // The destination render marks the tab `aria-current="page"` (the
+    // announcement); focus follows so the strip stays reachable.
+    window.addEventListener("phx:page-loading-stop", () => requestAnimationFrame(() => {
+      const root = document.getElementById("app-layout")
+      root?.querySelector(`[data-tab-key="${CSS.escape(next.key)}"] .workbench-tab-link`)?.focus({preventScroll: true})
+    }), {once: true})
+    this.navigate(next.href)
+    return true
   },
 
   renderHistory() {
@@ -846,7 +851,6 @@ const Workbench = {
     })
     this.previewTab = projectPreview.sync(this.el, this.currentTab)
     this.renderTabs()
-    this.renderProjectWindows()
     this.syncHistoryPanel()
   },
 
@@ -859,6 +863,12 @@ const Workbench = {
     }
     const trigger = event.target.closest("button, a")
     if (!trigger) return
+    // Picking an overflow entry is an ordinary link navigation: close the menu,
+    // never prevent the click.
+    if ("workbenchTabOverflowKey" in trigger.dataset) {
+      const overflow = trigger.closest("#workbench-tabs-overflow")
+      if (overflow) overflow.open = false
+    }
     if ("workbenchCloseGitDiff" in trigger.dataset) {
       this.closeGitDiff()
       return
@@ -882,18 +892,6 @@ const Workbench = {
         event.stopPropagation()
         if (active.key !== this.currentTab || navigating) this.navigate(active.href)
         else if (this.gitDiff) this.closeGitDiff()
-        return
-      }
-    }
-    if (trigger.dataset.workbenchWindow &&
-        !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
-      const tab = this.tabs.find(tab => tab.key === trigger.dataset.workbenchWindow)
-      if (tab) {
-        event.preventDefault()
-        event.stopPropagation()
-        if (!this.media.matches) this.setHistory(false)
-        this.switchProject(tab)
-        this.navigate(tab.href)
         return
       }
     }
@@ -955,28 +953,24 @@ const Workbench = {
       if (dialog && !dialog.open) dialog.showModal()
     }
     if ("workbenchCloseWindow" in trigger.dataset) this.closeWindow(trigger.closest("dialog"))
-    if ("workbenchOpen" in trigger.dataset && !this.media.matches) this.setHistory(false)
     if ("workbenchCloseTab" in trigger.dataset) this.closeTab(trigger.dataset.workbenchCloseTab, event.detail === 0)
   },
 
   closeTab(key, restoreFocus) {
-    const tabs = this.visibleTabs()
-    const index = tabs.findIndex(tab => tab.key === key)
-    if (index < 0) return
-    const closed = tabs[index]
+    // The store decides everything about a close, including where attention goes.
+    const {tabs, closed, focus} = closeTabIn(this.tabs, key)
+    if (!closed) return
     projectPreview.forget(closed)
     if (closed.kind === "draft") {
       this.pushEventTo("#workbench-projects", "discard_assistant_draft", {id: closed.id})
     }
-    this.tabs = this.tabs.filter(tab => tab.key !== key)
-    const next = tabs[index + 1] || tabs[index - 1]
+    this.tabs = tabs
     write(sessionStorage, TAB_KEY, this.tabs)
     this.renderTabs()
-    this.renderProjectWindows()
 
     const focusNext = () => {
       const root = document.getElementById("app-layout")
-      const tab = next && root?.querySelector(`[data-tab-key="${CSS.escape(next.key)}"] .workbench-tab-link`)
+      const tab = focus?.key && root?.querySelector(`[data-tab-key="${CSS.escape(focus.key)}"] .workbench-tab-link`)
       const control = tab || root?.querySelector("#workbench-create-toggle")
       control?.focus()
     }
@@ -985,7 +979,7 @@ const Workbench = {
       if (restoreFocus) {
         window.addEventListener("phx:page-loading-stop", () => requestAnimationFrame(focusNext), {once: true})
       }
-      this.navigate(next?.href || route("/projects", this.node, blank))
+      this.navigate(focus?.href || route("/projects", this.node, blank))
     } else if (restoreFocus) {
       focusNext()
     }
