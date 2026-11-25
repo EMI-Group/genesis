@@ -698,7 +698,7 @@ defmodule EvoDashWeb.ProjectsWorkbenchConversationTest do
       })
 
     {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: path, wb_home: "1"}}")
-    view |> element("#workbench-history-filters button", "Conversations") |> render_click()
+    view |> element("#workbench-history button", "Conversations") |> render_click()
 
     row = "#{row_selector(chat_id)}[data-workbench-item='chat']"
     href = "/assistant?session=#{chat_id}"
