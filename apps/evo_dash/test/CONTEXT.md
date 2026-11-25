@@ -4,7 +4,7 @@
 
 ExUnit suite for the `:evo_dash` app: the runner bootstrap, shared support modules, and suites that mirror `apps/evo_dash/lib/`.
 Test files (`*_test.exs`) live in `evo_dash/` and `evo_dash_web/` beside the code they cover, plus `support/config_dir_test.exs` and `evo_dash/runtime_config_test.exs` covering the root `config/runtime.exs`; bootstrap is `test_helper.exs`, helpers are `support/`.
-`support/` holds 10 compiled `.ex` modules plus TWO uncompiled test scripts, `support/config_dir_test.exs` and `support/fs_cleanup_test.exs` (only `*.ex` files are compiled, so ExUnit loads the `_test.exs` like any suite).
+`support/` holds 12 compiled `.ex` modules plus TWO uncompiled test scripts, `support/config_dir_test.exs` and `support/fs_cleanup_test.exs` (only `*.ex` files are compiled, so ExUnit loads the `_test.exs` like any suite).
 Case modules split between `async: true` and globally constrained `async: false` suites; the sync inventory and parallelism policy live under "Async policy".
 `mix test apps/evo_dash/test` from the umbrella root runs exactly this app's suite; bare root `mix test` also runs the `evo_git` suite first.
 The domain singletons (`EvoGit.Store`, `EvoGit.TaskRegistry`, `EvoGit.TaskInfo`, `EvoGit.VCT`) live in `:evo_git` and are tested there; per-test Store/TaskRegistry isolation is `EvoDash.Test.IsolatedTaskStore` (children of `EvoGit.Supervisor`, NOT `EvoDash.Supervisor`).
