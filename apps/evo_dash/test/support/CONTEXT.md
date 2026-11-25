@@ -4,7 +4,7 @@
 
 The awaited-state helpers for the LiveView suites (the ONE settled-state/save-receipt await), the connection case template, the async-load flush helper, the two directory-picker fakes, the Store/TaskRegistry + VCT isolation helpers, the per-process config-dir and seam overrides, the deadline-bounded temp-tree removal primitive, and the hermetic ChatGPT sign-in stub.
 Compiled only in `:test` via `elixirc_paths(:test) = ["lib", "test/support"]` (`apps/evo_dash/mix.exs`).
-Ten compiled `.ex` modules carry setup, helpers and fakes only — never test logic or assertions.
+Twelve compiled `.ex` modules carry setup, helpers and fakes only — never test logic or assertions.
 The directory also holds TWO test scripts, `config_dir_test.exs` and `fs_cleanup_test.exs`, which are NOT compiled (only `*.ex` is) but loaded by ExUnit like any other suite; they live here because each is the proof module for one support module of this directory.
 
 ## Routing Table
@@ -105,8 +105,8 @@ A NON-LOCAL scope whose fetch failed still counts as applied (`remote_config_err
 `await_settled/2` waits for that predicate and renders once; `await_save/4` takes the click, waits for ITS receipt (a `llm_test_seq` bump + the success flash on a settled page) and FLUNKS with the page's own refusal reason when the page flashes a save error instead — never a silent instant return; `await_rendered/3` is a bounded `has_element?` poll for "the surface is rendered now" claims; `await_assigns/4` is the documented escape hatch and requires a human-readable expectation string.
 Flash reads accept BOTH key spellings, because the socket's flash map carries STRING keys while `put_flash/3` models atoms.
 No `Process.sleep` anywhere (the poll cadence is a bounded `receive`), and no negative window.
-Documented limits (each needs a PRODUCTION marker, not a test change): a same-scope reload (`AsyncResults.config_load_wait_down/1`) and the fire-and-forget auth-status load carry no in-flight assign, and a same-page node switch whose PREVIOUS scope had a `remote_config_error` is indistinguishable from the new scope's apply.
-Consumers: `live/settings_live/provider_wizard_test.exs` (the reference conversion).
+Documented limits (each needs a PRODUCTION marker, not a test change): a same-scope reload (`AsyncResults.config_load_wait_down/1`) and the fire-and-forget credential-status load (mount-time and save-triggered alike) carry no in-flight assign, and a same-page node switch whose PREVIOUS scope had a `remote_config_error` is indistinguishable from the new scope's apply — a `config_load_pending`/`auth_status_pending` marker on the page would close the gap.
+Consumers: all five mounted Settings suites — `live/settings_live_test.exs` (whose `Helpers` re-exports `assigns/1` and wraps saves as `save_hook/4`), `live/settings_live/provider_panel_live_test.exs`, `live/settings_live/provider_wizard_test.exs`, `live/settings_live/auth_status_test.exs` and `live/settings_live/chatgpt_sign_in_surfaces_test.exs`; `provider_wizard_test.exs` is the reference conversion.
 
 ### `EvoDash.Test.Seam` (`seam.ex`)
 `put/2` installs an `EvoDash.Seam` override in the CALLING process dictionary (in an ExUnit test: the test process) and registers an `on_exit` restore; `delete/1` clears it mid-test and `put_all/1` installs a keyword list.

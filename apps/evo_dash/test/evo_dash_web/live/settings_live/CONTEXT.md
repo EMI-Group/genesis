@@ -3,14 +3,14 @@
 ## Intent
 
 Focused pure-helper, provider-account panel/wizard and credential-status page contracts live here.
-The nine suites declare 184 tests; every module is `async: true` except the 6 mounted tests of the sync `NavigationLiveTest`.
+The eleven suites declare 266 tests; every module is `async: true` except the 6 mounted tests of the sync `NavigationLiveTest`.
 Pure helpers neither mount pages nor start shared services.
 Config-directory isolation is per process (`EvoDash.Test.ConfigDir.isolate!/1` through the `:config_dir_fun` seam), never a BEAM-global `XDG_CONFIG_HOME` write.
 A "what got persisted" pin reads through `EvoDash.Test.PersistedConfig.user_config/0` (one forced `EvoGit.Config.Cache.reload/0` of the test's own directory) instead of the bare `EvoGit.Config.user_config/0` term, because that map is a BEAM-global `:persistent_term` entry per config directory whose content depends on which refresh stored last.
 
 ## API Surface
 
-- `provider_profiles_contract_test.exs` — 48, `async: true` (`EvoDashWeb.SettingsLive.ProviderProfilesContractTest`): pure `ProviderProfiles` / `ConfigIO` / `AuthStatus` / detached `ModelProfileEvents` editor boundary (identity, checkbox submissions, default-only model-name helper, `off_peak_holidays` round trip).
+- `provider_profiles_contract_test.exs` — 51, `async: true` (`EvoDashWeb.SettingsLive.ProviderProfilesContractTest`): pure `ProviderProfiles` / `ConfigIO` / `AuthStatus` / detached `ModelProfileEvents` editor boundary (identity, checkbox submissions, default-only model-name helper, `off_peak_holidays` round trip).
 - `model_profile_helpers_test.exs` — 34, `async: true` (`EvoDashWeb.SettingsLive.ModelProfileHelpersTest`): the retained legacy `parse_model_profile_params/2` single-model parser and `generate_profile_id/2`.
 - `config_io_test.exs` — 12, `async: true` (`EvoDashWeb.SettingsLive.ConfigIOTest`): flat-category conversions and the canonical runtime model-options push.
 - `config_save_test.exs` — 12, `async: true` (`EvoDashWeb.SettingsLive.ConfigSaveTest`): the read-verified save receipt of `ConfigSave.save/3`, plus the stale-LOCAL-node-identity contract (`:node_identity_changed` refusal with no foreign write, the flipped in-flight receipt settling `{:stale, _}`, the remote target unaffected, and ONE derivation across `scope/1`/`test_config_scope/1`/`target_node/1`).
@@ -18,9 +18,11 @@ A "what got persisted" pin reads through `EvoDash.Test.PersistedConfig.user_conf
 - `model_ids_test.exs` — 6, `async: true` (`EvoDashWeb.SettingsLive.ModelIdsTest`): retired model ids against the catalog and the mounted Settings page.
 - `navigation_test.exs` — 23 (`EvoDashWeb.SettingsLive.NavigationTest`, 17, `async: true`; `EvoDashWeb.SettingsLive.NavigationLiveTest`, 6, SYNC): `/settings` category resolution/URL helpers plus the mounted sidebar.
 - `provider_panel_live_test.exs` — 13, `async: true` (`EvoDashWeb.SettingsLive.ProviderPanelLiveTest`): the seeded account list and its single expanded editor.
-- `provider_wizard_test.exs` — 9, `async: true` (`EvoDashWeb.SettingsLive.ProviderWizardTest`): the account-creation wizard, the per-account model and schedule editors, and the removed-Quick-Setup regression pin.
+- `provider_wizard_test.exs` — 15, `async: true` (`EvoDashWeb.SettingsLive.ProviderWizardTest`): the account-creation wizard, the per-account model and schedule editors, and the removed-Quick-Setup regression pin.
   Its in-browser sign-in test reads the `#settings-chatgpt-waiting` block AND its `#settings-chatgpt-sign-in-url` link from the CLICK's own `render_click/1` reply, because the stub's queued terminal status (`[:pending, {:ok, …}]`) can be applied the moment the event returns; the rule and its siblings are documented in `../CONTEXT.md` ("deterministic waits").
   Every other flow whose stub stays `:pending` awaits the APPLIED phase through `await_sign_in/2` before reading its waiting markup, so a loaded host cannot race the async flow call.
+- `chatgpt_sign_in_state_test.exs` — 46, `async: true` (`EvoDashWeb.SettingsLive.ChatGPTSignInStateTest`): the PURE page-level state machine (surface ownership, flow-id stale guard, paste/manual transitions, poll lifecycle, sign-in side effects) driven through the per-process ChatGPT login stub; it mounts no page.
+- `chatgpt_sign_in_surfaces_test.exs` — 21, `async: true` (`EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest`): the mounted sign-in surfaces on an EXPANDED account detail and its auth-status row, every phase claim awaited on the APPLIED page state through `await_page_sign_in/3` / `await_start_failure/2`.
 - `NavigationLiveTest` is the only sync module in this directory: it drives platform/nix gating through the BEAM-global app-env seams `:platform_os_override` and `:nix_available_override`, which the `async: true` `EvoDashWeb.PlatformInfoTest` / `system_live_test` also read (and `SettingsLiveGlobalStateTest` mutates).
 
 ## Provider account identity (pure)
@@ -101,6 +103,16 @@ A legacy-only `[llm]` configuration yields no invented provider accounts and no 
 The suite pins both receipts, the rejected-value case, an acknowledged write whose follow-up read fails, a real legacy-fixture round trip, and a genuinely unwritten candidate that fails even when both sides canonicalize identically.
 The persistence projection canonicalizes both sides and drops legacy flat `[llm]` mirrors/`models` plus nil-valued keys.
 
+## Settled-state awaits
+
+Every wait in the five mounted suites — `settings_live_test.exs`, `auth_status_test.exs`, `provider_panel_live_test.exs`, `provider_wizard_test.exs`, `chatgpt_sign_in_surfaces_test.exs` — goes through `EvoDash.Test.SettingsAwait`; no suite here keeps its own busy-flag wait (`wait_settings/3`, `await_config_save/1`) or a pid-sampling mount drain.
+A save is complete only on ITS receipt (`await_save/4`: a bumped `llm_test_seq` plus the success flash on a settled page), and a refused save fails at once with the reason the page reported, because `config_saving == false` holds on EVERY refusal path and is never a completion signal.
+`settled?/1` is the page's own conjunction (no owned save request, writer or load, `config_loaded_scope == ConfigSave.scope(socket)` and `auth_status_seq >= 1`), so a mount counts as settled only once the viewed scope's snapshot was APPLIED — the same scope match `CategoryEvents.persist_file_config/4` requires before it builds a whole-file write.
+A claim about a SURFACE awaits the rendered element (`await_rendered/3`): opening an account editor is `await_rendered("#provider-profile-detail-<slug>")`, because the collapsed row renders `details={false}` and never the sign-in panel.
+Everything that is neither a mount settle, a save receipt nor a rendered element uses the documented `await_assigns/4` escape hatch and names what it awaits in words (`await_save_refusal/2` and `await_wizard_save/1` in `auth_status_test.exs`, `await_refusal/2` in `provider_panel_live_test.exs`, the sign-in phases in `provider_wizard_test.exs` / `chatgpt_sign_in_surfaces_test.exs`, a collapse).
+A save the core schema REJECTS is awaited on its own evidence — the error flash — never on the success receipt, which would flunk on the very refusal the test pins.
+The credential verdict a test asserts is awaited as the RENDERED verdict (`auth_status_test.exs`'s `await_baseline_verdict/2`), because the OAuth/auth-status load itself is fire-and-forget.
+
 ## Credential status
 
 `auth_status_test.exs` pins `AuthStatus.classify/2` and `classify_remote/2` atom-precisely (`{:error, {:managed_file_unwritable, _}}` → `:unwritable`, every other shape unchanged) and the PAGE-level verdicts: `Login detected`, `No subscription login found`, `Login found, managed credential file not writable` plus the managed-file path and the writable remedy.
@@ -127,7 +139,7 @@ Every rendered item opens its pane through `select_category`, stays active and r
 
 ## Parent page coupling (`../settings_live_test.exs`)
 
-The parent file declares 84 tests in three modules: 3 async `EvoDashWeb.SettingsLiveParentAdapterTest`, 64 async `EvoDashWeb.SettingsLiveTest` and 17 sync `EvoDashWeb.SettingsLiveGlobalStateTest`.
+The parent file declares 89 tests in three modules: 3 async `EvoDashWeb.SettingsLiveParentAdapterTest`, 69 async `EvoDashWeb.SettingsLiveTest` and 17 sync `EvoDashWeb.SettingsLiveGlobalStateTest`.
 `SettingsLiveParentAdapterTest` renders the real `SettingsComponents.category_section/1` boundary and calls actual parent change/row/cancel handlers without a mounted page; its third test pins persisted-model connection resolution, inherited generation, API key and provider options through `ConfigIO.resolve_model_spec/2`.
 `SettingsLiveTest` owns the parent page's remaining surfaces: settings search, `ModelProfileHelpers.move_model_profile/3`, LLM connection-test rendering and handlers, the sandbox `write_paths` list editor, remote-node config loading, the remote-connection bootstrap progress bar, the daemon-already-running permission dialog, Install wording/banner/Name auto-fill, the async connect flow, copy-to-clipboard, the appearance/accent category and the `md+ independent scroll layout contract`.
 That scroll-layout describe pins the two-class regression gate behind the "panes scroll linked" bug: every `div#category-<cat>` root and the generic `<form id="settings-form-<cat>">` carry `flex-1 flex flex-col min-w-0` plus `min-h-0` and never `h-full`, an inner `.overflow-y-auto` body exists, and `form#settings-form-search` carries `overflow-y-auto` on the form itself.
@@ -139,20 +151,21 @@ Mounted Projects, Assistant and Welcome canonical contracts live in their own pa
 
 ## Mount funnel and seeding
 
-`mount_settings/2` in `settings_live_test.exs` funnels every mount: `live/3`, then `await_mount_async_loads/1` (monitor this mount's `$callers` children, then drain), and only then hands the view to the test, so a late node-data apply can never clobber test-driven state; the ORIGINAL mount HTML is returned unchanged.
-`provider_panel_live_test.exs` and `provider_wizard_test.exs` carry LOCAL copies of `mount_settings`, `settings_hook/3` and `await_config_save` so each file compiles and runs alone; the shared `EvoDashWeb.SettingsLiveTest.Helpers` module only exists once `settings_live_test.exs` is loaded, which the loader does not guarantee in alphabetical order.
-`settings_live_agents_test.exs` uses its OWN owner-aware variant (`mount_settings/1` → `await_view_async_loads/1`): a bounded 2 ms poll on "no live `EvoDash.TaskSupervisor` child whose `$callers` contain THIS view pid", a ~5 s best-effort cap (`@settle_timeout_ms`), then a `render/1` drain — the same helper is reused at the `reload_custom_tools` click.
+`mount_settings/2` in `settings_live_test.exs` funnels every mount: `live/3`, then `EvoDash.Test.SettingsAwait.await_settled/1`, and only then hands the view to the test, so a late node-data apply can never clobber test-driven state; the ORIGINAL mount HTML is returned unchanged.
+`provider_panel_live_test.exs`, `provider_wizard_test.exs`, `auth_status_test.exs` and `chatgpt_sign_in_surfaces_test.exs` each carry their OWN `mount_settings/2` and `save_hook` over the shared await, so every file compiles and runs alone; the shared `EvoDashWeb.SettingsLiveTest.Helpers` module only exists once `settings_live_test.exs` is loaded, which the loader does not guarantee in alphabetical order.
+`model_ids_test.exs` (`mount_async_task_pids/1` + `await_task_exit/1`) and `navigation_test.exs` (`await_node_data/1` over `async_task_pids/1` + `callers/1`) still settle their mounts by monitoring THIS view's `$callers` children; that sample is why the shared await exists — it can be empty in the gap between two chained mount loads.
+`settings_live_agents_test.exs` uses its OWN owner-aware variant (`mount_settings/1` → `await_view_async_loads/1`): a bounded 2 ms poll on "no live `EvoDash.TaskSupervisor` child whose `$callers` contain THIS view pid" — an unset `$callers` counts as waitable — then a `render/1` drain, all inside the load-tolerant 30 s `@settle_timeout_ms`; the same helper is reused at the `reload_custom_tools` click.
 `settings_live_test.exs`, `provider_panel_live_test.exs` and `provider_wizard_test.exs` SEED canonical provider fixtures straight into this test's `config.toml` (string keys, one nested model row, optional explicit default) instead of driving the add/save UI for setup; the mounted suites drive the actual rendered controls for Add/Save/Cancel/CRUD/model-row flows.
-Mutations acknowledge dispatch before the off-process write completes, so every assertion reads the authoritative completion (`config_saving == false`, then `render/1`), never the dispatch render.
+Mutations acknowledge dispatch before the off-process write completes, so a save assertion reads its RECEIPT (the success flash that clears the owning request) and never the dispatch render.
 
 ## Constraints
 
 Pure suites use the shared test bootstrap and never call `ExUnit.start/0`, patch missing core functions or skip failing integration contracts.
 Mounted suites retain per-process `EvoDash.Test.ConfigDir.isolate!/1` and local-only `EvoDash.ActiveTasks.invalidate(nil, node())`; the whole-table `reset/0` belongs to sync modules only.
-Every async-load budget here is a load-tolerant 30 s (`@async_wait_budget_ms`, `@assigns_timeout_ms`) with a 1–2 ms poll cadence; no fixed `Process.sleep` is a wait mechanism.
+Every async-load budget here is a load-tolerant 30 s — `EvoDash.Test.SettingsAwait` owns the mount/save budgets (`async_wait_budget_ms/0`, `assigns_timeout_ms/0`), and a suite that needs a deadline for its own poll or `assert_receive` re-declares the same `@async_wait_budget_ms` — with a 1–2 ms poll cadence; no fixed `Process.sleep` is a wait mechanism.
 `assigns/1` is a synchronous `:sys.get_state(view.pid, 30_000)` round-trip, so `send` followed by an `assigns/1` read is already ordered.
 Auth config-directory labels include the OS pid so interrupted or concurrent BEAM runs cannot reuse another run's blocker fixture.
-Auth save assertions wait for `config_saving` and `config_save_request` to clear through the authoritative writer receipt, then settle the receipt's OAuth refresh before rendering or reading persistence.
+Auth save assertions settle on the save's own receipt (a bumped `llm_test_seq`, the `Provider profile saved.` flash and a settled page) and on the rendered expanded detail, then read persistence; a refused draft is awaited on its error flash instead.
 Every login verdict, managed-file path and writable-path remedy stays asserted; supplied vendor instructions normalize only HTML whitespace, not their wording.
 No test may make a real LLM request or rely on shared credentials, scheduler mutation or global ChatHistory.
 Multi-model coverage here is pure parsing/draft round trips and sparse inheritance; a mounted multi-model Save → remount cycle is `provider_panel_live_test.exs`'s `two distinct models survive save, reload and remount, including the id new`.
@@ -168,7 +181,7 @@ The rendered reasoning-checkbox clear and the closed-Advanced API-key-source sta
 The `:managed_file_unwritable` classification tests concern OAuth credential files, not `config.toml` write failures.
 The legacy OAuth migration save preserves its path for both OAuth accounts, so its appearance in scheduler update options is expected.
 No suite in this directory installs an app-env blocking runner or suspends the scheduler; `config_io_test.exs` exercises `State.do_update_config/2` on local state values, not the registered scheduler process.
-`await_profile_save/1` waits for save markers to clear and then drains OAuth refresh tasks, but marker clearance alone is not success: a failed runtime scheduler update can also finish the writer request, so the exact success-flash assertion stays.
+Save-marker clearance alone is not success: a failed runtime scheduler update can also finish the writer request, so the exact success-flash assertion stays.
 A longer test polling deadline cannot repair a runtime `GenServer.call` timeout already returned as a failed save acknowledgement.
 
 ## Known Issues
@@ -181,8 +194,8 @@ The source failure belongs to the core scheduler owner, outside this leaf test n
 
 ## Focused commands
 
-`mix test apps/evo_dash/test/evo_dash_web/live/settings_live --seed 0` (184 tests) or `--seed 1` runs this directory; naming one file runs just that suite.
-The pure helper slice is `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/config_io_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/model_profile_helpers_test.exs --seed 1` (94 tests).
+`mix test apps/evo_dash/test/evo_dash_web/live/settings_live --seed 0` (266 tests) or `--seed 1` runs this directory; naming one file runs just that suite.
+The pure helper slice is `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/config_io_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/model_profile_helpers_test.exs --seed 1` (97 tests).
 Useful describe filters are `--only 'describe:credential status render (injected result)'`, `--only 'describe:profile save round-trip (auth_mode / oauth_file persistence)'`, `--only 'describe:wizard auth step (provider capability)'` and `--only 'describe:the removed Quick Setup shortcut'`.
 Leaf-subtree or pure-slice success does not establish collective LiveView-directory or broader dashboard-suite success.
 
