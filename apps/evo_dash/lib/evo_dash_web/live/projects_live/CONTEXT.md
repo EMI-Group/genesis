@@ -77,7 +77,10 @@ The GitHub issue-fix launch is the deliberate exception: a synchronous `SafeCall
 
 ## Project overview — the two entry points
 
-Selecting a project (or naming a VCT workspace) lands on the overview, not in the composer: `Overview.visible?/1` blocks that surface only for a connection gate, explicit compose request, idle workbench (`wb_home=1`) or no selection.
+`Overview.visible?/1` renders the overview for a selected project or VCT workspace unless a connection gate, explicit compose request or idle workbench suppresses it.
+A connected local mount without a project param can assign the newest VCT project while `workbench_idle?` remains true, so `active_project_path` alone does not imply an overview or a published draft route.
+`Project.detect_mode/1,2` classifies directory contents, not Git history: `.git`, `README.md`, `.genesis` and `.gitignore` are ignored, so `"genesis_new"` cannot distinguish an unborn repository from a plain directory, a committed empty tree or a failed listing.
+`Overview.load/2` reads the mounted repository's node-owned `ProjectGit.snapshot/2` off-process but projects only `branch`, `commit` and `subject`; a strict empty-Git policy needs positive snapshot evidence before that projection, since missing commit metadata and worktree cleanliness are not represented there.
 The overview puts the primary **New task** action and secondary **Chat with Assistant** action directly below the selection heading; neither requires opening a settings disclosure.
 An unavailable workspace roster entry is shown as unavailable with disabled entry points (never as an empty workspace and never as the previously active project).
 The composer is an explicit step: `handle_params/3` sets `compose_task?: overview_compose_task?(params)` (`wb_task=1` or a non-blank `resume_from`/`starting_commit`) and `maybe_restore_compose_task/1` additionally SETS it when a restored browser draft carries a prompt or a resume id — it never clears a flag the URL set — so a returning user with saved draft state never sees the overview.
