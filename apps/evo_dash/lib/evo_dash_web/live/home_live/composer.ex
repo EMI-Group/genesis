@@ -53,8 +53,8 @@ defmodule EvoDashWeb.HomeLive.Composer do
 
   import EvoDashWeb.LLMSelectionComponents, only: [llm_selection: 1]
 
+  alias EvoDashWeb.ComposerComponents
   alias EvoDashWeb.HomeLive.Attachments
-
   alias EvoDashWeb.HomeLive.Workspace
 
   @chat_statuses [:idle, :running, :cancelling, :awaiting_input, :ended]
@@ -109,7 +109,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
       >
         {assigns[:workspace_error]}
       </p>
-      <div class="assistant-input-card">
+      <ComposerComponents.composer kind="assistant" class="assistant-input-card">
         <form
           id="chat-form"
           phx-submit="send_message"
@@ -169,7 +169,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
             </button>
           </div>
         </div>
-      </div>
+      </ComposerComponents.composer>
       <p id="chat-keyboard-hint" class="sr-only">
         {gettext("Enter to send · Shift+Enter for a new line")}
       </p>
