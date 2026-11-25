@@ -95,6 +95,19 @@ It exists because the production read `EvoGit.Config.user_config/0` answers a BE
 The directory resolves at call time in the calling process, so the per-test `EvoDash.Test.ConfigDir` override keeps every reload inside that test's own directory.
 Used by the Settings suites' "what got persisted" assertions (`live/settings_live/provider_panel_live_test.exs`, `live/settings_live/provider_wizard_test.exs`).
 
+### `EvoDash.Test.SettingsAwait` (`settings_await.ex`)
+
+The Settings suites' ONE evidence-based await: a `/settings` page settles when its own authoritative assigns say so, never when a moving target (`config_saving`, a sampled set of `EvoDash.TaskSupervisor` pids) happens to look quiet.
+`assigns/1` is the shared `:sys.get_state(view.pid, 30_000)` read; `async_wait_budget_ms/0` and `assigns_timeout_ms/0` are the suites' 30 s budgets.
+`settled?/1` is the conjunction documented in the module: no owned write (`config_save_request`, `config_saving`, live `config_save_owner`, `config_load_wait_ref`), no owned load (`custom_agents_loading`/`custom_tools_loading`, and the apply evidence below), plus the scope's snapshot applied.
+The apply evidence is `config_loaded_scope == ConfigSave.scope(socket)` — the very match `CategoryEvents.persist_file_config/4` requires before it builds a whole-file write — and `auth_status_seq >= 1`, which is load-bearing because `config_loaded_scope` is SEEDED to `{nil, node()}`, i.e. already a local socket's scope.
+A NON-LOCAL scope whose fetch failed still counts as applied (`remote_config_error` set while the apply deliberately leaves `config_loaded_scope` nil), but only once both mount loading flags are false, so it cannot fire before an apply.
+`await_settled/2` waits for that predicate and renders once; `await_save/4` takes the click, waits for ITS receipt (a `llm_test_seq` bump + the success flash on a settled page) and FLUNKS with the page's own refusal reason when the page flashes a save error instead — never a silent instant return; `await_rendered/3` is a bounded `has_element?` poll for "the surface is rendered now" claims; `await_assigns/4` is the documented escape hatch and requires a human-readable expectation string.
+Flash reads accept BOTH key spellings, because the socket's flash map carries STRING keys while `put_flash/3` models atoms.
+No `Process.sleep` anywhere (the poll cadence is a bounded `receive`), and no negative window.
+Documented limits (each needs a PRODUCTION marker, not a test change): a same-scope reload (`AsyncResults.config_load_wait_down/1`) and the fire-and-forget auth-status load carry no in-flight assign, and a same-page node switch whose PREVIOUS scope had a `remote_config_error` is indistinguishable from the new scope's apply.
+Consumers: `live/settings_live/provider_wizard_test.exs` (the reference conversion).
+
 ### `EvoDash.Test.Seam` (`seam.ex`)
 `put/2` installs an `EvoDash.Seam` override in the CALLING process dictionary (in an ExUnit test: the test process) and registers an `on_exit` restore; `delete/1` clears it mid-test and `put_all/1` installs a keyword list.
 It never writes app env, so the override reaches exactly the pages, LiveView processes and `EvoDash.TaskSupervisor` children descended from the test and nothing else — two `async: true` modules can hold different fixtures for the same seam at the same time, with nothing to restore and nothing to serialize.
