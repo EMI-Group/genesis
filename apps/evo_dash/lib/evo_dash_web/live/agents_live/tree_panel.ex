@@ -125,7 +125,7 @@ defmodule EvoDashWeb.AgentsLive.TreePanel do
           <%= cond do %>
             <% @scoped_task_state == :loading -> %>
               <p id="scoped-agents-loading" class="text-sm text-base-content/70" role="status">
-                {gettext("Loading task agents…")}
+                {gettext("Loading agents…")}
               </p>
             <% @scoped_task_state == :missing -> %>
               <p id="scoped-agents-missing" class="text-sm text-base-content/70">
