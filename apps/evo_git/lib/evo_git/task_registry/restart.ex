@@ -20,9 +20,12 @@ defmodule EvoGit.TaskRegistry.Restart do
 
   The decision itself is NOT re-derived here: `EvoGit.TaskRegistry.Pause`
   owns the pure `dirty_pausable?/2` rule (persistent state on, not interactive)
-  and the `root_run?/1` predicate (a durable record whose `fields[:parent_id]`
-  is nil), so the `:dirty` verdict means exactly what a single-row
-  `Pause.pause_kind_for_restart/2` means.
+  and the ROOT predicate (`EvoGit.AgentState.Snapshot.root?/1`, behind
+  `Pause.root_run?/1`), so the `:dirty` verdict means exactly what a single-row
+  `Pause.pause_kind_for_restart/2` means. Each candidate's records are grouped
+  through the PURE `EvoGit.AgentState.Snapshot.build/2`, so "is this task
+  resumable?" is answered by the SAME snapshot constructor the resume admission
+  and `Snapshot.read/2` use — never by a private parent-id scan.
 
   ## Degradation — nothing is classified
 
@@ -33,6 +36,7 @@ defmodule EvoGit.TaskRegistry.Restart do
   cannot be restored would be the lie this classifier exists to prevent.
   """
 
+  alias EvoGit.AgentState.Snapshot
   alias EvoGit.TaskRegistry.AgentStateRead
   alias EvoGit.TaskRegistry.Pause
   alias EvoGit.TaskRegistry.StoreRead
@@ -80,23 +84,26 @@ defmodule EvoGit.TaskRegistry.Restart do
         %{}
 
       candidates ->
-        root_ids =
-          candidates
-          |> Enum.map(& &1.id)
-          |> durable_root_ids()
-
-        for row <- candidates, MapSet.member?(root_ids, row.id), into: %{} do
-          {row.id, :dirty}
-        end
+        candidates
+        |> Enum.map(& &1.id)
+        |> durable_root_tasks()
     end
   end
 
-  # ONE batched durable read for the candidate ids; a degraded read answers `[]`
-  # and therefore classifies nothing.
-  defp durable_root_ids(task_ids) do
+  # ONE batched durable read for the candidate ids, grouped per task and
+  # resolved by the PURE `Snapshot.build/2`; a degraded read answers `[]` and
+  # therefore classifies nothing. Only a task whose grouped records hold a ROOT
+  # row (`{:ok, %Snapshot{}}`) is a dirty pause — a child-only roster is not
+  # resumable and keeps the `:failed` restart behaviour.
+  defp durable_root_tasks(task_ids) do
     task_ids
     |> AgentStateRead.roster_many(op: "restart_classify_roster")
-    |> Enum.filter(&Pause.root_run?/1)
-    |> MapSet.new(& &1.task_id)
+    |> Enum.group_by(& &1.task_id)
+    |> Enum.reduce(%{}, fn {task_id, records}, acc ->
+      case Snapshot.build(task_id, records) do
+        {:ok, %Snapshot{}} -> Map.put(acc, task_id, :dirty)
+        {:error, _empty_or_no_root} -> acc
+      end
+    end)
   end
 end

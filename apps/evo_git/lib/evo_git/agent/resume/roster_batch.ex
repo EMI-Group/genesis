@@ -15,7 +15,9 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
     * the rows whose `parent_id` is THIS agent and whose `spawn_turn` is the
       dangling turn (the assistant message's `tool_calls` the resume is about to
       answer), ordered by `spawn_index` — the child's position in the parent's
-      model call order;
+      model call order. The filter itself lives in `EvoGit.AgentState.Snapshot`
+      (`children/3`), the ONE durable read model of the tree, so this module
+      cannot drift from the pause side;
     * one SLOT per expected subagent call, in that same order:
       - `status == "done"` → its stored `result` JSON becomes the slot result
         (`{:ok, %EvoGit.Agent.Result{}}`), so no child is re-spawned and no cost
@@ -25,27 +27,43 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
         its restored conversation;
       - no row (or a row that cannot be rebuilt) → `:missing`, which the
         scheduler answers as `{:error, :subagent_result_lost}` — honest, never
-        invented.
+        invented. `EvoGit.Agent.Resume.Reattach` upgrades such a slot to
+        `:fresh` on a `:clean_pause` resume (a child the pause froze BEFORE it
+        ever registered must be spawned, not reported lost), which is why the
+        entry type below carries that status even though this module never
+        produces it.
 
   ## Containment
 
   This runs in the AGENT WORKER process (the resumed parent's exchange worker),
-  never in the scheduler: the durable read is a plain `EvoGit.AgentState.roster/2`
+  never in the scheduler: the durable read is ONE `EvoGit.AgentState.snapshot/2`
   call (bounded and total inside `EvoGit.AgentState`), and the file/context work
   of rebuilding a spec stays off the shared GenServer. `plan/4` answers
   `{:error, reason}` for any RAISE and degrades the caller to the honest
   fallback text; an EXIT or THROW is left alone and reaches the scheduler's
   crash-retry, because it is infrastructure rather than a plan verdict.
 
-  ## Why the resume opts, not a pause kind
+  ## Why the resume opts, and which KIND they carry
 
-  A re-spawned child is a CRASH RETRY of its own run: `:resume_agent_id`,
+  A re-spawned child is a resumed run of its OWN: `:resume_agent_id`,
   `:resume_current_commit`, `:resume_branch`, `:resume_anchor_ref` and
   `:restore_agent_state: true` are what `EvoGit.AgentScheduler.ResumePlan` needs
   to base the child's worktree on its own last commit, rebuild its branch from
   the anchor when the workers directory was wiped, and restore its transcript.
-  `:resume_kind` is deliberately ABSENT — that key means a task-level pause
-  resume, and there is no pause for a child.
+
+  The PARENT's resume kind (`opts[:resume_kind]`) decides two further keys,
+  because a child inherits the pause position it was frozen in:
+
+    * `:clean_pause` → `:pause_commit` = the child's OWN `pause_commit` (the
+      checkpoint the freeze stored), so its worktree is based on the exact
+      position it was frozen at, and `:resume_kind` travels so the child's own
+      `EvoGit.Agent.Resume.apply/2` takes the clean/no-repair path;
+    * `:dirty_pause` → `:pause_commit` PRESENT and `nil`, which SUPPRESSES
+      `ResumePlan`'s durable fallback read: a `pause_commit` column left over
+      from an EARLIER pause must never be used after a crash, and the child then
+      bases on `:resume_current_commit` exactly as a crash retry does;
+    * `nil` (crash retry) → neither key is written, so the child's opts stay
+      byte-identical to the pre-redesign shape.
   """
 
   require Logger
@@ -55,6 +73,7 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
   alias EvoGit.AgentState
   alias EvoGit.AgentState.Record
   alias EvoGit.AgentState.Redispatch
+  alias EvoGit.AgentState.Snapshot
   alias EvoGit.AgentSpec
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
@@ -65,15 +84,19 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
     * `:index` — the slot position, i.e. the child's `spawn_index` in the
       parent's model call order;
     * `:status` — `:done` (a finished child whose stored result is used as-is),
-      `:running` (a child to re-spawn) or `:missing` (no usable durable row);
-    * `:agent_id` — the persisted id of the child when a row matched;
+      `:running` (a child to re-spawn under its persisted id), `:fresh` (a child
+      the pause froze before it ever registered: spawn it under a NEW id — built
+      by `EvoGit.Agent.Resume.Reattach`, never here) or `:missing` (no usable
+      durable row);
+    * `:agent_id` — the persisted id of the child when a row matched (`nil` for
+      `:fresh`);
     * `:result` — for `:done`, the `{:ok, %EvoGit.Agent.Result{}}` the ordinary
       spawn path would have produced; `nil` otherwise;
-    * `:spec` — for `:running`, the rebuilt spec; `nil` otherwise.
+    * `:spec` — for `:running`/`:fresh`, the rebuilt spec; `nil` otherwise.
   """
   @type entry :: %{
           index: non_neg_integer(),
-          status: :done | :running | :missing,
+          status: :done | :running | :fresh | :missing,
           agent_id: pos_integer() | nil,
           result: {:ok, Result.t()} | nil,
           spec: AgentSpec.t() | nil
@@ -122,8 +145,13 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
   Options:
 
     * `:roster_fun` — `fn task_id -> [%EvoGit.AgentState.Record{}] | {:error, reason}`,
-      defaulting to `&EvoGit.AgentState.roster/1`. The ONE injection point (an
-      explicit option, never app env).
+      defaulting to the ONE snapshot read
+      (`EvoGit.AgentState.snapshot/2`, whose `agents` roster it projects). The
+      ONE injection point (an explicit option, never app env).
+    * `:resume_kind` — the PARENT's pause resume kind (`:clean_pause`,
+      `:dirty_pause`, `nil` for a crash retry); it decides whether a rebuilt
+      child carries its own `:pause_commit` and a `:resume_kind` of its own —
+      see the moduledoc.
 
   Total: `{:error, reason}` for a state without durable identity, an unknown
   turn, an empty batch, a refused/unavailable store or any raise while
@@ -157,7 +185,7 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
 
       entries =
         for index <- 0..(expected - 1)//1 do
-          entry(index, Map.get(by_index, index), state)
+          entry(index, Map.get(by_index, index), state, opts)
         end
 
       {:ok, %{turn: turn, expected_count: expected, entries: entries}}
@@ -182,8 +210,12 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
 
   ## Roster
 
+  # The default durable read is the ONE snapshot read model: `snapshot/2` already
+  # splits the root off the roster and answers `{:error, :empty | :no_root |
+  # :unavailable}` for anything unusable, and `resume_opts/2` only needs the
+  # `agents` roster.
   defp roster(task_id, opts) do
-    case Keyword.get(opts, :roster_fun) || (&AgentState.roster/1) do
+    case Keyword.get(opts, :roster_fun) || (&default_roster/1) do
       fun when is_function(fun, 1) ->
         case fun.(task_id) do
           records when is_list(records) -> {:ok, records}
@@ -196,28 +228,31 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
     end
   end
 
-  # The children of THIS parent spawned by the DANGLING turn, keyed by their
-  # position in the parent's model call order. A row without an integer
-  # `spawn_index` cannot be placed in a batch, so it is ignored (the slot ends
-  # up `:missing`) rather than guessed.
-  defp children_by_index(records, parent_id, turn) do
-    records
-    |> Enum.filter(fn record -> matches?(record, parent_id, turn) end)
-    |> Map.new(fn record -> {field(record, :spawn_index), record} end)
+  defp default_roster(task_id) do
+    case AgentState.snapshot(task_id) do
+      {:ok, snapshot} -> snapshot.agents
+      {:error, _reason} -> []
+    end
   end
 
-  defp matches?(record, parent_id, turn) do
-    is_integer(parent_id) and is_integer(turn) and
-      field(record, :parent_id) == parent_id and
-      field(record, :spawn_turn) == turn and
-      is_integer(field(record, :spawn_index))
+  # The children of THIS parent spawned by the DANGLING turn, keyed by their
+  # position in the parent's model call order. The filter is
+  # `EvoGit.AgentState.Snapshot.children/3` — the SAME one the pause side reads —
+  # so this module has no private copy of it. A row without an integer
+  # `spawn_index` cannot be placed in a batch, so it is ignored (the slot ends up
+  # `:missing`) rather than guessed.
+  defp children_by_index(records, parent_id, turn) do
+    records
+    |> Snapshot.children(parent_id, turn)
+    |> Enum.filter(&is_integer(field(&1, :spawn_index)))
+    |> Map.new(fn record -> {field(record, :spawn_index), record} end)
   end
 
   ## One slot
 
-  defp entry(index, nil, _state), do: missing_entry(index, nil)
+  defp entry(index, nil, _state, _opts), do: missing_entry(index, nil)
 
-  defp entry(index, record, state) do
+  defp entry(index, record, state, opts) do
     case Record.status(record) do
       "done" ->
         %{
@@ -229,7 +264,7 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
         }
 
       "running" ->
-        running_entry(index, record, state)
+        running_entry(index, record, state, opts)
 
       other ->
         Logger.warning(
@@ -258,8 +293,8 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
      }}
   end
 
-  defp running_entry(index, record, state) do
-    case build_spec(record, state) do
+  defp running_entry(index, record, state, opts) do
+    case build_spec(record, state, opts) do
       {:ok, spec} ->
         %{
           index: index,
@@ -281,7 +316,7 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
 
   ## Spec rebuild
 
-  defp build_spec(record, state) do
+  defp build_spec(record, state, opts) do
     fields = fields(record)
 
     with module when is_atom(module) and not is_nil(module) <- Map.get(fields, :agent_module),
@@ -311,7 +346,7 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
           model_id: Map.get(fields, :model_id)
         )
         |> put_model_id_locked(fields)
-        |> Keyword.merge(resume_opts(record))
+        |> Keyword.merge(resume_opts(record, opts))
 
       {:ok, AgentSpec.new(context_node, phylo_node, module, objective, opts)}
     else
@@ -322,8 +357,14 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
   # The child resumes its OWN run: identity, base, branch and anchor. The anchor
   # ref is what lets `EvoGit.AgentScheduler.Worktrees` rebuild a wiped branch from
   # the commits the dead run had produced.
-  defp resume_opts(record) do
+  #
+  # The PARENT's resume kind is inherited as the child's own pause position: a
+  # clean freeze based the child on ITS `pause_commit`, a dirty pause SUPPRESSES
+  # the stale durable `pause_commit` column with an explicit `nil` (the key's
+  # presence is what `ResumePlan` honors), and a crash retry writes neither key.
+  defp resume_opts(record, opts) do
     fields = fields(record)
+    kind = resume_kind(opts)
 
     [
       resume_agent_id: record_agent_id(record),
@@ -333,7 +374,29 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
       restore_agent_state: true
     ]
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> put_pause_commit(kind, fields)
+    |> put_resume_kind(kind)
   end
+
+  # The two task-level pause resume kinds; anything else (including an absent
+  # key) is the crash-retry path.
+  defp resume_kind(opts) do
+    case Keyword.get(opts, :resume_kind) do
+      kind when kind in [:clean_pause, :dirty_pause] -> kind
+      _other -> nil
+    end
+  end
+
+  defp put_pause_commit(opts, :clean_pause, fields),
+    do: Keyword.put(opts, :pause_commit, Map.get(fields, :pause_commit))
+
+  defp put_pause_commit(opts, :dirty_pause, _fields),
+    do: Keyword.put(opts, :pause_commit, nil)
+
+  defp put_pause_commit(opts, nil, _fields), do: opts
+
+  defp put_resume_kind(opts, nil), do: opts
+  defp put_resume_kind(opts, kind), do: Keyword.put(opts, :resume_kind, kind)
 
   # A locked selection stays locked (the whole account/model/effort identity was
   # chosen explicitly); an unlocked one is left ABSENT so dispatch fallbacks keep

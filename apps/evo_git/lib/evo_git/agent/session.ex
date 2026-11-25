@@ -89,16 +89,21 @@ defmodule EvoGit.Agent.Session do
 
   A pause is requested per agent by the scheduler (`EvoGit.AgentScheduler.ControlPlane`,
   set by `begin_task_pause/1`) and reaches the session ONLY through the exchange engine, which
-  probes it at two TURN BOUNDARIES and never mid-batch
+  probes it at two TURN BOUNDARIES
   (`EvoGit.Agent.Exchange.pause_requested?/2` over the `:pause_requested?` seam kind): at the top
   of the loop AFTER the cancel check (so cancel ALWAYS wins) and immediately after a fully
-  executed tool batch. In-flight tool calls are never interrupted — that is what makes a pause
-  clean.
+  executed tool batch.
+  A SUBAGENT batch the scheduler answers with `{:freeze, :task_pause}` freezes the turn instead
+  (`{:pause, state}` with the in-flight batch marker intact): nothing was interrupted, so a
+  resumed parent rebuilds/waits on the restored children.
   An exchange worker ABORTED by the scheduler's pause slot purge (a queued slot waiter answered
   `{:error, :paused}`) exits abnormally instead of returning `{:pause, _}`; the `:DOWN` handler
   therefore converts an abnormal worker exit into a PAUSE when the flag is set (belt and braces),
   using this session's last checkpointed `%State{}`. The pause flag wins over that abnormal exit;
   every other `:DOWN` case is unchanged.
+  The same conversion handles a task pause's bounded-quiesce DEADLINE: `{:task_freeze, :force}`
+  kills an exchange worker that never reached a turn boundary and lets that `:DOWN` arm pause from
+  the pre-batch checkpoint — or starts the pause finalizer itself when there is no worker left.
   The durable work then runs in `EvoGit.Agent.Session.Pause`, a MONITORED short-lived process
   exactly like the completion `Finalize` (so `inspect/2`, `history/2` and `cancel/2` stay
   answerable): it re-installs the process context with THIS session as owner, reaps the agent's
@@ -107,9 +112,9 @@ defmodule EvoGit.Agent.Session do
   `EvoGit.AgentState.put_pause_commit/3` and then `EvoGit.AgentState.flush/1` before reporting
   `{:session_paused, pid, info}`.
   The session delivers `{:paused, info}` (with `info = %{agent_id, task_id, checkpoint, branch,
-  reason: :task_pause}`) through the ONE terminal path, publishes the agent summary with status
-  `:done` (agent-level statuses have no `:paused`; the TASK row becomes `:paused`) and does NOT
-  mark the durable run complete, so a paused run stays resumable.
+  durable, clean_freeze, reason: :task_pause}`) through the ONE terminal path, publishes the agent
+  summary with status `:done` (agent-level statuses have no `:paused`; the TASK row becomes
+  `:paused`) and does NOT mark the durable run complete, so a paused run stays resumable.
   `info.checkpoint` IS the persisted `pause_commit`: the same sha the scheduler reads as
   `worktree_resume_from` and bases a resumed worktree on (the map key is pinned for consumers
   outside this module).
@@ -700,6 +705,46 @@ defmodule EvoGit.Agent.Session do
 
       true ->
         log_ignored(phase, data, {:stale_down, pid, reason})
+        {:keep_state, data}
+    end
+  end
+
+  # A TASK PAUSE's bounded-quiesce DEADLINE. The pause is normally honoured by the engine at a turn
+  # boundary, but an agent blocked inside an LLM/tool call never reaches one, and the task cannot
+  # wait for it: the scheduler interrupts it here. The durable snapshot of such an agent is its LAST
+  # checkpoint — the pre-batch checkpoint, whose `pending_tool_batch` marker is intact (nothing in
+  # the pause path clears it) — so this handler only STARTS the interruption:
+  #
+  #   * a live exchange worker is killed and the state is left alone: the existing abnormal-exit
+  #     `:DOWN` arm converts it into a pause when the pause flag is set (never duplicated here);
+  #   * with no worker to interrupt (`:awaiting_input`, or a worker that already died) the pause
+  #     finalizer starts directly, exactly like the no-worker pause path;
+  #   * once a result (or a completion/pause finalizer) owns the terminal delivery, nothing happens —
+  #     a freeze can never finalize twice.
+  def handle_event(:info, {:task_freeze, _mode}, phase, data) do
+    worker = live_worker_pid(data)
+
+    cond do
+      not is_nil(data.result) or not is_nil(data.finalizer) or not is_nil(data.pause_finalizer) or
+          phase in [:finalizing, :done] ->
+        log_ignored(phase, data, :task_freeze)
+        {:keep_state, data}
+
+      is_pid(worker) ->
+        Process.exit(worker, :kill)
+        {:keep_state, data}
+
+      match?(%State{}, data.state) ->
+        {:next_state, :finalizing, start_pause_finalizer(%{data | worker: nil})}
+
+      true ->
+        # Nothing has been checkpointed yet (a freeze during `:starting` has no state to snapshot),
+        # so there is no pause to deliver: the scheduler's force kill is the remaining lever.
+        Logger.warning(
+          "AgentSession #{Kernel.inspect(agent_id(data))} (#{Kernel.inspect(phase)}): " <>
+            "task freeze ignored — no state to snapshot yet"
+        )
+
         {:keep_state, data}
     end
   end
@@ -1698,7 +1743,15 @@ defmodule EvoGit.Agent.Session do
   defp paused_info(%State{} = state, pause_commit), do: Pause.info(state, pause_commit, nil)
 
   defp paused_info(_state, pause_commit) do
-    %{agent_id: nil, task_id: nil, checkpoint: pause_commit, branch: nil, reason: :task_pause}
+    # No state means no frozen batch to judge: nothing here can claim a clean freeze.
+    %{
+      agent_id: nil,
+      task_id: nil,
+      checkpoint: pause_commit,
+      branch: nil,
+      clean_freeze: false,
+      reason: :task_pause
+    }
   end
 
   # Terminal delivery, EXACTLY ONCE (one private function, one caller each for the success,
@@ -1897,6 +1950,14 @@ defmodule EvoGit.Agent.Session do
   end
 
   defp shutdown_worker(_data), do: :ok
+
+  # The pid of the LIVE exchange worker, or nil. `data.worker` is a `%Task{}`; a worker that already
+  # died has its monitor `:DOWN` in flight, so there is nothing left to interrupt.
+  defp live_worker_pid(%{worker: %Task{pid: pid}}) when is_pid(pid) do
+    if Process.alive?(pid), do: pid
+  end
+
+  defp live_worker_pid(_data), do: nil
 
   defp agent_id(%{dispatch_ctx: ctx}), do: Keyword.get(ctx, :agent_id)
 

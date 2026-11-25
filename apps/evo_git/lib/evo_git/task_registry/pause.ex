@@ -2,12 +2,19 @@ defmodule EvoGit.TaskRegistry.Pause do
   @moduledoc """
   Task-level PAUSE / RESUME protocol for `EvoGit.TaskRegistry`.
 
-  A task-level pause winds ONE named task down to a durable, resumable resting
-  state (`docs/task-pause.md`): the row becomes `:pausing`, the scheduler flags
-  every agent of the task (`EvoGit.AgentScheduler.begin_task_pause/1`), each agent
-  stops at its next TURN BOUNDARY (never mid-tool) after checkpointing its
-  conversation and committing its worktree, and the wrapper result
-  `{:paused, info}` lands the row `:paused` with `pause_kind: :clean`.
+  A task-level pause FREEZES the task's WHOLE agent tree into a durable,
+  resumable resting state (`docs/task-pause.md`): the row becomes `:pausing`, the
+  scheduler opens ONE freeze over the task
+  (`EvoGit.AgentScheduler.begin_task_pause/1` + `EvoGit.AgentScheduler.TaskFreeze`),
+  every parent blocked in `spawn_sub_agents/2` is parked, and each agent stops at
+  its next TURN BOUNDARY (never mid-tool) after checkpointing its conversation
+  and committing its worktree. The wrapper result `{:paused, info}` reaches the
+  runtime only once the freeze COMPLETED — i.e. once every agent of the tree
+  reported (or the bounded quiesce forced the leftovers) — and it lands the row
+  `:paused`:
+
+      %{agent_id, task_id, reason: :task_pause, pause_kind: :clean | :dirty,
+        checkpoint, branch, durable, clean_freeze, frozen_agents}
 
   This module owns the VALIDATION and the PERSISTENCE of that protocol; the
   `EvoGit.TaskRegistry` GenServer owns the sequencing (persist THEN broadcast),
@@ -19,31 +26,45 @@ defmodule EvoGit.TaskRegistry.Pause do
   ## Clean vs dirty
 
   `pause_kind` (`:clean | :dirty | nil`, the `tasks.pause_kind` column) is the
-  ONE persisted discriminator:
+  ONE persisted discriminator, and it describes HOW the snapshot was taken:
 
-    * `:clean` — the user paused the task. Nothing was interrupted, so a resume
-      restores the transcript with NO repair and NO "files may be inconsistent"
-      wording.
-    * `:dirty` — the runtime restarted while the task was live. The agents died
-      mid-flight, so a resume runs the existing crash-resume repair plus the
-      `[RESUME]` notice. `pause_kind_for_restart/1,2` is the ONE classifier both
-      restart paths (`TaskRegistry.init/1` reconciliation and the one-shot
-      `:lease_sweep`) use.
+    * `:clean` — every agent reached its freeze point within the bounded quiesce
+      and nothing was interrupted (each report proved `clean_freeze: true` and a
+      durable checkpoint). A resume restores the tree with NO repair and NO
+      "files may be inconsistent" wording.
+    * `:dirty` — a HOST RESTART while the task was live, OR a quiesce timeout /
+      forced freeze. Either way the snapshot may hold interrupted work, so a
+      resume runs the existing crash-resume repair plus the `[RESUME]` notice.
+      `pause_kind_for_restart/1,2` is the ONE classifier both restart paths
+      (`TaskRegistry.init/1` reconciliation and the one-shot `:lease_sweep`) use.
+
+  A report that cannot PROVE a clean snapshot never claims one: `pause_kind/1`
+  derives the persisted kind from the wrapper's own pause report
+  (`pause_kind: :dirty`, `durable: false` and `clean_freeze: false` all mean
+  `:dirty`; a legacy/absent key keeps `:clean`).
 
   A pause is only possible when durable agent state is available
   (`:persistent_state`, default on), because the paused run is restored from
   `agent_state.sqlite`; without it the task is not resumable and pause is
   REFUSED rather than pretending.
 
-  ## The ROOT row is the gate
+  ## The ROOT row is the gate; the resume restores the WHOLE frozen tree
 
   Resumability is decided by the task's durable ROOT run — the record whose
-  `parent_id` is absent or `nil` — never by "any durable row": a resume that
-  cannot restore a root would silently start the objective from scratch, and a
-  roster holding only CHILD rows has nothing to resume. ONE bounded, offloaded
-  `EvoGit.TaskRegistry.AgentStateRead.roster/2` read yields that row
-  (`read_root_run/2`; the lowest `agent_id` among the root rows, which is what
-  the roster's `depth ASC, agent_id ASC` order puts first).
+  `parent_id` is absent or `nil` (`EvoGit.AgentState.Snapshot.root?/1`) — never
+  by "any durable row": a resume that cannot restore a root would silently start
+  the objective from scratch, and a roster holding only CHILD rows has nothing to
+  resume. ONE bounded, offloaded `EvoGit.TaskRegistry.AgentStateRead.roster/2`
+  read yields the records and the PURE `EvoGit.AgentState.Snapshot.build/2`
+  splits them into that root plus the full roster (`read_snapshot/2`).
+
+  What a resume RESTORES is that whole frozen tree: the root plus every `running`
+  child at ANY depth, each with the same `agent_id`, its own conversation, its
+  own worktree base and its own recorded position. This module only ADMITS the
+  resume and carries the ROOT's facts to the scheduler — the thaw planner
+  rebuilds the children from their own durable rows — so a child row is never
+  consumed or rewritten here: it keeps `status = "running"` and its own
+  `pause_commit` until the planner restores it.
 
   A resume carries five facts from that row to the scheduler, each key ALWAYS
   present on the spawn opts (`nil` included, so "resolved to nothing" and
@@ -66,8 +87,8 @@ defmodule EvoGit.TaskRegistry.Pause do
   | Step | Writer |
   |---|---|
   | `status: :pausing` (+ revert on an unavailable scheduler) | this module |
-  | scheduler pause marker / per-agent pause flags | `EvoGit.AgentScheduler.begin_task_pause/1` |
-  | `status: :paused`, `pause_kind: :clean`, lease cleared | `EvoGit.TaskRegistry.handle_wrapper_result/3` (the wrapper reports `{:paused, info}`) |
+  | scheduler freeze / per-agent pause flags | `EvoGit.AgentScheduler.begin_task_pause/1` |
+  | `status: :paused`, `pause_kind: :clean \| :dirty` DERIVED from the report, lease cleared | `EvoGit.TaskRegistry.handle_wrapper_result/3` (the wrapper reports `{:paused, info}`; the kind comes from `pause_kind/1`) |
   | `status: :paused`, `pause_kind: :dirty`, lease cleared | `TaskRegistry.init/1` and `:lease_sweep` through this module's classifier |
   | `status: :running`, `pause_kind: nil`, fresh lease | `resume/4` |
   | every broadcast | `EvoGit.TaskRegistry` (after the persist) |
@@ -77,6 +98,7 @@ defmodule EvoGit.TaskRegistry.Pause do
 
   alias EvoGit.AgentState.Anchor
   alias EvoGit.AgentState.Record
+  alias EvoGit.AgentState.Snapshot
   alias EvoGit.TaskRegistry.AgentStateRead
   alias EvoGit.TaskRegistry.StoreGuard
   alias EvoGit.TaskRegistry.StoreRead
@@ -196,12 +218,15 @@ defmodule EvoGit.TaskRegistry.Pause do
   On a paused row it re-runs the SAME admission `start_task/2` runs
   (`RuntimeOpts.admit_task_path/1`, `admit_model_selection/2` against the CURRENT
   config, `admit_session_mode/1`, `admit_persistent_state/1`); a failed admission
-  answers that `{:error, reason}` and leaves the row `:paused`. It then requires the
-  task's durable ROOT row (`read_root_run/2`: ONE bounded, offloaded
-  `EvoGit.TaskRegistry.AgentStateRead.roster/2` read), because a resume with
-  nothing to restore — no durable row at all, or a roster holding only child
-  rows — would silently start the objective from scratch: that is
-  `{:error, :not_resumable}`.
+  answers that `{:error, reason}` and leaves the row `:paused`. It then requires
+  the task's durable ROOT row, resolved from the durable TREE snapshot
+  (`read_snapshot/2`: ONE bounded, offloaded
+  `EvoGit.TaskRegistry.AgentStateRead.roster/2` read split by the pure
+  `EvoGit.AgentState.Snapshot.build/2`), because a resume with nothing to restore
+  — no durable row at all, or a roster holding only child rows — would silently
+  start the objective from scratch: that is `{:error, :not_resumable}`. An
+  UNREADABLE store is `{:error, :store_unavailable}` instead (a retryable
+  answer, never a verdict about the tree).
 
   The write is TARGETED (`update_task_columns/3`, which always bumps
   `updated_at`): `status: :running`, `finished_at: nil`, `error: nil`,
@@ -228,6 +253,12 @@ defmodule EvoGit.TaskRegistry.Pause do
   ABSENT key means "not a pause resume" (the direct-dispatch path, which falls
   back to a bounded read of its own). The scheduler itself must never make a
   synchronous durable read.
+
+  Only the ROOT is re-enqueued here; the REST of the frozen tree is restored by
+  the thaw planner from the same durable rows (root + every `running` child at
+  any depth), so the child rows are neither read for facts nor consumed here —
+  they keep `status = "running"` and their own `pause_commit` until the resumed
+  root rebuilds its batch.
 
   Sequencing: the scheduler pause marker is cleared FIRST (a re-spawned agent must
   never inherit a stale pause flag through `ControlPlane.ensure_row/1`), the
@@ -282,14 +313,18 @@ defmodule EvoGit.TaskRegistry.Pause do
     end
   end
 
-  # The durable-run gate: the ROOT row, not "any durable row". A resume with no
+  # The durable-tree gate: the ROOT row, not "any durable row". A resume with no
   # root row (including a roster holding only children) would silently start the
   # objective from scratch, so it refuses. ONE bounded, offloaded roster read
-  # serves this gate and the resume facts below.
+  # serves this gate and the resume facts below; `Snapshot.build/2` is the ONE
+  # root/roster split (pure), and the unreadable-store answer stays distinct so a
+  # caller retries instead of being told the tree is not resumable.
   defp ensure_root_run(task_id) do
-    case read_root_run(task_id, "resume_roster") do
-      %Record{} = root -> {:ok, root}
-      _none -> {:error, :not_resumable}
+    case read_snapshot(task_id, "resume_roster") do
+      {:ok, %Snapshot{root: root}} -> {:ok, root}
+      {:error, :unavailable} -> {:error, :store_unavailable}
+      {:error, :empty} -> {:error, :not_resumable}
+      {:error, :no_root} -> {:error, :not_resumable}
     end
   end
 
@@ -380,6 +415,37 @@ defmodule EvoGit.TaskRegistry.Pause do
   def resume_kind(:dirty), do: :dirty_pause
   def resume_kind(_clean_or_nil), do: :clean_pause
 
+  @doc """
+  The PERSISTED pause kind a `{:paused, info}` report PROVES: `:clean` only when
+  the report can prove it, `:dirty` otherwise.
+
+  The scheduler's task-level report
+  (`%{pause_kind: :clean | :dirty, durable: boolean(), clean_freeze: boolean(), …}`)
+  is the only evidence a pause leaves, so this is the ONE honest mapping:
+
+    * `pause_kind: :dirty` — the freeze itself degraded (an agent was forced by
+      the bounded quiesce), so the snapshot may hold interrupted work;
+    * `durable: false` — an agent could not confirm its checkpoint was written;
+    * `clean_freeze: false` — a mixed/non-subagent call may have been
+      interrupted half-way and the resume must run the crash repair.
+
+  Anything else — including a LEGACY/absent key (an older report shape, or a
+  hand-built term in a test) — keeps `:clean`, which is the backward-compatible
+  verdict. Both key shapes are accepted (a freshly built report is atom-keyed,
+  a JSON-restored one string-keyed). Total: a non-map answers `:clean`.
+  """
+  @spec pause_kind(map() | term()) :: :clean | :dirty
+  def pause_kind(info) when is_map(info) do
+    cond do
+      fetch_report(info, :pause_kind) in [:dirty, "dirty"] -> :dirty
+      fetch_report(info, :durable) == false -> :dirty
+      fetch_report(info, :clean_freeze) == false -> :dirty
+      true -> :clean
+    end
+  end
+
+  def pause_kind(_info), do: :clean
+
   ## Restart classification (dirty pause)
 
   @doc """
@@ -388,8 +454,8 @@ defmodule EvoGit.TaskRegistry.Pause do
   non-boolean refuses), it is NOT an interactive session (`interactive?/1`, the
   SAME rule the clean pause refuses with `:not_pausable`, because an interactive
   session's lifecycle is user-driven and a resumed one would have no client),
-  AND `EvoGit.AgentState` holds a durable ROOT run row for the task
-  (`read_root_run/2`: ONE bounded, offloaded
+  AND the durable tree snapshot holds a ROOT run for the task
+  (`read_snapshot/2`: ONE bounded, offloaded
   `EvoGit.TaskRegistry.AgentStateRead.roster/2` read, so this classification can
   never block the registry).
 
@@ -403,7 +469,7 @@ defmodule EvoGit.TaskRegistry.Pause do
   """
   @spec dirty_pausable?(map()) :: boolean()
   def dirty_pausable?(%{id: task_id} = task) do
-    dirty_pausable?(task, not is_nil(read_root_run(task_id, "dirty_pause_roster")))
+    dirty_pausable?(task, durable_root?(task_id))
   end
 
   def dirty_pausable?(_task), do: false
@@ -430,27 +496,38 @@ defmodule EvoGit.TaskRegistry.Pause do
 
   @doc """
   `true` when a durable agent-state record is a ROOT run — the record whose
-  `fields[:parent_id]` is absent or `nil`.
+  `parent_id` is absent or `nil`.
 
-  The durable tree is keyed `(task_id, agent_id)` and only the ROOT record can
-  restore a paused task (a resume starts from the root), so this ONE predicate
-  is shared by resume admission (`read_root_run/2`) and the batched restart
-  classification.
+  Delegates to `EvoGit.AgentState.Snapshot.root?/1`, the ONE root predicate: the
+  durable tree is keyed `(task_id, agent_id)` and only the ROOT record can
+  restore a paused task (a resume starts from the root), so resume admission,
+  the snapshot constructor and the batched restart classification must never
+  disagree about which record that is.
   """
-  @spec root_run?(EvoGit.AgentState.Record.t()) :: boolean()
-  def root_run?(%Record{fields: fields}) when is_map(fields),
-    do: is_nil(Map.get(fields, :parent_id))
+  @spec root_run?(EvoGit.AgentState.Record.t() | term()) :: boolean()
+  def root_run?(record), do: Snapshot.root?(record)
 
-  def root_run?(_record), do: false
+  # The task's durable tree snapshot, built from ONE bounded, offloaded roster
+  # read (`AgentStateRead`, which degrades to `[]` rather than blocking the
+  # registry) — the SAME `Snapshot.build/2` the direct `Snapshot.read/2` uses.
+  #
+  # The store PROBE keeps the unreadable-store answer distinct from an empty
+  # tree: "cannot tell" (`:unavailable`) must never be reported as
+  # `:not_resumable`, because that verdict would refuse a task that is perfectly
+  # resumable; the roster's own order (`depth ASC, agent_id ASC`) means the
+  # root `build/2` picks is the lowest `agent_id` when several root rows exist.
+  defp read_snapshot(task_id, op) do
+    if Snapshot.available?() do
+      Snapshot.build(task_id, AgentStateRead.roster(task_id, op: op))
+    else
+      {:error, :unavailable}
+    end
+  end
 
-  # The task's durable ROOT run — or `nil`. The roster is ordered
-  # `depth ASC, agent_id ASC`, so `Enum.find/2` yields the LOWEST `agent_id`
-  # when several root rows exist. Total: an unanswerable read degrades to `[]`
-  # and therefore to `nil`.
-  defp read_root_run(task_id, op) do
-    task_id
-    |> AgentStateRead.roster(op: op)
-    |> Enum.find(&root_run?/1)
+  # Whether the task's durable tree holds a ROOT run — the boolean half the
+  # restart classifier needs. A degraded read is `false` (today's behaviour).
+  defp durable_root?(task_id) do
+    match?({:ok, %Snapshot{}}, read_snapshot(task_id, "dirty_pause_roster"))
   end
 
   @doc """
@@ -534,6 +611,17 @@ defmodule EvoGit.TaskRegistry.Pause do
   end
 
   ## Option classification (non-raising — these run inside the registry)
+
+  # One accessor for BOTH key shapes of the pause REPORT (a freshly built
+  # payload is atom-keyed, a JSON-restored one string-keyed). `Map.fetch/2` —
+  # never `Map.get/2 ||` — so a LITERAL `false` (`durable: false`) is not
+  # mistaken for an absent key.
+  defp fetch_report(info, key) do
+    case Map.fetch(info, key) do
+      {:ok, value} -> value
+      :error -> Map.get(info, Atom.to_string(key))
+    end
+  end
 
   # `:session_mode` is a STRING-keyed persisted opt (`EvoGit.Store.Codec`'s
   # `@string_opt_keys`), and this classifier only ever sees a DECODED row — so

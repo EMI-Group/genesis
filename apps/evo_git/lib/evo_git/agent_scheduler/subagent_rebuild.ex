@@ -22,6 +22,11 @@ defmodule EvoGit.AgentScheduler.SubagentRebuild do
       with the plan's resume opts (persisted `agent_id`, own base/branch/anchor,
       `restore_agent_state: true`), so each child continues its own run instead
       of restarting;
+    * `status: "fresh"` slots were frozen BEFORE they ever registered (a clean
+      pause, so they have no durable row and no id). They are spawned through the
+      SAME dispatch path, with their batch position but WITHOUT an `:agent_id`
+      opt, so the scheduler allocates a fresh id exactly as the original spawn
+      would have;
     * a slot with no usable row answers `{:error, :subagent_result_lost}` —
       honest, never invented.
 
@@ -57,7 +62,7 @@ defmodule EvoGit.AgentScheduler.SubagentRebuild do
   alias EvoGit.AgentScheduler.SubagentReattach
   alias EvoGit.AgentScheduler.Subagents
 
-  @statuses [:done, :running, :missing]
+  @statuses [:done, :running, :fresh, :missing]
 
   @typedoc """
   Answer of one rebuild: the ordered batch (one element per subagent call, a
@@ -145,6 +150,7 @@ defmodule EvoGit.AgentScheduler.SubagentRebuild do
       case status do
         :done -> match?({:ok, %EvoGit.Agent.Result{}}, Map.get(entry, :result))
         :running -> match?(%EvoGit.AgentSpec{}, Map.get(entry, :spec))
+        :fresh -> match?(%EvoGit.AgentSpec{}, Map.get(entry, :spec))
         :missing -> true
       end
   end
@@ -152,13 +158,15 @@ defmodule EvoGit.AgentScheduler.SubagentRebuild do
   defp valid_entry?(_entry), do: false
 
   # `:done` keeps its stored result, `:missing` is the honest lost answer and
-  # `:running` is what is left to spawn.
+  # `:running`/`:fresh` are what is left to spawn — `:running` under its own
+  # persisted id, `:fresh` under a newly allocated one.
   defp classify(entries) do
     Enum.reduce(entries, {%{}, []}, fn entry, {results, pending} ->
       case entry.status do
         :done -> {Map.put(results, entry.index, entry.result), pending}
         :missing -> {Map.put(results, entry.index, SubagentReattach.lost_result()), pending}
         :running -> {results, [entry | pending]}
+        :fresh -> {results, [entry | pending]}
       end
     end)
     |> then(fn {results, pending} -> {results, Enum.sort_by(pending, & &1.index)} end)
@@ -173,7 +181,7 @@ defmodule EvoGit.AgentScheduler.SubagentRebuild do
         {:ok, child_id, state_acc} when is_integer(child_id) ->
           Logger.info(
             "AgentScheduler: rebuilt subagent slot #{entry.index} of agent #{meta.id} " <>
-              "as agent #{child_id} (resumed from its durable row)"
+              "as agent #{child_id} (#{spawn_kind(entry)})"
           )
 
           {results, Map.put(indices, child_id, entry.index), [child_id | ids], state_acc}
@@ -217,6 +225,9 @@ defmodule EvoGit.AgentScheduler.SubagentRebuild do
     end
   end
 
+  defp spawn_kind(%{status: :fresh}), do: "spawned fresh, never registered before the pause"
+  defp spawn_kind(_entry), do: "resumed from its durable row"
+
   # The ordinary dispatch path: register under the child's PERSISTED id (the
   # registration fails closed when a live run still holds it), then dispatch.
   defp default_spawn(state, %SchedMeta{} = parent, entry, registration_opts) do
@@ -238,8 +249,17 @@ defmodule EvoGit.AgentScheduler.SubagentRebuild do
     end
   end
 
+  # A `:fresh` slot has NO persisted id (its child never registered before the
+  # pause), so the registration carries only its batch position and the scheduler
+  # mints an id exactly as the original spawn would have. A `:running` slot keeps
+  # its own id, which the registration fails closed on when a live run holds it.
+  defp registration_opts(%{status: :fresh} = entry, turn) do
+    [spawn_index: entry.index, spawn_turn: turn]
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
   defp registration_opts(entry, turn) do
-    [agent_id: entry.agent_id, spawn_index: entry.index, spawn_turn: turn]
+    [agent_id: Map.get(entry, :agent_id), spawn_index: entry.index, spawn_turn: turn]
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
   end
 

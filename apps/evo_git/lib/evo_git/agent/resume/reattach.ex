@@ -35,10 +35,28 @@ defmodule EvoGit.Agent.Resume.Reattach do
   hands it to `EvoGit.AgentScheduler.rebuild_subagent_batch/3`, which installs
   the finished children's stored results, re-spawns the still-running ones under
   their persisted ids (own anchored base, persisted branch, restored
-  conversation) and waits for them exactly like a live batch. A recursive
-  child repeats the same steps for ITS dangling batch, so resume is recursive
-  down the tree. Only when that rebuild ALSO declines does a call degrade to the
-  fallback text.
+  conversation) and waits for them exactly like a live batch — it BLOCKS until
+  the restored children genuinely finish. A recursive child repeats the same
+  steps for ITS dangling batch, so resume is recursive down the tree. Only when
+  that rebuild ALSO declines does a call degrade to the fallback text.
+
+  ## Clean pause: a frozen batch is REBUILT, never reported lost
+
+  A `:clean_pause` resume is a pause SNAPSHOT, not an interruption: the parent
+  was parked inside `spawn_sub_agents/2`, its batch marker kept, and every
+  still-running child row kept `status: "running"`. Re-attaching therefore
+  rebuilds from the durable roster and the parent does not re-issue the tool
+  call.
+
+  A frozen batch can also hold a subagent call whose child NEVER registered (the
+  pause stopped the parent before the spawn loop reached that call).
+  `RosterBatch` honestly reports such a slot `:missing`, and on this kind that
+  verdict is upgraded to `:fresh` with a spec built by the PRODUCTION builder
+  (`EvoGit.Agent.SubagentProcessing.build_subagent_specs/3`) and NO agent id —
+  the scheduler allocates a fresh id exactly as the original spawn did. Such a
+  child must be spawned, not reported lost; only a slot whose spec cannot be
+  built stays `:missing`. A `:dirty_pause`/crash resume keeps `:missing`
+  untouched, because there a row-less slot really is a lost child.
 
   ## Why the merge is not optional
 
@@ -126,6 +144,11 @@ defmodule EvoGit.Agent.Resume.Reattach do
       `EvoGit.Agent.Resume.RosterBatch`).
     * `:spawn_fun` — the scheduler-side spawn seam the rebuild passes through
       (see `EvoGit.AgentScheduler.SubagentRebuild`).
+    * `:resume_kind` — the PARENT's pause resume kind (`:clean_pause`,
+      `:dirty_pause`, `nil` for a crash retry), forwarded to
+      `EvoGit.Agent.Resume.RosterBatch.plan/4` and used here to decide whether a
+      row-less slot becomes `:fresh` (clean pause: never spawned, so spawn it
+      now) or stays `:missing` (everything else: genuinely lost).
 
   Every option is an explicit injection point, never app env.
 
@@ -212,7 +235,7 @@ defmodule EvoGit.Agent.Resume.Reattach do
 
     case RosterBatch.plan(state, turn, expected, opts) do
       {:ok, plan} ->
-        case rebuild_batch(state, plan, opts) do
+        case rebuild_batch(state, thaw_plan(state, plan, slots, opts), opts) do
           {:ok, results} when is_list(results) ->
             adopt(state, slots, results)
 
@@ -235,6 +258,75 @@ defmodule EvoGit.Agent.Resume.Reattach do
     case Keyword.get(opts, :rebuild_fun) || @default_rebuild_fun do
       fun when is_function(fun, 3) -> fun.(agent_id, plan, opts)
       other -> {:error, {:invalid_rebuild_fun, other}}
+    end
+  end
+
+  ## Frozen batch (clean pause): `:missing` means "never spawned yet"
+
+  # On a CLEAN pause a slot with no durable row is not a lost child: the pause
+  # froze the batch BEFORE the spawn loop reached that call, so the child has to
+  # be created now, exactly as the original spawn would have. The plan entry is
+  # upgraded to `:fresh` with a spec built by the PRODUCTION builder, so the
+  # spawned child is identical to the one the original batch intended, and with
+  # NO agent id (the scheduler allocates a fresh one). A spec that cannot be
+  # built keeps the honest `:missing` verdict.
+  # Every other resume kind leaves the plan UNTOUCHED — after a crash a
+  # row-less slot really is a lost child.
+  defp thaw_plan(%State{} = state, plan, slots, opts) do
+    if resume_kind(opts) == :clean_pause do
+      calls = Map.new(slots, fn {index, call} -> {index, call} end)
+
+      %{plan | entries: Enum.map(plan.entries, &thaw_entry(state, &1, calls))}
+    else
+      plan
+    end
+  end
+
+  defp thaw_entry(%State{} = state, %{status: :missing} = entry, calls) do
+    with {:ok, call} <- Map.fetch(calls, entry.index),
+         {:ok, spec} <- fresh_spec(state, call, entry.index) do
+      %{entry | status: :fresh, spec: spec, agent_id: nil, result: nil}
+    else
+      _no_call_or_no_spec -> entry
+    end
+  end
+
+  defp thaw_entry(_state, entry, _calls), do: entry
+
+  # `build_subagent_specs/3` reads the worktree path from the process dictionary
+  # (the spawn path installs it before calling). The exchange worker already
+  # carries its own agent's path, so this only fills it in for a bare caller.
+  # The surrounding `resolve/3` try/rescue already covers a raise here; this
+  # local rescue is narrower on purpose so one unbuildable slot cannot take the
+  # WHOLE batch's plan down with it (every other slot keeps its real verdict).
+  defp fresh_spec(%State{} = state, call, index) do
+    if is_binary(state.repo_path), do: Process.put(:repo_path, state.repo_path)
+
+    case SubagentProcessing.build_subagent_specs([{call, index}], state, %{}) do
+      [%EvoGit.AgentSpec{} = spec] -> {:ok, spec}
+      other -> warn_fresh(state, index, {:unexpected_specs, other})
+    end
+  rescue
+    # Left `:missing` on purpose: an unbuildable spec means we cannot honestly
+    # spawn an identical child, and reporting the slot lost is correct.
+    error -> warn_fresh(state, index, Exception.message(error))
+  catch
+    kind, reason -> warn_fresh(state, index, Exception.format(kind, reason))
+  end
+
+  defp warn_fresh(%State{} = state, index, reason) do
+    Logger.warning(
+      "Resume: could not rebuild the spec of the frozen subagent slot #{index} of agent " <>
+        "#{inspect(state.agent_id)} (#{inspect(reason)}); reporting it lost"
+    )
+
+    :error
+  end
+
+  defp resume_kind(opts) do
+    case Keyword.get(opts, :resume_kind) do
+      kind when kind in [:clean_pause, :dirty_pause] -> kind
+      _other -> nil
     end
   end
 

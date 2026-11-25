@@ -1,3 +1,20 @@
+defmodule EvoGit.Agent.ExchangePauseTest.FreezeSubagent do
+  @moduledoc """
+  A subagent module declared by `PauseAgent`, so ONE tool call of the freeze test
+  is classified `:subagent` through the production derivation
+  (`EvoGit.Agent.SubagentSchemas`) instead of a hand-written name list.
+
+  Defined ABOVE the `async: true` test module for the same load-order reason as
+  the agent modules.
+  """
+
+  @doc "The generated subagent tool name (what the model emits)."
+  def subagent_tool_name, do: "subagent_freeze_probe"
+
+  @doc "The generated subagent tool description."
+  def subagent_tool_description, do: "A probe subagent declared only by the pause-seam test."
+end
+
 defmodule EvoGit.Agent.ExchangePauseTest.PauseAgent do
   @moduledoc """
   The role a pause-seam exchange runs AS.
@@ -6,6 +23,9 @@ defmodule EvoGit.Agent.ExchangePauseTest.PauseAgent do
   from the agent module: the pause boundaries are loop control, so the tests
   assert on the outcomes and the states the seams receive, never on the role's
   behaviour.
+
+  It also DECLARES one subagent module, so a call to that tool is routed into
+  `EvoGit.Agent.SubagentProcessing` — the path a task pause now freezes.
 
   Defined ABOVE the `async: true` test module on purpose: `mix test` starts the
   ExUnit async runner BEFORE requiring the test files, so a helper defined after
@@ -27,6 +47,9 @@ defmodule EvoGit.Agent.ExchangePauseTest.PauseAgent do
       )
     ]
   end
+
+  @doc "The declared subagent modules: one probe tool, never actually spawned."
+  def subagent_modules, do: [EvoGit.Agent.ExchangePauseTest.FreezeSubagent]
 
   @doc false
   # Never executed: the exchange is driven by the `:tool_batch` seam, so no
@@ -52,8 +75,10 @@ defmodule EvoGit.Agent.ExchangePauseTest do
      cleared) and before the next loop step
      (`EvoGit.Agent.ToolDispatch.continue_after_tools/7`).
 
-  There is NO mid-batch check by design: a pause never interrupts an in-flight
-  tool call, which is what makes the pause CLEAN.
+  There is NO mid-batch pause PROBE by design: a pause never interrupts an
+  in-flight tool call. A SUBAGENT batch is the one batch that is frozen instead
+  of completed — the scheduler answers its spawn with `{:freeze, :task_pause}`
+  and the turn hands back `{:pause, state}` with the marker intact.
 
   ## What these tests pin
 
@@ -68,8 +93,13 @@ defmodule EvoGit.Agent.ExchangePauseTest do
     `:pause_requested?` probe), so the pause can only be honoured at the NEXT
     boundary — when it is the only pending request it is honoured at the FIRST;
   * the paused state is checkpointed exactly ONCE per turn boundary, that
-    checkpoint IS the returned state, and it carries NO `pending_tool_batch`
-    marker (a completed batch is never live).
+    checkpoint IS the returned state, and a batch that COMPLETED before the pause
+    carries NO `pending_tool_batch` marker (a completed batch is never live);
+  * a SUBAGENT batch the scheduler answers with `{:freeze, :task_pause}` is the
+    opposite case: the turn returns `{:pause, state}` with the marker PRESERVED,
+    no tool result appended, no merge and no further LLM call, and the pause
+    checkpoint carries that same marker (a pause is a snapshot, not a
+    completion).
 
   ## Isolation
 
@@ -287,6 +317,58 @@ defmodule EvoGit.Agent.ExchangePauseTest do
     end
   end
 
+  describe "a FROZEN subagent batch (task pause)" do
+    test "freezes as a pause: marker preserved, no tool results, no merge",
+         %{agent_id: agent_id} do
+      test_pid = self()
+
+      # The subagent spawn is the ONE outside-world call of this path; the seam
+      # answers the task pause exactly like the scheduler does, so the freeze is
+      # testable without a live scheduler.
+      Process.put(:repo_path, freeze_repo_dir(agent_id))
+
+      spawn_fun = fn specs, timeout ->
+        send(test_pid, {:spawn_called, length(specs), timeout})
+        {:freeze, :task_pause}
+      end
+
+      opts = [
+        llm_call: subagent_call_llm(test_pid),
+        # EVERY call of this batch is a subagent call, so the STANDARD half is
+        # empty (the seam is still consulted, and answers no results).
+        tool_batch: fn indexed_calls, _state ->
+          send(test_pid, {:standard_calls, length(indexed_calls)})
+          []
+        end,
+        spawn_sub_agents_fun: spawn_fun,
+        checkpoint: fn state -> send(test_pid, {:checkpoint, state}) end
+      ]
+
+      assert {:pause, %State{} = paused} =
+               Exchange.run(initial_state(agent_id, persistent_state: true), opts)
+
+      assert_received {:standard_calls, 0}
+      # ONE spec was really built and the seam was called with `(specs, timeout)`.
+      assert_received {:spawn_called, 1, :infinity}
+
+      # The frozen batch is STILL in flight: the marker is the snapshot position.
+      assert %{turn: 1, calls: [%{class: :subagent}]} = paused.pending_tool_batch
+
+      # Nothing was appended: a freeze never fabricates a tool result.
+      assert tool_messages(paused) == []
+
+      # No further LLM call: the exchange stopped at the frozen batch.
+      assert llm_calls(agent_id) == 1
+
+      # The pause checkpoint carries the SAME marker (it is NOT normalised through
+      # the terminal-state path), so the durable row keeps the frozen position.
+      [batch_start, paused_checkpoint] = collect_checkpoints(agent_id)
+      assert %{calls: [%{class: :subagent}]} = batch_start.pending_tool_batch
+      assert %{calls: [%{class: :subagent}]} = paused_checkpoint.pending_tool_batch
+      assert paused_checkpoint == paused
+    end
+  end
+
   describe "the :pause_requested? seam" do
     test "an explicit seam overrides the ControlPlane flag in both directions",
          %{agent_id: agent_id} do
@@ -433,6 +515,41 @@ defmodule EvoGit.Agent.ExchangePauseTest do
          @report_text}
       end
     end
+  end
+
+  # A turn that delegates ONE subagent (the declared probe tool) — the batch the
+  # scheduler freezes when the task pauses. A second turn (plain text) must never
+  # be reached.
+  defp subagent_call_llm(test_pid) do
+    fn context, _tools, _params, agent_id, _retries ->
+      send(test_pid, {:llm_call, agent_id})
+
+      if assistant_message_count(context) == 0 do
+        {:ok,
+         response(
+           context,
+           assistant_message("Delegating the probe.", [
+             ReqLLM.ToolCall.new(
+               "call_freeze_sub",
+               "subagent_freeze_probe",
+               Jason.encode!(%{"path" => "./", "objective" => "probe"})
+             )
+           ])
+         )}
+      else
+        {:implicit_completion, response(context, assistant_message(@report_text, nil)),
+         @report_text}
+      end
+    end
+  end
+
+  # A plain directory standing in for the agent's repo: building a subagent spec
+  # reads `:repo_path` and derives the child's context node from it, but the
+  # spawn seam means nothing is ever created or committed.
+  defp freeze_repo_dir(agent_id) do
+    dir = Path.join(System.tmp_dir!(), "evogit_exchange_freeze_#{agent_id}")
+    File.mkdir_p!(dir)
+    dir
   end
 
   # A batch that must NEVER run: every scenario using it pauses at the LOOP TOP,
