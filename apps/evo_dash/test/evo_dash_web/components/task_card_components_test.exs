@@ -305,8 +305,40 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       assert html =~ "/review/"
     end
 
+    test "a failed task with a (salvaged) branch renders the Review button" do
+      # A failure keeps its worktree/result, so the review page can render the
+      # outcome honestly — the workbench history panel already routes every
+      # finished task to `/review/<id>`, so the card must offer the same route.
+      html =
+        render_component(&TaskCardComponents.task_card/1,
+          task:
+            review_task(
+              status: :failed,
+              result: {:error, :agent_crashed},
+              error: %{kind: :down, message: "agent crashed", source: :down_handler}
+            )
+        )
+
+      assert html =~ "Review"
+      assert [_] = Floki.find(parse(html), "a[href*='/review/']")
+    end
+
+    test "a failed multi-repo task renders the Review button too" do
+      html =
+        render_component(&TaskCardComponents.task_card/1,
+          task:
+            review_task(
+              status: :failed,
+              result: {:ok, %{repos: %{"primary" => %{commit_sha: "aaaaaaa1", branch_name: nil}}}}
+            )
+        )
+
+      assert html =~ "Review"
+      assert html =~ "/review/"
+    end
+
     test "a :reflect (repo-less) task never renders the Review button" do
-      for status <- [:completed, :cancelled] do
+      for status <- [:completed, :cancelled, :failed] do
         html =
           render_component(&TaskCardComponents.task_card/1,
             task: review_task(type: :reflect, status: status, result: {:ok, %{result: "chat"}})
@@ -318,7 +350,7 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
     end
 
     test "non-reviewable statuses never render the Review button" do
-      for status <- [:pending, :running, :finalizing, :failed] do
+      for status <- [:pending, :running, :finalizing, :pausing, :paused] do
         html =
           render_component(&TaskCardComponents.task_card/1,
             task: review_task(status: status, result: {:ok, %{branch_name: "genesis/agent_1"}})
@@ -520,15 +552,17 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       end
     end
 
-    test "a failed task never renders a Review button even with an error map" do
+    test "a failed task renders the structured error AND the Review route" do
+      # A failure is reviewable (the review page renders it honestly), so the
+      # error strip and the Review button coexist on the same card.
       html =
         render_component(&TaskCardComponents.task_card/1,
           task: failed_task(error: error_record())
         )
 
       assert html =~ "bg-error/10 border border-error/20 rounded-lg px-3 py-2 min-w-0"
-      refute html =~ "Review"
-      refute html =~ "/review/"
+      assert html =~ "Review"
+      assert [_] = Floki.find(parse(html), "a[href='/review/t_fail']")
     end
   end
 
@@ -1148,8 +1182,9 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
         assert Floki.find(parse(html), "a[href*='/review/']") == []
       end
 
-      # `show_review_button?/1` stays a :completed/:cancelled ALLOWLIST.
-      for status <- [:completed, :cancelled] do
+      # `show_review_button?/1` stays a FINISHED-status allowlist
+      # (:completed/:cancelled/:failed) — a pause is not finished.
+      for status <- [:completed, :cancelled, :failed] do
         html = render_action_card(%{id: "t_rev", status: status})
         assert [_] = Floki.find(parse(html), "a[href*='/review/']")
       end

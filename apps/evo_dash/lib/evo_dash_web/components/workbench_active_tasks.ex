@@ -11,7 +11,10 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
       go.
     * `#workbench-needs-review` — the feed's review candidates (`:completed`
       with a nil `review_status`), as its OWN compact section with a count, at
-      most `@review_limit` newest rows and a "View all" link to the tasks page.
+      most `@review_limit` newest rows and a "View all" link to the tasks page's
+      own review-triage filter (`/tasks?status=needs_review`). `:failed` and
+      `:cancelled` tasks are reviewable on their cards, but they are NOT triage
+      candidates and never appear here.
 
   Interactive agent sessions appear in NEITHER section: the sidebar's
   Conversations block (`EvoDashWeb.HomeLive.SessionList`) is their one list, so
@@ -65,7 +68,7 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
         groups: groups,
         review_rows: review_rows,
         review_count: length(review_tasks),
-        review_more_href: with_node_param(~p"/tasks", node_id),
+        review_more_href: review_more_href(node_id),
         list_enter_scope: "sidebar|" <> node_scope,
         review_list_enter_scope: "sidebar-review|" <> node_scope
       )
@@ -316,6 +319,14 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
       true -> "#{div(diff, 86400)}d ago"
     end
   end
+
+  # The "View all" destination: the tasks page filtered to its review-triage
+  # status (`?status=needs_review`), never the unfiltered list. The node param
+  # must come FIRST and is appended by hand: `Helpers.with_node_param/2` joins
+  # with `?`, which would corrupt an already-parameterised URL.
+  defp review_more_href(nil), do: ~p"/tasks?status=needs_review"
+
+  defp review_more_href(node_id), do: ~p"/tasks?node=#{node_id}&status=needs_review"
 
   # The Active Tasks section's rows: NON-map entries skipped (the hub is
   # shape-agnostic), interactive sessions dropped (they belong to the sidebar's

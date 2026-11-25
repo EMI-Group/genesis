@@ -769,19 +769,28 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   defp remember_remote_context(socket), do: socket
 
   @doc """
-  Returns `true` when the completed task is a review candidate.
+  Returns `true` when the finished task has a review route.
 
   Deliberately does NOT inspect the task result for changes (a task whose
   primary repo is unchanged but whose writable foreign repos changed is still
-  reviewable). Any `:completed` task whose `review_status` is nil qualifies —
-  the caller gates on `review_status` — EXCEPT repo-less `:reflect` tasks,
-  which have no code review and are excluded explicitly.
+  reviewable). Every FINISHED status — `:completed`, `:cancelled` and `:failed` —
+  qualifies, EXCEPT repo-less `:reflect` tasks, which have no code review and are
+  excluded explicitly.
+
+  This is the ROUTE predicate, not the triage rule: the sidebar's "Needs review"
+  bucket stays `:completed` + nil `review_status` + a live branch
+  (`partition_active_tasks/1`), so a `:failed` (or `:cancelled`) task gets a
+  review route without entering the triage queue.
 
   Summary/map-based: reads only the summary contract keys (`status`, `type`).
   Must NEVER read `result` from summary maps — the summary projection drops it.
   """
-  def show_review_button?(%{status: :completed, type: :reflect}), do: false
-  def show_review_button?(%{status: :completed}), do: true
+  def show_review_button?(%{status: status, type: :reflect})
+      when status in [:completed, :cancelled, :failed],
+      do: false
+
+  def show_review_button?(%{status: status}) when status in [:completed, :cancelled, :failed],
+    do: true
 
   def show_review_button?(_), do: false
 

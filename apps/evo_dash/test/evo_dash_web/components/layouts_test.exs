@@ -748,12 +748,48 @@ defmodule EvoDashWeb.LayoutsTest do
       assert Floki.text(heading) =~ "Needs review"
       # … and "View all" is the way to the rest.
       assert [more] = Floki.find(tree, "#workbench-needs-review-more")
-      assert Floki.attribute(more, "href") == ["/tasks"]
+      assert Floki.attribute(more, "href") == ["/tasks?status=needs_review"]
       assert Floki.text(more) =~ "View all"
       # Nothing finished leaks into Active Tasks, and the live task is not
       # duplicated in the review section.
       assert sidebar_task_labels(html) == ["Live one"]
       assert review_task_links(html) == 5
+    end
+
+    test "a failed task is reviewable on its card but never a triage candidate" do
+      # `:failed` gets a `/review/<id>` ROUTE (card + history panel), but the
+      # "Needs review" bucket stays the store's composite predicate:
+      # `:completed` + nil `review_status` + a live branch. A failure must not
+      # occupy a triage slot.
+      html =
+        render_app(
+          pending_tasks: [
+            task(
+              id: "rev-1",
+              status: :completed,
+              project_path: "/home/user/proj",
+              objective: "Review one",
+              finished_at: ~U[2026-01-01 00:00:00Z]
+            ),
+            task(
+              id: "fail-1",
+              status: :failed,
+              project_path: "/home/user/proj",
+              objective: "Failed one",
+              finished_at: ~U[2026-01-02 00:00:00Z]
+            )
+          ]
+        )
+
+      tree = parse(html)
+
+      # Only the completed candidate is listed, with the honest count of 1.
+      assert review_task_labels(html) == ["Review one"]
+      assert [count] = Floki.find(tree, "#workbench-needs-review-count")
+      assert String.trim(Floki.text(count)) == "1"
+      assert Floki.find(tree, "#workbench-needs-review [href='/review/fail-1']") == []
+      # Nor does the failure leak into the LIVE task list.
+      assert Floki.find(tree, "#workbench-active-tasks [data-sidebar-task-link]") == []
     end
 
     test "it is its own sidebar section, directly after Active Tasks and outside every disclosure" do
@@ -831,7 +867,7 @@ defmodule EvoDashWeb.LayoutsTest do
       assert [review] = Floki.find(tree, "#workbench-needs-review [data-sidebar-task-link]")
       assert Floki.attribute(review, "href") == ["/review/rev-1?node=target-7"]
       assert [more] = Floki.find(tree, "#workbench-needs-review-more")
-      assert Floki.attribute(more, "href") == ["/tasks?node=target-7"]
+      assert Floki.attribute(more, "href") == ["/tasks?node=target-7&status=needs_review"]
     end
   end
 

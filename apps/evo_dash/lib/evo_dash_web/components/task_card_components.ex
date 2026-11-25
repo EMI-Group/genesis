@@ -1240,16 +1240,20 @@ defmodule EvoDashWeb.TaskCardComponents do
   defdelegate render_result_full(assigns), to: ResultRender
   defdelegate result_copy_text(result), to: ResultRender
 
-  # Review candidacy is deliberately RESULT-AGNOSTIC: EVERY completed/cancelled
-  # task is reviewable. A task may have made no changes in its PRIMARY repo but
-  # did change writable FOREIGN repos (multi-repo), so detecting a non-empty
-  # branch_name / `no_changes` here would hide legitimate review candidates.
+  # Review candidacy is deliberately RESULT-AGNOSTIC: EVERY finished task
+  # (`:completed`, `:cancelled` or `:failed`) is reviewable. A task may have made
+  # no changes in its PRIMARY repo but did change writable FOREIGN repos
+  # (multi-repo), so detecting a non-empty branch_name / `no_changes` here would
+  # hide legitimate review candidates. A failure is reviewable for the same
+  # reason the workbench history panel routes every finished task to
+  # `/review/<id>`: the review page renders the failure honestly (the branch and
+  # any salvaged changes are still there).
   # The only exclusion is `:reflect` (repo-less) tasks — no code to review.
   # `:type` is read defensively (`Map.get/2`) so summary maps without it stay
   # KeyError-safe.
-  defp show_review_button?(%{status: :completed} = task), do: Map.get(task, :type) != :reflect
-
-  defp show_review_button?(%{status: :cancelled} = task), do: Map.get(task, :type) != :reflect
+  defp show_review_button?(%{status: status} = task)
+       when status in [:completed, :cancelled, :failed],
+       do: Map.get(task, :type) != :reflect
 
   defp show_review_button?(_), do: false
 end
