@@ -15,10 +15,21 @@ The broader mounted ProjectsLive integration suite lives in the parent directory
 - `async_load_selection_test.exs` covers `AsyncLoad.handle_result/5` node/path/target/generation guards, the pending-remote `default_batch/6` early return, canonical bundle projection, late user-choice preservation, pending restore reconciliation and same-node stale-provider removal.
   A dropped/stale result now settles instead of returning silently: a socket holding no usable bundle records `:model_selection_superseded` / `:model_selection_pending_remote` with readiness false (never `ready? == false` with no error), a socket holding an applied, owned valid bundle keeps readiness with no error, and a result map lacking the `:model_selection` key lands its other keys while recording `:model_selection_missing`.
 
+- `inline_settings_test.exs` follows the rendered New task patch, checks mode-specific form controls and persistence, and exercises foreign-repository validation and add/edit/remove through the rendered inline Project Settings forms.
+- `shared_composer_test.exs` follows both rendered overview entry points, checks the task composer and its quality-control persistence event, and changes the Assistant form to prove the unsent project draft survives a remount without a session.
+
 ## Constraints
 
-Every module except `EvoDashWeb.ProjectsLive.ProjectFlowVctTest` uses `async: true` and requires no LiveView mounts or database fixtures.
-`ProjectFlowVctTest` is `async: false` because the `EvoGit.VCT` mount table is a BEAM-global singleton persisted on the run-wide test store; it never clears the table and only forgets the row it created.
+Tests default to `async: true`.
+`ProjectFlowVctTest` is synchronous because it writes the shared `EvoGit.VCT` mount table and only forgets its own fixture.
+`AssistantComposerTest` is synchronous because its connected Assistant mount writes `EvoDash.ChatHistory` and it seeds a VCT mount for draft scope.
+The manual composer and inline settings mounts select projects through the URL without changing VCT or launching a task.
+
+## Mounted coverage boundaries
+
+LiveViewTest drives server-rendered events but does not execute the browser's native `<details>` opening or the browser storage hooks.
+Tests exercise local-node controls; they do not assert remote inline settings behavior.
+The manual composer route renders duplicate `task-options` and `persist-agent-state-toggle` IDs from `TaskFormComponents` and `RemoteView.task_configuration/1`, so strict LiveView checks fail before the affected interactions can run.
 The canonical-selection suites use in-memory config maps and sockets, never app-env runner overrides, task launches, network calls or global state mutations.
 Canonical bundle fixtures call the public `Project.load_model_selection_from_config/2` API rather than mocking the core resolver.
 `ProjectTest` isolates configuration per process with `EvoDash.Test.ConfigDir.isolate!/1` and can inject local resolved configuration through `Process.put(:memo_config_resolve, config)`.
