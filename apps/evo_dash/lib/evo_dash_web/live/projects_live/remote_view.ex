@@ -91,7 +91,7 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
 
   def connecting_state(assigns) do
     ~H"""
-    <div class="flex-1 flex flex-col items-center justify-center gap-3 py-16 animate-fade-in-up">
+    <div class="flex-1 flex flex-col items-center justify-center gap-3 py-16">
       <span class="loading loading-spinner loading-lg text-info"></span>
       <p class="text-sm text-base-content/70">
         {gettext("Connecting to %{name}…", name: @current_node_name)}
@@ -111,7 +111,7 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
 
   def error_state(assigns) do
     ~H"""
-    <div class="flex-1 flex flex-col items-center justify-center gap-4 py-16 px-4 animate-fade-in-up">
+    <div class="flex-1 flex flex-col items-center justify-center gap-4 py-16 px-4">
       <div role="alert" class="alert alert-error max-w-xl w-full">
         <.icon name="hero-exclamation-triangle" class="size-5 shrink-0" />
         <div class="min-w-0">
