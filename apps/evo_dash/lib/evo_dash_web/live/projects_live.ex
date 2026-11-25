@@ -93,9 +93,9 @@ defmodule EvoDashWeb.ProjectsLive do
         ></iframe>
       </EvoDashWeb.Layouts.app>
     <% else %>
-      <% selecting_workbench_project? = get_in(@workbench_reconnect_params, ["wb_home"]) == "1" %>
+      <% empty_workbench? = @workbench_reconnect_params["wb_home"] == "1" %>
       <% remote_gate? = EvoDashWeb.RemoteGateComponents.gate_active?(assigns) %>
-      <% loading_project? = @remote_project_loading != nil and !selecting_workbench_project? %>
+      <% loading_project? = @remote_project_loading != nil and !empty_workbench? %>
       <% overview? = Overview.visible?(assigns) %>
       <% workspace_selected? = is_binary(assigns[:overview_workspace_point]) %>
       <% composing_task? =
@@ -117,7 +117,7 @@ defmodule EvoDashWeb.ProjectsLive do
             @active_project_path
         end %>
       <% workbench_project =
-        if selecting_workbench_project? and not workspace_selected?,
+        if empty_workbench? and not workspace_selected?,
           do:
             (@workbench_project_selection && @workbench_project_selection.path) ||
               @remote_project_loading || git_project,
@@ -737,6 +737,9 @@ defmodule EvoDashWeb.ProjectsLive do
             ~w(project wb_open wb_home wb_task wb_git_branch starting_commit resume_from)
           ),
         workbench_open_requested: params["wb_open"] == "1",
+        # Navigation supersedes an explicit remote open, including closing
+        # the last tab while the same project's activation is still in flight.
+        remote_project_open_requested: nil,
         workbench_idle?:
           params["wb_home"] == "1" or
             Enum.all?(~w(project starting_commit resume_from), &is_nil(params[&1])),
@@ -2055,7 +2058,7 @@ defmodule EvoDashWeb.ProjectsLive do
     end
   end
 
-  # Selecting an open project's empty workspace only needs its registered path.
+  # The closed-last-tab URL only needs its registered path to retain scope.
   # Task configuration is loaded when the user enters the task composer.
   defp select_remote_workbench_project(socket, requested_path, path) do
     target = socket.assigns.current_node
@@ -2805,11 +2808,13 @@ defmodule EvoDashWeb.ProjectsLive do
       true ->
         case result do
           {:ok, results} ->
+            overview_url = ProjectFlow.remote_open_overview_url(socket, path, results)
             project_changed? = Map.get(socket.assigns, :active_project_path) != path
 
             socket =
               socket
               |> assign(:remote_project_loading, nil)
+              |> assign(:remote_project_open_requested, nil)
               |> assign(:projects, results.projects)
               |> assign(:active_project, results.active_project)
               |> assign(:active_project_path, results.active_project_path)
@@ -2826,24 +2831,32 @@ defmodule EvoDashWeb.ProjectsLive do
               |> maybe_reset_github_state(project_changed?)
               |> GitHub.maybe_check()
 
-            params = socket.assigns.workbench_reconnect_params
+            same_project_url? = socket.assigns.workbench_reconnect_params["project"] == path
 
-            if params["project"] == path do
-              # An absolute project URL already addresses this activation. In
-              # particular don't patch away resume/starting-commit intent or
-              # create a duplicate browser-history entry for the same project.
-              {:noreply,
-               socket
-               |> AsyncLoad.maybe_spawn(socket.assigns.current_node_id)
-               |> Overview.maybe_spawn()}
-            else
-              {:noreply, push_patch(socket, to: project_url(socket, path))}
+            # A same-path patch does not trigger handle_params' project batch.
+            socket =
+              if same_project_url?,
+                do: AsyncLoad.maybe_spawn(socket, socket.assigns.current_node_id),
+                else: socket
+
+            cond do
+              overview_url ->
+                {:noreply, push_patch(socket, to: overview_url)}
+
+              same_project_url? ->
+                # URL-driven activation preserves the existing view intent
+                # without adding a duplicate browser-history entry.
+                {:noreply, Overview.maybe_spawn(socket)}
+
+              true ->
+                {:noreply, push_patch(socket, to: project_url(socket, path))}
             end
 
           {:error, :not_a_directory} ->
             socket =
               socket
               |> assign(:remote_project_loading, nil)
+              |> assign(:remote_project_open_requested, nil)
               |> put_flash(
                 :error,
                 gettext("Directory does not exist on the remote node: %{path}", path: path)
@@ -3020,10 +3033,9 @@ defmodule EvoDashWeb.ProjectsLive do
   defp overview_workspace_point("vct:///workspaces/" <> _ = point), do: point
   defp overview_workspace_point(_project), do: nil
 
-  # Builds the dashboard URL for a project path. In a remote context the
-  # `&node=` param is appended so the node context survives the push_patch —
-  # NOTE: deliberately NOT `EvoDashWeb.Helpers.with_node_param/2`, which
-  # appends with `?` and would corrupt the existing `?project=` query.
+  # Normalizes a URL-driven remote activation to its resolved project path,
+  # preserving empty-workbench and compose intent. Explicit opens use the
+  # ordinary overview URL instead.
   defp project_url(socket, path) do
     params = socket.assigns.workbench_reconnect_params
 
