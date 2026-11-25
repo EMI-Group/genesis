@@ -1490,19 +1490,19 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "can open project via palette and form submission", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/projects")
+      # An explicit starting project prevents VCT auto-activation from resetting the palette.
+      initial_path = Path.join(tmp_dir, "initial")
+      File.mkdir!(initial_path)
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: initial_path, wb_open: "1"}}")
 
-      # Open the palette and switch to open-path mode
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
+      view |> element("#project-omnibox button[phx-value-mode=open_path]") |> render_click()
 
-      # Submit the form with a path
       view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      |> form("#palette-body-open_path form[phx-submit=open_project]", path: tmp_dir)
+      |> render_submit()
 
-      # The activation lands on the project overview; step into the composer
-      # (the surface this test pins) exactly as a user does.
+      assert_patch(view, ~p"/projects?#{%{project: tmp_dir}}")
+
       enter_composer(view)
 
       assert has_element?(view, "#task-form #task-launch-button")
