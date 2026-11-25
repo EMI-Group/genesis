@@ -20,6 +20,14 @@ defmodule EvoDashWeb.ComposerComponents do
 
   attr(:class, :any, default: nil)
   attr(:rest, :global)
+  attr(:editor_tag, :string, default: "div", values: ["div", "form"])
+  attr(:editor_class, :any, default: nil)
+
+  attr(:editor_attrs, :map,
+    default: %{},
+    doc: "Additional editor attributes; pass class through editor_class."
+  )
+
   attr(:toolbar_id, :string, default: nil)
   attr(:toolbar_class, :any, default: nil)
 
@@ -39,7 +47,13 @@ defmodule EvoDashWeb.ComposerComponents do
   def composer_surface(assigns) do
     ~H"""
     <div class={["workbench-composer-surface", @class]} {@rest}>
-      <div class="workbench-composer-editor">{render_slot(@editor)}</div>
+      <.dynamic_tag
+        tag_name={@editor_tag}
+        class={["workbench-composer-editor", @editor_class]}
+        {@editor_attrs}
+      >
+        {render_slot(@editor)}
+      </.dynamic_tag>
       {render_slot(@before_toolbar)}
       <div
         :if={@toolbar != []}
