@@ -6,12 +6,14 @@ Support-module regression tests mirror `apps/evo_dash/lib/evo_dash_web/live/agen
 Pure reducer suites are async and require no page mounts or shared state mutations.
 `stream_watch_test.exs` is also async, using hand-built Phoenix sockets, unique consumer-local PubSub topics and a worker-command capture boundary without mutating global runner seams.
 `load_data_model_label_test.exs` is synchronous because it replaces the global `:agents_list_runner` seam used by the async page suite.
-Stateful AgentsLive page integration tests live in `../agents_live_test.exs` (parent directory, owned elsewhere).
+Most stateful AgentsLive page integration tests live in `../agents_live_test.exs` (parent directory, owned elsewhere).
+`task_navigation_test.exs` mounts the real `/agents` page synchronously because its scheduler read-model fixtures and the async parent suite's globally overridden list runner cannot coexist.
 
 ## Routing Table
 
 - `runtime_stream_test.exs` → pure reducer initialization, call identity, transition and retention contracts.
 - `stream_watch_test.exs` → async transport, atomic snapshot barrier and worker-command boundary contracts.
+- `task_navigation_test.exs` → mounted task filtering on one project, unscoped Agents, pending tasks without agents, and task identity plus exact URLs across local/pending-node switches.
 - `../agents_stream_integration_test.exs`, `../agents_stream_render_test.exs` and `../agents_stream_watch_lifecycle_test.exs` → mounted/render/actual-worker coverage (siblings — read-only, escalate writes to parent).
 
 ## API Surface
