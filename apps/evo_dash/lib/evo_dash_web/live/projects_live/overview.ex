@@ -35,9 +35,9 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
       (`/assistant?wb_project=…&wb_draft=…[&node=…]`): `wb_project` is the OS
       path for a project and the WORKSPACE POINT for a workspace (a member path
       is never silently substituted — the assistant resolves the group itself).
-    * `default_draft_path/1` advertises that same URL for a confirmed explicit
-      overview or a confirmed recent local fallback. The browser decides whether
-      its restored tab rail is empty.
+    * `default_draft_path/1` advertises that same URL only for a confirmed
+      explicit overview. The browser decides whether its restored tab rail is
+      empty.
     * `draft_id/0` mints the 24-lowercase-hex workbench draft id `HomeLive`
       requires (`byte_size(draft) == 24`).
     * `load/2` reads BOTH halves of the async payload off-process —
@@ -361,23 +361,21 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
 
   @doc """
   The same already-minted Assistant draft URL as the overview link, or nil
-  until selection is confirmed. Accepts a visible, explicitly selected project
-  or workspace, or a recent local project confirmed by an
-  `:overview_recent_project_path` stamp on a route with no project param.
-
-  The stamp is the absolute path of the mount activated by the recent-project
-  fallback after checking the directory exists. It is not set by explicit
-  selection or by browser draft restoration. The recent fallback may leave
-  the workbench idle; it does not change overview visibility.
+  until selection is confirmed. Requires a visible overview with an explicit
+  project or workspace URL selection. Implicit recent-project activation does
+  not offer a default draft.
 
   Confirmation uses the loaded VCT registry, never Git state or extra I/O.
   Whether to open the draft depends on the browser's restored tab rail.
   """
   @spec default_draft_path(map()) :: String.t() | nil
   def default_draft_path(
-        %{workbench_reconnect_params: %{} = params, overview_draft_id: draft} = assigns
+        %{
+          workbench_reconnect_params: %{"project" => selected} = params,
+          overview_draft_id: draft
+        } = assigns
       ) do
-    with true <- present?(draft) and overview_available?(assigns),
+    with true <- present?(selected) and present?(draft) and visible?(assigns),
          false <- ModelSelectionScope.pending_remote?(assigns),
          nil <- assigns[:remote_project_loading],
          nil <- assigns[:workbench_project_selection],
@@ -391,7 +389,7 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
            ),
          %{exec_path: path} = selection <- scope(assigns),
          true <- ProjectFlow.absolute_path_for_node?(assigns[:current_node] || node(), path),
-         true <- confirmed_draft_selection?(selection, params, assigns) do
+         true <- confirmed_selection?(selection, selected, assigns) do
       assistant_path(assigns, selection)
     else
       _ -> nil
@@ -399,18 +397,6 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
   end
 
   def default_draft_path(_assigns), do: nil
-
-  defp confirmed_draft_selection?(selection, %{"project" => selected}, assigns) do
-    present?(selected) and not idle?(assigns) and
-      confirmed_selection?(selection, selected, assigns)
-  end
-
-  defp confirmed_draft_selection?(%{kind: :project} = selection, _params, assigns) do
-    ModelSelectionScope.current(assigns) == {nil, node()} and
-      confirmed_selection?(selection, assigns[:overview_recent_project_path], assigns)
-  end
-
-  defp confirmed_draft_selection?(_selection, _params, _assigns), do: false
 
   defp confirmed_selection?(%{kind: :workspace, point: point}, point, _assigns), do: true
 
