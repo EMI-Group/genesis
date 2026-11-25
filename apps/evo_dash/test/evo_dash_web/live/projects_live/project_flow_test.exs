@@ -626,22 +626,13 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
     end
   end
 
-  # Installs a fake for the `:evo_dash, :remote_path_expand_runner` app-env seam
-  # (read at CALL time by `normalize_remote_project_path/2`) and restores the
-  # previous value in on_exit. The seam receives `(node, path)` and must return
-  # `{:ok, binary}` for its result to be used.
+  # Installs a fake for the `:remote_path_expand_runner` seam (resolved at CALL
+  # time by `normalize_remote_project_path/2` through the chain-scoped
+  # `EvoDash.Seam.get/2`), so the override reaches this test's own socket and
+  # reaches no other test's page. The seam receives `(node, path)` and must
+  # return `{:ok, binary}` for its result to be used.
   defp install_expand_runner(fun) do
-    original = Application.get_env(:evo_dash, :remote_path_expand_runner)
-
-    on_exit(fn ->
-      if is_nil(original) do
-        Application.delete_env(:evo_dash, :remote_path_expand_runner)
-      else
-        Application.put_env(:evo_dash, :remote_path_expand_runner, original)
-      end
-    end)
-
-    Application.put_env(:evo_dash, :remote_path_expand_runner, fun)
+    EvoDash.Test.Seam.put(:remote_path_expand_runner, fun)
   end
 end
 

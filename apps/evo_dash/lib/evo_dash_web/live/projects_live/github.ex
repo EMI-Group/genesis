@@ -49,7 +49,7 @@ defmodule EvoDashWeb.ProjectsLive.GitHub do
 
     if connected?(socket) and usable_node?(socket) and is_binary(path) and
          mode != "genesis_new" and is_nil(status) do
-      runner = Application.get_env(:evo_dash, :github_runner) || (&NodeContext.github_upstream/2)
+      runner = EvoDash.Seam.get(:github_runner) || (&NodeContext.github_upstream/2)
 
       socket
       |> assign(:github_status, %{state: :checking, owner: nil, repo: nil})
@@ -146,7 +146,7 @@ defmodule EvoDashWeb.ProjectsLive.GitHub do
          true <- open? and usable_node?(socket) and is_binary(path),
          false <- socket.assigns[:github_fixing] == issue_number do
       runner =
-        Application.get_env(:evo_dash, :github_issue_markdown_runner) ||
+        EvoDash.Seam.get(:github_issue_markdown_runner) ||
           (&NodeContext.github_issue_markdown/3)
 
       socket
@@ -227,7 +227,7 @@ defmodule EvoDashWeb.ProjectsLive.GitHub do
 
   defp fetch_issues(socket, path, current_node, state) do
     runner =
-      Application.get_env(:evo_dash, :github_issues_runner) ||
+      EvoDash.Seam.get(:github_issues_runner) ||
         (&NodeContext.list_github_issues/3)
 
     socket

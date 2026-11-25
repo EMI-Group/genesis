@@ -679,20 +679,13 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   # Called per-test/per-helper at the EXPOSED activation sites only (the
   # GitHub-issue-integration describe stubs its own seams via
   # put_github_seams/1 and must not be clobbered; an empty tmp_dir
-  # auto-detects genesis_new, which never checks). Conflict-free: nothing
-  # else in this file reads :github_runner, the assertion surface is
-  # unchanged (an :error status renders no GitHub UI), and no other suite in
-  # the tree touches the key (it is this file family's own seam), so the
-  # global stub cannot race a peer.
+  # auto-detects genesis_new, which never checks). Conflict-free: the stub goes
+  # through `EvoDash.Test.Seam.put/2`, so it is resolved by THIS test's page and
+  # load tasks only — a concurrently mounted page owns its own seam resolution
+  # and the assertion surface is unchanged either way (an :error status renders
+  # no GitHub UI).
   def stub_github_upstream_check! do
-    Application.put_env(:evo_dash, :github_runner, fn _node, _path ->
-      {:error, :no_github_upstream}
-    end)
-
-    on_exit(fn ->
-      Application.delete_env(:evo_dash, :github_runner)
-    end)
-
+    EvoDash.Test.Seam.put(:github_runner, fn _node, _path -> {:error, :no_github_upstream} end)
     :ok
   end
 
@@ -782,11 +775,7 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   # `EvoDash.SafeCall.run/1`, so a fun that exits/raises sends NO result
   # message at all and the page keeps the defaults `mount/3` seeded.
   def install_projects_async_load_runner(fun) do
-    Application.put_env(:evo_dash, :projects_async_load_runner, fun)
-
-    on_exit(fn ->
-      Application.delete_env(:evo_dash, :projects_async_load_runner)
-    end)
+    EvoDash.Test.Seam.put(:projects_async_load_runner, fun)
   end
 
   # `install_projects_async_load_runner/1` PLUS a per-spawn report to the test
@@ -795,10 +784,11 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   # effects. `batch_fun` is the 0-arity batch body, resolved (and run) inside
   # the supervised task like the real loader.
   #
-  # The report carries the child's `$callers` because the seam is BEAM-global:
-  # another concurrently running async module's mounted page invokes it too, so
-  # a caller-aware wait (`await_view_batch/2`) is what attributes a spawn to the
-  # page under test.
+  # The report carries the child's `$callers` because a page can spawn several
+  # batches (Retry, a config broadcast, a node switch): the caller chain is what
+  # attributes a spawn to the page under test (`await_view_batch/2`). The seam
+  # itself is chain-scoped (`EvoDash.Test.Seam.put/2`), so a concurrently
+  # mounted page of another module never runs this fun at all.
   def install_reporting_async_load_runner(batch_fun) when is_function(batch_fun, 0) do
     test_pid = self()
 
@@ -908,17 +898,7 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
       end
     }
 
-    for {key, runner} <- runners do
-      previous = Application.fetch_env(:evo_dash, key)
-      Application.put_env(:evo_dash, key, runner)
-
-      on_exit(fn ->
-        case previous do
-          {:ok, value} -> Application.put_env(:evo_dash, key, value)
-          :error -> Application.delete_env(:evo_dash, key)
-        end
-      end)
-    end
+    EvoDash.Test.Seam.put_all(runners)
 
     {id, remote_node}
   end
@@ -1173,17 +1153,7 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
     ]
 
     seams = Keyword.merge(defaults, overrides)
-
-    for {key, value} <- seams do
-      Application.put_env(:evo_dash, key, value)
-    end
-
-    on_exit(fn ->
-      for {key, _value} <- seams do
-        Application.delete_env(:evo_dash, key)
-      end
-    end)
-
+    EvoDash.Test.Seam.put_all(seams)
     :ok
   end
 
@@ -1365,9 +1335,15 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # (the frozen `EvoGit.TaskRegistry` probes, the real task launches whose
   # `{:task_updated, ...}` broadcast arms every mounted page's NodeAware
   # debounce, the run-wide-store `clear_task_history` sweep, the `/help` mount
-  # that writes the process-wide `EvoDash.ChatHistory`, and the app-env keys
-  # shared with `directory_picker_test` / `project_flow_test`) live in
-  # `EvoDashWeb.ProjectsLiveSyncTest` below. The per-test `ActiveTasks` clear is
+  # that writes the process-wide `EvoDash.ChatHistory`, and the `:directory_picker`
+  # config shared with `directory_picker_test`) live in
+  # `EvoDashWeb.ProjectsLiveSyncTest` below. Every RUNNER seam of this family
+  # (`:projects_async_load_runner`, `:projects_overview_runner`,
+  # `:remote_project_load_runner`, `:remote_resume_task_runner`,
+  # `:remote_path_expand_runner`, `:github_*_runner`) is installed through
+  # `EvoDash.Test.Seam.put/2` and resolved by `EvoDash.Seam.get/2` on the CALLER's
+  # spawn chain, so a fixture reaches this test's own page and load tasks only and
+  # is never a shared BEAM-global. The per-test `ActiveTasks` clear is
   # node-scoped (`invalidate(nil, node())`), so it can only touch the LOCAL
   # `{nil, node()}` context — the same async-safe contract `EvoDashWeb.ConnCase`
   # uses.
@@ -6349,6 +6325,36 @@ defmodule EvoDashWeb.ProjectsLiveOverviewTest do
     end
   end
 
+  describe "remote URL-driven project activation — tilde expansion" do
+    test "remote ?project= tilde path expands via the remote seam, never the local HOME", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      remote_home = "/remote/home/#{Path.basename(tmp_dir)}/remote-proj"
+      {id, remote_node} = install_remote_activation_fixture!(remote_home)
+      test_pid = self()
+
+      # Resolved at CALL time (dead-render normalization AND activation) through
+      # the chain-scoped `EvoDash.Seam.get/2`, so the fake reaches this test's
+      # own page and supervised task only. Match the target identity and input
+      # exactly: no local HOME fallback.
+      EvoDash.Test.Seam.put(:remote_path_expand_runner, fn ^remote_node, "~/remote-proj" ->
+        send(test_pid, {:remote_path_expanded, remote_node, "~/remote-proj"})
+        {:ok, remote_home}
+      end)
+
+      {:ok, view, _html} =
+        live(conn, "/projects?project=" <> URI.encode("~/remote-proj") <> "&node=" <> id)
+
+      assert_remote_activation_loaded(view, id, remote_node, remote_home)
+
+      assert_receive {:remote_path_expanded, ^remote_node, "~/remote-proj"},
+                     async_wait_budget()
+
+      assert assigns(view)[:active_project_path] == remote_home
+    end
+  end
+
   describe "remote (viewed) node" do
     test "renders the overview in the remote context and never in the composer",
          %{conn: conn, tmp_dir: tmp_dir} do
@@ -6380,9 +6386,10 @@ defmodule EvoDashWeb.ProjectsLiveOverviewTest do
     test "shows a project task with an honest status", %{conn: conn, tmp_dir: tmp_dir} do
       path = repo!(Path.join(tmp_dir, "overview-activity"))
 
-      # Path-SCOPED: the seam is app-env (process-wide), and a concurrently
-      # running module that renders this project's overview must never inherit
-      # this test's fake row — every other path answers an EMPTY payload.
+      # Path-guarded: the fixture answers the row only for THIS project's path,
+      # so a re-read after an in-page selection change still sees an empty
+      # payload. The seam itself is chain-scoped (`EvoDash.Test.Seam.put/2`), so
+      # no other module's page runs this fun at all.
       install_overview_runner(fn _node, candidate ->
         if candidate == path do
           %{
@@ -6522,17 +6529,7 @@ defmodule EvoDashWeb.ProjectsLiveOverviewTest do
   end
 
   defp install_overview_runner(fun) do
-    previous = Application.get_env(:evo_dash, :projects_overview_runner)
-    Application.put_env(:evo_dash, :projects_overview_runner, fun)
-
-    on_exit(fn ->
-      if previous do
-        Application.put_env(:evo_dash, :projects_overview_runner, previous)
-      else
-        Application.delete_env(:evo_dash, :projects_overview_runner)
-      end
-    end)
-
+    EvoDash.Test.Seam.put(:projects_overview_runner, fun)
     :ok
   end
 
@@ -6628,8 +6625,6 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
   #   * `:directory_picker` (`enabled`) — `test/evo_dash/directory_picker_test.exs`
   #     is `async: true` and flips it to `enabled: true` for its own module; a
   #     concurrent `enabled: false` here (or a real pick there) is the conflict.
-  #   * `:remote_path_expand_runner` — `projects_live/project_flow_test.exs` is
-  #     `async: true` and stubs the same key.
   #   * mounting the Assistant page (`/assistant`, reached from the legacy
   #     `/help` alias via a 302) — a connected `EvoDash.HomeLive` mount calls
   #     `EvoDash.ChatHistory.current_chat_id() || new_chat()` + `put_state`,
@@ -6637,10 +6632,11 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
   #     `async: true` `EvoDash.ChatHistoryTest` asserts exact GLOBAL contents
   #     (`list_chats()`, `current_chat_id()`).
   #
-  # The `:github_runner` / `:github_issues_runner` /
+  # The runner seams (`:github_runner` / `:github_issues_runner` /
   # `:github_issue_markdown_runner` / `:projects_async_load_runner` /
-  # `:directory_picker_module` seams are unique to this file family and ride the
-  # async module.
+  # `:projects_overview_runner` / `:remote_*_runner`) are chain-scoped, so they
+  # ride the async module; only the singleton-consumed `:directory_picker` /
+  # `:directory_picker_module` config stays global.
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
   import EvoDashWeb.ProjectsLiveTest.Helpers
@@ -7174,44 +7170,6 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       task = EvoGit.TaskRegistry.get_task(cleanup_launched_task(html))
       assert has_persistent_state_opt?(task)
       assert persistent_state_opt(task) == false
-    end
-  end
-
-  describe "remote URL-driven project activation" do
-    test "remote ?project= tilde path expands via the remote seam, never the local HOME", %{
-      conn: conn,
-      tmp_dir: tmp_dir
-    } do
-      remote_home = "/remote/home/#{Path.basename(tmp_dir)}/remote-proj"
-      {id, remote_node} = install_remote_activation_fixture!(remote_home)
-      test_pid = self()
-
-      # Read at call time in both dead-render normalization and activation.
-      # Match the target identity and input exactly: no local HOME fallback.
-      previous = Application.fetch_env(:evo_dash, :remote_path_expand_runner)
-
-      Application.put_env(:evo_dash, :remote_path_expand_runner, fn ^remote_node,
-                                                                    "~/remote-proj" ->
-        send(test_pid, {:remote_path_expanded, remote_node, "~/remote-proj"})
-        {:ok, remote_home}
-      end)
-
-      on_exit(fn ->
-        case previous do
-          {:ok, value} -> Application.put_env(:evo_dash, :remote_path_expand_runner, value)
-          :error -> Application.delete_env(:evo_dash, :remote_path_expand_runner)
-        end
-      end)
-
-      {:ok, view, _html} =
-        live(conn, "/projects?project=" <> URI.encode("~/remote-proj") <> "&node=" <> id)
-
-      assert_remote_activation_loaded(view, id, remote_node, remote_home)
-
-      assert_receive {:remote_path_expanded, ^remote_node, "~/remote-proj"},
-                     async_wait_budget()
-
-      assert assigns(view)[:active_project_path] == remote_home
     end
   end
 

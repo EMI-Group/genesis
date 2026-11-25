@@ -115,10 +115,10 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   - genuinely tilde-expandable (`~`, `~/...`, `~\\...` — same
     `expandable_tilde?/1` predicate as the local path) → expanded on the
     REMOTE node via the node-aware RPC so the remote user's home is used, not
-    the dashboard user's. The expander is injectable via
-    `Application.get_env(:evo_dash, :remote_path_expand_runner)` (test seam,
-    same pattern as `:merge_check_runner`); RPC failure or a non-binary
-    result falls back to the raw input
+    the dashboard user's. The expander is injectable via the
+    `:remote_path_expand_runner` seam (test seam, chain-scoped through
+    `EvoDash.Seam.get/2`, same pattern as `:merge_check_runner`); RPC failure
+    or a non-binary result falls back to the raw input
   - anything else → `{:error, :relative}`
   """
   @spec normalize_remote_project_path(node(), String.t()) ::
@@ -133,11 +133,11 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
       expandable_tilde?(trimmed) ->
         # Tilde expansion is cwd-independent but HOME-dependent: expand on the
         # remote node so the remote user's home resolves correctly. The runner
-        # is read from app env at call time so tests can inject a fake without
-        # a connected node; any failure degrades to the raw input.
+        # is resolved at CALL time through the chain-scoped `EvoDash.Seam.get/2`
+        # so tests can inject a fake without a connected node and without
+        # reaching another test's page; any failure degrades to the raw input.
         expand_runner =
-          Application.get_env(:evo_dash, :remote_path_expand_runner) ||
-            (&default_remote_path_expand/2)
+          EvoDash.Seam.get(:remote_path_expand_runner) || (&default_remote_path_expand/2)
 
         case expand_runner.(node, trimmed) do
           {:ok, expanded} when is_binary(expanded) -> {:ok, expanded}
@@ -545,8 +545,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
       view_pid = self()
 
       Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-        load_runner =
-          Application.get_env(:evo_dash, :remote_project_load_runner, &remote_project_load/2)
+        load_runner = EvoDash.Seam.get(:remote_project_load_runner, &remote_project_load/2)
 
         result =
           case load_runner.(node, expanded) do
@@ -661,7 +660,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   defp task_foreign_repos_for_resume(node, resume_task_id) do
     if is_binary(resume_task_id) and resume_task_id != "" do
       task_runner =
-        Application.get_env(:evo_dash, :remote_resume_task_runner, &NodeContext.get_task_lite/2)
+        EvoDash.Seam.get(:remote_resume_task_runner, &NodeContext.get_task_lite/2)
 
       case task_runner.(node, resume_task_id) do
         nil ->

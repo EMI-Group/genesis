@@ -362,12 +362,12 @@ defmodule EvoDash.Test.ConfigDirMountedTest do
   Projects page's supervised canonical selection load, not just the test pid.
   """
 
-  # The async ProjectsLiveTest replaces the process-global
-  # :evo_dash, :projects_async_load_runner with its own gated/empty picker
-  # fixture. This proof must exercise the DEFAULT loader, not that foreign
-  # fixture, so only the positive mounted test runs after the async cohort.
-  # Per-process config isolation itself remains async-safe (proved above).
-  use EvoDashWeb.ConnCase, async: false
+  # `async: true` — this proof exercises the DEFAULT Projects batch, and a
+  # runner seam a concurrently running module installs cannot reach it:
+  # `:projects_async_load_runner` resolves through `EvoDash.Seam.get/2` on the
+  # caller's spawn chain, so only a page descended from that other test sees its
+  # fixture. Config-directory isolation is per process for the same reason.
+  use EvoDashWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
 
@@ -378,8 +378,9 @@ defmodule EvoDash.Test.ConfigDirMountedTest do
 
   test "the mounted LiveView resolves the per-process config dir",
        %{conn: conn, config_dir: config_dir, probe_provider_id: probe_provider_id} do
-    # Pin fixture ownership: the mounted proof must use the production batch,
-    # never a runner installed by a different test module.
+    # Pin fixture ownership: the mounted proof uses the production batch. No
+    # runner is installed in app env at all (a test's runner override is
+    # chain-scoped), so a foreign fixture cannot reach this page.
     assert Application.fetch_env(:evo_dash, :projects_async_load_runner) == :error
 
     # Level 1: the TEST process resolves the activated override.

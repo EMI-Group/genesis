@@ -26,6 +26,7 @@ One entry per source file/dir; the API Surface section below states each module'
 - `./markdown_render.ex` → `EvoDash.MarkdownRender`
 - `./settings_utils.ex` → `EvoDash.SettingsUtils`
 - `./safe_call.ex` → `EvoDash.SafeCall`
+- `./seam.ex` → `EvoDash.Seam`
 - `./source_status.ex` → `EvoDash.SourceStatus`
 - `./connection_diagnostics.ex` → `EvoDash.ConnectionDiagnostics`
 - `./mcp/` → `EvoDash.MCP.Server`/`EvoDash.MCP.Tools`/`EvoDash.MCP.Auth`/`EvoDash.MCP.Links`
@@ -139,6 +140,12 @@ Routing compares the supplied node atom with `node()`: local → guarded `EvoGit
 The local guard catches exits and missing modules only, so a local responder exception can still raise; the remote branch catches every exception/exit/throw into an error tuple. `restart_remote/1`/`stop_remote/1` discard the RPC result and return `:ok`, so their success value cannot prove delivery.
 Data wrappers (`list_agents/1`, `get_agent_history/2`, `paused?/1`, task lists) document empty/false fallbacks that conflate unavailable with genuinely empty; `get_resolved_config/1` and `get_recent_system_samples/1` preserve explicit envelopes and are preferable when a consumer must tell the two apart.
 
+### `EvoDash.Seam` (`seam.ex`)
+The ONE resolver for every injectable `:evo_dash` seam, so an override can be scoped to a test's own process tree instead of the whole BEAM.
+`get/2` `(key, default)` resolves in order: this process' dictionary entry, the same key on the `:"$callers"` chain, the same key on the `:"$ancestors"` chain (both walked through `Process.info(pid, {:dictionary, key})`, local pids only, cycle-safe and bounded), then `Application.get_env(:evo_dash, key, default)`.
+It is TOTAL and cheap — no raising, no logging, a dead/unreadable/remote chain entry is skipped — and DEFAULT-INERT: production writes nothing, so every call site behaves exactly like a direct `Application.get_env/3` read.
+A call site whose consumer is a singleton started at BOOT (not descended from any test) keeps reading app env: today that is `EvoDash.DirectoryPicker`'s `:directory_picker_module` / `:directory_picker` config, which tests must still serialize.
+The Projects runner seams cross it at SPAWN/CALL time, and `EvoDash.Test.Seam.put/2` is the test-side installer (per-process dictionary only, never app env).
 ### `EvoDash.SafeCall` (`safe_call.ex`)
 
 The ONE exit-safe boundary for store/registry/cross-node (`EvoDash.NodeContext`) calls from a LiveView or a supervised loader task: a `GenServer.call` timeout or dead target EXITS its caller (`rescue` cannot catch it), and a loader dying before it replies would wedge a `loading` flag forever.

@@ -30,13 +30,15 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   own `{:workspaces_loaded, seq, node, result}` message (monotonic
   `workspaces_seq` + node guard), so they never ride the picker batch.
 
-  The batch BODY is resolved from the `:projects_async_load_runner` app-env
-  seam AT SPAWN TIME (a 0-arity fun; default
+  The batch BODY is resolved from the `:projects_async_load_runner` seam AT
+  SPAWN TIME through `EvoDash.Seam.get/2` (a 0-arity fun; default
   `fn -> default_batch(node, remote?, current_node_id, path, seed_terminal_ids?,
   auto_activate?) end`) and runs inside `EvoDash.SafeCall.run/1`, so an injected
   batch that exits/raises (e.g. `fn -> exit(:boom) end`) cannot crash anything.
   Failure is reported through the same scoped message and invalidates picker
   readiness without reconciling or persisting the selected/pending choice.
+  Because the seam is chain-scoped, an override installed by one test never
+  reaches a page mounted by another.
   """
 
   alias EvoGit.Platform
@@ -108,7 +110,7 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
       # Resolved at spawn time so runner failures use the same scoped delivery
       # path as production store/RPC failures.
       runner =
-        Application.get_env(:evo_dash, :projects_async_load_runner, fn ->
+        EvoDash.Seam.get(:projects_async_load_runner, fn ->
           default_batch(
             node,
             remote?,

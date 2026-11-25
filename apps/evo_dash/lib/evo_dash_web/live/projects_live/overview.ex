@@ -43,9 +43,8 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
     * `load/2` reads BOTH halves of the async payload off-process —
       `%{git: <snapshot | nil>, tasks: [summary map]}` — each wrapped in
       `EvoDash.SafeCall.run/1` so one failing half never takes the other down.
-      It is also the DEFAULT body of the `:projects_overview_runner` app-env
-      seam (`Application.get_env(:evo_dash, :projects_overview_runner)`,
-      resolved at SPAWN time).
+      It is also the DEFAULT body of the `:projects_overview_runner` seam
+      (`EvoDash.Seam.get/2`, chain-scoped, resolved at SPAWN time).
     * `maybe_spawn/1` starts that read in `EvoDash.TaskSupervisor` through
       `EvoDash.SafeCall.start/4` with the tag
       `{:overview_loaded, seq, node, path}` — the message therefore arrives
@@ -527,9 +526,11 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
 
   defp load_key(_assigns, _path), do: nil
 
-  # The runner seam is resolved AT SPAWN TIME so a test can stub the read.
+  # The runner seam is resolved AT SPAWN TIME through the chain-scoped
+  # `EvoDash.Seam.get/2`, so a test can stub the read without reaching another
+  # test's page.
   defp runner do
-    case Application.get_env(:evo_dash, @runner_seam) do
+    case EvoDash.Seam.get(@runner_seam) do
       fun when is_function(fun, 2) -> fun
       _ -> &load/2
     end
