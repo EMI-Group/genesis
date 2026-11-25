@@ -46,10 +46,10 @@ defmodule EvoDashWeb.TaskFormComponents do
   persistence is purely client-side (the StatePersistence input watcher in
   app.js).
 
-  Routine task options and the optional advanced disclosure sit below the
-  editor, associated with `task-form`. A page that renders its own Task Options
-  section sets `show_options={false}` and renders `task_options_tab/1` there
-  instead. Project settings belong to the page.
+  The labelled Task Options section sits below the editor, with its fields
+  associated with `task-form`. A page that places the section separately sets
+  `show_options={false}` and renders `task_options_tab/1` once instead. Project
+  settings belong to the page.
 
   Passing `provider_profiles`, `model_selections`, or a non-empty `model_spec`
   moves the shared `LLMSelectionComponents.llm_selection/1` capsule INSIDE the
