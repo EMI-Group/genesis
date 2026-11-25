@@ -6458,17 +6458,6 @@ defmodule EvoDashWeb.ProjectsLiveOverviewTest do
 
   defp unique(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"
 
-  # Mounts `path` under a per-test-unique name and forgets that point on exit —
-  # the mount table is store-backed and run-wide, so mounts outlive the test.
-  defp seed_project!(tmp_dir, basename) do
-    path = Path.join(tmp_dir, basename)
-    File.mkdir_p!(path)
-
-    assert {:ok, mount} = VCT.mount(path, name: basename)
-    on_exit(fn -> forget_quietly(mount.point) end)
-    mount
-  end
-
   # A workspace MEMBER mounted at a RESERVED point (`vct:///<name>` — outside
   # both `vct:///projects/…` and `vct:///workspaces/…`).
   # Members must NOT be PROJECT mounts here: the VCT table is store-backed and
