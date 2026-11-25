@@ -19,7 +19,7 @@ The body carries EXACTLY one identity field: `prompt_cache_key`, set from `provi
 The SAME identity is sent as the `session-id` request header, which falls back to the resolved cache key when only `prompt_cache_key` is present, so body and header always agree for one agent run.
 `thread-id` and `x-client-request-id` are emitted ONLY when `provider_options[:thread_id]` is supplied; Genesis never invents a request or thread id.
 The request carries the SIWC usage-attribution headers `originator: <app name>` and `user-agent: <app name>/<version>`.
-The app name has ONE source, `EvoGit.Auth.CHATGPT.agent_name/0`, which is also the `agent_name_hint` sent at registration, so hint and header cannot drift.
+The app name has ONE source, `EvoGit.Auth.ChatGPT.agent_name/0`, which is also the `agent_name_hint` sent at registration, so hint and header cannot drift.
 They ride every inference request because ChatGPT's plan usage surface buckets a request without them as the surface `unknown`.
 The only other headers are `authorization: Bearer <token>`, `content-type: application/json` and `accept: text/event-stream`.
 The Codex `backend-api` headers (`chatgpt-account-id`, `openai-beta`) are omitted on purpose: the SIWC plan flow uses the public Responses endpoint, and OpenAI's token-sharing docs forbid pointing that flow at `backend-api`.
