@@ -27,6 +27,16 @@
 }
 
 .workbench-center { flex-direction: column; }
+
+/* The tab rail and page stack share a center column. Inherit one fill on
+   New Task, but use the normal canvas as long as a Git diff covers the draft. */
+.workbench-center:has(> .workbench-content-stack > #main-scroll #workbench-task-composer):not(:has(#workbench-git-diff)) {
+  --workbench-canvas: color-mix(in oklab, var(--surface-canvas) 45%, var(--surface-shell));
+}
+[data-theme="dark"] .workbench-center:has(> .workbench-content-stack > #main-scroll #workbench-task-composer):not(:has(#workbench-git-diff)) {
+  --workbench-canvas: var(--color-base-100);
+}
+
 .workbench-content-stack {
   display: grid;
   grid-template: minmax(0, 1fr) / minmax(0, 1fr);
@@ -44,7 +54,7 @@
   margin-block-end: calc(var(--page-gutter) / 2);
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-box);
-  background: var(--surface-canvas);
+  background: var(--workbench-canvas, var(--surface-canvas));
 }
 .workbench-top + .workbench-content-stack > * { border-radius: inherit; }
 #workbench-project-preview {
@@ -167,7 +177,7 @@
 
 .workbench-tab.is-current {
   z-index: 1;
-  background: var(--surface-canvas);
+  background: var(--workbench-canvas, var(--surface-canvas));
   border-color: var(--border-hairline);
   border-block-end-color: transparent;
   color: var(--color-base-content);
@@ -1340,21 +1350,6 @@
   height: .35rem;
   border-radius: 50%;
   background: var(--color-warning);
-}
-
-/* On the workbench page the task-form card is a plain layer-1 content surface:
-   the canvas fill plus the hairline, no glow, no backdrop and NO elevation (the
-   accent border is the only edge — see surfaces.css). */
-#app-layout[data-workbench-page="dashboard"] .input-card {
-  border-radius: .8rem;
-  background: var(--surface-canvas);
-  border-color: var(--border-hairline);
-  box-shadow: none;
-  backdrop-filter: none;
-}
-#app-layout[data-workbench-page="dashboard"] .input-card::before { display: none; }
-#app-layout[data-workbench-page="dashboard"] .input-card:focus-within {
-  border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-base-300));
 }
 
 /* Settings scrolls inside the iframe, including when a nested modal is open. */

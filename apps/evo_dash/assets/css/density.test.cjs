@@ -216,9 +216,22 @@ test("component stylesheets consume the ladder instead of arbitrary sizes", () =
 // --- shared composer chrome and control sizing -----------------------------
 
 const composerStyles = source["assistant.css"];
-const composer = "#app-layout .workbench-composer-surface:is(.workbench-composer[data-composer-kind], .workbench-composer[data-composer-kind] *)";
-const trigger = ".workbench-composer-toolbar details.capsule > .capsule-trigger";
+const composer = "#app-layout :is(.workbench-composer.assistant-input-card, .workbench-composer .input-card)";
+const toolbar = ".workbench-composer :is(.assistant-context-bar, .input-controls)";
+const trigger = `${toolbar} details.capsule > .capsule-trigger`;
 const advancedSummary = ".workbench-task-options #task-advanced-options > summary";
+
+test("shared composer rules are wired to the rendered card and toolbar classes", () => {
+  const web = join(__dirname, "../../lib/evo_dash_web");
+  const assistant = readFileSync(join(web, "live/home_live/composer.ex"), "utf8");
+  assert.match(assistant, /<ComposerComponents\.composer kind="assistant" class="assistant-input-card">/);
+  assert.match(assistant, /id="chat-composer-controls" class="assistant-context-bar"/);
+
+  const task = readFileSync(join(web, "components/task_form_components.ex"), "utf8");
+  assert.match(task, /<\.composer kind="task"/);
+  assert.match(task, /class="input-card\b/);
+  assert.match(task, /class="input-controls\b/);
+});
 
 test("one flat composer surface supports both wrapper placements without decorating the whole form", () => {
   const shared = leafRules(composerStyles).filter(rule => rule.selectorText === composer);
@@ -229,6 +242,14 @@ test("one flat composer surface supports both wrapper placements without decorat
   assert.equal(chrome.background, "var(--composer-surface)");
   assert.equal(chrome["box-shadow"], "none");
   assert.equal(chrome.transition, "var(--composer-transition, var(--composer-focus-transition))");
+  assert.doesNotMatch(source["workbench.css"], /\.input-card\b/, "the dashboard cannot override composer chrome");
+  for (const sheet of ["app.css", "assistant.css"]) {
+    const cardRules = leafRules(source[sheet]).filter(rule => /\.(?:assistant-)?input-card\b/.test(rule.selectorText));
+    for (const rule of cardRules) {
+      assert.doesNotMatch(rule.selectorText, /::before/, "no decorative card gradient");
+      assert.equal(values(rule.body)["backdrop-filter"], undefined, "the composer is not glass");
+    }
+  }
 
   for (const [sheet, selector] of [
     ["assistant.css", ".assistant-input-card"],
@@ -249,13 +270,15 @@ test("one flat composer surface supports both wrapper placements without decorat
   assert.match(values(sizing[0].body)["--composer-transition"], /^min-height\b[\s\S]+var\(--composer-focus-transition\)$/);
 });
 
-test("the New Task page and composer have distinct tones in both themes", () => {
-  const page = ":is(#main-content, #main-scroll):has(#workbench-task-composer)";
-  const task = '.workbench-composer[data-composer-kind="task"]';
-  for (const prefix of ["", '[data-theme="dark"] ']) {
-    const declarationsFor = selector => values(blocks(prefix + selector, composerStyles)[0]);
-    assert.notEqual(declarationsFor(page).background, declarationsFor(task)["--composer-surface"]);
-  }
+test("the launch hover ring reaches the enabled button in the AdaptiveInput toolbar", () => {
+  const [hover] = blocks("@media (hover: hover)", composerStyles);
+  const [launch] = blocks(".workbench-composer .input-controls #task-launch-button:not(:disabled):hover", hover);
+  assert.match(values(launch)["box-shadow"], /^0 0 0 2px .*var\(--project-accent\)/);
+
+  const [controls] = blocks(".input-controls", app);
+  const sizing = values(controls);
+  assert.equal(sizing.position, "relative", "the attachment panel anchors to the toolbar");
+  assert.equal(sizing["flex-wrap"], "nowrap", "AdaptiveInput keeps the toolbar on one line");
 });
 
 test("composer focus is visible on the surface and on the exact keyboard control", () => {
@@ -264,12 +287,12 @@ test("composer focus is visible on the surface and on the exact keyboard control
   assert.equal(focus["border-color"], "var(--color-primary-standalone)");
   assert.match(focus["box-shadow"], /^0 0 0 2px .*var\(--color-primary-standalone\)/);
 
-  const keyboard = ".workbench-composer-toolbar :is(button, summary):focus-visible";
+  const keyboard = `${toolbar} :is(button, summary):focus-visible`;
   const [focusRule] = leafRules(composerStyles).filter(rule => rule.selectorText.startsWith(`${keyboard},`));
   assert.equal(values(focusRule.body).outline, "2px solid var(--color-primary-standalone)");
 
   const [forced] = blocks("@media (forced-colors: active)", composerStyles);
-  const [forcedFocus] = blocks(".workbench-composer-surface:focus-within", forced);
+  const [forcedFocus] = blocks(`${composer}:focus-within`, forced);
   assert.equal(values(forcedFocus).outline, "2px solid Highlight");
 });
 
@@ -280,7 +303,7 @@ test("composer capsule summaries are flat at rest and distinct while open", () =
   assert.equal(resting.background, "transparent");
   assert.equal(resting["min-block-size"], "var(--control-h-sm)");
 
-  const [opened] = blocks(".workbench-composer-toolbar details.capsule[open] > .capsule-trigger", composerStyles);
+  const [opened] = blocks(`${toolbar} details.capsule[open] > .capsule-trigger`, composerStyles);
   assert.equal(values(opened).background, "var(--surface-selected)");
 });
 

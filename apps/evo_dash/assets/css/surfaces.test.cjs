@@ -180,6 +180,7 @@ test("app.css imports surfaces.css between the scale and the component sheets", 
 // --- the native tab strip --------------------------------------------------
 
 const workbench = source["workbench.css"];
+const canvasFill = "var(--workbench-canvas, var(--surface-canvas))";
 
 test("the tab strip has ONE declaration per selector group", () => {
   for (const selector of [".workbench-tab", ".workbench-tab-link", ".workbench-tabs"]) {
@@ -212,7 +213,7 @@ test("current and pending tabs have distinct treatments within a stable silhouet
   const [current] = rulesWith(".workbench-tab.is-current", workbench);
   const [pending] = rulesWith('.workbench-tab[data-tab-pending="true"]:not(.is-current)', workbench);
   const committed = values(current.body);
-  assert.equal(committed.background, "var(--surface-canvas)");
+  assert.equal(committed.background, canvasFill);
   assert.equal(committed["border-color"], "var(--border-hairline)");
   assert.equal(committed["border-block-end-color"], "transparent");
   assert.equal(committed["z-index"], "1", "the tab paints over the canvas's top hairline");
@@ -275,7 +276,7 @@ test("the inset canvas retains its frame and meets the committed tab at the hair
   assert.equal(frame["margin-inline"], top["padding-inline"], "align the canvas with the top bar gutter");
   assert.equal(frame.border, "1px solid var(--border-hairline)");
   assert.equal(frame["margin-block-start"], "-1px", "overlap only the single top hairline");
-  assert.equal(frame.background, "var(--surface-canvas)");
+  assert.equal(frame.background, canvasFill);
   assert.equal(frame["box-shadow"], undefined);
 });
 
@@ -491,11 +492,34 @@ test("hover, selected and focus are three different treatments", () => {
 
 // --- the center canvas ----------------------------------------------------
 
-test("the center canvas takes the canvas token, once", () => {
-  const canvas = leafRules(source["app.css"]).filter(rule =>
-    rule.selectors.includes("#main-content") && rule.selectors.includes("#main-scroll")
+test("the page and scroller consume the same fill as the tab and frame, with no competing paint", () => {
+  const canvas = FILES.flatMap(name => leafRules(source[name])).filter(rule =>
+    /#main-(?:content|scroll)\b/.test(rule.selectorText) && /\bbackground(?:-color)?\s*:/.test(rule.body)
   );
   assert.equal(canvas.length, 1, "expected ONE #main-content + #main-scroll canvas rule");
-  assert.deepEqual(values(canvas[0].body), {background: "var(--surface-canvas)"},
+  assert.deepEqual(canvas[0].selectors, ["#main-content", "#main-scroll"]);
+  assert.deepEqual(values(canvas[0].body), {background: canvasFill},
     "the canvas rule stays background-only");
+});
+
+test("only the uncovered New Task page changes the inherited canvas, separately from composer fill", () => {
+  const overrides = FILES.flatMap(name => leafRules(source[name])).filter(rule =>
+    "--workbench-canvas" in values(rule.body)
+  );
+  const draft = ".workbench-center:has(> .workbench-content-stack > #main-scroll #workbench-task-composer):not(:has(#workbench-git-diff))";
+  const dark = '[data-theme="dark"] ';
+  assert.deepEqual(overrides.map(rule => rule.selectorText), [draft, dark + draft]);
+
+  const task = '.workbench-composer[data-composer-kind="task"]';
+  for (const [index, [prefix, tone]] of [
+    ["", "color-mix(in oklab, var(--surface-canvas) 45%, var(--surface-shell))"],
+    [dark, "var(--color-base-100)"]
+  ].entries()) {
+    assert.deepEqual(values(overrides[index].body), {"--workbench-canvas": tone});
+    const [composer] = rulesWith(prefix + task, source["assistant.css"]);
+    const fill = values(composer.body)["--composer-surface"];
+    assert.ok(fill);
+    assert.notEqual(fill, tone, "the resting composer is distinct from the surrounding canvas");
+    assert.doesNotMatch(fill, /--workbench-canvas/, "the editor never inherits the page's draft fill");
+  }
 });

@@ -750,10 +750,11 @@ button, a, input, textarea, select, summary,
    place instead of the markup's `bg-base-100` utility. Unlayered author CSS
    beats the layered utility on purpose: the canvas tone is a surface decision
    (see surfaces.css), not a per-page one, and it is what the active workbench
-   tab joins. Background only — every other canvas property stays in markup. */
+   tab joins. The workbench center can supply a New Task fill; all other views
+   use the theme canvas. Background only; the rest stays in markup. */
 #main-content,
 #main-scroll {
-  background: var(--surface-canvas);
+  background: var(--workbench-canvas, var(--surface-canvas));
 }
 
 /* === Agents Page Fixed Layout === */
