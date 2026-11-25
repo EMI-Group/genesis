@@ -176,7 +176,7 @@ defmodule EvoDashWeb.HomeLive do
               <% @transcript == [] and @chat_status == :ended -> %>
                 <.session_ended_state scoped?={not is_nil(@workspace)} />
               <% @transcript == [] -> %>
-                <.empty_state />
+                <.empty_state project_scoped?={not is_nil(@workspace)} />
               <% true -> %>
                 <.message_list
                   transcript={@transcript}

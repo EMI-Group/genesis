@@ -330,53 +330,33 @@ defmodule EvoDashWeb.ProjectsLive do
                       </span>
                     </:controls>
                   </EvoDashWeb.TaskFormComponents.task_form>
-                  <section aria-labelledby="task-options-title" class="space-y-4">
-                    <h2 id="task-options-title" class="text-lg font-semibold">
-                      {gettext("Task Options")}
-                    </h2>
-                    <EvoDashWeb.TaskFormComponents.task_options_tab
-                      mode={@task_mode}
-                      node_path={@task_node_path}
-                      starting_commit={@task_starting_commit}
-                      resume_from={@task_resume_from}
-                      archive={@task_archive}
-                      persist_agent_state?={@persist_agent_state?}
-                      build_systems={@build_systems}
-                      selected_build_system={@task_build_system}
-                    />
-                  </section>
-                  <details
-                    id="workbench-task-settings"
-                    class="border-t border-base-300"
-                    phx-mounted={JS.ignore_attributes("open")}
-                  >
-                    <summary
-                      id="workbench-task-settings-title"
-                      class="min-h-[var(--row-h)] cursor-pointer content-center text-sm font-semibold"
-                    >
-                      {gettext("Project Settings")}
-                    </summary>
-                    <div class="pb-4">
-                      <EvoDashWeb.ProjectComponents.project_settings_tab
-                        active_project={@active_project_path}
-                        project_config={@project_config}
-                        worktree_script={@worktree_script}
-                        commands={@commands}
-                        foreign_repos={@foreign_repos}
-                        foreign_repo_path_suggestions={@foreign_repo_path_suggestions}
-                        show_add_foreign_repo={@show_add_foreign_repo_form}
-                        new_repo_id={@new_repo_id}
-                        new_repo_path={@new_repo_path}
-                        new_repo_description={@new_repo_description}
-                        new_repo_base_sha={@new_repo_base_sha}
-                        editing_foreign_repo_id={@editing_foreign_repo_id}
-                        foreign_repo_edit_form={@foreign_repo_edit_form}
-                        tauri_detected={@tauri_detected}
-                        platform={@platform}
-                        remote={@remote?}
-                      />
-                    </div>
-                  </details>
+                  <RemoteView.task_configuration
+                    inline={true}
+                    active_project_path={@active_project_path}
+                    tauri_detected={@tauri_detected}
+                    platform={@platform}
+                    task_mode={@task_mode}
+                    task_node_path={@task_node_path}
+                    task_starting_commit={@task_starting_commit}
+                    task_resume_from={@task_resume_from}
+                    task_archive={@task_archive}
+                    persist_agent_state?={@persist_agent_state?}
+                    build_systems={@build_systems}
+                    task_build_system={@task_build_system}
+                    project_config={@project_config}
+                    worktree_script={@worktree_script}
+                    commands={@commands}
+                    foreign_repos={@foreign_repos}
+                    foreign_repo_path_suggestions={@foreign_repo_path_suggestions}
+                    show_add_foreign_repo_form={@show_add_foreign_repo_form}
+                    new_repo_id={@new_repo_id}
+                    new_repo_path={@new_repo_path}
+                    new_repo_description={@new_repo_description}
+                    new_repo_base_sha={@new_repo_base_sha}
+                    editing_foreign_repo_id={@editing_foreign_repo_id}
+                    foreign_repo_edit_form={@foreign_repo_edit_form}
+                    remote={@remote?}
+                  />
                 </div>
               <% phase in [:connecting, :bootstrapping, :disconnecting] -> %>
                 <!-- Pending remote context: connecting chrome only — no
@@ -1308,7 +1288,7 @@ defmodule EvoDashWeb.ProjectsLive do
   end
 
   def handle_event("select_quality_level", _params, socket), do: {:noreply, socket}
-  # Persist-agent-state toggle (Task Options tab). The checkbox carries no
+  # Persist-agent-state toggle. The checkbox carries no
   # `name`/`form` association, so the assign is the single source of truth: a
   # click on a CHECKED checkbox sends `%{"value" => "true"}` while an
   # UNCHECKED click omits the `"value"` key entirely.
@@ -1646,9 +1626,7 @@ defmodule EvoDashWeb.ProjectsLive do
      # read (and mtime) at this moment, so a hand-edited file is picked up
      # without waiting for the next task broadcast. Collapsing is a pure toggle.
      |> then(fn s -> if new_show, do: refresh_project_config(s, true), else: s end)
-     # When expanding, switch the config dropdown to the Project Settings tab
-     # so its content is visible. (Backwards-compatible entry point for tests
-     # and any external callers of the toggle_project_settings event.)
+     # Retain the legacy tab state for callers of this event.
      |> then(fn s ->
        if new_show, do: assign(s, :config_tab, "project_settings"), else: s
      end)
@@ -2029,11 +2007,6 @@ defmodule EvoDashWeb.ProjectsLive do
   # nested: `EvoDash.SafeCall.start/3` sends `{tag, result}`). The monotonic
   # `:command_seq` is the stale-guard — only the newest run may touch the
   # assigns/flash.
-  #
-  # NOTE: the Configure dialog's command buttons are rendered by
-  # `EvoDashWeb.ProjectComponents` (outside this module), so the in-flight
-  # feedback the page itself can give is the `:command_running` assign plus the
-  # "Running …" info flash — not a disabled button.
   @impl true
   def handle_event("run_command", %{"command" => command}, socket) do
     commands = socket.assigns.commands
@@ -2389,7 +2362,8 @@ defmodule EvoDashWeb.ProjectsLive do
           {:noreply,
            socket
            |> assign(:workspaces, workspaces)
-           |> assign(:expanded_workspaces, Enum.filter(expanded, &(&1 in known)))}
+           |> assign(:expanded_workspaces, Enum.filter(expanded, &(&1 in known)))
+           |> Overview.maybe_spawn()}
 
         _ ->
           {:noreply, socket}
