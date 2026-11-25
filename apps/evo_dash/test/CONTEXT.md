@@ -278,7 +278,7 @@ The update wind-down ASKS idle `:awaiting_input` sessions to close via `close_se
 
 Dashboard pause/resume coverage splits by surface: card controls, `action_busy` gating and the clean/dirty paused explainer in `evo_dash_web/components/task_card_components_test.exs` (describe "task_card/1 — pause / resume"), page handlers + flashes + filters in `evo_dash_web/live/tasks_live_test.exs` (describe "task pause and resume"), badge/dot colour families in `helpers_test.exs`, the update busy set in `evo_dash_web/live/system_live_test.exs` and `evo_dash_web/controllers/server_status_controller_test.exs`, sidebar live partition in `evo_dash_web/components/layouts_test.exs` (describe "app/1 — paused/pausing tasks stay in the live partition"), `NodeAware` active partition in `evo_dash_web/live_hooks/node_aware_test.exs`, workbench history status inventory + hrefs in `evo_dash_web/live/projects_workbench_test.exs`, RPC passthrough in `evo_dash/node_context_test.exs`, MCP tool surface in `evo_dash_web/plugs/mcp_test.exs`, and Assistant mini-card labels in `evo_dash_web/live/home_live/assistant_message_test.exs`.
 Paused explainer/resume-caveat copy is pinned VERBATIM only in `task_card_components_test.exs` (clean line, dirty warning paragraph, the dirty `data-confirm` string, the "not revived"/"reported as lost" subagent clauses); no other suite asserts that copy.
-No dash test covers a passed task's agent roster or archive.
+No dash test covers a paused task's agent roster or archive.
 
 ## Provider-profile redesign regression coverage
 
