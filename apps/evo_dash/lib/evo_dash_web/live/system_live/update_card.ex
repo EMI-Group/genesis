@@ -29,12 +29,12 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   force kill would be needless data loss.
 
   The task-level PAUSE pair splits the same way. `:pausing` IS busy — a pause
-  request is still DRAINING the task's agents at their next turn boundary, so a
-  wrapper and its lease are alive and work is in flight — so the wind-down
-  cancels it like any other busy task. `:paused` is NOT busy and is deliberately
-  absent: every agent has stopped at a turn boundary, the state is durable and
-  resumable, and no wrapper and no lease remain, so there is nothing to drain and
-  the wind-down must neither cancel nor wait for it.
+  request is still FREEZING the whole task tree, whose in-flight tool batches
+  get a bounded quiesce budget to finish, so a wrapper and its lease are alive
+  and work is in flight — so the wind-down cancels it like any other busy task.
+  `:paused` is NOT busy and is deliberately absent: every agent's frozen
+  position is durable and resumable, and no wrapper and no lease remain, so
+  nothing is in flight and the wind-down must neither cancel nor wait for it.
 
   A session that never closes must not wedge the busy modal, so an idle session
   blocks completion for at most 3 wind-down polls
@@ -59,9 +59,10 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   # Statuses that count as BUSY/active for update gating: the update can only be
   # applied when no task is in any of these states, because only these can still
   # do work (a worker is running, queued or finalizing). `:pausing` belongs here
-  # because a pause request is still draining the task's agents (wrapper and
-  # lease alive); `:paused` deliberately does NOT — the agents have stopped at a
-  # turn boundary, the state is durable, and there is no wrapper to wind down.
+  # because a pause request is still FREEZING the task's whole agent tree with a
+  # wrapper and lease alive (in-flight tool batches get a bounded quiesce);
+  # `:paused` deliberately does NOT — every agent's frozen position is durable,
+  # and there is no wrapper to wind down.
   #
   # A non-terminal but IDLE interactive session (`:awaiting_input`) is
   # deliberately NOT in this set: it holds no worker, no LLM/tool slot and no
