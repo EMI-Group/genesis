@@ -1461,6 +1461,33 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
   end
 
+  defp assert_registered_project_overview(view, path) do
+    assert %URI{path: "/projects", query: query} =
+             view |> assert_patch(async_wait_budget()) |> URI.parse()
+
+    assert URI.decode_query(query) == %{"project" => path}
+    assert {:ok, %{path: ^path, point: point}} = EvoGit.VCT.resolve(path)
+    wait_for_projects(view, path)
+
+    overview = "#workbench-project-overview[data-overview-kind=project]"
+
+    chat_link =
+      "#{overview} a#overview-chat-assistant[data-phx-link=redirect]:not([aria-disabled=true]):not([hidden])"
+
+    assert has_element?(view, "#{overview} [data-overview-path]", path)
+    assert has_element?(view, "#{overview} [data-overview-point]", point)
+    assert has_element?(view, chat_link, "Chat with Assistant")
+
+    # Both attributes must point to the same draft from this navigation.
+    dom = view |> render() |> Floki.parse_document!()
+    assert [chat_href] = Floki.attribute(dom, chat_link, "href")
+    assert %URI{path: "/assistant", query: chat_query} = URI.parse(chat_href)
+    assert %{"wb_draft" => draft} = URI.decode_query(chat_query)
+    assert draft =~ ~r/\A[0-9a-f]{24}\z/
+    assert chat_href == "/assistant?" <> URI.encode_query(wb_project: path, wb_draft: draft)
+    assert Floki.attribute(dom, "#app-layout", "data-workbench-default-draft") == [chat_href]
+  end
+
   describe "opening a project" do
     test "can open project via palette and form submission", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/projects")
@@ -1474,8 +1501,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
-      # The activation lands on the project overview; step into the composer
-      # (the surface this test pins) exactly as a user does.
+      assert_registered_project_overview(view, tmp_dir)
+
+      # Step from the overview into the composer as a user does.
       enter_composer(view)
 
       assert has_element?(view, "#task-form #task-launch-button")
@@ -2524,6 +2552,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert Enum.any?(EvoGit.VCT.projects(), &(&1.path == full_path))
       # The palette closes after successful creation
       assert assigns(view)[:project_palette_open] == false
+
+      assert_registered_project_overview(view, full_path)
     end
 
     test "creates a fully non-existent nested path recursively", %{
