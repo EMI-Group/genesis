@@ -883,7 +883,9 @@ defmodule EvoDashWeb.LayoutsTest do
       # Name first, then the host label of the node the shortcut belongs to.
       assert [server] = Floki.find(link, ".workbench-project-server")
       assert Floki.text(server) == "Local"
-      assert [_] = Floki.find(row, "[data-workbench-project-windows]")
+      # A project row carries NO open-view container: the tab rail is the ONE
+      # open-view list, so the sidebar never grows a per-project window list.
+      assert Floki.find(row, "[data-workbench-project-windows]") == []
 
       # A project row is a SHORTCUT: no task rows, no create actions …
       assert Floki.find(section, "[data-sidebar-task-link]") == []
@@ -1022,6 +1024,66 @@ defmodule EvoDashWeb.LayoutsTest do
       assert Floki.find(section, "a[href^='/agents']") == []
       assert Floki.find(section, "a[href^='/review/']") == []
       assert Floki.find(section, "#chat-session-list") == []
+    end
+  end
+
+  describe "app/1 — workbench tab rail" do
+    # The tab rail is the ONE open-view list: `#workbench-tabs` (server-empty,
+    # filled by the `Workbench` hook) followed by the rail's two `<details>`
+    # menus, the last of which is the overflow shell the hook reveals only when
+    # the rail overflows. `#app-layout` carries the labels that shell consumes.
+    test "the rail-end overflow shell starts hidden and comes after the create menu" do
+      tree = render_app(current_page: :dashboard) |> parse()
+
+      # One rail, and one tab list inside it that states the keyboard cycle
+      # contract; the list itself renders EMPTY on the server.
+      assert [rail] = Floki.find(tree, ".workbench-tab-rail")
+      assert [tabs] = Floki.find(rail, "#workbench-tabs")
+
+      assert Floki.attribute(tabs, "role") == ["navigation"]
+      assert Floki.attribute(tabs, "phx-update") == ["ignore"]
+
+      assert Floki.attribute(tabs, "aria-label") ==
+               ["Open tabs — Alt+Left / Alt+Right cycles tabs"]
+
+      assert element_children(tabs) == []
+
+      # Exactly ONE overflow shell: a rail-end `<details>`, hidden until the
+      # hook finds the rail overflowing and IGNORED by LiveView so the hook
+      # owns both its children and the native `open` state.
+      assert [overflow] = Floki.find(rail, "#workbench-tabs-overflow")
+      assert has_class?(overflow, "workbench-tab-overflow")
+      assert Floki.attribute(overflow, "hidden") == ["hidden"]
+      assert Floki.attribute(overflow, "phx-update") == ["ignore"]
+
+      assert [summary] = Floki.find(overflow, "summary.workbench-icon-button")
+      assert Floki.attribute(summary, "aria-label") == ["All open tabs"]
+      assert contains?(summary, "span.hero-ellipsis-horizontal")
+
+      # The panel is the hook-populated list on the create menu's surface, and
+      # it is EMPTY on a server render.
+      assert [list] = Floki.find(overflow, "#workbench-tabs-overflow-list")
+      assert_classes(list, ["workbench-create-menu"])
+      assert element_children(list) == []
+
+      # Rail order: tab list → create menu → overflow shell (the shell is the
+      # rail-END menu, after `#workbench-create`).
+      rail_ids =
+        rail
+        |> element_children()
+        |> Enum.map(fn child -> child |> Floki.attribute("id") |> List.first() end)
+
+      assert rail_ids == ["workbench-tabs", "workbench-create", "workbench-tabs-overflow"]
+    end
+
+    test "the shell ships the tab-rail labels the overflow shell consumes" do
+      tree = render_app(current_page: :dashboard) |> parse()
+
+      assert [layout] = Floki.find(tree, "#app-layout")
+
+      assert Floki.attribute(layout, "data-workbench-keep-open") == ["Keep this tab open"]
+      assert Floki.attribute(layout, "data-workbench-next-tab") == ["Next tab (Alt+Right)"]
+      assert Floki.attribute(layout, "data-workbench-prev-tab") == ["Previous tab (Alt+Left)"]
     end
   end
 
