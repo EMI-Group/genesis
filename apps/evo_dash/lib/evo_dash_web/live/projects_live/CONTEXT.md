@@ -40,8 +40,7 @@ Page-specific: the reads (`NodeContext.projects/1`, `list_task_ids`, `get_task_l
 
 ### Async write path (the ONE shape)
 
-Bump a monotonic seq (or record the picker id in `:attach_pending`), set its `*_running`/`*_pending` marker, spawn with `EvoDash.SafeCall.start/3,4` against `EvoDash.TaskSupervisor` (never a bare `Task.start`), then apply the result in a seq-marked (or marker-gated) `handle_info/2` that clears the marker, so the tab never blocks.
-A purely-instant validation failure stays synchronous and owns its own flash (`:attachments_over_cap`, a missing custom agent, a stale-model `{:error, reason}`, a failed `SafeCall.start` itself), and a failed spawn clears nothing it never set (`task_launching`/`command_running` stay false), so no affordance is left wedged.
+Bump a monotonic seq (or record the picker id in `:attach_pending`), set its `*_running`/`*_pending` marker, spawn with `EvoDash.SafeCall.start/3,4` against `EvoDash.TaskSupervisor`, then apply the result in a seq-marked (or marker-gated) `handle_info/2` that clears the marker — a purely-instant validation failure stays synchronous and owns its own flash (`:attachments_over_cap`, a missing custom agent, a stale-model `{:error, reason}`, a failed `SafeCall.start` itself), and a failed spawn clears nothing it never set (`task_launching`/`command_running` stay false), so no affordance is wedged.
 The GitHub issue-fix launch is the deliberate exception: a synchronous `SafeCall.run/1` start (`GitHub.start_fix_task/3`), because it already runs off the async issues flow and its result drives the modal close.
 
 ### Async message inventory (projects_live)
