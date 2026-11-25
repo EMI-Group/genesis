@@ -184,18 +184,52 @@ defmodule EvoDashWeb.TasksLive.PageLoad do
   Every entry is a SQL predicate understood by the core's WHERE builder; the
   store itself treats `"all"` (and, for `:session_mode`, any unknown value) as
   "no clause", so no filter is stripped before the `list_tasks_page/2` call.
+
+  `"needs_review"` is a REVIEW-TRIAGE filter, not a stored status: it translates
+  to no `status` clause plus `review_status: "pending"`, which the store expands
+  to its composite `status = 'completed' AND review_status IS NULL AND
+  branch_name IS NOT NULL` predicate. While it is active it WINS over the
+  separate review filter (see `review_status_filter/1`), so the two selects can
+  never contradict each other.
   """
   def filters(socket) do
+    status_filter = socket.assigns.status_filter
+    needs_review? = needs_review_filter?(status_filter)
+
     [
-      status: socket.assigns.status_filter,
+      status: if(needs_review?, do: "all", else: status_filter),
       project_path: socket.assigns.project_filter,
-      review_status: socket.assigns.review_status_filter,
+      review_status: review_status_filter(socket),
       search: socket.assigns.search_query,
       # Defensive read: the page seeds this assign; a context without it means
       # "no session-mode filter", which `normalize_session_mode/1` maps to
       # "all".
       session_mode: Map.get(socket.assigns, :session_mode_filter, "all")
     ]
+  end
+
+  @doc """
+  True when the STATUS filter is the review-triage value `"needs_review"`.
+
+  The status filter takes precedence over the separate review filter: a task
+  either needs review (no decision yet) and appears under `needs_review`, or it
+  has a decision and appears under that review state — never both.
+  """
+  def needs_review_filter?(status_filter), do: status_filter == "needs_review"
+
+  @doc """
+  The effective `:review_status` SQL filter.
+
+  `"needs_review"` in the status filter forces the store's composite
+  `"pending"` predicate and the separate review select is ignored; otherwise the
+  review select travels through unchanged.
+  """
+  def review_status_filter(socket) do
+    if needs_review_filter?(socket.assigns.status_filter) do
+      "pending"
+    else
+      socket.assigns.review_status_filter
+    end
   end
 
   @doc """
@@ -223,13 +257,52 @@ defmodule EvoDashWeb.TasksLive.PageLoad do
   it. A missing/blank `session_mode` reads as `"oneshot"`, so the historic
   behaviour is unchanged for every one-shot task.
   """
-  def visible_tasks(tasks, true), do: tasks
+  def visible_tasks(tasks, show_reflect_tasks) do
+    visible_tasks(tasks, show_reflect_tasks, "all")
+  end
 
-  def visible_tasks(tasks, false) do
+  @doc """
+  `visible_tasks/2` plus the `"needs_review"` EXACTNESS guard.
+
+  The status filter `"needs_review"` is review TRIAGE, not a stored status: the
+  store predicate is the composite `status = 'completed' AND review_status IS
+  NULL AND branch_name IS NOT NULL`. The SQL side cannot be narrowed further
+  from here (the WHERE builder owns the store), so this choke point additionally
+  rejects any row that has a `review_status` set — the filter must NEVER list a
+  task whose review decision already exists.
+
+  Total for every shape: an absent/unreadable `review_status` counts as "no
+  decision" (nil), so the guard only ever drops a row that provably HAS one.
+  """
+  def visible_tasks(tasks, show_reflect_tasks, status_filter) do
+    tasks
+    |> hide_reflect_tasks(show_reflect_tasks)
+    |> enforce_review_exactness(status_filter)
+  end
+
+  defp hide_reflect_tasks(tasks, true), do: tasks
+
+  defp hide_reflect_tasks(tasks, false) do
     Enum.reject(tasks, fn row ->
       Map.get(row, :type) == :reflect and session_mode_of(row) != "interactive"
     end)
   end
+
+  defp enforce_review_exactness(tasks, status_filter) do
+    if needs_review_filter?(status_filter) do
+      Enum.reject(tasks, &has_review_decision?/1)
+    else
+      tasks
+    end
+  end
+
+  # A row "has a review decision" when its `review_status` is non-nil. Read with
+  # `Map.get/2` (summary-safe, never a dot access) and tolerate a non-map row.
+  defp has_review_decision?(row) when is_map(row) do
+    not is_nil(Map.get(row, :review_status)) and Map.get(row, :review_status) != ""
+  end
+
+  defp has_review_decision?(_row), do: false
 
   # --- helpers --------------------------------------------------------------
 

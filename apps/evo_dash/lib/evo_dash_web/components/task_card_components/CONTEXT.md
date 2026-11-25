@@ -12,6 +12,7 @@ The task card's data contract plus the helper families extracted from `task_card
 - `./repos.ex` → `result_repos/1`, `task_repos/2`, `result_repos_badges/1`.
 - `./archive.ex` → the `detail.archive` envelope readers (`archive_state/1`, `archive_records/1`, `archive_total/1`, `archive_dropped/1`, `archive_exhausted?/1`, `archive_server_total/1`, `archive_agent_results/1`, `archive_loading_more?/1`, `archive_more_error/1`) + `archive_opt?/1` (a `defdelegate` to `EvoDashWeb.ArchiveHelpers.archive_opt?/1` — the ONE archive opt-in predicate, shared with the review page).
 - `./errors.ex` → the structured failure-record readers `task_error/1` / `error_field/2`.
+- Card chrome — `task_card` root + `data-variant` (`flat` list row default, `raised` opt-in) + `data-selected`, `task-card-accent`, `task-card-status`, `task-card-panel`, all surfaces/ elevation CSS-owned in `assets/css/surfaces.css` → §Card chrome.
 
 ## Task Cards & the Summary-Map Contract
 
@@ -37,7 +38,7 @@ A paused task is a NON-terminal, resumable resting state; `:pausing` is still wo
 `task_card/1` declares `attr(:action_busy, :map, default: %{})` — in-flight async markers keyed by the STRING task id (`:pause` | `:resume`), read through the private total `action_busy/2` (a nil or non-map attr degrades to "nothing in flight" instead of raising).
 **Pause** (`phx-click="open_pause_modal"`, `phx-value-task_id`) is rendered for `[:running, :pausing]` AND only for a one-shot run — `pause_offered?/1` is false when `Map.get(task, :session_mode, "oneshot") == "interactive"`, because the core refuses a pause for an INTERACTIVE-session root (`{:error, :not_pausable}`) and the control would be an action that can never succeed; `session_mode` is read defensively (absent → `"oneshot"`, so old/hand-built maps keep the control in the pre-existing tests). `persistent_state` is deliberately NOT consulted — the summary does not carry it, so a `persistent_state: false` task still shows Pause and its `{:error, :not_resumable}` is surfaced by the TasksLive flash line instead. Pause is disabled while `@task.status == :pausing` or any marker exists for the task, and renders the spinner label `gettext("Pausing…")` in either case, with a `title` explaining that the agent finishes its current tool call before stopping. The control emits `open_pause_modal` — the owning LiveView owns the confirmation modal.
 **Resume** (`phx-click="resume_task"`, `phx-value-task_id`) is rendered only for `:paused`, disabled by any marker, spinner label `gettext("Resuming…")`; it is DIRECT for a `:clean` pause and carries a `phx-confirm` for a `:dirty` one (`resume_confirm/1` reads `Map.get(@task, :pause_kind)`) so the warning is seen BEFORE the click lands. Resume carries NO `session_mode` gate: a pause can only exist for a non-interactive run in the first place.
-**Force kill** stays available for `:pausing`/`:paused` (a draining or stuck pause must always be killable); **Review never is** — `show_review_button?/1` stays an allowlist on `:completed`/`:cancelled`, so a paused task is resumed, not reviewed.
+**Force kill** stays available for `:pausing`/`:paused` (a draining or stuck pause must always be killable); **Review never is** — `show_review_button?/1` is an allowlist over FINISHED statuses (`:completed`/`:cancelled`/`:failed`), and a pause is not finished, so a paused task is resumed, not reviewed.
 The card renders its own status-driven paused explainer (no LiveView round-trip, full width, only for `:paused`): `pause_kind: :dirty` → an amber warning strip (the last tool call may not have completed, so files and background jobs may be inconsistent) plus the one-line resume caveat `gettext("Resuming restores the root agent and the subagents that were still running, each with its saved context. A subagent whose result was already collected is not revived; one with no saved record is reported as lost.")` (whole-tree resume: the core rebuilds the task's durable run roster, so a running child is re-spawned with its own restored conversation, worktree and branch; `:clean` or nil (a legacy row) → the neutral info strip `gettext("Paused by you — resume continues where it stopped.")`.
 Status labels: the badge `cond` renders `gettext("Pausing…")` / `gettext("Paused")` (never the raw atom); the pulse set is `[:running, :cancelling, :awaiting_input, :pausing]`, so `:pausing` pulses amber and `:paused` never pulses; colours come from `Helpers.task_status_badge/1` / `task_status_dot_class/1` / `task_status_tint/1` (amber for `:pausing`, the `info`/blue family for `:paused`).
 
@@ -103,7 +104,7 @@ Task results may carry a top-level `repos` map — STRING keys: `%{repo_id => %{
 
 ### Task-card Review button candidacy
 
-`show_review_button?/1` (private) decides whether the collapsed card's Review link renders. Candidacy is deliberately RESULT-AGNOSTIC: EVERY `:completed` or `:cancelled` task shows it, because a multi-repo task may have changed only writable FOREIGN repos — requiring a non-empty primary `branch_name` or a `no_changes: true` result would hide legitimate review candidates. The ONLY exclusion is `:reflect` (repo-less) tasks (their `type` is read defensively via `Map.get/2`); pending/running/finalizing/failed tasks never render it.
+`show_review_button?/1` (private) decides whether the collapsed card's Review link renders. Candidacy is deliberately RESULT-AGNOSTIC: EVERY FINISHED task (`:completed`, `:cancelled` or `:failed`) shows it, because a multi-repo task may have changed only writable FOREIGN repos — requiring a non-empty primary `branch_name` or a `no_changes: true` result would hide legitimate review candidates, and a failed run keeps its branch plus any salvaged changes, which the review page renders honestly (the same route the workbench history panel gives every finished task). The ONLY exclusion is `:reflect` (repo-less) tasks (their `type` is read defensively via `Map.get/2`); pending/running/finalizing/cancelling/pausing/paused tasks never render it.
 
 ### Field-usage audit — conclusions
 
@@ -126,6 +127,17 @@ Every component here is a pure function component re-executed on EVERY LiveView 
 - EXPANDED card: work is bounded by the caps (16 KiB text previews, 200 log rows, 1 MiB copy payloads, 300 archive records). Each preview is computed ONCE per render and reused — never recompute it per field or per branch (`agent_summary/1` feeds one preview to both the Markdown and Raw branches).
 - `render_result_full/1` runs only in the TasksLive modal, never on the page render.
 - A slow task-card page load is no longer explained by these components — the collapsed render is summary-only; the cost sits in the LiveView's paginated summary load and the per-card detail fetches (outside this node).
+
+## Card chrome — the CSS-owned surface system
+
+The card's chrome is the dashboard's three-layer surface system in `assets/css/surfaces.css`; the markup only supplies class names and attributes, and the wrapper carries NO background/border/shadow/hover utilities.
+`task_card/1` declares `attr(:variant, :string, default: "flat", values: ["flat", "raised"])` and writes it as `data-variant` on the root, plus `data-selected={@focused}`.
+`flat` (the default, and the only variant `/tasks` uses) is a LIST ROW: canvas fill, hairline border, `box-shadow: none`, no accent bar — a long task list must not read as a stack of elevated cards.
+`raised` is the opt-in CARD treatment (raised surface + the elevation token + the accent bar) for content read/decided as one unit; no caller uses it yet, so adding it is a caller-side attrs change only.
+The root class list is `task-card min-w-0 rounded-xl border relative z-10 group has-[[open]]:z-30` + the status `tint` from `task_card_tint/1` (the flat variant's subtle wash — the helper is unchanged).
+`task-card-accent` is the accent top-bar wrapper and `task-card-status` marks the LIVE status badge (the review badge stays a plain `badge`).
+`task-card-panel` is the recessed shell of every nested detail/options panel — Objective, Agent Message, Token & Cost Usage, Agents Spawned, Execution Logs (`<details>`) and Archived Agent Details — which therefore keep only their spacing/radius utilities (`p-4 rounded-lg`, plus `motion-disclosure` on the logs disclosure) instead of a tinted `bg-*`/`border-*`/`hover:*` simulation of depth.
+Selection, hover and `:focus-visible` are three distinct CSS treatments keyed on `data-selected`/`:hover`/`:focus-visible`; the accent belongs to the SELECTED object only, so no markup branch chooses a border or shadow for `@focused` anymore.
 
 ## Rendering Caps — task-card rows
 
@@ -151,4 +163,5 @@ Markup in this subtree follows the dashboard's ONE density/type scale (`docs/ui-
 The uppercase section headings in `result_render.ex` (`Error`/`Crashed`/`No Changes`/`Agent Message`/`Repositories`) are `text-2xs font-semibold … uppercase tracking-wide` — all-caps micro labels, never `text-xs font-bold`.
 Reading bodies use `text-base` (the Objective in `options.ex`), dense message/preview bodies `text-sm`, and ids/paths/badges/helper lines `text-xs` (13 px is the metadata floor; stacktraces stay `text-xs` mono).
 Bordered message/notice panels and inset wells are `rounded-xl` — `p-3` inside a card, `p-4` for a modal/zoomed body — while controls and chips are `rounded-lg`; the session panel (`session.ex`) is a card-like panel (`rounded-xl p-4`) whose actions are `btn-sm`.
+Radius and spacing stay in markup utilities, but the SURFACE (fill, hairline border, elevation, hover/selected/focus) of the card and its nested panels is CSS-owned — see "Card chrome" above; never rebuild depth with `shadow-*`/`bg-base-100`/`hover:*` utilities on a card or panel.
 `errors.ex` and `archive.ex` render no markup (pure total readers); the class strings they feed live in the parent `task_card_components.ex`, as do the pinned collapsed-strip and expanded-error class lists in `task_card_components_test.exs`.

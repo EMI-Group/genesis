@@ -1,7 +1,7 @@
 # Review-page suite — SPLIT ACROSS MODULES FOR PARALLELISM.
 #
 # ExUnit parallelises across MODULES, never within one, so the page suite is
-# partitioned into SIX `async: true` modules plus THREE `async: false` modules
+# partitioned into SEVEN `async: true` modules plus THREE `async: false` modules
 # for the tests that publish process-global state. Every test body, assertion and
 # comment is carried over unchanged; only module boilerplate moved.
 #
@@ -54,6 +54,10 @@
 #                                       / `start_task` are `:erpc` calls that fail
 #                                       fast, so nothing is published on "tasks";
 #                                       the config dir is seam-isolated per process
+#   ReviewLiveOutcomeTest  (true)    10  none: terminal-outcome coverage (the
+#                                       failed/cancelled/no-report/handled matrix);
+#                                       Store-only seeds + Store-only cleanup and
+#                                       no action click ⇒ publishes nothing
 #   ReviewLiveMergeTest    (false)   24  :review_merge_runner + :review_reject_runner
 #                                       (several tests write both, so one module
 #                                       must own both) — SYNC because every test
@@ -2214,7 +2218,7 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
     end
   end
 
-  describe "task actions — overflow menu and Continue button" do
+  describe "task actions — overflow menu and Prepare follow-up task button" do
     # branch_exists: true (real repo) so the per-repo action row + the full
     # overflow menu render. The merge-check stub is already the fast :clean one
     # from the module setup — with merge_targets present it spawns and resolves
@@ -2237,7 +2241,7 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
       {:ok, task_id: task_id}
     end
 
-    test "Continue task button fires resume", %{conn: conn, task_id: task_id} do
+    test "Prepare follow-up task button fires resume", %{conn: conn, task_id: task_id} do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       html = flush_review_load(view)
       # Drain the mount-time reload armed by the load's set_review_metadata
@@ -2245,11 +2249,12 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
       # renders the loading page for the element assertions below.
       settle_debounced_task_reload(view)
 
-      # The secondary Continue button (task-actions row) fires resume —
-      # presence + event attr only (the navigation itself is covered by the
-      # multi-repo resume describe).
+      # The secondary "Prepare follow-up task" button (task-actions row) fires
+      # the `resume` event — presence + label + event attr only (the
+      # navigation itself is covered by the multi-repo resume describe).
       assert has_element?(view, "button[phx-click='resume']")
-      assert html =~ "Continue task"
+      assert html =~ "Prepare follow-up task"
+      refute html =~ "Continue task"
     end
 
     test "overflow menu carries the full action set with ignore as a plain always-available item last",
@@ -5178,8 +5183,10 @@ defmodule EvoDashWeb.ReviewLiveChromeTest do
       # "component surface pins (repo_cards / task_actions)" describe block.
       refute html =~ "Ignore this review?"
 
-      # The informational no-changes notice is still shown.
-      assert html =~ "The agent completed without making any code changes."
+      # The informational no-changes notice is still shown — PER REPO: the
+      # primary produced no branch, so its card states exactly that (the claim
+      # is never generalised to the task).
+      assert html =~ "No code changes in this repository."
     end
   end
 
@@ -5270,7 +5277,8 @@ defmodule EvoDashWeb.ReviewLiveChromeTest do
         })
 
       assert html =~ ~s(phx-click="resume")
-      assert html =~ "Continue task"
+      assert html =~ "Prepare follow-up task"
+      refute html =~ "Continue task"
 
       menu = overflow_menu(html)
 
@@ -5787,6 +5795,468 @@ defmodule EvoDashWeb.ReviewLiveAutoResolveTest do
   end
 end
 
+# Terminal-outcome coverage for the `/review` page — the destination EVERY
+# finished task now lands on from the workbench history panel.
+#
+# The pure decision matrix (`EvoDashWeb.ReviewLive.Outcome`) has its own unit
+# suite (`review_outcome_test.exs`); THIS module pins the PAGE consequences:
+# what the outcome banner says, which actions survive, and what a per-repo card
+# claims for a failed / cancelled / no-change / vanished-branch repo.
+#
+# `async: true` and seam-free: every fixture seeds through `EvoGit.Store`
+# (no broadcast) and cleans up through `delete_seeded_task!/1` (Store delete, no
+# broadcast), no test clicks an action, and the real-repo fixtures pre-seed
+# `base_sha` so the load persists nothing — so this module publishes NOTHING on
+# the "tasks" topic. `outcome`/`task_error`/`has_report` come from `LoadData`
+# (the real async load), never from an injected assigns map, so the assertions
+# below pin the production classification path end to end.
+defmodule EvoDashWeb.ReviewLiveOutcomeTest do
+  use EvoDashWeb.ConnCase, async: true
+  import Phoenix.LiveViewTest
+  import EvoDashWeb.ReviewLiveTest.Helpers
+  alias EvoGit.TaskInfo
+
+  setup_all do
+    # Canonical merge-check stub for EVERY mount in this module (see the file
+    # header): the async merge check is spawned on mount for a repo whose branch
+    # still exists, and an unstubbed runner does real `git merge-tree` work.
+    install_canonical_merge_check_runner()
+
+    # Only the branch shape THIS module's fixtures ask for: the templates are
+    # per-module so concurrently running modules never share a mutable fixture.
+    templates = build_templates!([{"main", nil}])
+    on_exit(fn -> rm_templates!(templates) end)
+
+    {:ok, review_templates: templates}
+  end
+
+  setup %{review_templates: templates} do
+    # The fixture hand-off is per TEST PROCESS: `review_template!/2` reads the
+    # templates from the process dictionary, and every `on_exit` closure
+    # captures a value instead.
+    Process.put(:review_templates, templates)
+    :ok
+  end
+
+  setup do
+    # Production Store/TaskRegistry pair (this module isolates nothing), so
+    # fail loudly at the source if a prior suite leaked an isolated instance.
+    EvoDash.Test.IsolatedTaskStore.assert_production!()
+
+    # ActiveTasks is a process-less public ETS table shared by the whole run:
+    # this async module clears ONLY the local `{nil, node()}` context.
+    EvoDash.ActiveTasks.invalidate(nil, node())
+
+    on_exit(fn -> EvoDash.ActiveTasks.invalidate(nil, node()) end)
+
+    :ok
+  end
+
+  describe "completed WITH changes" do
+    test "keeps today's rendering, offers the follow-up action, renders no outcome banner", %{
+      conn: conn
+    } do
+      {_repo_path, task_id, _change_sha} = create_review_task_with_repo!("main", nil)
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+      settle_debounced_task_reload(view)
+
+      # The outcome IS loaded — a completed task that recorded a report simply
+      # needs no banner (the report card below IS the statement).
+      assert assigns(view)[:outcome] == :completed
+      assert assigns(view)[:task_error] == nil
+      assert assigns(view)[:has_report] == true
+      refute html =~ ~s(id="review-task-outcome")
+      refute html =~ "data-outcome="
+
+      # Unchanged action surface: per-repo Merge + Reject, the agent report, a
+      # real diff-stat row, and the "Prepare follow-up task" action.
+      card = repo_card_html(html, "primary")
+      assert card =~ ~s(id="merge-form-primary")
+      assert card =~ ~s(phx-click="reject")
+      assert html =~ "Agent summary"
+      refute stats_bar_text(html) == ""
+      assert html =~ "Prepare follow-up task"
+      refute html =~ "Continue task"
+      refute html =~ "Mark as read"
+    end
+  end
+
+  describe "completed with a nil primary branch and a CHANGED foreign repo" do
+    test "the no-changes claim stays per repo and never generalises to the task", %{conn: conn} do
+      {_primary_dir, _foreign_dir, task_id} = seed_nil_primary_changed_foreign_task!()
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+      settle_debounced_task_reload(view)
+
+      assert assigns(view)[:outcome] == :completed
+      # `is_no_changes` is the RAW fact: one repo DID produce commits.
+      assert assigns(view)[:is_no_changes] == false
+
+      primary = repo_card_html(html, "primary")
+      assert primary =~ "No code changes in this repository."
+      refute primary =~ ~s(id="merge-form-primary")
+      refute primary =~ ~s(phx-click="reject")
+
+      # The changed writable foreign repo keeps its OWN merge/reject row.
+      foreign = repo_card_html(html, "original")
+      refute foreign =~ "No code changes in this repository."
+      assert foreign =~ ~s(id="merge-form-original")
+      assert foreign =~ ~s(phx-click="reject")
+
+      # "no changes" was never promoted to a task-level dismissal.
+      refute html =~ "Mark as read"
+      refute html =~ ~s(id="review-task-outcome")
+    end
+  end
+
+  describe "failed" do
+    test "states the failure record, links the diagnostics and withholds every action", %{
+      conn: conn
+    } do
+      task_id =
+        seed_outcome_task!(
+          status: :failed,
+          error: %{
+            kind: :error,
+            source: :result_handler,
+            message: "boom: provider exploded"
+          }
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+
+      assert assigns(view)[:outcome] == :failed
+      assert assigns(view)[:task_error] != nil
+      assert assigns(view)[:has_report] == false
+
+      # The outcome banner: failure tint, status, message and the Kind/Source
+      # meta of the structured failure record.
+      assert html =~ ~s(id="review-task-outcome")
+      assert html =~ ~s(data-outcome="failed")
+      assert html =~ "This task failed"
+      assert html =~ "Its work cannot be merged or rejected."
+      assert html =~ "boom: provider exploded"
+      assert html =~ "Kind: error"
+      assert html =~ "Source: result_handler"
+      assert html =~ "No agent report was recorded for this run."
+
+      # The escape hatch to the task's own diagnostics.
+      [link] = Floki.find(Floki.parse_document!(html), "#review-task-diagnostics")
+      assert Floki.attribute(link, "href") == ["/tasks?task=#{task_id}"]
+
+      # The review-status badge is meaningless for a diagnostics record: the
+      # header carries only the task-status badge.
+      assert header_badge_texts(html) == ["Failed"]
+
+      # No merge / reject / Create-PR / Extract-Skills / "Mark as read".
+      refute html =~ ~s(id="merge-form-primary")
+      refute html =~ ~s(phx-click="merge")
+      refute html =~ ~s(phx-click="reject")
+      refute html =~ ~s(phx-click="create_pr")
+      refute html =~ ~s(phx-click="extract_skills")
+      refute html =~ "Mark as read"
+
+      # No "0 commits / 0 files changed" row: a failed run with no diff data is
+      # never presented as an empty-but-successful change.
+      assert stats_bar_text(html) == ""
+      refute html =~ "0 commits"
+      refute html =~ "0 files changed"
+
+      # The repo card names the reason it has no changes and no actions.
+      card = repo_card_html(html, "primary")
+      assert card =~ "This repository produced no changes — the task failed."
+      refute card =~ ~s(phx-click="reject")
+    end
+
+    test "a failed task whose branch still exists still withholds merge and reject", %{
+      conn: conn
+    } do
+      {_repo_path, task_id, _change_sha} = create_review_task_with_repo!("main", nil)
+
+      task = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      assert :ok = EvoGit.Store.put_task(EvoGit.Store, %{task | status: :failed})
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+      settle_debounced_task_reload(view)
+
+      assert assigns(view)[:outcome] == :failed
+      assert html =~ ~s(data-outcome="failed")
+      assert html =~ "This task failed"
+
+      card = repo_card_html(html, "primary")
+      # The branch is live and its diff is readable, but a failed task's work
+      # can be neither merged nor rejected.
+      assert card =~ "Merge and reject are unavailable because the task failed."
+      refute card =~ ~s(id="merge-form-primary")
+      refute card =~ ~s(phx-click="merge")
+      refute card =~ ~s(phx-click="reject")
+
+      refute html =~ ~s(phx-click="create_pr")
+      refute html =~ ~s(phx-click="extract_skills")
+      refute html =~ "Mark as read"
+    end
+  end
+
+  describe "cancelled" do
+    test "with a live branch the preserved changes stay mergeable and are never 'Mark as read'",
+         %{
+           conn: conn
+         } do
+      {_repo_path, task_id, _change_sha} = create_review_task_with_repo!("main", nil)
+
+      task = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      assert :ok = EvoGit.Store.put_task(EvoGit.Store, %{task | status: :cancelled})
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+      settle_debounced_task_reload(view)
+
+      assert assigns(view)[:outcome] == :cancelled
+      assert assigns(view)[:has_report] == true
+
+      assert html =~ ~s(id="review-task-outcome")
+      assert html =~ ~s(data-outcome="cancelled")
+      assert html =~ "This task was cancelled"
+      assert html =~ "Its preserved changes can still be reviewed and merged below."
+      # The report survived the cancellation, so the "no report" line is absent.
+      refute html =~ "No agent report was recorded for this run."
+
+      card = repo_card_html(html, "primary")
+      assert card =~ ~s(id="merge-form-primary")
+      assert card =~ ~s(phx-click="reject")
+
+      # A cancelled task is never dismissed as a no-change review.
+      refute html =~ "Mark as read"
+    end
+
+    test "with no changes the card says WHY there is nothing to review", %{conn: conn} do
+      task_id = seed_outcome_task!(status: :cancelled)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+
+      assert assigns(view)[:outcome] == :cancelled
+      assert assigns(view)[:is_no_changes] == true
+
+      assert html =~ ~s(data-outcome="cancelled")
+      assert html =~ "This task was cancelled"
+      assert html =~ "It was cancelled before producing reviewable changes."
+
+      card = repo_card_html(html, "primary")
+      assert card =~ "This repository produced no changes — the task was cancelled."
+      refute card =~ "No code changes in this repository."
+      refute card =~ ~s(phx-click="reject")
+
+      refute html =~ "Mark as read"
+      refute html =~ "0 commits"
+      refute html =~ "0 files changed"
+    end
+  end
+
+  describe "completed without a report" do
+    test "states the missing report in its own words (never as a failure or a cancellation)", %{
+      conn: conn
+    } do
+      task_id = seed_outcome_task!(status: :completed, result: nil)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+
+      assert assigns(view)[:outcome] == :completed
+      assert assigns(view)[:has_report] == false
+
+      assert html =~ ~s(id="review-task-outcome")
+      assert html =~ ~s(data-outcome="completed")
+      assert html =~ "No agent report recorded"
+
+      assert html =~
+               "This task ended as Completed without an agent report. Check the task diagnostics for the transcript."
+
+      [link] = Floki.find(Floki.parse_document!(html), "#review-task-diagnostics")
+      assert Floki.attribute(link, "href") == ["/tasks?task=#{task_id}"]
+
+      # Never worded as a failure or a cancellation, and the failed/cancelled
+      # "no report was recorded for this run" line is not used here.
+      refute html =~ "This task failed"
+      refute html =~ "This task was cancelled"
+      refute html =~ "No agent report was recorded for this run."
+
+      # A completed task with nothing anywhere IS dismissable — the outcome
+      # matrix, not the missing report, decides that.
+      assert html =~ "Mark as read"
+    end
+  end
+
+  describe "a branch that vanished (:handled)" do
+    test "without a preserved snapshot the changes are reported as unrecoverable", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+
+      card = repo_card_html(html, "primary")
+      [badge] = Floki.find(Floki.parse_document!(card), "#repo-resolution-primary")
+      assert Floki.text(badge) |> String.trim() == "Already handled"
+      assert card =~ "The branch is gone and its changes are no longer recoverable."
+      refute card =~ "still viewable read-only"
+      # No merge is offered once the branch cannot be resolved.
+      refute card =~ ~s(id="merge-form-primary")
+      refute card =~ ~s(phx-click="reject")
+    end
+
+    test "with persisted SHAs the diff stays viewable read-only", %{conn: conn} do
+      {repo_path, task_id, _change_sha} = create_review_task_with_repo!("main", nil)
+      # The branch was deleted on a previous visit (merge/reject) while the task
+      # kept its base/commit SHAs, so the diff is still reachable from them.
+      git!(repo_path, ["branch", "-D", "task-branch"])
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+
+      card = repo_card_html(html, "primary")
+      [badge] = Floki.find(Floki.parse_document!(card), "#repo-resolution-primary")
+      assert Floki.text(badge) |> String.trim() == "Already handled"
+
+      assert card =~
+               "The branch was deleted, but its changes are still viewable read-only in the diff tabs."
+
+      refute card =~ "no longer recoverable"
+      refute card =~ ~s(id="merge-form-primary")
+      refute card =~ ~s(phx-click="reject")
+    end
+  end
+
+  describe "header scope" do
+    test "a repo-less task states 'No project path' beside the node chip", %{conn: conn} do
+      task_id = seed_repo_less_task!()
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+
+      assert assigns(view)[:repo_path] == nil
+
+      header = page_header_html(html)
+      assert header =~ "No project path"
+      # The node chip is part of the same identity line.
+      assert Floki.find(Floki.parse_document!(header), "span.hero-server-stack") != []
+      assert Floki.text(header) =~ "Local"
+      # A repo-less task has no branch, so no branch chip is invented.
+      assert Floki.find(Floki.parse_document!(header), "span.hero-code-bracket-square") == []
+    end
+  end
+
+  # --- Fixtures -------------------------------------------------------------
+
+  # Seeds a terminal task on a NONEXISTENT repo path (every git lookup degrades
+  # to nil/false, so the page is fully deterministic). `attrs` overrides any
+  # `%TaskInfo{}` field (`:status`, `:result`, `:error`, `:type`, `:opts`).
+  defp seed_outcome_task!(attrs) do
+    task_id = "review_test_outcome_#{System.unique_integer([:positive])}"
+
+    task =
+      struct(
+        %TaskInfo{
+          id: task_id,
+          type: :evolve,
+          status: :completed,
+          opts: [path: "/nonexistent/repo/path", objective: "Test objective"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: DateTime.utc_now(),
+          logs: [],
+          review_status: nil,
+          result: nil
+        },
+        attrs
+      )
+
+    EvoGit.Store.put_task(EvoGit.Store, task)
+
+    on_exit(fn -> delete_seeded_task!(task_id) end)
+
+    task_id
+  end
+
+  # A repo-less (assistant/reflect) task: no `:path` in its opts at all, so the
+  # header must state the absence instead of dropping the scope slot.
+  defp seed_repo_less_task! do
+    seed_outcome_task!(
+      type: :reflect,
+      opts: [],
+      result:
+        {:ok,
+         %{
+           commit_sha: nil,
+           branch_name: nil,
+           result: "Assistant summary",
+           pr_url: nil,
+           pr_title: nil
+         }}
+    )
+  end
+
+  # A completed task whose PRIMARY went unchanged (nil branch/commit in the
+  # result's `repos` map) while a WRITABLE FOREIGN repo produced commits on its
+  # own live `task-branch`. Both repo paths are real copies, so the foreign card
+  # resolves its merge targets and offers Merge/Reject.
+  defp seed_nil_primary_changed_foreign_task! do
+    {primary_dir, _primary_sha, primary_base_sha} =
+      copy_review_template!("evogit_outcome_primary_", "main", nil)
+
+    {foreign_dir, foreign_sha, _foreign_base_sha} =
+      copy_review_template!("evogit_outcome_foreign_", "main", nil)
+
+    task_id =
+      seed_multi_repo_task!(
+        primary_dir,
+        nil,
+        [%{"id" => "original", "root" => foreign_dir, "writable" => true}],
+        %{
+          "primary" => %{"commit_sha" => nil, "branch_name" => nil},
+          "original" => %{"commit_sha" => foreign_sha, "branch_name" => "task-branch"}
+        },
+        primary_base_sha
+      )
+
+    on_exit(fn -> rm_rf_retry(primary_dir) end)
+    on_exit(fn -> rm_rf_retry(foreign_dir) end)
+
+    {primary_dir, foreign_dir, task_id}
+  end
+
+  # --- Page scrapers --------------------------------------------------------
+
+  # The page header card (the ONLY `header` carrying the title `h1`). Fails
+  # loudly when absent, so the assertions built on it can never be vacuous.
+  defp page_header_html(html) do
+    case html |> Floki.parse_document!() |> Floki.find("header") do
+      [] ->
+        flunk("expected the review page header to be rendered")
+
+      headers ->
+        case Enum.find(headers, &(Floki.find(&1, "h1") != [])) do
+          nil -> flunk("expected the review page header to carry its title")
+          header -> Floki.raw_html(header)
+        end
+    end
+  end
+
+  # The text of every DaisyUI badge inside the page header, in DOM order — the
+  # review-status badge and the task-status badge (a FAILED task renders only
+  # the latter).
+  defp header_badge_texts(html) do
+    html
+    |> page_header_html()
+    |> Floki.parse_document!()
+    |> Floki.find(".badge")
+    |> Enum.map(&(&1 |> Floki.text() |> String.trim()))
+  end
+end
+
 defmodule EvoDashWeb.ReviewLiveSyncTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
@@ -6160,8 +6630,9 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
       # async load fails fast with :nodedown. Inject a VALID load result
       # carrying a primary review-repo entry (branch_exists: false,
       # merge_targets: [] so MergeCheck.maybe_start does NOT spawn an async
-      # check — fully deterministic), then click Continue task: the resume
-      # handler must still navigate to /projects with the project/commit/resume
+      # check — fully deterministic), then click "Prepare follow-up task": the
+      # resume handler must still navigate to /projects with the
+      # project/commit/resume
       # query params PLUS a manual `&node=` suffix (URL-driven landing whose
       # activation is covered by projects_live_test).
       id = "review-test-target-#{System.unique_integer([:positive])}"

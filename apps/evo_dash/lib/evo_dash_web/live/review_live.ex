@@ -100,6 +100,12 @@ defmodule EvoDashWeb.ReviewLive do
         task_usage: nil,
         agent_count: nil,
         task_status: nil,
+        # Terminal-outcome facts (owned by LoadData): the outcome class, the
+        # structured failure record and whether an agent report exists. Nil/false
+        # here means "not loaded yet" — the outcome banner renders nothing then.
+        outcome: nil,
+        task_error: nil,
+        has_report: false,
         model_id: nil,
         summary_raw: false,
         objective_raw: false,
@@ -346,7 +352,13 @@ defmodule EvoDashWeb.ReviewLive do
               model_id: nil,
               started_at: nil,
               finished_at: nil,
-              merge_status: nil
+              merge_status: nil,
+              # No loaded task means no subject for an outcome banner, and the
+              # no-change dismissal belongs to the failed load, not to a task.
+              outcome: nil,
+              task_error: nil,
+              has_report: false,
+              is_no_changes: false
             )
             # Back to the mount defaults: nothing on screen is derived from a
             # repo list any more (the error panel is what renders).

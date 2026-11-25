@@ -8,9 +8,14 @@
      `simple_nav` page has no bar and simply gets 3.5rem more content box, so no
      second constant is ever needed. */
   --shell-topbar-h: 3.5rem;
+  /* The rails' own interaction tones. The FILLS come from the shared surface
+     vocabulary (`surfaces.css`: `--surface-shell`, `--surface-rail`,
+     `--surface-hover`, `--surface-selected`); these stay as the local names the
+     workbench rules already speak, resolved from those tokens so there is never
+     a second, independent tone definition. */
   --workbench-text-muted: color-mix(in srgb, var(--color-base-content) 65%, transparent);
-  --workbench-hover: color-mix(in srgb, var(--color-base-content) 6%, transparent);
-  --workbench-selected: color-mix(in srgb, var(--color-primary) 12%, var(--color-base-200));
+  --workbench-hover: var(--surface-hover);
+  --workbench-selected: var(--surface-selected);
 }
 
 .workbench-main, .workbench-center {
@@ -84,43 +89,70 @@
   .workbench-resizer::after { transition: none; }
 }
 
+/* The workbench top bar (layer 0 chrome). ONE rule owns its geometry, its
+   surface tone and its single hairline; the tab rail inside it is stretched so
+   the tabs can sit on the bar's bottom edge (below). The only responsive
+   override is the narrow-viewport padding/gap shift further down. */
 .workbench-top {
   display: flex;
   align-items: center;
   flex: 0 0 var(--shell-topbar-h);
-  gap: .65rem;
+  gap: .5rem;
   min-width: 0;
-  padding: 0 .7rem;
-  border-bottom: 1px solid var(--color-base-300);
+  padding: 0 .55rem;
+  border-bottom: 1px solid var(--border-hairline);
+  background: var(--surface-shell);
 }
 
+/* The tab rail stretches to the bar's full height so the tab strip can sit ON
+   the bar's bottom edge; the icon buttons beside it stay vertically centered. */
 .workbench-tab-rail {
   display: flex;
   align-items: center;
+  align-self: stretch;
   gap: .35rem;
   flex: 1;
   min-width: 0;
 }
 
+/* === The native tab strip ===
+   A VS Code / ChatGPT-desktop style strip: tabs live in the content region's top
+   edge, bottom-aligned inside the fixed-height bar, and the ACTIVE one is
+   CONTINUOUS with the canvas below it.
+   The 1px bottom padding + the -1px bottom margin are load-bearing: together
+   they let the active tab's canvas-coloured bottom border land exactly on the
+   bar's hairline (interrupting it) without overflowing this horizontal scroller
+   by a pixel. */
 .workbench-tabs {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
+  align-self: stretch;
   gap: .3rem;
   flex: 0 1 auto;
   min-width: 0;
+  padding-block-end: 1px;
+  margin-block-end: -1px;
   overflow-x: auto;
   scrollbar-width: thin;
+  /* Paints the active tab's bottom edge above the bar's hairline. */
+  position: relative;
+  z-index: 1;
 }
 
 .workbench-tabs:empty { display: none; }
 
+/* ONE tab shape (and only ONE rule declares it): a bottom-anchored slab with the
+   top corners rounded, so the inactive hover silhouette and the active tab share
+   the same outline. */
 .workbench-tab {
   display: flex;
   align-items: center;
+  align-self: flex-end;
   flex: 0 0 auto;
+  block-size: var(--row-h-sm);
   max-width: min(14rem, 55vw);
   border: 1px solid transparent;
-  border-radius: .5rem;
+  border-radius: var(--radius-tab) var(--radius-tab) 0 0;
   font-size: var(--text-xs);
   color: var(--workbench-text-muted);
 }
@@ -128,19 +160,31 @@
 .workbench-tab:hover, .workbench-row:hover, .workbench-icon-button:hover,
 .workbench-history-row > button:hover { background: var(--workbench-hover); }
 
+/* The active tab joins the canvas: canvas fill, hairline on the sides and the
+   top only, and a bottom border in the CANVAS colour that paints over the bar's
+   hairline (the -1px bottom margin puts that border exactly on the hairline
+   band). No shadow and no underline pill — continuity, not decoration. */
 .workbench-tab.is-current {
-  background: var(--color-base-100);
-  border-color: var(--color-base-300);
+  position: relative;
+  z-index: 1;
+  margin-block-end: -1px;
+  background: var(--surface-canvas);
+  border-color: var(--border-hairline);
+  border-block-end-color: var(--surface-canvas);
   color: var(--color-base-content);
 }
 
+/* ONE link rule: the icon/text/padding geometry of every tab. */
 .workbench-tab-link {
+  display: flex;
+  align-items: center;
+  gap: .38rem;
   min-width: 0;
   overflow: hidden;
+  padding: .42rem .35rem .42rem .58rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.workbench-tab-link { padding: .42rem .35rem .42rem .65rem; }
 .workbench-tab-close {
   display: grid;
   flex: none;
@@ -149,12 +193,63 @@
   block-size: 1.75rem;
   margin-inline-end: .2rem;
   border-radius: .3rem;
+  /* Hidden until the tab is hovered/focused — the ACTIVE tab always shows it.
+     Opacity + visibility only: the button keeps its box, so revealing it never
+     shifts the label. */
+  opacity: 0;
+  visibility: hidden;
+}
+.workbench-tab:is(:hover, :focus-within) .workbench-tab-close,
+.workbench-tab.is-current .workbench-tab-close {
+  opacity: 1;
+  visibility: visible;
 }
 .workbench-tab-close .hero-x-mark { width: .875rem; height: .875rem; }
 .workbench-tab-close:hover { background: var(--workbench-hover); color: var(--color-base-content); }
 @media (prefers-reduced-motion: no-preference) {
-  .workbench-tab-close { transition: background-color 100ms ease-out, scale 100ms ease-out; }
+  .workbench-tab-close {
+    transition: background-color 100ms ease-out, opacity 100ms ease-out,
+      visibility 100ms ease-out, scale 100ms ease-out;
+  }
   .workbench-tab-close:active { scale: .96; }
+}
+
+/* === Published tab hooks (styled here, owned by the tab behaviour) ===
+   A PREVIEW tab is a draft of a tab, not a real one: italic, dimmed title and a
+   close control that appears only while the tab is hovered/focused. */
+.workbench-tab[data-preview="true"] .workbench-tab-link {
+  font-style: italic;
+  opacity: .72;
+}
+.workbench-tab[data-preview="true"] .workbench-tab-close,
+.workbench-tab[data-preview="true"].is-current .workbench-tab-close {
+  opacity: 0;
+  visibility: hidden;
+}
+.workbench-tab[data-preview="true"]:is(:hover, :focus-within) .workbench-tab-close {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* The rail-end OVERFLOW menu (`#workbench-tabs-overflow`): a compact icon-button
+   summary at the end of the strip whose panel IS the create menu's surface and
+   elevation family, mirrored to the rail's end. */
+.workbench-tab-overflow,
+#workbench-tabs-overflow {
+  position: relative;
+  flex: none;
+  align-self: center;
+}
+.workbench-tab-overflow > summary { list-style: none; cursor: pointer; }
+.workbench-tab-overflow > summary::-webkit-details-marker { display: none; }
+.workbench-tab-overflow[open] > summary {
+  background: var(--workbench-selected);
+  color: var(--color-primary-standalone);
+}
+.workbench-tab-overflow > .workbench-create-menu {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+  transform: none;
 }
 .workbench-create { position: relative; flex: none; }
 .workbench-create > summary { list-style: none; }
@@ -163,6 +258,7 @@
   background: var(--workbench-selected);
   color: var(--color-primary-standalone);
 }
+/* A rail menu is an OVERLAY: raised surface + the shared `--elev-2` elevation. */
 .workbench-create-menu {
   position: absolute;
   z-index: 39;
@@ -172,10 +268,10 @@
   min-width: 11rem;
   max-width: calc(100vw - 1.25rem);
   padding: .3rem;
-  border: 1px solid var(--color-base-300);
+  border: 1px solid var(--border-hairline);
   border-radius: .55rem;
-  background: var(--color-base-100);
-  box-shadow: 0 10px 22px -12px color-mix(in srgb, var(--color-base-content) 42%, transparent);
+  background: var(--surface-raised);
+  box-shadow: var(--elev-2);
 }
 .workbench-create-menu > .workbench-row { min-height: var(--row-h-sm); cursor: pointer; }
 
@@ -205,12 +301,10 @@
 .workbench-section-heading {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: .5rem;
   min-width: 0;
-}
-.workbench-section-heading {
-  justify-content: space-between;
-  padding: .45rem .55rem;
+  padding: .52rem .55rem;
   font-size: var(--text-xs);
   font-weight: 600;
 }
@@ -244,7 +338,7 @@
   border-block-start: 1px solid var(--color-base-300);
 }
 .workbench-project-entry { display: block; min-width: 0; }
-.workbench-project-heading { display: flex; min-width: 0; }
+.workbench-project-heading { display: flex; align-items: center; min-width: 0; }
 .workbench-project-link {
   min-height: var(--row-h-tall);
   padding-block: .4rem;
@@ -300,8 +394,10 @@
      id rules right below), so the heading, project label, search and filters
      stay pinned while rows scroll under them. */
   overflow: hidden;
-  background: var(--color-base-200);
-  border-inline-start: 1px solid var(--color-base-300);
+  /* A DOCKED panel on the shell layer (surfaces.css): rail tone + ONE hairline.
+     No card shadow and no floating look — the dock is part of the shell. */
+  background: var(--surface-rail);
+  border-inline-start: 1px solid var(--border-hairline);
   padding: .55rem .6rem;
   /* Right-panel entrance/exit driven by the shared motion vocabulary: every
      listed property uses var(--motion-slow) + var(--motion-ease-out), never a
@@ -591,12 +687,14 @@
 .workbench-window {
   margin: auto;
   padding: 0;
-  background: var(--color-base-100);
+  /* A native dialog is an OVERLAY: raised surface + the layer-2 elevation. */
+  background: var(--surface-raised);
   color: var(--color-base-content);
-  border: 1px solid var(--color-base-300);
+  border: 1px solid var(--border-hairline);
   border-radius: .85rem;
   max-width: calc(100vw - 1.5rem);
   max-height: calc(100dvh - 1.5rem);
+  box-shadow: var(--elev-3);
 }
 .workbench-window::backdrop { background: color-mix(in srgb, black 38%, transparent); }
 .workbench-project-window { width: 29rem; }
@@ -707,7 +805,8 @@
   display: block;
   width: 100%;
   height: min(47.3rem, calc(100dvh - 1.65rem));
-  background: var(--color-base-100);
+  /* The iframe paints the Settings document's own canvas. */
+  background: var(--surface-canvas);
   border: 0;
   /* Composite the iframe and its backdrop before clipping the window corners. */
   filter: opacity(1);
@@ -723,35 +822,18 @@
   outline-offset: 2px;
 }
 
-/* Keep the work surface distinct from the two navigation rails. */
-#app-layout {
-  --workbench-surface: color-mix(in srgb, var(--color-base-100) 74%, var(--color-base-200));
-  --workbench-rail: color-mix(in srgb, var(--color-base-200) 88%, var(--color-base-100));
-}
-#app-layout #sidebar { background: var(--workbench-rail); flex-shrink: 0; }
+/* The rails and the docked right panel consume the shared layer-0 tones
+   (`surfaces.css`), so a rail is never a second, independent surface definition. */
+#app-layout #sidebar { background: var(--surface-rail); flex-shrink: 0; }
 #sidebar[data-sidebar-collapsed="false"] { width: var(--workbench-left-width, 16rem); }
 #sidebar-mobile-close { display: none; }
 @media (max-width: 1023.98px) {
   #sidebar[data-sidebar-collapsed="false"] { width: min(18rem, 86vw); }
 }
-.workbench-top {
-  background: var(--workbench-surface);
-  gap: .5rem;
-  padding-inline: .55rem;
-}
+/* Narrow chrome keeps its natural width; only the inline start shifts to clear
+   the mobile sidebar toggle. */
 @media (max-width: 1023.98px) {
   .workbench-top { padding-inline-start: 3.55rem; gap: .4rem; }
-}
-.workbench-tab { border-radius: .35rem; border: 0; }
-.workbench-tab.is-current {
-  box-shadow: inset 0 -2px var(--color-primary);
-  background: var(--workbench-selected);
-}
-.workbench-tab-link {
-  display: flex;
-  align-items: center;
-  gap: .38rem;
-  padding-inline-start: .58rem;
 }
 .workbench-tab-icon { flex: none; width: .875rem; height: .875rem; opacity: .75; }
 .workbench-tab-instance {
@@ -762,7 +844,6 @@
   text-overflow: ellipsis;
   font-size: var(--text-2xs);
 }
-.workbench-section-heading { padding-block: .52rem; }
 .workbench-section-heading button:focus-visible,
 .workbench-history-filter:focus-visible,
 .workbench-query:focus-within {
@@ -793,9 +874,6 @@
 }
 .workbench-query input::placeholder { color: var(--workbench-text-muted); }
 
-.workbench-history {
-  background: var(--workbench-rail);
-}
 .workbench-history-project {
   margin-top: .18rem;
   max-width: 13rem;
@@ -1132,11 +1210,14 @@
   background: var(--color-warning);
 }
 
+/* On the workbench page the task-form card is a plain layer-1 content surface:
+   the canvas fill plus the hairline, no glow, no backdrop and NO elevation (the
+   accent border is the only edge — see surfaces.css). */
 #app-layout[data-workbench-page="dashboard"] .input-card {
   border-radius: .8rem;
-  background: var(--color-base-100);
-  border-color: var(--color-base-300);
-  box-shadow: 0 5px 20px -14px color-mix(in srgb, var(--color-base-content) 34%, transparent);
+  background: var(--surface-canvas);
+  border-color: var(--border-hairline);
+  box-shadow: none;
   backdrop-filter: none;
 }
 #app-layout[data-workbench-page="dashboard"] .input-card::before { display: none; }
@@ -1146,10 +1227,13 @@
 
 /* Settings scrolls inside the iframe, including when a nested modal is open. */
 :root:has(#workbench-window-content) { scrollbar-gutter: auto; }
+/* The Settings window is its OWN document (no #app-layout), so the three rail
+   tones are re-declared here — still resolved from the shared surface tokens so
+   the popup can never drift to a second palette. */
 #workbench-window-content {
   --workbench-text-muted: color-mix(in srgb, var(--color-base-content) 70%, transparent);
-  --workbench-hover: color-mix(in srgb, var(--color-base-content) 6%, transparent);
-  --workbench-selected: color-mix(in srgb, var(--color-primary) 12%, var(--color-base-200));
+  --workbench-hover: var(--surface-hover);
+  --workbench-selected: var(--surface-selected);
 }
 #workbench-window-content .workbench-window-page { padding: 0; }
 .workbench-settings-nav {
@@ -1157,8 +1241,8 @@
   min-height: 0;
   overflow-y: auto;
   padding: 1rem .8rem;
-  border-inline-end: 1px solid var(--color-base-300);
-  background: var(--color-base-200);
+  border-inline-end: 1px solid var(--border-hairline);
+  background: var(--surface-rail);
 }
 .workbench-settings-group { margin-top: 1.1rem; }
 .workbench-settings-group h3 {
@@ -1266,60 +1350,7 @@
   color: var(--workbench-text-muted);
 }
 
-.workbench-project-heading { display: flex; align-items: center; min-width: 0; }
 .workbench-project-heading .workbench-project-link { flex: 1; }
-/* A project entry's own child rows (its open windows / its activity) are a
-   LIST under the title pill: the title row and the FIRST child row are both
-   accent-tinted `is-current` pills, so they need a real block gap of their own
-   or the two tints fuse into one continuous coloured shape. The inline indent
-   is the hierarchy, this gap is the separation. */
-.workbench-project-activity,
-.workbench-project-open-windows:not(:empty) {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  min-width: 0;
-  margin-inline-start: 1.1rem;
-  gap: .15rem;
-}
-/* The gap rides the FIRST row, never the container: the container is filled by
-   JS and HEEx renders it with a whitespace-only body even when it holds no
-   rows, so a container margin would reserve dead space under every entry
-   without open windows. `> :first-child` only exists when a row does. */
-.workbench-project-activity > :first-child,
-.workbench-project-open-windows > :first-child {
-  margin-block-start: .3rem;
-}
-.workbench-project-activity-link[hidden] { display: none; }
-.workbench-project-window-link {
-  min-width: 0;
-  min-block-size: var(--row-h-sm);
-  padding-block: .2rem;
-  gap: .45rem;
-  color: var(--workbench-text-muted);
-}
-.workbench-project-window-link .truncate { flex: 1; min-width: 0; }
-[data-workbench-project-switching] .workbench-project-entry:not(:has(.workbench-project-window-link.is-current))
-  .workbench-project-link.is-current {
-  background: transparent;
-  color: inherit;
-  font-weight: inherit;
-}
-[data-workbench-project-switching] .workbench-project-entry:has(.workbench-project-window-link.is-current)
-  .workbench-project-link {
-  background: var(--workbench-selected);
-  color: var(--color-primary-standalone);
-}
-@media (pointer: coarse) {
-  .workbench-project-window-link { min-block-size: var(--touch-target); }
-}
-
-.workbench-project-activity-link { gap: .4rem; color: var(--workbench-text-muted); }
-.workbench-project-activity-link:hover { color: var(--color-base-content); }
-.workbench-project-activity-link time { flex: none; font-size: var(--text-2xs); }
-.workbench-project-activity .workbench-hint { padding-block: .25rem; }
-@media (max-width: 1023.98px) {
-  .workbench-project-activity-link { min-block-size: var(--touch-target); }
-}
 
 .workbench-project-window { width: 38rem; }
 .project-picker { padding: 1.2rem; }

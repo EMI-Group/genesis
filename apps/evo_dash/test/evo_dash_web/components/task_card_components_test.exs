@@ -305,8 +305,40 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       assert html =~ "/review/"
     end
 
+    test "a failed task with a (salvaged) branch renders the Review button" do
+      # A failure keeps its worktree/result, so the review page can render the
+      # outcome honestly — the workbench history panel already routes every
+      # finished task to `/review/<id>`, so the card must offer the same route.
+      html =
+        render_component(&TaskCardComponents.task_card/1,
+          task:
+            review_task(
+              status: :failed,
+              result: {:error, :agent_crashed},
+              error: %{kind: :down, message: "agent crashed", source: :down_handler}
+            )
+        )
+
+      assert html =~ "Review"
+      assert [_] = Floki.find(parse(html), "a[href*='/review/']")
+    end
+
+    test "a failed multi-repo task renders the Review button too" do
+      html =
+        render_component(&TaskCardComponents.task_card/1,
+          task:
+            review_task(
+              status: :failed,
+              result: {:ok, %{repos: %{"primary" => %{commit_sha: "aaaaaaa1", branch_name: nil}}}}
+            )
+        )
+
+      assert html =~ "Review"
+      assert html =~ "/review/"
+    end
+
     test "a :reflect (repo-less) task never renders the Review button" do
-      for status <- [:completed, :cancelled] do
+      for status <- [:completed, :cancelled, :failed] do
         html =
           render_component(&TaskCardComponents.task_card/1,
             task: review_task(type: :reflect, status: status, result: {:ok, %{result: "chat"}})
@@ -318,7 +350,7 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
     end
 
     test "non-reviewable statuses never render the Review button" do
-      for status <- [:pending, :running, :finalizing, :failed] do
+      for status <- [:pending, :running, :finalizing, :pausing, :paused] do
         html =
           render_component(&TaskCardComponents.task_card/1,
             task: review_task(status: status, result: {:ok, %{branch_name: "genesis/agent_1"}})
@@ -520,15 +552,17 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       end
     end
 
-    test "a failed task never renders a Review button even with an error map" do
+    test "a failed task renders the structured error AND the Review route" do
+      # A failure is reviewable (the review page renders it honestly), so the
+      # error strip and the Review button coexist on the same card.
       html =
         render_component(&TaskCardComponents.task_card/1,
           task: failed_task(error: error_record())
         )
 
       assert html =~ "bg-error/10 border border-error/20 rounded-lg px-3 py-2 min-w-0"
-      refute html =~ "Review"
-      refute html =~ "/review/"
+      assert html =~ "Review"
+      assert [_] = Floki.find(parse(html), "a[href='/review/t_fail']")
     end
   end
 
@@ -827,7 +861,7 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
 
       # Accent bar + card tint belong to the violet idle-session family.
       assert html =~ "h-1 opacity-80 bg-violet-500"
-      assert html =~ "bg-violet-500/5 shadow-violet-500/10 border-violet-500/30"
+      assert html =~ "bg-violet-500/5 border-violet-500/30"
       assert html =~ "bg-violet-500/10 text-violet-600 dark:text-violet-400 rounded-full"
       refute html =~ "bg-warning"
 
@@ -1148,11 +1182,207 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
         assert Floki.find(parse(html), "a[href*='/review/']") == []
       end
 
-      # `show_review_button?/1` stays a :completed/:cancelled ALLOWLIST.
-      for status <- [:completed, :cancelled] do
+      # `show_review_button?/1` stays a FINISHED-status allowlist
+      # (:completed/:cancelled/:failed) — a pause is not finished.
+      for status <- [:completed, :cancelled, :failed] do
         html = render_action_card(%{id: "t_rev", status: status})
         assert [_] = Floki.find(parse(html), "a[href*='/review/']")
       end
+    end
+  end
+
+  # The card's chrome is CSS-OWNED (`assets/css/surfaces.css`): the markup only
+  # writes the `.task-card` / `.task-card-accent` / `.task-card-status` /
+  # `.task-card-panel` class names plus `data-variant` / `data-selected`, so a
+  # utility-built elevation (`shadow-sm`, `hover:shadow-md`, `bg-base-100`) or a
+  # `@focused`-driven border branch must never come back.
+  describe "task_card/1 — surface chrome" do
+    test "the root keeps the layout classes and carries flat/unselected data attributes" do
+      root =
+        render_action_card(%{id: "t_chrome"})
+        |> parse()
+        |> Floki.find("div.task-card")
+        |> List.first()
+
+      classes = class_list(root)
+
+      for kept <- [
+            "task-card",
+            "min-w-0",
+            "rounded-xl",
+            "border",
+            "relative",
+            "z-10",
+            "group",
+            "has-[[open]]:z-30"
+          ] do
+        assert kept in classes,
+               "expected #{kept} on the task-card root, got #{inspect(classes)}"
+      end
+
+      assert Floki.attribute(root, "data-variant") == ["flat"]
+      # `to_string/1` is deliberate: a bare boolean attribute would vanish when
+      # false and never match CSS `[data-selected="true"]`.
+      assert Floki.attribute(root, "data-selected") == ["false"]
+
+      for banned <- [
+            "bg-base-100",
+            "shadow-sm",
+            "hover:shadow-md",
+            "transition-shadow",
+            "border-base-200/60",
+            "border-base-300"
+          ] do
+        refute banned in classes, "did not expect #{banned} on the task-card root"
+      end
+    end
+
+    test "the status tint is a fill + border wash and NEVER a shadow colour" do
+      # The wrapper carries no shadow-SIZE utility (elevation belongs to
+      # `assets/css/surfaces.css`), so a `shadow-<semantic>/10` colour token
+      # would be inert markup. Pin the whole status family — including the
+      # completed + review_status variants — at full strength.
+      expected = [
+        {:failed, nil, "bg-error/5 border-error/20"},
+        {:running, nil, "bg-warning/5 border-warning/20"},
+        {:cancelling, nil, "bg-warning/5 border-warning/20"},
+        {:pausing, nil, "bg-warning/5 border-warning/20"},
+        {:paused, nil, "bg-info/5 border-info/20"},
+        {:awaiting_input, nil, "bg-violet-500/5 border-violet-500/30"},
+        {:pending, nil, "bg-base-200/40 border-base-300/20"},
+        {:cancelled, nil, "bg-base-200/40 border-base-300/20"},
+        {:completed, nil, "bg-success/5 border-success/20"},
+        {:completed, :merged, "bg-success/5 border-success/20"},
+        {:completed, :rejected, "bg-error/5 border-error/20"},
+        {:completed, :continued, "bg-secondary/5 border-secondary/20"},
+        {:completed, :ignored, "bg-base-200/40 border-base-300/20"}
+      ]
+
+      for {status, review_status, tint} <- expected do
+        root =
+          render_action_card(%{id: "t_tint", status: status, review_status: review_status})
+          |> parse()
+          |> Floki.find("div.task-card")
+          |> List.first()
+
+        classes = class_list(root)
+
+        for kept <- String.split(tint) do
+          assert kept in classes,
+                 "expected #{kept} on the #{status}/#{inspect(review_status)} task-card root, got #{inspect(classes)}"
+        end
+
+        assert Enum.filter(classes, &String.starts_with?(&1, "shadow-")) == [],
+               "did not expect a shadow-* class on the #{status}/#{inspect(review_status)} task-card root"
+      end
+    end
+
+    test "the raised variant and the focused flag are written as data attributes" do
+      root =
+        render_action_card(%{id: "t_raised"}, variant: "raised", focused: true)
+        |> parse()
+        |> Floki.find("div.task-card")
+        |> List.first()
+
+      assert "task-card" in class_list(root)
+      assert Floki.attribute(root, "data-variant") == ["raised"]
+      assert Floki.attribute(root, "data-selected") == ["true"]
+    end
+
+    test "task-card-accent is always present once and task-card-status marks ONLY the live badge" do
+      doc =
+        render_action_card(%{id: "t_marked", status: :completed, review_status: :merged})
+        |> parse()
+
+      # Always in the DOM (CSS hides it for the flat variant) — never gated on
+      # `@focused` anymore.
+      assert [accent] = Floki.find(doc, ".task-card-accent")
+      assert "task-card-accent" in class_list(accent)
+
+      badges = Floki.find(doc, "span.badge")
+      assert length(badges) == 2
+
+      assert [live_badge] = Floki.find(doc, "span.task-card-status")
+      assert "task-card-status" in class_list(live_badge)
+      assert Floki.text(live_badge) =~ "Completed"
+      refute Floki.text(live_badge) =~ "Merged"
+
+      # The review-status badge is unmarked chrome.
+      review_badge = Enum.find(badges, &(&1 != live_badge))
+      assert review_badge
+      refute "task-card-status" in class_list(review_badge)
+      assert Floki.text(review_badge) =~ "Merged"
+    end
+
+    test "every nested detail panel is a recessed task-card-panel with p-4" do
+      usage = %{
+        input_tokens: 1_000,
+        output_tokens: 500,
+        total_tokens: 1_500,
+        input_cost: 0.001,
+        output_cost: 0.002,
+        total_cost: 0.003
+      }
+
+      # `format_datetime/2` dot-accesses `:time` on each log timestamp.
+      logs = [
+        %{timestamp: %{time: ~T[12:00:00]}, level: :info, message: "agent started"},
+        %{timestamp: %{time: ~T[12:00:01]}, level: :warn, message: "agent warned"}
+      ]
+
+      panels =
+        render_action_card(
+          %{
+            id: "t_panels",
+            status: :completed,
+            opts: [prompt: "Panel contract task", mode: "simple", archive: true]
+          },
+          show_details: true,
+          detail: %{
+            state: :ok,
+            task: %{
+              result: {:ok, %{result: "agent message"}},
+              usage: usage,
+              logs: logs
+            }
+          }
+        )
+        |> parse()
+        |> Floki.find(".task-card-panel")
+
+      # Objective + Agent Message + Token & Cost Usage + Agents Spawned +
+      # Execution Logs (a <details>) + Archived Agent Details.
+      assert length(panels) == 6
+
+      for panel <- panels do
+        classes = class_list(panel)
+
+        for kept <- ["task-card-panel", "p-4", "rounded-lg"] do
+          assert kept in classes,
+                 "expected #{kept} on a nested panel, got #{inspect(classes)}" <>
+                   " (#{inspect(Floki.text(panel) |> String.slice(0, 40))})"
+        end
+
+        for banned <- ["bg-base-200/30", "border-base-200/80", "hover:border-base-300"] do
+          refute banned in classes, "did not expect #{banned} on a nested panel"
+        end
+      end
+    end
+
+    test "surfaces.css owns all four surface-chrome selectors (markup cannot drift)" do
+      css =
+        "../../../assets/css/surfaces.css"
+        |> Path.expand(__DIR__)
+        |> File.read!()
+
+      assert css =~ ".task-card {"
+      assert css =~ ".task-card-panel {"
+      assert css =~ ".task-card-accent"
+      assert css =~ ".task-card-status {"
+
+      # The two data attributes the markup writes are the CSS switch.
+      assert css =~ ~s([data-variant="flat"])
+      assert css =~ ~s([data-selected="true"])
     end
   end
 

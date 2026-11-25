@@ -603,6 +603,34 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ "alpha task"
       assert html =~ "beta task"
     end
+
+    test "the status select offers the full lifecycle option set in lifecycle order", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
+
+      # ONE pin for membership AND order: the select renders the whole task
+      # lifecycle (the in-flight/resting states first, the terminal statuses,
+      # then the DERIVED `needs_review` triage stop), so a dropped status or a
+      # reordered list fails exactly here.
+      values =
+        html
+        |> Floki.parse_document!()
+        |> Floki.find("select[name=status_filter] option")
+        |> Floki.attribute("value")
+
+      assert values == ~w(
+               all running pending finalizing cancelling awaiting_input pausing paused
+               completed failed cancelled needs_review
+             )
+
+      # The two newest stops render their gettext labels (same regex idiom as the
+      # `cancelling` option pin in the "cancelling status display" describe: the
+      # option body carries newline indentation around the label).
+      assert html =~ ~r/<option value="finalizing"[^>]*>\s*Finalizing\s*<\/option>/
+      assert html =~ ~r/<option value="needs_review"[^>]*>\s*Needs review\s*<\/option>/
+    end
   end
 
   describe "reflect chat tasks (show_reflect_tasks reveal toggle)" do
@@ -1521,20 +1549,470 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ "Review"
     end
 
-    test "does not render a Review button for failed, cancelling, running, or pending tasks", %{
+    test "does not render a Review button for the non-reviewable live statuses", %{
       conn: conn
     } do
-      # The failed task uses the force-killed shape: result nil.
-      insert_fixture!(status: :failed, result: nil, opts: [prompt: "failed one"])
+      # Every status that is NOT a reviewable outcome: the in-flight / draining /
+      # resting states an operator may still act on, plus the finalizing hand-off.
+      # `:failed` is deliberately ABSENT — a failed run whose salvage branch
+      # exists IS reviewable and is pinned by the exact-href test below.
       insert_fixture!(status: :cancelling, finished_at: nil, opts: [prompt: "cancelling one"])
       insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running one"])
       insert_fixture!(status: :pending, finished_at: nil, opts: [prompt: "pending one"])
+      insert_fixture!(status: :pausing, finished_at: nil, opts: [prompt: "pausing one"])
+      insert_fixture!(status: :paused, finished_at: nil, opts: [prompt: "paused one"])
+      insert_fixture!(status: :finalizing, finished_at: nil, opts: [prompt: "finalizing one"])
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
       html = flush_tasks_load(view)
 
       # No task card may link to the review page.
       refute html =~ ~r{href="/review/"}
+    end
+
+    test "the review href is exact for completed, cancelled and failed tasks", %{conn: conn} do
+      completed = insert_fixture!(status: :completed, branch_name: "evogit/completed-review")
+      cancelled = insert_fixture!(status: :cancelled, branch_name: "evogit/cancelled-review")
+
+      # The force-kill / crash shape: no result at all, but a salvage branch
+      # exists, so the run is still reviewable.
+      failed =
+        insert_fixture!(
+          status: :failed,
+          result: nil,
+          branch_name: "evogit/failed-salvage"
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      # Read the hrefs through Floki (never a substring match) and scoped to
+      # #tasks-list, because the sidebar's review section also links finished
+      # runs. Each card contributes exactly ONE href.
+      hrefs =
+        view
+        |> render_tasks_list()
+        |> Floki.parse_document!()
+        |> Floki.find(~s(a[href^="/review/"]))
+        |> Floki.attribute("href")
+
+      assert Enum.sort(hrefs) ==
+               Enum.sort([
+                 "/review/#{completed}",
+                 "/review/#{cancelled}",
+                 "/review/#{failed}"
+               ])
+    end
+
+    test "a remote node's review href carries ?node= (finished tasks only)", %{conn: conn} do
+      target_id = register_remote_target!("tasks-review-href")
+
+      completed = insert_fixture!(status: :completed, branch_name: "evogit/remote-review")
+
+      # A force-killed / crashed run: no result, but its salvage branch exists,
+      # so the FINISHED allowlist (`:completed` / `:cancelled` / `:failed`,
+      # repo-less `:reflect` excluded) routes it to review too — the triage
+      # BUCKET is what stays `:completed`-only, never the route.
+      failed =
+        insert_fixture!(
+          status: :failed,
+          result: nil,
+          branch_name: "evogit/remote-review-salvage"
+        )
+
+      # Every node-aware read is served from the LOCAL store: the fake remote
+      # node is unreachable, so the seams keep the page renderable while the
+      # viewed node CONTEXT stays remote.
+      install_tasks_page_load_runner(fn _node, page, page_size, filters ->
+        EvoDashWeb.TasksLive.PageLoad.load(node(), page, page_size, filters)
+      end)
+
+      {:ok, view, _html} = live(conn, "/tasks?node=" <> target_id)
+      flush_tasks_load(view)
+
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.current_node_id ==
+               target_id
+
+      hrefs =
+        view
+        |> render_tasks_list()
+        |> Floki.parse_document!()
+        |> Floki.find(~s(a[href^="/review/"]))
+        |> Floki.attribute("href")
+
+      assert Enum.sort(hrefs) ==
+               Enum.sort([
+                 "/review/#{completed}?node=#{target_id}",
+                 "/review/#{failed}?node=#{target_id}"
+               ])
+    end
+
+    test "the needs_review triage filter round-trips on a remote node", %{conn: conn} do
+      target_id = register_remote_target!("tasks-review-needs")
+
+      candidate =
+        insert_fixture!(
+          status: :completed,
+          branch_name: "evogit/remote-needs-review",
+          opts: [prompt: "MARKER REVIEW REMOTE CANDIDATE"]
+        )
+
+      insert_fixture!(
+        status: :completed,
+        branch_name: "evogit/remote-needs-review-decided",
+        review_status: :merged,
+        opts: [prompt: "MARKER REVIEW REMOTE DECIDED"]
+      )
+
+      insert_fixture!(
+        status: :completed,
+        branch_name: nil,
+        opts: [prompt: "MARKER REVIEW REMOTE BRANCHLESS"]
+      )
+
+      test_pid = self()
+
+      # Served locally (see the review-href test above); the runner ALSO records
+      # the node and filters each load was asked for, so this pins that the
+      # triage predicate travels to the remote read.
+      install_tasks_page_load_runner(fn node, page, page_size, filters ->
+        send(test_pid, {:page_load_node, node, filters})
+        EvoDashWeb.TasksLive.PageLoad.load(node(), page, page_size, filters)
+      end)
+
+      {:ok, view, _html} = live(conn, "/tasks?node=" <> target_id)
+      flush_tasks_load(view)
+
+      remote = :"genesis_remote@127.0.0.1"
+      assert_receive {:page_load_node, ^remote, _filters}, @async_wait_budget_ms
+
+      render_patch(view, "/tasks?status=needs_review&node=" <> target_id)
+      flush_tasks_load(view)
+
+      # The patched load ran on the REMOTE node carrying the DERIVED predicate:
+      # no status clause + the store's composite `"pending"` review predicate.
+      assert_receive {:page_load_node, ^remote, filters}, @async_wait_budget_ms
+      assert filters[:status] == "all"
+      assert filters[:review_status] == "pending"
+
+      list = render_tasks_list(view)
+      assert list =~ "MARKER REVIEW REMOTE CANDIDATE"
+      assert list =~ candidate
+      refute list =~ "MARKER REVIEW REMOTE DECIDED"
+      refute list =~ "MARKER REVIEW REMOTE BRANCHLESS"
+    end
+  end
+
+  describe "needs review triage" do
+    # `needs_review` is a DERIVED status-filter value, never a stored status: the
+    # page sends `status: "all"` + `review_status: "pending"` and the core expands
+    # `"pending"` to `status = 'completed' AND review_status IS NULL AND
+    # branch_name IS NOT NULL`. Every list assertion is scoped to #tasks-list
+    # because the sidebar also lists completed tasks.
+
+    test "only an undecided completed branch task lands under needs_review", %{conn: conn} do
+      candidate =
+        insert_fixture!(
+          status: :completed,
+          branch_name: "evogit/needs-review-a",
+          opts: [prompt: "MARKER REVIEW CANDIDATE"]
+        )
+
+      # A decided task: the SQL predicate's `review_status IS NULL` half excludes it.
+      insert_fixture!(
+        status: :completed,
+        branch_name: "evogit/needs-review-b",
+        review_status: :merged,
+        opts: [prompt: "MARKER REVIEW DECIDED"]
+      )
+
+      # A branchless completed task can NEVER be a candidate: the store predicate
+      # requires `branch_name IS NOT NULL`, so it is not even landed.
+      insert_fixture!(
+        status: :completed,
+        branch_name: nil,
+        opts: [prompt: "MARKER REVIEW BRANCHLESS"]
+      )
+
+      insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "MARKER REVIEW RUNNING"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      _html = render_hook(view, "filter_tasks", %{"status_filter" => "needs_review"})
+      html = flush_tasks_load(view)
+      list = render_tasks_list(view)
+
+      assert list =~ "MARKER REVIEW CANDIDATE"
+      assert list =~ candidate
+      refute list =~ "MARKER REVIEW DECIDED"
+      refute list =~ "MARKER REVIEW BRANCHLESS"
+      refute list =~ "MARKER REVIEW RUNNING"
+
+      # The triage queue has its own singular count wording.
+      assert html =~ "1 task needs review"
+    end
+
+    test "the count line pluralizes the triage queue", %{conn: conn} do
+      insert_fixture!(
+        status: :completed,
+        branch_name: "evogit/needs-review-plural-a",
+        opts: [prompt: "MARKER REVIEW PLURAL A"]
+      )
+
+      insert_fixture!(
+        status: :completed,
+        branch_name: "evogit/needs-review-plural-b",
+        opts: [prompt: "MARKER REVIEW PLURAL B"]
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      _html = render_hook(view, "filter_tasks", %{"status_filter" => "needs_review"})
+      html = flush_tasks_load(view)
+
+      assert html =~ "2 tasks need review"
+      refute html =~ "2 task needs review"
+    end
+
+    test "a decided task leaves the queue through the debounced reload", %{conn: conn} do
+      candidate =
+        insert_fixture!(
+          status: :completed,
+          branch_name: "evogit/needs-review-departing",
+          opts: [prompt: "MARKER REVIEW DEPARTING"]
+        )
+
+      insert_fixture!(
+        status: :completed,
+        branch_name: "evogit/needs-review-staying",
+        opts: [prompt: "MARKER REVIEW STAYING"]
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      _html = render_hook(view, "filter_tasks", %{"status_filter" => "needs_review"})
+      flush_tasks_load(view)
+      assert render_tasks_list(view) =~ "MARKER REVIEW DEPARTING"
+
+      # Decide it IN THE STORE, then raise the core's own event shape: the page
+      # must drop the row through its debounced reload (no local mutation).
+      task = EvoGit.Store.get_task(EvoGit.Store, candidate)
+      EvoGit.Store.put_task(EvoGit.Store, %{task | review_status: :merged})
+
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "tasks",
+        {:task_updated, candidate, :completed, node()}
+      )
+
+      # Bounded poll, no fixed sleep: the debounce + reload is what removes the
+      # row from the visible list.
+      wait_until(fn -> not (render_tasks_list(view) =~ "MARKER REVIEW DEPARTING") end)
+
+      list = render_tasks_list(view)
+      refute list =~ "MARKER REVIEW DEPARTING"
+      assert list =~ "MARKER REVIEW STAYING"
+
+      flush_tasks_load(view)
+    end
+
+    test "an empty queue says so, and a focused miss still wins", %{conn: conn} do
+      # Only rows that can never be a candidate: a decided task and a branchless
+      # one. The triage queue is genuinely empty.
+      insert_fixture!(
+        status: :completed,
+        branch_name: "evogit/needs-review-empty",
+        review_status: :merged,
+        opts: [prompt: "MARKER REVIEW DECIDED ONLY"]
+      )
+
+      insert_fixture!(
+        status: :completed,
+        branch_name: nil,
+        opts: [prompt: "MARKER REVIEW BRANCHLESS ONLY"]
+      )
+
+      {:ok, view, _html} = live(conn, "/tasks?status=needs_review")
+      html = flush_tasks_load(view)
+
+      assert html =~ "No tasks need review"
+      assert html =~ "Finished tasks that still need a review decision appear here."
+      refute html =~ "No tasks found"
+      refute html =~ "Try adjusting your filters or search query."
+      refute render_tasks_list(view) =~ "MARKER REVIEW DECIDED ONLY"
+
+      # A focused miss keeps its own heading even with the triage filter active.
+      {:ok, miss_view, _html} = live(conn, "/tasks?task=no-such-task&status=needs_review")
+      miss_html = flush_tasks_load(miss_view)
+
+      assert miss_html =~ "Task not found"
+      refute miss_html =~ "No tasks need review"
+    end
+  end
+
+  describe "URL-addressed filters (one load per action)" do
+    # The filters are URL state: handle_params/3 seeds them and runs the ONE
+    # page load, so a deep link, back/forward and every filter event converge on
+    # the same single load — never an "assign + reload" pair.
+
+    test "a triage filter is deep-linkable and every patch spawns exactly one load", %{
+      conn: conn
+    } do
+      install_page_load_hook()
+
+      insert_fixture!(
+        status: :completed,
+        branch_name: "evogit/needs-review-url",
+        opts: [prompt: "MARKER REVIEW URL"]
+      )
+
+      insert_fixture!(
+        status: :completed,
+        branch_name: "evogit/needs-review-url-decided",
+        review_status: :merged,
+        opts: [prompt: "MARKER REVIEW URL DECIDED"]
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      assert_receive :page_load_spawned, @async_wait_budget_ms
+      refute_receive :page_load_spawned, 0
+
+      # A deep link to the triage filter: ONE load, and the list narrows.
+      render_patch(view, "/tasks?status=needs_review")
+      assert_receive :page_load_spawned, @async_wait_budget_ms
+      refute_receive :page_load_spawned, 0
+      flush_tasks_load(view)
+
+      assert render_tasks_list(view) =~ "MARKER REVIEW URL"
+      refute render_tasks_list(view) =~ "MARKER REVIEW URL DECIDED"
+
+      # A non-matching query on top of it empties the list...
+      render_patch(view, "/tasks?status=needs_review&q=zzz-no-match")
+      assert_receive :page_load_spawned, @async_wait_budget_ms
+      refute_receive :page_load_spawned, 0
+      flush_tasks_load(view)
+
+      refute render_tasks_list(view) =~ "MARKER REVIEW URL"
+
+      # ...and dropping it restores the candidate. One load per patch, again.
+      render_patch(view, "/tasks?status=needs_review")
+      assert_receive :page_load_spawned, @async_wait_budget_ms
+      refute_receive :page_load_spawned, 0
+      flush_tasks_load(view)
+
+      assert render_tasks_list(view) =~ "MARKER REVIEW URL"
+    end
+
+    test "unknown URL values fall back to the defaults", %{conn: conn} do
+      insert_fixture!(status: :completed, opts: [prompt: "MARKER REVIEW UNKNOWN FALLBACK"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      # Every value is whitelisted against its option vocabulary; an unknown one
+      # keeps the default instead of raising or atomizing.
+      render_patch(view, "/tasks?status=bogus&review=bogus&session=bogus")
+      html = flush_tasks_load(view)
+
+      assigns = :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
+      assert assigns.status_filter == "all"
+      assert assigns.review_status_filter == "all"
+      assert assigns.session_mode_filter == "all"
+
+      assert render_tasks_list(view) =~ "MARKER REVIEW UNKNOWN FALLBACK"
+      assert html =~ "1 task found"
+    end
+
+    test "a filter change while focused exits focus mode", %{conn: conn} do
+      focused = insert_fixture!(status: :completed, opts: [prompt: "MARKER REVIEW FOCUSED"])
+      insert_fixture!(status: :completed, opts: [prompt: "MARKER REVIEW NOT FOCUSED"])
+
+      {:ok, view, _html} = live(conn, "/tasks?task=" <> focused)
+      flush_tasks_load(view)
+
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.focused_task_id ==
+               focused
+
+      assert render_tasks_list(view) =~ "MARKER REVIEW FOCUSED"
+      refute render_tasks_list(view) =~ "MARKER REVIEW NOT FOCUSED"
+
+      # tasks_url/3 NEVER emits `task`, so the patch exits focus mode and the
+      # ordinary (filtered) list renders.
+      render_hook(view, "filter_tasks", %{"status_filter" => "completed"})
+      flush_tasks_load(view)
+
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.focused_task_id == nil
+
+      list = render_tasks_list(view)
+      assert list =~ "MARKER REVIEW FOCUSED"
+      assert list =~ "MARKER REVIEW NOT FOCUSED"
+    end
+
+    test "search patches the URL form and narrows the list", %{conn: conn} do
+      insert_fixture!(status: :completed, opts: [prompt: "MARKER REVIEW SEARCH HIT"])
+      insert_fixture!(status: :completed, opts: [prompt: "MARKER REVIEW SEARCH MISS"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      render_hook(view, "search_tasks", %{"search_query" => "MARKER REVIEW SEARCH HIT"})
+
+      # `search_tasks` patches with `replace: true` and the page's own URL builder
+      # query-encodes the spaces FORM-style.
+      assert_patch(view, "/tasks?q=MARKER+REVIEW+SEARCH+HIT", @async_wait_budget_ms)
+
+      flush_tasks_load(view)
+      assert render_tasks_list(view) =~ "MARKER REVIEW SEARCH HIT"
+      refute render_tasks_list(view) =~ "MARKER REVIEW SEARCH MISS"
+    end
+
+    test "a node switch keeps the page's filters in the patched URL", %{conn: conn} do
+      target_id = register_remote_target!("tasks-node-switch-filters")
+
+      insert_fixture!(
+        status: :completed,
+        branch_name: "evogit/node-switch-needs-review",
+        opts: [prompt: "MARKER NODE SWITCH CANDIDATE"]
+      )
+
+      # Every node-aware read is served from the LOCAL store: the fake remote
+      # node is unreachable, so the patched load stays renderable.
+      install_tasks_page_load_runner(fn _node, page, page_size, filters ->
+        EvoDashWeb.TasksLive.PageLoad.load(node(), page, page_size, filters)
+      end)
+
+      {:ok, view, _html} = live(conn, "/tasks?status=needs_review")
+      flush_tasks_load(view)
+
+      # NodeAware.handle_node_selected/2 rebuilds the URL from the page's
+      # `@current_path`, so that assign carries the CURRENT filters — a bare
+      # `~p"/tasks"` would reset the view to the default list on a node switch.
+      send(view.pid, {:node_selected, target_id})
+      # ONE extra render flushes the self-message so the push_patch lands before
+      # assert_patch polls.
+      render(view)
+      assert_patch(view, "/tasks?status=needs_review&node=#{target_id}", @async_wait_budget_ms)
+      flush_tasks_load(view)
+
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.status_filter ==
+               "needs_review"
+
+      assert render_tasks_list(view) =~ "MARKER NODE SWITCH CANDIDATE"
+
+      # Switching back to "local" DROPS the `node` key and still keeps them.
+      send(view.pid, {:node_selected, "local"})
+      render(view)
+      assert_patch(view, "/tasks?status=needs_review", @async_wait_budget_ms)
+      flush_tasks_load(view)
+
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.status_filter ==
+               "needs_review"
+
+      assert render_tasks_list(view) =~ "MARKER NODE SWITCH CANDIDATE"
     end
   end
 

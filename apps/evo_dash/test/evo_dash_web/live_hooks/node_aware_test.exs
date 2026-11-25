@@ -285,6 +285,134 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
       assert patch_to(result) == nil
       assert result.assigns[:remote_status] == "stale"
     end
+
+    # The connection-status patch is a view-preserving navigation, exactly like
+    # a node switch: `@current_path` may carry page state in its query string
+    # (`/tasks?status=needs_review`), so `?node=` is SPLICED INTO it rather than
+    # appended after a second `?` (which would reset the page's filters).
+    test "a connection-status patch keeps existing filters and emits exactly one ?" do
+      start_supervised!(
+        {EvoDashWeb.NodeAwareTest.ConnectionManager,
+         {"test-conn", %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      socket =
+        socket(%{
+          current_node: node(),
+          current_node_id: "test-conn",
+          current_path: "/tasks?status=needs_review"
+        })
+
+      assert {:noreply, result} =
+               NodeAware.handle_connection_status(
+                 socket,
+                 {:remote_connection_status, "test-conn",
+                  %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}
+               )
+
+      to = patch_to(result)
+      assert to == "/tasks?status=needs_review&node=test-conn"
+      assert length(String.split(to, "?")) == 2
+    end
+
+    test "a connection-status patch on a bare path becomes <path>?node=<id>" do
+      start_supervised!(
+        {EvoDashWeb.NodeAwareTest.ConnectionManager,
+         {"test-conn", %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      socket =
+        socket(%{current_node: node(), current_node_id: "test-conn", current_path: "/agents"})
+
+      assert {:noreply, result} =
+               NodeAware.handle_connection_status(
+                 socket,
+                 {:remote_connection_status, "test-conn",
+                  %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}
+               )
+
+      assert patch_to(result) == "/agents?node=test-conn"
+    end
+
+    test "a connection-status patch splices reconnect params into the query string" do
+      start_supervised!(
+        {EvoDashWeb.NodeAwareTest.ConnectionManager,
+         {"test-conn", %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      socket =
+        socket(%{
+          current_node: node(),
+          current_node_id: "test-conn",
+          current_path: "/tasks?status=needs_review&node=test-conn",
+          workbench_reconnect_params: %{"task" => "task-1"}
+        })
+
+      assert {:noreply, result} =
+               NodeAware.handle_connection_status(
+                 socket,
+                 {:remote_connection_status, "test-conn",
+                  %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}
+               )
+
+      assert patch_to(result) ==
+               "/tasks?status=needs_review&task=task-1&node=test-conn"
+    end
+  end
+
+  describe "handle_node_selected/2 — the node param joins the CURRENT query string" do
+    # A node switch is a view-preserving navigation: the page's URL state
+    # (filters, a focused task, a settings category) lives in the query string
+    # the page carries in `@current_path`, so the helper REBUILDS the URL around
+    # it instead of appending `?node=` to the bare route path (which would reset
+    # `/tasks?status=needs_review` to the unfiltered list).
+
+    test "a path without a query gains exactly ?node=<id>" do
+      socket = socket(%{current_path: "/agents"})
+
+      assert {:noreply, result} = NodeAware.handle_node_selected(socket, "gpu-server")
+      assert patch_to(result) == "/agents?node=gpu-server"
+    end
+
+    test "existing filters survive the node switch" do
+      socket = socket(%{current_path: "/tasks?status=needs_review&session=interactive"})
+
+      assert {:noreply, result} = NodeAware.handle_node_selected(socket, "gpu-server")
+
+      assert patch_to(result) ==
+               "/tasks?status=needs_review&session=interactive&node=gpu-server"
+    end
+
+    test "an existing node key is replaced, never duplicated" do
+      socket = socket(%{current_path: "/tasks?node=old-node&status=failed"})
+
+      assert {:noreply, result} = NodeAware.handle_node_selected(socket, "gpu-server")
+      assert patch_to(result) == "/tasks?status=failed&node=gpu-server"
+    end
+
+    test "an already URL-encoded value survives byte-for-byte" do
+      socket =
+        socket(%{current_path: "/tasks?q=needs%20review%20%26%20more&project=%2Ftmp%2Frepo"})
+
+      assert {:noreply, result} = NodeAware.handle_node_selected(socket, "gpu-server")
+
+      assert patch_to(result) ==
+               "/tasks?q=needs%20review%20%26%20more&project=%2Ftmp%2Frepo&node=gpu-server"
+    end
+
+    test "selecting local drops the node key and keeps the other params" do
+      socket = socket(%{current_path: "/tasks?status=needs_review&node=old-node"})
+
+      assert {:noreply, result} = NodeAware.handle_node_selected(socket, "local")
+      assert patch_to(result) == "/tasks?status=needs_review"
+    end
+
+    test "selecting local on a bare path yields the bare path" do
+      socket = socket(%{current_path: "/tasks"})
+
+      assert {:noreply, result} = NodeAware.handle_node_selected(socket, "local")
+      assert patch_to(result) == "/tasks"
+    end
   end
 
   describe "load_running_and_pending_tasks/1 — node-aware source" do

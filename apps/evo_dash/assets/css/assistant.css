@@ -18,7 +18,9 @@
 .assistant-empty-heading { padding-block: 20px 28px; text-align: center; }
 .assistant-empty-heading h2 { font-size: var(--text-3xl); font-weight: 500; letter-spacing: -0.025em; line-height: 1.3; color: var(--color-base-content); text-wrap: balance; }
 .assistant-compose { flex-shrink: 0; inline-size: 100%; padding-block: 8px; }
-.assistant-input-card { position: relative; border: 1px solid color-mix(in srgb, var(--color-base-content) 12%, transparent); border-radius: 26px; background: var(--color-base-100); box-shadow: 0 5px 24px rgb(0 0 0 / 0.045); transition: border-color 150ms; }
+/* A layer-1 CONTENT surface: the hairline is the only edge — no elevation
+   shadow (depth belongs to overlays; see surfaces.css). */
+.assistant-input-card { position: relative; border: 1px solid var(--border-hairline); border-radius: 26px; background: var(--color-base-100); box-shadow: none; transition: border-color 150ms; }
 .assistant-input-card:focus-within { border-color: color-mix(in srgb, var(--color-base-content) 26%, transparent); }
 .assistant-message-form { display: flex; flex-direction: column; min-inline-size: 0; }
 .assistant-textarea { display: block; inline-size: 100%; min-inline-size: 0; block-size: auto; min-block-size: 96px; max-block-size: min(220px, 28dvh); padding: 20px 22px 12px; border: 0; resize: vertical; background: transparent; color: var(--color-base-content); font: inherit; font-size: 16px; line-height: 1.6; outline: none; }
@@ -33,7 +35,8 @@
 .assistant-context-button[disabled], .assistant-context-button[aria-disabled="true"] { cursor: default; opacity: .45; }
 .assistant-context-button span { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .assistant-attach-menu, .assistant-project-control, .assistant-task-control { position: relative; }
-.assistant-menu-panel { position: absolute; inset-block-end: calc(100% + 14px); inset-inline-start: 0; z-index: 60; inline-size: 320px; max-inline-size: calc(100vw - 48px); max-block-size: min(360px, 52dvh); overflow-y: auto; overscroll-behavior: contain; padding: 16px; border: 1px solid color-mix(in srgb, var(--color-base-content) 12%, transparent); border-radius: 16px; background: var(--color-base-100); box-shadow: 0 8px 32px rgb(0 0 0 / .1); }
+/* A popover MENU is an OVERLAY: raised surface + the shared `--elev-3`. */
+.assistant-menu-panel { position: absolute; inset-block-end: calc(100% + 14px); inset-inline-start: 0; z-index: 60; inline-size: 320px; max-inline-size: calc(100vw - 48px); max-block-size: min(360px, 52dvh); overflow-y: auto; overscroll-behavior: contain; padding: 16px; border: 1px solid var(--border-hairline); border-radius: 16px; background: var(--surface-raised); box-shadow: var(--elev-3); }
 .assistant-attach-panel { inline-size: 288px; padding: 6px; }
 .assistant-attach-panel button { display: flex; align-items: center; gap: 10px; inline-size: 100%; padding: 10px 12px; border-radius: 8px; font-size: var(--text-sm); text-align: start; }
 .assistant-attach-panel button:hover { background: var(--color-base-200); }

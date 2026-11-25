@@ -1,7 +1,31 @@
 defmodule EvoDashWeb.WorkbenchActiveTasks do
-  @moduledoc false
+  @moduledoc """
+  The sidebar's task sections, rendered from the `EvoDashWeb.LiveHooks.NodeAware`
+  Active Tasks feed.
+
+  TWO disjoint sections, so neither can be mistaken for the other:
+
+    * `#workbench-active-tasks` — LIVE tasks only (running/pending/finalizing/
+      cancelling/pausing/paused), grouped per project. A finished task never
+      appears here: it is not active, and its row would have nowhere honest to
+      go.
+    * `#workbench-needs-review` — the feed's review candidates (`:completed`
+      with a nil `review_status`), as its OWN compact section with a count, at
+      most `@review_limit` newest rows and a "View all" link to the tasks page's
+      own review-triage filter (`/tasks?status=needs_review`). `:failed` and
+      `:cancelled` tasks are reviewable on their cards, but they are NOT triage
+      candidates and never appear here.
+
+  Interactive agent sessions appear in NEITHER section: the sidebar's
+  Conversations block (`EvoDashWeb.HomeLive.SessionList`) is their one list, so
+  a session is never duplicated here.
+  """
 
   use EvoDashWeb, :html
+
+  # Review candidates are a "what needs me next" nudge, not a second task list:
+  # the section stays short and hands the rest to the tasks page.
+  @review_limit 5
 
   attr(:running_tasks, :list, default: [])
   attr(:pending_tasks, :list, default: [])
@@ -22,23 +46,36 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
     pending_tasks = List.wrap(Map.get(assigns, :pending_tasks, []))
     node_id = Map.get(assigns, :current_node_id)
 
-    sessions = build_sessions(running_tasks, pending_tasks, now, node_id)
-    groups = build_groups(running_tasks, pending_tasks, now, node_id)
+    # The feed's two buckets mean different things (`running` = live statuses,
+    # `pending` = reviewable completions); each section takes only what its own
+    # meaning allows, so a live task is never dropped just because the hub put it
+    # in the other bucket, and a review candidate never leaks into Active Tasks.
+    groups = build_groups(live_tasks(running_tasks, pending_tasks), now, node_id)
+    review_tasks = review_tasks(running_tasks, pending_tasks)
+    review_rows = review_tasks |> Enum.take(@review_limit) |> Enum.map(&row(&1, now, node_id))
 
-    # The `ListEnter` hook's SCOPE: the viewed node only. This list is
-    # cross-project (it groups EVERY project of the node), so a project must not
-    # be part of the scope — otherwise a project group appearing would re-seed
-    # the baseline and animate the whole list. The value must be NONEMPTY for the
-    # local node too (an empty scope is deliberately inert in the hook), and a
-    # node change is what makes the hook re-seed instead of animating everything.
-    list_enter_scope = "sidebar|" <> (node_id || "local")
+    # The `ListEnter` hook's SCOPE: the viewed node only, and one scope per
+    # section, so a new review candidate can never animate an Active Tasks row
+    # (or re-seed that list's baseline). Both lists are cross-project (they
+    # group EVERY project of the node), so a project must not be part of the
+    # scope. The value must be NONEMPTY for the local node too (an empty scope is
+    # deliberately inert in the hook), and a node change is what makes the hook
+    # re-seed instead of animating everything.
+    node_scope = node_id || "local"
 
     assigns =
-      assign(assigns, sessions: sessions, groups: groups, list_enter_scope: list_enter_scope)
+      assign(assigns,
+        groups: groups,
+        review_rows: review_rows,
+        review_count: length(review_tasks),
+        review_more_href: review_more_href(node_id),
+        list_enter_scope: "sidebar|" <> node_scope,
+        review_list_enter_scope: "sidebar-review|" <> node_scope
+      )
 
     ~H"""
     <section
-      :if={@running_tasks != [] or @pending_tasks != []}
+      :if={@groups != []}
       id="workbench-active-tasks"
       class="workbench-active-tasks"
       aria-label={gettext("Active Tasks")}
@@ -61,24 +98,6 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
         phx-hook="ListEnter"
         data-list-enter-scope={@list_enter_scope}
       >
-        <%!-- Interactive agent sessions live in their OWN group, above
-           the per-project one-shot task groups (design record
-           docs/agent-runtime-refactor.md §4.9 — sessions never fall
-           into "Other"). `session_tasks/2` is fed by the same Active
-           Tasks feed as the project rows. --%>
-        <%= if @sessions != [] do %>
-          <%!-- Sessions group header --%>
-          <div class="workbench-task-group-header">
-            <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/60 sidebar-label">
-              <%!-- zh_CN: 会话 — 指可交互的智能体会话（等待用户输入），不是一次性任务 --%>
-              <.icon name="hero-chat-bubble-left-right" class="w-3 h-3 shrink-0" />
-              {gettext("Sessions")}
-            </span>
-          </div>
-          <%= for row <- @sessions do %>
-            <.task_row row={row} />
-          <% end %>
-        <% end %>
         <%= for {project_name, rows} <- @groups do %>
           <%!-- Project group header --%>
           <div class="workbench-task-group-header">
@@ -94,12 +113,54 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
         <% end %>
       </div>
     </section>
+    <%!-- Review candidates are NOT active tasks: they get their own section,
+         their own heading (with the honest total) and a link to the full
+         tasks page instead of unbounded rows. --%>
+    <section
+      :if={@review_rows != []}
+      id="workbench-needs-review"
+      class="workbench-needs-review"
+      aria-label={gettext("Needs review")}
+    >
+      <div class="workbench-section-heading">
+        <%!-- zh_CN: 待审核 — 已完成但尚未合并/拒绝的任务，需要用户去 review 页面处理 --%>
+        <span class="sidebar-label">{gettext("Needs review")}</span>
+        <span
+          id="workbench-needs-review-count"
+          class="sidebar-label text-xs font-semibold text-base-content/60 tabular-nums"
+        >
+          {@review_count}
+        </span>
+      </div>
+      <div
+        id="workbench-needs-review-rows"
+        class="space-y-1"
+        phx-hook="ListEnter"
+        data-list-enter-scope={@review_list_enter_scope}
+      >
+        <%= for row <- @review_rows do %>
+          <.task_row row={row} />
+        <% end %>
+      </div>
+      <div class="px-3 py-1.5">
+        <.link
+          id="workbench-needs-review-more"
+          navigate={@review_more_href}
+          class="flex items-center gap-1.5 rounded-lg text-xs font-semibold text-primary-standalone hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
+        >
+          <.icon name="hero-arrow-right" class="w-3.5 h-3.5 shrink-0" />
+          <%!-- zh_CN: 查看全部 — 打开任务列表页看全部待审核任务 --%>
+          <span class="sidebar-label">{gettext("View all")}</span>
+        </.link>
+      </div>
+    </section>
     """
   end
 
-  # ONE row renderer for both groups: session rows and project rows differ only
-  # in their view-model fields, never in their markup. `status_title` is nil for
-  # a session row, and a nil attribute is not rendered at all.
+  # ONE row renderer for both sections: an active row and a review row differ
+  # only in their view-model fields, never in their markup. `status_title` is nil
+  # for a session row (no session rows are rendered here anymore), and a nil
+  # attribute is not rendered at all.
   attr(:row, :map, required: true)
 
   defp task_row(assigns) do
@@ -131,63 +192,34 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
     """
   end
 
-  # Session rows, in feed order (running then pending). A session is always
-  # "live" (it is a waiting interactive agent), so its row links to the task
-  # list, its dot pulses and it carries no status tooltip.
-  defp build_sessions(running_tasks, pending_tasks, now, node_id) do
-    # Row-independent: every session links to the same node-aware task list.
-    href = with_node_param(~p"/tasks", node_id)
-
-    Enum.map(session_tasks(running_tasks, pending_tasks), fn task ->
-      status = Map.get(task, :status)
-
-      sub_line =
-        if status == :awaiting_input,
-          do: gettext("Waiting for you"),
-          else: format_elapsed(Map.get(task, :started_at), now)
-
-      label = task_label(task)
-
-      %{
-        key: task_key(task),
-        label: label,
-        sub_line: sub_line,
-        href: href,
-        dot_class: task_status_dot_class(status),
-        pulse?: true,
-        title: label <> " — " <> sub_line,
-        status_title: nil
-      }
-    end)
-  end
-
   # Per-project groups as `{project_name, rows}`, in sidebar order: "Other"
-  # first, then case-insensitive alphabetical by project basename, with the
-  # live rows of each group before its finished (reviewable) ones.
-  defp build_groups(running_tasks, pending_tasks, now, node_id) do
-    running_tasks
-    |> group_tasks_by_project(pending_tasks)
+  # first, then case-insensitive alphabetical by project basename.
+  defp build_groups(tasks, now, node_id) do
+    tasks
+    |> group_tasks_by_project()
     |> Enum.map(fn {project_name, tasks} ->
-      {project_name, Enum.map(tasks, &project_row(&1, now, node_id))}
+      {project_name, Enum.map(tasks, &row(&1, now, node_id))}
     end)
   end
 
-  # A project group's row. `live?` = LIVE (not finished) and therefore links to
-  # the agent inspector; it covers the pause pair because `:paused`/`:pausing`
-  # are NON-terminal, so they must NEVER be titled or routed like a reviewable
-  # finished task.
-  defp project_row(task, now, node_id) do
+  # A row of either section. `live?` decides the destination: a LIVE task opens
+  # the run that actually focuses it — the tasks page's `?task=<id>` focus mode
+  # (`/agents` takes no task param, so it would drop the user on the whole
+  # inspector) — while a review candidate opens its review page. It covers the
+  # pause pair because `:paused`/`:pausing` are NON-terminal, so they must NEVER
+  # be titled or routed like a reviewable finished task.
+  defp row(task, now, node_id) do
     live? = live_task?(task)
     label = task_label(task)
 
-    {href, sub_line, status_title} =
+    {href, sub_line, status_title, pulse?} =
       if live? do
-        {with_node_param(~p"/agents", node_id), format_elapsed(task.started_at, now),
-         active_status_title(task.status)}
+        {tasks_focus_href(task, node_id), format_elapsed(task.started_at, now),
+         active_status_title(task.status), pulsing_status?(task.status)}
       else
-        {with_node_param(~p"/review/#{task.id}", node_id),
+        {review_href(task, node_id),
          gettext("completed") <> " " <> format_elapsed(task.finished_at, now),
-         gettext("Pending Review")}
+         gettext("Pending Review"), false}
       end
 
     %{
@@ -196,21 +228,42 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
       sub_line: sub_line,
       href: href,
       dot_class: task_status_dot_class(task.status),
-      pulse?: pulsing_status?(task.status),
+      pulse?: pulse?,
       title: label <> " — " <> sub_line,
       status_title: status_title
     }
   end
 
+  # A LIVE task's destination: the tasks page's FOCUS mode (`?task=<id>`), which
+  # filters that page to the one task and opens its card. `with_node_param/2`
+  # appends its own `?node=`, so the second parameter is joined with `&` by
+  # building the whole query at once. A summary with no usable id cannot be
+  # focused, so it falls back to the unfiltered page.
+  defp tasks_focus_href(task, node_id) do
+    case Enum.reject([node: node_id, task: task_key(task)], fn {_key, value} -> is_nil(value) end) do
+      [] -> ~p"/tasks"
+      query -> ~p"/tasks" <> "?" <> URI.encode_query(query)
+    end
+  end
+
+  # A review candidate's destination: its review page, node-preserving. Without
+  # an id there is nothing to review, so it degrades to the tasks page.
+  defp review_href(task, node_id) do
+    case task_key(task) do
+      nil -> tasks_focus_href(task, node_id)
+      id -> with_node_param(~p"/review/#{id}", node_id)
+    end
+  end
+
   # The `ListEnter` ROW key — the task id, never anything derived from the row's
   # href, sub-line or label: those change when a task moves from running to
   # `:awaiting_input` or from live to reviewable, and a STATUS change must not
-  # replay the entrance animation. Keys are unique per render because
-  # `session_tasks/2` (interactive only) and `group_tasks_by_project/2`
-  # (interactive rejected) partition the same feed disjointly, and each group
-  # holds one entry per task — so the hook's "first element per key wins" rule
-  # never drops a row. A summary without a usable id simply yields no key (the
-  # row is then ignored by the hook instead of crashing the layout).
+  # replay the entrance animation. Keys are unique per render because the two
+  # sections partition the feed disjointly (live statuses vs `:completed`
+  # candidates) and each group holds one entry per task — so the hook's "first
+  # element per key wins" rule never drops a row. A summary without a usable id
+  # simply yields no key (the row is then ignored by the hook instead of
+  # crashing the layout).
   defp task_key(task) do
     case Map.get(task, :id) do
       id when is_binary(id) -> id
@@ -234,7 +287,8 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
   # Statuses whose sidebar dot may ANIMATE: only states that can still make
   # progress on their own. `:paused` is deliberately absent — the task is
   # stopped, so a pulse would claim activity that is not happening (it keeps the
-  # family colour `task_status_dot_class/1` gives it, rendered static).
+  # family colour `task_status_dot_class/1` gives it, rendered static). A review
+  # candidate is finished, so it never pulses either (see `row/3`).
   defp pulsing_status?(status),
     do: status in [:running, :pending, :finalizing, :cancelling, :pausing]
 
@@ -266,30 +320,55 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
     end
   end
 
-  # Interactive agent sessions from the Active Tasks feed, in feed order
-  # (running then pending). A summary map without a `:session_mode` key is a
-  # one-shot task, so only an explicit "interactive" entry is a session.
-  # Defense-in-depth: skip non-map entries instead of crashing the layout.
-  defp session_tasks(running_tasks, pending_tasks) do
+  # The "View all" destination: the tasks page filtered to its review-triage
+  # status (`?status=needs_review`), never the unfiltered list. The node param
+  # must come FIRST and is appended by hand: `Helpers.with_node_param/2` joins
+  # with `?`, which would corrupt an already-parameterised URL.
+  defp review_more_href(nil), do: ~p"/tasks?status=needs_review"
+
+  defp review_more_href(node_id), do: ~p"/tasks?node=#{node_id}&status=needs_review"
+
+  # The Active Tasks section's rows: NON-map entries skipped (the hub is
+  # shape-agnostic), interactive sessions dropped (they belong to the sidebar's
+  # Conversations block — never duplicated here), and anything that is not a
+  # live status dropped (a finished entry must not render as active). Both feed
+  # buckets are considered, in feed order (running then pending), so a live task
+  # is listed wherever the hub decided to put it.
+  defp live_tasks(running_tasks, pending_tasks) do
     (running_tasks ++ pending_tasks)
     |> Enum.filter(&is_map/1)
-    |> Enum.filter(&(Map.get(&1, :session_mode, "oneshot") == "interactive"))
+    |> Enum.reject(&session?/1)
+    |> Enum.filter(&live_task?/1)
   end
 
-  # Groups running and pending tasks by project name for sidebar display.
-  # Returns a list of {project_name, tasks} tuples sorted alphabetically by
-  # project name, with unpathed tasks at the top as "Other". Interactive
-  # sessions are excluded: they render in their own "Sessions" group.
-  defp group_tasks_by_project(running_tasks, pending_tasks) do
-    # Defense-in-depth: the sidebar lists are seeded from the shape-agnostic
-    # ActiveTasks hub, so skip any non-map entry instead of crashing the page.
-    all =
-      (running_tasks ++ pending_tasks)
-      |> Enum.filter(&is_map/1)
-      |> Enum.reject(&(Map.get(&1, :session_mode, "oneshot") == "interactive"))
+  # The review candidates of the feed, newest first. The feed's `pending` bucket
+  # holds only `:completed` + nil `review_status` reviewable tasks and arrives
+  # sorted the same way (`NodeAware.partition_active_tasks/1`); the filter and the
+  # sort are repeated here so the section can never list a live task and its
+  # "newest N" promise never depends on an upstream order, and the sort key is
+  # nil-safe (both timestamps absent → epoch).
+  defp review_tasks(running_tasks, pending_tasks) do
+    (running_tasks ++ pending_tasks)
+    |> Enum.filter(&is_map/1)
+    |> Enum.reject(&session?/1)
+    |> Enum.filter(&(Map.get(&1, :status) == :completed))
+    |> Enum.sort_by(
+      &(Map.get(&1, :finished_at) || Map.get(&1, :started_at) || ~U[1970-01-01 00:00:00Z]),
+      {:desc, DateTime}
+    )
+  end
 
+  # An interactive agent session, as the summary's `session_mode` string marks it.
+  # A summary without the key is a one-shot task.
+  defp session?(task), do: Map.get(task, :session_mode, "oneshot") == "interactive"
+
+  # Groups live tasks by project name for sidebar display. Returns a list of
+  # {project_name, tasks} tuples sorted alphabetically by project name, with
+  # unpathed tasks at the top as "Other". Interactive sessions never reach this
+  # function (`live_tasks/1` drops them).
+  defp group_tasks_by_project(tasks) do
     grouped =
-      Enum.group_by(all, fn task ->
+      Enum.group_by(tasks, fn task ->
         case Map.get(task, :project_path) do
           nil -> nil
           path -> Path.basename(path)
@@ -303,26 +382,19 @@ defmodule EvoDashWeb.WorkbenchActiveTasks do
         String.downcase(a) <= String.downcase(b)
       end)
 
-    sorted_groups =
-      Enum.map(sorted_named, fn {name, tasks} ->
-        {running, pending} = Enum.split_with(tasks, &live_task?/1)
-
-        {name, running ++ pending}
-      end)
-
     if others != [] do
-      {running, pending} = Enum.split_with(others, &live_task?/1)
-
-      [{"Other", running ++ pending} | sorted_groups]
+      [{"Other", others} | sorted_named]
     else
-      sorted_groups
+      sorted_named
     end
   end
 
-  # The "live" side of a project group: a task that is not finished renders
-  # BEFORE its group's finished (reviewable) rows. The pause pair belongs here —
-  # a paused task is non-terminal (resumable, `finished_at` nil) and must never
-  # be ordered or rendered like a completed review candidate.
+  # A task that is still LIVE — non-terminal, so it belongs in Active Tasks and
+  # gets the live destination. The pause pair belongs here: a paused task is
+  # resumable (`finished_at` nil) and must never be ordered or rendered like a
+  # completed review candidate. `:awaiting_input` is deliberately absent: it is
+  # the interactive-session status, and those rows live in the sidebar's
+  # Conversations block.
   defp live_task?(task),
     do:
       Map.get(task, :status) in [

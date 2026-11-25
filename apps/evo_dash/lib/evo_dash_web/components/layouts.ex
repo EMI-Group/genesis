@@ -153,6 +153,9 @@ defmodule EvoDashWeb.Layouts do
       data-workbench-new-task={gettext("New task")}
       data-workbench-new-chat={gettext("New conversation")}
       data-workbench-close={gettext("Close tab")}
+      data-workbench-keep-open={gettext("Keep this tab open")}
+      data-workbench-next-tab={gettext("Next tab (Alt+Right)")}
+      data-workbench-prev-tab={gettext("Previous tab (Alt+Left)")}
       data-workbench-chats={gettext("Conversations")}
     >
       <%!-- Mobile hamburger button (visible on < lg screens) --%>
@@ -364,7 +367,7 @@ defmodule EvoDashWeb.Layouts do
                 class="workbench-tabs"
                 phx-update="ignore"
                 role="navigation"
-                aria-label={gettext("Open tabs")}
+                aria-label={gettext("Open tabs — Alt+Left / Alt+Right cycles tabs")}
               >
               </div>
               <details
@@ -410,6 +413,21 @@ defmodule EvoDashWeb.Layouts do
                     </button>
                   <% end %>
                 </div>
+              </details>
+              <details
+                id="workbench-tabs-overflow"
+                class="workbench-tab-overflow"
+                phx-update="ignore"
+                hidden
+              >
+                <summary
+                  class="workbench-icon-button"
+                  aria-label={gettext("All open tabs")}
+                  title={gettext("All open tabs")}
+                >
+                  <.icon name="hero-ellipsis-horizontal" class="size-5" />
+                </summary>
+                <div id="workbench-tabs-overflow-list" class="workbench-create-menu"></div>
               </details>
             </div>
             <button

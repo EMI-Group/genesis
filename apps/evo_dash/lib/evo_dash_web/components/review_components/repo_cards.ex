@@ -28,6 +28,14 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
   #     "no repo busy" (never crashes on a nil/legacy shape).
   attr(:review_action, :any, default: nil)
   attr(:busy_repos, :any, default: nil)
+  # Whether merge/reject may be offered AT ALL. A failed task is a diagnostics
+  # record (`EvoDashWeb.ReviewLive.Outcome.actions_allowed?/1` is false), so the
+  # batch toolbar and every per-repo action row are withheld and the cards say
+  # why instead.
+  attr(:actions_allowed, :boolean, default: true)
+  # The task's terminal outcome class (`:completed | :failed | :cancelled |
+  # :other`) — drives the per-repo no-change wording, never a task-level claim.
+  attr(:task_outcome, :atom, default: nil)
 
   def repo_cards(assigns) do
     assigns = assign(assigns, :action_in_flight?, assigns.review_action != nil)
@@ -38,7 +46,7 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
         <.completion_banner completion={@completion} back_url={@back_url} />
       <% end %>
 
-      <%= if show_merge_all?(@repos) do %>
+      <%= if @actions_allowed and show_merge_all?(@repos) do %>
         <div id="merge-all-toolbar" class="flex flex-wrap items-center gap-3">
           <button
             id="merge-all-repositories"
@@ -67,6 +75,8 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
         :for={repo <- @repos}
         repo={repo}
         busy={repo_busy?(@busy_repos, repo, @action_in_flight?)}
+        actions_allowed={@actions_allowed}
+        task_outcome={@task_outcome}
       />
     </div>
     """
@@ -133,6 +143,8 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
 
   attr(:repo, :map, required: true)
   attr(:busy, :boolean, default: false)
+  attr(:actions_allowed, :boolean, default: true)
+  attr(:task_outcome, :atom, default: nil)
 
   defp repo_card(assigns) do
     repo = assigns.repo
@@ -205,33 +217,59 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
 
       <div class="p-4">
         <%= cond do %>
-          <% state in [:merged, :rejected, :handled] -> %>
+          <% state in [:merged, :rejected] -> %>
             <div class="flex items-center gap-2 text-sm text-base-content/70">
               <.icon name="hero-check-circle" class="size-4 shrink-0 text-success" />
               <span>{resolution_badge_text(@resolution)}</span>
             </div>
+          <% state == :handled -> %>
+            <%!-- :handled = the branch is GONE but the repo was already dealt
+                 with. Keep the badge text and state RECOVERABILITY honestly: a
+                 preserved review snapshot keeps the diff readable. --%>
+            <div class="flex items-center gap-2 text-sm text-base-content/70">
+              <.icon name="hero-check-circle" class="size-4 shrink-0 text-success" />
+              <span>{resolution_badge_text(@resolution)}</span>
+            </div>
+            <div class={[
+              "mt-2 rounded-lg border p-3 text-sm font-medium",
+              handled_recoverability_class(@review_data)
+            ]}>
+              {handled_recoverability_text(@review_data)}
+            </div>
           <% state in [:error, :conflict] -> %>
             <.resolution_detail resolution={@resolution} state={state} />
-            <.repo_action_row
-              repo_id={@repo_id}
-              merge_targets={@merge_targets}
-              target={target}
-              busy={@busy}
-            />
+            <%= if @actions_allowed do %>
+              <.repo_action_row
+                repo_id={@repo_id}
+                merge_targets={@merge_targets}
+                target={target}
+                busy={@busy}
+              />
+            <% else %>
+              <.actions_unavailable_notice />
+            <% end %>
           <% !@branch_exists -> %>
-            <.branch_inactive_notice branch_name={@branch_name} />
+            <.branch_inactive_notice
+              branch_name={@branch_name}
+              review_data={@review_data}
+              task_outcome={@task_outcome}
+            />
           <% true -> %>
             <%= if @merge_status != nil do %>
               <div class="rounded-lg border border-base-300 bg-base-200/30 p-3 mb-3">
                 <.merge_status_block status={@merge_status} />
               </div>
             <% end %>
-            <.repo_action_row
-              repo_id={@repo_id}
-              merge_targets={@merge_targets}
-              target={target}
-              busy={@busy}
-            />
+            <%= if @actions_allowed do %>
+              <.repo_action_row
+                repo_id={@repo_id}
+                merge_targets={@merge_targets}
+                target={target}
+                busy={@busy}
+              />
+            <% else %>
+              <.actions_unavailable_notice />
+            <% end %>
         <% end %>
       </div>
     </div>
@@ -264,29 +302,119 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
 
   # ---------------------------------------------------------------------------
   # branch_inactive_notice/1 — informational only (branch_exists: false), no
-  # actions: no-changes (branch_name nil) vs branch-gone.
+  # actions. The wording is PER REPO and OUTCOME-aware — never a task-level
+  # claim — and it distinguishes "the diff is still readable" from "the changes
+  # are gone":
+  #
+  #   * branch named, no review snapshot → the branch is gone AND unrecoverable;
+  #   * branch named, snapshot present   → the branch is gone, diff still viewable;
+  #   * no branch, failed task           → no changes because it failed;
+  #   * no branch, cancelled task        → no changes because it was cancelled;
+  #   * otherwise                        → no code changes in this repository.
   # ---------------------------------------------------------------------------
 
   attr(:branch_name, :string, default: nil)
+  attr(:review_data, :any, default: nil)
+  attr(:task_outcome, :atom, default: nil)
 
   defp branch_inactive_notice(assigns) do
+    assigns = assign(assigns, :notice, branch_inactive_notice_content(assigns))
+
     ~H"""
     <div class={[
       "rounded-lg border p-4 flex items-center gap-3",
-      if(@branch_name, do: "border-warning/30 bg-warning/10", else: "border-info/30 bg-info/10")
+      branch_notice_class(@notice.tone)
     ]}>
       <.icon
-        name={if @branch_name, do: "hero-exclamation-triangle", else: "hero-information-circle"}
-        class={"size-5 shrink-0 " <> if(@branch_name, do: "text-warning", else: "text-info")}
+        name={@notice.icon}
+        class={"size-5 shrink-0 " <> branch_notice_text_class(@notice.tone)}
       />
-      <span class={["text-sm font-medium", if(@branch_name, do: "text-warning", else: "text-info")]}>
-        <%= if @branch_name do %>
-          {gettext("This branch no longer exists.")}
-        <% else %>
-          {gettext(
-            "The agent completed without making any code changes. You can resume from this investigation or dismiss it."
-          )}
-        <% end %>
+      <span class={["text-sm font-medium", branch_notice_text_class(@notice.tone)]}>
+        {@notice.text}
+      </span>
+    </div>
+    """
+  end
+
+  defp branch_inactive_notice_content(%{
+         branch_name: branch_name,
+         review_data: review_data,
+         task_outcome: task_outcome
+       }) do
+    cond do
+      branch_name && is_nil(review_data) ->
+        %{
+          tone: :warning,
+          icon: "hero-exclamation-triangle",
+          text: gettext("This branch no longer exists and its changes are no longer recoverable.")
+        }
+
+      branch_name ->
+        %{
+          tone: :info,
+          icon: "hero-information-circle",
+          text:
+            gettext(
+              "This branch no longer exists, but its changes are still viewable read-only in the diff tabs."
+            )
+        }
+
+      task_outcome == :failed ->
+        %{
+          tone: :info,
+          icon: "hero-information-circle",
+          text: gettext("This repository produced no changes — the task failed.")
+        }
+
+      task_outcome == :cancelled ->
+        %{
+          tone: :info,
+          icon: "hero-information-circle",
+          text: gettext("This repository produced no changes — the task was cancelled.")
+        }
+
+      true ->
+        %{
+          tone: :info,
+          icon: "hero-information-circle",
+          text: gettext("No code changes in this repository.")
+        }
+    end
+  end
+
+  defp branch_notice_class(:warning), do: "border-warning/30 bg-warning/10"
+  defp branch_notice_class(_tone), do: "border-info/30 bg-info/10"
+
+  defp branch_notice_text_class(:warning), do: "text-warning"
+  defp branch_notice_text_class(_tone), do: "text-info"
+
+  # The :handled body's recoverability line: a preserved review snapshot keeps
+  # the diff readable even though the branch was deleted.
+  defp handled_recoverability_text(nil),
+    do: gettext("The branch is gone and its changes are no longer recoverable.")
+
+  defp handled_recoverability_text(_review_data),
+    do:
+      gettext(
+        "The branch was deleted, but its changes are still viewable read-only in the diff tabs."
+      )
+
+  defp handled_recoverability_class(nil), do: "border-warning/30 bg-warning/10 text-warning"
+  defp handled_recoverability_class(_review_data), do: "border-info/30 bg-info/10 text-info"
+
+  # ---------------------------------------------------------------------------
+  # actions_unavailable_notice/1 — why a repo card carries NO merge/reject row.
+  # Only a FAILED task withholds the actions (a gracefully cancelled task stays
+  # mergeable), so the sentence can name the reason.
+  # ---------------------------------------------------------------------------
+
+  defp actions_unavailable_notice(assigns) do
+    ~H"""
+    <div class="flex items-center gap-2 text-sm text-base-content/70">
+      <.icon name="hero-information-circle" class="size-4 shrink-0" />
+      <span>
+        <%!-- zh_CN: 任务失败后不再提供合并/拒绝操作 --%>
+        {gettext("Merge and reject are unavailable because the task failed.")}
       </span>
     </div>
     """

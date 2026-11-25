@@ -310,6 +310,57 @@ defmodule EvoDashWeb.NodeAwarePureTest do
     end
   end
 
+  describe "show_review_button?/1 — the finished-status review ROUTE predicate" do
+    # The route predicate: every FINISHED status has a `/review/<id>` destination
+    # (the workbench history panel already sends all of them there and the
+    # review page renders failures/cancellations honestly), except repo-less
+    # `:reflect` tasks. This is NOT the sidebar triage rule — the "Needs review"
+    # bucket stays `:completed` + nil `review_status` (`partition_active_tasks/1`).
+    test "every finished status is reviewable" do
+      for status <- [:completed, :cancelled, :failed] do
+        assert NodeAware.show_review_button?(%{status: status, type: :evolve}),
+               "expected #{inspect(status)} to be reviewable"
+      end
+    end
+
+    test "a summary without a :type key is reviewable (KeyError-safe default)" do
+      for status <- [:completed, :cancelled, :failed] do
+        assert NodeAware.show_review_button?(%{status: status})
+      end
+    end
+
+    test ":reflect (repo-less) tasks are never reviewable, at every finished status" do
+      for status <- [:completed, :cancelled, :failed] do
+        refute NodeAware.show_review_button?(%{status: status, type: :reflect})
+      end
+    end
+
+    test "a decided review_status does not remove the route (the caller gates triage)" do
+      # `review_status` is the CALLER's triage gate, never part of this
+      # predicate: a merged/rejected task stays reviewable so its branch and
+      # diff can still be inspected.
+      for review_status <- [nil, :merged, :rejected, :handled] do
+        assert NodeAware.show_review_button?(%{
+                 status: :completed,
+                 type: :evolve,
+                 review_status: review_status
+               })
+      end
+    end
+
+    test "unfinished statuses are never reviewable" do
+      for status <- [:pending, :running, :finalizing, :cancelling, :pausing, :paused] do
+        refute NodeAware.show_review_button?(%{status: status, type: :evolve})
+      end
+    end
+
+    test "non-map / empty input is not reviewable" do
+      refute NodeAware.show_review_button?(nil)
+      refute NodeAware.show_review_button?(%{})
+      refute NodeAware.show_review_button?("completed")
+    end
+  end
+
   describe "handle_task_info/2 — node-filtered debounce" do
     # The node-identity PubSub contract: `{:task_updated, task_id, status,
     # node}` / `{:task_deleted, task_id, node}` where node is the BEAM node

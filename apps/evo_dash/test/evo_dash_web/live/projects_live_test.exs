@@ -149,6 +149,42 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   # and its `.git/hooks` sample scripts are dropped: they are inert samples
   # and the biggest part of the copy cost.
   def install_git_template(_context) do
+    {template, sha} = build_git_template!()
+    key = {__MODULE__, :git_template}
+    :persistent_term.put(key, {template, sha})
+
+    on_exit(fn ->
+      # Guarded erase: both suite modules build a template, so never erase a key
+      # that has already been replaced by the other module's value.
+      if :persistent_term.get(key, nil) == {template, sha} do
+        :persistent_term.erase(key)
+      end
+    end)
+
+    :ok
+  end
+
+  # The module-OWNED variant of `install_git_template/1`: the template rides the
+  # test context (`context.git_template`) instead of the BEAM-global
+  # `:persistent_term` slot.
+  #
+  # The shared slot belongs to whichever module installed it LAST and is erased
+  # by THAT module's `on_exit`, so a THIRD module running concurrently with the
+  # two shared-key modules loses the template mid-run (observed as
+  # `ArgumentError ... no persistent term stored with this key` raised from
+  # `git_template!/0` in whichever of the two shared-key modules was still
+  # running). An owned template is built once per module, is unreachable from
+  # any other module and is removed by this module's own `on_exit` only.
+  def install_owned_git_template(_context) do
+    {:ok, git_template: build_git_template!()}
+  end
+
+  # Builds ONE real git fixture template (a repository carrying one empty
+  # commit) in a fresh temp dir, registers its removal on exit and returns
+  # `{template_path, head_sha}`. The CALLER owns the reference: the shared
+  # `install_git_template/1` stores it in `:persistent_term`, the owned variant
+  # keeps it in the test context.
+  def build_git_template! do
     template = Path.join(System.tmp_dir!(), "evogit_git_template_#{System.unique_integer()}")
     File.mkdir_p!(template)
     {_, 0} = System.cmd("git", ["init", template], stderr_to_stdout: true)
@@ -172,16 +208,8 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
 
     File.rm_rf!(Path.join(template, ".git/hooks"))
     {sha, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: template)
-    key = {__MODULE__, :git_template}
-    :persistent_term.put(key, {template, String.trim(sha)})
 
     on_exit(fn ->
-      # Guarded erase: both suite modules build a template, so never erase a key
-      # that has already been replaced by the other module's value.
-      if :persistent_term.get(key, nil) == {template, String.trim(sha)} do
-        :persistent_term.erase(key)
-      end
-
       # Teardown-only rescue: a cleanup failure must never mask a test failure.
       try do
         File.rm_rf!(template)
@@ -190,7 +218,7 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
       end
     end)
 
-    :ok
+    {template, String.trim(sha)}
   end
 
   def git_template!, do: :persistent_term.get({__MODULE__, :git_template})
@@ -274,8 +302,32 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   # save the two palette-opening round-trips. Tests that assert palette UI
   # (the "opening a project" / "project palette" describes) keep driving the
   # clicks themselves.
+  #
+  # Selecting a project now lands on the PROJECT OVERVIEW, not in the composer,
+  # so this helper steps into the composer the way a user does
+  # (`enter_composer/1`): the composer these callers were written for is exactly
+  # what they then exercise.
   def open_project!(view, path) do
     render_click(view, "open_project", %{"path" => path})
+    enter_composer(view)
+  end
+
+  # Steps from the PROJECT OVERVIEW into the task composer through its "New
+  # task" entry point (`compose_task` → `push_patch` with `wb_task=1`), exactly
+  # as a user leaves the overview. Returns the resulting rendered HTML so
+  # callers can assert on composer markup the way they did when the composer
+  # was the landing surface.
+  #
+  # A page that is NOT on the overview (already composing, the idle workbench,
+  # a remote gate, or a remote activation whose async result has not landed
+  # yet) is left untouched — the click is only issued where the overview
+  # actually owns the surface.
+  def enter_composer(view) do
+    if has_element?(view, "#workbench-project-overview") do
+      render_click(view, "compose_task", %{})
+    else
+      render(view)
+    end
   end
 
   # Mounts a project in the process-global VCT registry (returns the
@@ -572,8 +624,11 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   # git-inits the project itself — port spawns racing the setup's on_exit
   # rm_rf! printed uncatchable "spawn: Could not cd to <tmp_dir>" lines, and
   # the repo mutation bought no assertion anything.
-  def make_git_repo!(path) do
-    {template, _head_sha} = git_template!()
+  # `owned_template` is a `{template_path, head_sha}` pair from
+  # `install_owned_git_template/1` — the module-local alternative to the shared
+  # `:persistent_term` template (see that callback).
+  def make_git_repo!(path, owned_template \\ nil) do
+    {template, _head_sha} = owned_template || git_template!()
     File.cp_r!(template, path)
 
     path
@@ -1111,8 +1166,12 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   # open-path form submits to, and its render already carries the
   # post-`push_patch` (activated) DOM. The two palette-opening clicks only
   # exist to reach the form, and nothing here asserts on them.
+  #
+  # The activation lands on the PROJECT OVERVIEW, so the helper also steps into
+  # the composer (`enter_composer/1`) and keeps returning the view.
   def open_project(view, path) do
     render_click(view, "open_project", %{"path" => path})
+    _ = enter_composer(view)
 
     view
   end
@@ -1415,6 +1474,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
+      # The activation lands on the project overview; step into the composer
+      # (the surface this test pins) exactly as a user does.
+      enter_composer(view)
+
       # Expand the project settings panel (the click's own render IS the html
       # below — a second full `render/1` would re-render the same DOM)
       html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
@@ -1467,6 +1530,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
+      # The activation lands on the project overview; the settings panel below
+      # lives in the composer, so step into it like a user.
+      enter_composer(view)
+
       # Expand the project settings panel (the click's own render IS the html
       # below — a second full `render/1` would re-render the same DOM)
       html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
@@ -1484,6 +1551,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       view
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
+
+      # The activation lands on the project overview; the settings panel below
+      # lives in the composer, so step into it like a user.
+      enter_composer(view)
 
       # Expand the project settings panel (the click's own render IS the html
       # below — a second full `render/1` would re-render the same DOM)
@@ -1517,7 +1588,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
   describe "opening project via URL params" do
     test "activates project from URL query param", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, _view, html} = live(conn, ~p"/projects?project=#{URI.encode(tmp_dir)}")
+      # `wb_task=1` is the explicit compose request, so this mount targets the
+      # task composer (selecting a project alone lands on the overview).
+      {:ok, _view, html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: "1"}}")
 
       # Project should be active
       assert html =~ Path.basename(tmp_dir)
@@ -1716,7 +1789,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "foreign repos round-trip via restore_state event", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir}}")
+      # `wb_task=1`: the project-settings panel asserted below lives in the
+      # task composer, so this mount asks for the composer explicitly.
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: "1"}}")
 
       # Simulate session restore with foreign repos (as they'd arrive from sessionStorage JSON).
       # The project must be a real directory so activate_project runs.
@@ -1745,7 +1820,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "restore_state with empty foreign repos does not error", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir}}")
+      # `wb_task=1`: the project-settings panel asserted below lives in the
+      # task composer, so this mount asks for the composer explicitly.
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: "1"}}")
 
       render_hook(view, "restore_state", %{
         "project" => tmp_dir,
@@ -1810,7 +1887,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir}}")
+      # This test is ABOUT the composer, so it asks for it explicitly.
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: tmp_dir, wb_task: "1"}}")
 
       refute has_element?(view, ".project-palette-trigger")
 
@@ -2108,11 +2186,16 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert is_binary(mount.point)
 
       render_click(view, "open_project_palette", %{})
-      html = render_click(view, "select_project", %{"path" => project_a})
+      _ = render_click(view, "select_project", %{"path" => project_a})
 
       # The data identity is unchanged (the VCT point still keys the registry).
       assert assigns(view)[:active_project_path] == project_a
       assert assigns(view)[:active_project].point == mount.point
+
+      # Step into the composer: the top-bar/omnibox identity assertions below
+      # describe the COMPOSER chrome (the overview deliberately names the VCT
+      # point among the selection's own facts).
+      html = enter_composer(view)
 
       # The palette is closed, so the project identity shown in the omnibox
       # trigger is the mount's display name (bold label) beside the OS path
@@ -5299,7 +5382,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       # The per-test isolated config dir holds NO provider profile yet: the
       # picker loads successfully but has nothing to offer.
-      {:ok, view, _html} = live(conn, ~p"/projects?#{[project: tmp_dir]}")
+      # `wb_task=1`: the composer owns the picker controls asserted below.
+      {:ok, view, _html} = live(conn, ~p"/projects?#{[project: tmp_dir, wb_task: "1"]}")
       await_async_loads(view)
 
       assert assigns(view)[:model_selection_ready?] == true
@@ -5383,6 +5467,12 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         }
       end)
 
+      # A load generation ALREADY in flight, taken from the same monotonic
+      # counter the page allocates from: the assertion below then proves a
+      # spawn happened (a fresh integer is strictly greater) without depending
+      # on how many spawns earlier tests in this run happened to make.
+      in_flight_seq = System.unique_integer([:positive, :monotonic])
+
       socket = %Phoenix.LiveView.Socket{
         assigns: %{
           __changed__: nil,
@@ -5391,7 +5481,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
           active_project_path: "/repo/a",
           remote?: false,
           projects: [],
-          projects_load_seq: 4,
+          projects_load_seq: in_flight_seq,
           notified_task_ids_ready?: true,
           auto_activate_candidate?: false,
           config_generation: {config_dir, 4},
@@ -5507,7 +5597,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         EvoDashWeb.ProjectsLive.AsyncLoad.default_batch(node(), false, nil, nil, true, false)
       end)
 
-      {:ok, view, _html} = live(conn, ~p"/projects?#{[project: tmp_dir]}")
+      # `wb_task=1`: the composer owns the picker controls asserted below.
+      {:ok, view, _html} = live(conn, ~p"/projects?#{[project: tmp_dir, wb_task: "1"]}")
 
       first_task = await_view_batch(view.pid)
       assert first_task != view.pid
@@ -5998,6 +6089,431 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       render_change(view, "restore_state", %{"persist_agent_state?" => "false"})
       assert assigns(view)[:persist_agent_state?] == false
     end
+  end
+end
+
+# ---------------------------------------------------------------------------
+# Project overview step (the surface between selecting a project and the
+# composer) — `EvoDashWeb.ProjectsLive.Overview`.
+# ---------------------------------------------------------------------------
+defmodule EvoDashWeb.ProjectsLiveOverviewTest do
+  @moduledoc """
+  Pins the PROJECT OVERVIEW step the Projects page shows before the task
+  composer (`EvoDashWeb.ProjectsLive.Overview`): scope identity, the two entry
+  points (New task -> composer, Chat with Assistant), the `wb_task=1` bypass,
+  the restored-draft rule, workspace framing/member selection, the remote
+  (viewed) node case and the recent-activity block.
+
+  `async: true`: every test isolates its own XDG config dir and temp repo, the
+  task rows it writes are deleted on exit and its VCT workspace/project mounts
+  are forgotten on exit, so no concurrently running module observes this state.
+  """
+
+  use EvoDashWeb.ConnCase, async: true
+
+  import Phoenix.LiveViewTest
+  import EvoDashWeb.ProjectsLiveTest.Helpers
+
+  alias EvoDashWeb.ProjectsLive.Overview
+  alias EvoGit.VCT
+
+  setup [:setup_temp_dir, :set_onboarding_completed, :reset_active_tasks_hub]
+
+  # The git fixture TEMPLATE is module-owned (`install_owned_git_template/1`)
+  # rather than the suite's shared `:persistent_term` slot: this module runs
+  # CONCURRENTLY with the two modules that share that slot and erase it between
+  # them (a third concurrent module lost the key mid-run). The template rides
+  # the test context; `repo!/1` hands it to the shared `make_git_repo!/2`.
+  setup_all [:install_owned_git_template]
+
+  setup %{git_template: git_template} do
+    Process.put(:overview_git_template, git_template)
+    :ok
+  end
+
+  describe "overview renders the selected project" do
+    test "replaces the composer and carries the project scope identity", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      path = repo!(Path.join(tmp_dir, "overview-scope"))
+      view = open_overview!(conn, path)
+
+      assert has_element?(view, "#workbench-project-overview")
+      assert has_element?(view, ~s(#workbench-project-overview[data-overview-kind="project"]))
+
+      assert has_element?(
+               view,
+               ~s(h1#overview-title[data-overview-name="#{Path.basename(path)}"])
+             )
+
+      assert has_element?(view, "[data-overview-path]", path)
+      assert has_element?(view, "[data-overview-node]", "Local")
+
+      # The composer is an explicit step now, never the landing surface.
+      refute has_element?(view, "#workbench-task-composer")
+      refute has_element?(view, "#task-launch-button")
+    end
+
+    test "New task moves the page into the composer", %{conn: conn, tmp_dir: tmp_dir} do
+      path = repo!(Path.join(tmp_dir, "overview-new-task"))
+      view = open_overview!(conn, path)
+
+      assert has_element?(view, "button#overview-new-task")
+      render_click(view, "compose_task", %{})
+
+      assert has_element?(view, "#workbench-task-composer")
+      assert has_element?(view, "button#task-launch-button")
+      refute has_element?(view, "#workbench-project-overview")
+      assert assigns(view).compose_task? == true
+
+      # The URL carries the explicit composer step; assert the PARAMS so the
+      # test is tolerant of encoding/ordering choices.
+      query = view |> assert_patch() |> URI.parse() |> Map.fetch!(:query) |> URI.decode_query()
+      assert query["project"] == path
+      assert query["wb_task"] == "1"
+    end
+
+    test "Chat with Assistant links to /assistant with the project path and a draft id",
+         %{conn: conn, tmp_dir: tmp_dir} do
+      path = repo!(Path.join(tmp_dir, "overview-assistant"))
+      view = open_overview!(conn, path)
+
+      # The query comes from `URI.encode_query/1` (keys sorted, `&` escaped as
+      # `&amp;`), so only the path prefix is predictable here — the params are
+      # asserted decoded below.
+      assert has_element?(view, ~s(a#overview-chat-assistant[href^="/assistant?"]))
+
+      href =
+        view
+        |> render()
+        |> then(&Regex.run(~r/href="([^"]*wb_project[^"]*)"/, &1))
+        |> List.last()
+        |> String.replace("&amp;", "&")
+
+      query = href |> URI.parse() |> Map.fetch!(:query) |> URI.decode_query()
+      # A PROJECT selection is scoped by its OS path (the assistant is never
+      # handed a VCT token here), plus a fresh 24-hex workbench draft id.
+      assert query["wb_project"] == path
+      assert query["node"] == nil
+      assert String.length(query["wb_draft"]) == 24
+      assert String.match?(query["wb_draft"], ~r/^[0-9a-f]{24}$/)
+    end
+
+    test "wb_task=1 mounts straight into the composer", %{conn: conn, tmp_dir: tmp_dir} do
+      path = repo!(Path.join(tmp_dir, "overview-wb-task"))
+
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: path, wb_task: "1"}}")
+
+      assert has_element?(view, "#workbench-task-composer")
+      refute has_element?(view, "#workbench-project-overview")
+    end
+
+    test "a restored draft lands in the composer, not on the overview", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      path = repo!(Path.join(tmp_dir, "overview-restored-draft"))
+      view = open_overview!(conn, path)
+
+      assert has_element?(view, "#workbench-project-overview")
+
+      render_click(view, "restore_state", %{
+        "task_prompt" => "carry on with the saved objective",
+        "node" => "local",
+        "project" => path
+      })
+
+      assert has_element?(view, "#workbench-task-composer")
+      refute has_element?(view, "#workbench-project-overview")
+    end
+  end
+
+  describe "workspace scope" do
+    test "frames the workspace, names the first resolved member and follows a member switch",
+         %{conn: conn, tmp_dir: tmp_dir} do
+      first = seed_member!(tmp_dir, unique("overview-ws-first"))
+      second = seed_member!(tmp_dir, unique("overview-ws-second"))
+
+      workspace =
+        seed_workspace!(
+          unique("overview-workspace"),
+          [member_ref(first), member_ref(second)],
+          "overview workspace"
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: workspace.point}}")
+      wait_for_workspace(view, workspace.point)
+
+      assert has_element?(view, "#workbench-project-overview")
+      assert has_element?(view, ~s(#workbench-project-overview[data-overview-kind="workspace"]))
+      assert has_element?(view, "[data-overview-point]", workspace.point)
+
+      # The FIRST resolved member is the execution target.
+      member_line = wait_for_member_line(view)
+      assert member_line =~ first.path
+      assert has_element?(view, "select#overview-member-select")
+      assert has_element?(view, "[data-overview-member-option]")
+
+      # A member's select VALUE is its VCT point (`member_options/1` keys on the
+      # point and only falls back to the raw path for an unmounted member).
+      assert has_element?(
+               view,
+               ~s(select#overview-member-select option[value="#{second.point}"]),
+               second.name
+             )
+
+      render_change(view, "overview_select_member", %{"overview_member" => second.point})
+
+      member_line = view |> element("[data-overview-execution-member]") |> render()
+      assert member_line =~ second.path
+      refute member_line =~ first.path
+    end
+
+    test "a workspace with no resolvable member refuses the New task entry point",
+         %{conn: conn} do
+      ghost = %{"point" => unique("vct:///projects/overview-ghost"), "path" => nil}
+      workspace = seed_workspace!(unique("overview-empty-workspace"), [ghost], "empty workspace")
+
+      {:ok, view, _html} = live(conn, ~p"/projects?#{%{project: workspace.point}}")
+      wait_for_workspace(view, workspace.point)
+
+      assert has_element?(view, "#workbench-project-overview")
+      assert has_element?(view, "[data-overview-no-member]")
+      assert has_element?(view, "[data-overview-missing]")
+      assert has_element?(view, "button#overview-new-task[disabled]")
+      # A workspace token never reaches execution: no real member, no OS path.
+      refute has_element?(view, "a#overview-chat-assistant")
+
+      html = render_click(view, "compose_task", %{})
+      refute has_element?(view, "#workbench-task-composer")
+      assert has_element?(view, "#workbench-project-overview")
+      # The refusal is surfaced (flash) instead of navigating; the alert naming
+      # the missing member stays on screen.
+      assert html =~ "workspace"
+      assert assigns(view).compose_task? == false
+    end
+  end
+
+  describe "remote (viewed) node" do
+    test "renders the overview in the remote context and never in the composer",
+         %{conn: conn, tmp_dir: tmp_dir} do
+      remote_path = "/remote/projects/#{Path.basename(tmp_dir)}"
+      {id, remote_node} = install_remote_activation_fixture!(remote_path)
+
+      {:ok, view, _html} =
+        live(conn, "/projects?project=" <> URI.encode(remote_path) <> "&node=" <> id)
+
+      assert_remote_activation_loaded(view, id, remote_node, remote_path)
+
+      assert has_element?(view, "#workbench-project-overview")
+      assert has_element?(view, ~s(#workbench-project-overview[data-overview-kind="project"]))
+      assert has_element?(view, "[data-overview-node]")
+      assert has_element?(view, "[data-overview-path]", remote_path)
+      # A connected node offers both entry points; the gate chrome is absent.
+      assert has_element?(view, "button#overview-new-task")
+      assert has_element?(view, "a#overview-chat-assistant")
+      refute has_element?(view, "#workbench-task-composer")
+    end
+  end
+
+  describe "recent activity" do
+    test "shows a project task with an honest status", %{conn: conn, tmp_dir: tmp_dir} do
+      path = repo!(Path.join(tmp_dir, "overview-activity"))
+
+      # Path-SCOPED: the seam is app-env (process-wide), and a concurrently
+      # running module that renders this project's overview must never inherit
+      # this test's fake row — every other path answers an EMPTY payload.
+      install_overview_runner(fn _node, candidate ->
+        if candidate == path do
+          %{
+            git: nil,
+            tasks: [
+              %{
+                id: 4242,
+                status: :completed,
+                started_at: "2026-01-02T03:04:05Z",
+                opts: [objective: "Fix the build"]
+              }
+            ]
+          }
+        else
+          %{git: nil, tasks: []}
+        end
+      end)
+
+      view = open_overview!(conn, path)
+
+      wait_until(view, fn assigns ->
+        Enum.any?(assigns[:overview_tasks] || [], &(&1.id == 4242))
+      end)
+
+      assert has_element?(view, ~s([data-overview-task-id="4242"]))
+      row = overview_row(view, 4242)
+      assert row =~ "Fix the build"
+      assert row =~ ~r/[Cc]omplet/
+    end
+
+    test "omits the activity block when the project has no tasks", %{conn: conn, tmp_dir: tmp_dir} do
+      path = repo!(Path.join(tmp_dir, "overview-no-activity"))
+      view = open_overview!(conn, path)
+
+      # A freshly created repo has no task rows, and the block is simply absent
+      # (no empty state, nothing blocking the two entry points).
+      refute has_element?(view, "[data-overview-task-id]")
+      assert has_element?(view, "button#overview-new-task")
+    end
+  end
+
+  describe "Overview pure helpers" do
+    test "draft ids are 24 hex characters" do
+      draft = Overview.draft_id()
+      assert String.length(draft) == 24
+      assert String.match?(draft, ~r/^[0-9a-f]{24}$/)
+      assert Overview.draft_id() != draft
+    end
+
+    test "member options, execution member and missing refs" do
+      view = %{
+        resolved: [
+          %{point: "vct:///projects/alpha", path: "/tmp/alpha", name: "alpha"},
+          %{point: nil, path: "/tmp/beta", name: "beta"}
+        ],
+        missing: [%{"point" => "vct:///projects/gone", "path" => nil}],
+        nested: []
+      }
+
+      options = Overview.member_options(view)
+      assert Enum.map(options, & &1.path) == ["/tmp/alpha", "/tmp/beta"]
+
+      assert %{path: "/tmp/beta"} = Overview.execution_member(view, "/tmp/beta")
+      assert %{path: "/tmp/alpha"} = Overview.execution_member(view, nil)
+      assert %{path: "/tmp/alpha"} = Overview.execution_member(view, "/tmp/unknown")
+
+      missing = Overview.missing_refs(view)
+      assert length(missing) == 1
+      assert is_binary(hd(missing))
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Fixtures / waits
+  # ---------------------------------------------------------------------------
+
+  # The overview is the LANDING surface, so reaching the composer explicitly
+  # (what `Helpers.open_project!/2` does) cannot be reused here. The
+  # `open_project` event push-patches to the project URL, so THAT patch is
+  # consumed here: a later `assert_patch/1` must observe the event under test
+  # (the click's own patch), never this landing navigation.
+  defp open_overview!(conn, path) do
+    {:ok, view, _html} = live(conn, ~p"/projects")
+    render_click(view, "open_project", %{"path" => path})
+    assert_patch(view, async_wait_budget())
+    view
+  end
+
+  # A REAL git repository (one empty commit) seeded from this module's OWN
+  # template, built through the shared `make_git_repo!/2` fixture builder.
+  defp repo!(path), do: make_git_repo!(path, Process.get(:overview_git_template))
+
+  # The execution-member line is rendered only once the workspace VIEWS have
+  # landed off-process (`{:workspaces_loaded, ...}`), so this awaits the
+  # RENDERED half (bounded by `wait_assigns/2`) instead of reading one frame
+  # early — no hand-rolled sleep loop.
+  defp wait_for_member_line(view) do
+    wait_assigns(view, fn _assigns ->
+      has_element?(view, "[data-overview-execution-member]")
+    end)
+
+    view |> element("[data-overview-execution-member]") |> render()
+  end
+
+  # ONE recent-activity row as markup: the row's `<li>` chunk carrying the task
+  # id (the id span alone excludes the objective/badge it sits beside).
+  defp overview_row(view, id) do
+    row =
+      view
+      |> render()
+      |> String.split("<li")
+      |> Enum.find(&String.contains?(&1, ~s(data-overview-task-id="#{id}")))
+
+    assert row, "no recent-activity row rendered for task #{id}"
+    row
+  end
+
+  defp install_overview_runner(fun) do
+    previous = Application.get_env(:evo_dash, :projects_overview_runner)
+    Application.put_env(:evo_dash, :projects_overview_runner, fun)
+
+    on_exit(fn ->
+      if previous do
+        Application.put_env(:evo_dash, :projects_overview_runner, previous)
+      else
+        Application.delete_env(:evo_dash, :projects_overview_runner)
+      end
+    end)
+
+    :ok
+  end
+
+  defp unique(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"
+
+  # A workspace MEMBER mounted at a RESERVED point (`vct:///<name>` — outside
+  # both `vct:///projects/…` and `vct:///workspaces/…`).
+  # Members must NOT be PROJECT mounts here: the VCT table is store-backed and
+  # RUN-WIDE, and this file's other (concurrently running) modules call
+  # `clear_projects/0`, which forgets every project mount — that repeatedly
+  # removed a project-mounted member between the seed and the page's single
+  # `workspace_entries/1` read, leaving the workspace with zero resolved
+  # members. Reserved mounts are never listed, never capped and never
+  # forgotten, so the fixture survives; and the member-resolution semantics
+  # under test (`point`-first lookup, an option value = the member's point, the
+  # first resolvable member as the execution target) are identical. The
+  # run-wide temp data dir is discarded after the suite, so the leaked reserved
+  # mount is not persisted anywhere.
+  defp seed_member!(tmp_dir, basename) do
+    path = Path.join(tmp_dir, basename)
+    File.mkdir_p!(path)
+    point = "vct:///overview-member-" <> basename
+    assert {:ok, mount} = VCT.ensure_mount(point, path, name: basename)
+    mount
+  end
+
+  defp seed_workspace!(name, members, description) do
+    assert {:ok, mount} = VCT.create_workspace(name, members, description: description)
+    on_exit(fn -> forget_quietly(mount.point) end)
+    mount
+  end
+
+  defp member_ref(%{point: point, path: path}), do: %{"point" => point, "path" => path}
+
+  defp forget_quietly(key) do
+    try do
+      VCT.forget(key)
+    rescue
+      # Teardown-only rescue: a cleanup failure must never mask a test failure.
+      _ -> :ok
+    end
+  end
+
+  # The workspace VIEWS arrive off-process (`{:workspaces_loaded, seq, node,
+  # result}`), one frame after the mount. Reading assigns through `:sys.get_state`
+  # proves the LOAD landed, not that the resulting diff reached the test
+  # process, so the DOM half is awaited too: the overview's member form (or, for
+  # a workspace with nothing resolvable, its `data-overview-no-member` alert) is
+  # rendered only from the loaded views.
+  defp wait_for_workspace(view, point) do
+    wait_assigns(view, fn assigns ->
+      Enum.any?(assigns[:workspaces] || [], fn
+        %{workspace: %{point: candidate}} -> candidate == point
+        _other -> false
+      end)
+    end)
+
+    wait_assigns(view, fn _assigns ->
+      has_element?(view, "[data-overview-execution-member]") or
+        has_element?(view, "[data-overview-no-member]")
+    end)
   end
 end
 

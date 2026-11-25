@@ -769,19 +769,28 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   defp remember_remote_context(socket), do: socket
 
   @doc """
-  Returns `true` when the completed task is a review candidate.
+  Returns `true` when the finished task has a review route.
 
   Deliberately does NOT inspect the task result for changes (a task whose
   primary repo is unchanged but whose writable foreign repos changed is still
-  reviewable). Any `:completed` task whose `review_status` is nil qualifies —
-  the caller gates on `review_status` — EXCEPT repo-less `:reflect` tasks,
-  which have no code review and are excluded explicitly.
+  reviewable). Every FINISHED status — `:completed`, `:cancelled` and `:failed` —
+  qualifies, EXCEPT repo-less `:reflect` tasks, which have no code review and are
+  excluded explicitly.
+
+  This is the ROUTE predicate, not the triage rule: the sidebar's "Needs review"
+  bucket stays `:completed` + nil `review_status` + a live branch
+  (`partition_active_tasks/1`), so a `:failed` (or `:cancelled`) task gets a
+  review route without entering the triage queue.
 
   Summary/map-based: reads only the summary contract keys (`status`, `type`).
   Must NEVER read `result` from summary maps — the summary projection drops it.
   """
-  def show_review_button?(%{status: :completed, type: :reflect}), do: false
-  def show_review_button?(%{status: :completed}), do: true
+  def show_review_button?(%{status: status, type: :reflect})
+      when status in [:completed, :cancelled, :failed],
+      do: false
+
+  def show_review_button?(%{status: status}) when status in [:completed, :cancelled, :failed],
+    do: true
 
   def show_review_button?(_), do: false
 
@@ -1148,6 +1157,12 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       # param. handle_params calls assign_node → resolve_node_context, which
       # now resolves to {:remote, ...} (on :connected) or :local (on
       # disconnect/error), and then reloads all page-specific data.
+      #
+      # The patch OBEYS the node-switch URL rule: the params are spliced INTO
+      # the page's current query string (`@current_path` may carry page state —
+      # `/tasks?status=needs_review` keeps its filters there), so a
+      # connection-status transition never resets the view. The reconnect
+      # params (a focused task, a settings category) join it the same way.
       path = socket.assigns[:current_path] || "/"
 
       params =
@@ -1155,7 +1170,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
             is_binary(value),
             do: {key, value}
 
-      to = path <> "?" <> URI.encode_query([{"node", current_node_id} | params])
+      to = path |> put_query_params(params) |> put_node_param(current_node_id)
       {:noreply, Phoenix.LiveView.push_patch(socket, to: to)}
     else
       {:noreply, socket}
@@ -1296,11 +1311,57 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   triggering a re-render via `handle_params`.
 
   Each LiveView should set the `@current_path` assign (e.g. `~p"/projects"`,
-  `~p"/agents"`) so this helper can build the correct URL.
+  `~p"/agents"`) — INCLUDING the query string of the page's current URL when
+  that URL carries page state (`/tasks?status=needs_review`, `?category=…`, …),
+  because the URL is REBUILT from it, never from the bare route path: a node
+  switch (or a switch back to `"local"`) must not reset the view. `node=<id>`
+  is put INTO the existing query string — replacing a previous `node` key,
+  keeping every other param verbatim (so an already-encoded value survives
+  byte-for-byte) and never emitting a stray `?`/`&&`. A path with no query
+  becomes exactly `<path>?node=<id>`, and `"local"` drops the `node` key
+  entirely (the bare path when it was the only param).
   """
   def handle_node_selected(socket, node_id) do
     path = socket.assigns[:current_path] || "/"
-    to = if node_id == "local", do: path, else: path <> "?node=" <> node_id
-    {:noreply, Phoenix.LiveView.push_patch(socket, to: to)}
+    {:noreply, Phoenix.LiveView.push_patch(socket, to: put_node_param(path, node_id))}
   end
+
+  # Rebuilds `path` with the `node` query param set to `node_id` (`"local"`
+  # REMOVES it), keeping the other pairs verbatim: the query string is spliced
+  # as text, never decoded/re-encoded, so an already-encoded value
+  # (`q=needs%20review`) survives unchanged. Empty segments (a trailing `?` or
+  # a `&&`) are dropped, so the result never carries a stray separator.
+  defp put_node_param(path, node_id) do
+    {base, pairs} = split_query(path)
+    pairs = Enum.reject(pairs, &(query_param_key(&1) == "node"))
+    pairs = if node_id == "local", do: pairs, else: pairs ++ ["node=" <> node_id]
+    join_query(base, pairs)
+  end
+
+  # Splices `params` (raw key/value binaries) into `path`'s query string with
+  # the SAME text-splicing rule as `put_node_param/2`: a key already present is
+  # REPLACED, every other pair is kept verbatim and empty segments are dropped,
+  # so the result never carries a second `?` or a stray separator.
+  defp put_query_params(path, []), do: path
+
+  defp put_query_params(path, params) do
+    {base, pairs} = split_query(path)
+    keys = Enum.map(params, fn {key, _value} -> key end)
+    pairs = Enum.reject(pairs, &(query_param_key(&1) in keys))
+    added = Enum.map(params, fn {key, value} -> URI.encode_query([{key, value}]) end)
+    join_query(base, pairs ++ added)
+  end
+
+  # Splits a path into its base and its non-empty query pairs (verbatim).
+  defp split_query(path) do
+    case String.split(path, "?", parts: 2) do
+      [base, query] -> {base, String.split(query, "&", trim: true)}
+      [base] -> {base, []}
+    end
+  end
+
+  defp join_query(base, []), do: base
+  defp join_query(base, pairs), do: base <> "?" <> Enum.join(pairs, "&")
+
+  defp query_param_key(pair), do: pair |> String.split("=", parts: 2) |> hd()
 end

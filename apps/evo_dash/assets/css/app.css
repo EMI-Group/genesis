@@ -8,6 +8,11 @@
    It must stay OUT of the workbench→motion adjacency (pinned by
    assistant_motion.test.cjs) and before `./view_transitions.css` (last). */
 @import "./density.css";
+/* The surface + elevation vocabulary (three layers; overlays are the ONLY
+   shadowed surfaces). Right after the scale so both the dashboard shell and the
+   Settings window's own document can consume `var(--surface-*)` / `var(--elev-*)`
+   from any rule below, including the two component sheets. */
+@import "./surfaces.css";
 @import "./assistant.css";
 @import "./workbench.css";
 /* The shared motion foundation. CSS requires @import before every other rule,
@@ -707,15 +712,10 @@ button, a, input, textarea, select, summary,
   animation: agent-running-shimmer 6s ease-in-out infinite;
 }
 
-/* Hover micro-interactions */
-.hover-lift {
-  transition: transform 200ms ease, box-shadow 200ms ease;
-}
-.hover-lift:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px -5px color-mix(in oklab, var(--color-base-content) 10%, transparent), 0 4px 10px -6px color-mix(in oklab, var(--color-base-content) 5%, transparent);
-}
-
+/* Hover micro-interactions.
+   Only the accent GLOW survives: a content surface never lifts on hover (that
+   would be elevation on layer 1, see surfaces.css — the hover treatment is a
+   fill plus the stronger hairline, owned by the consumer rule). */
 .hover-glow {
   transition: box-shadow 200ms ease;
 }
@@ -750,6 +750,18 @@ button, a, input, textarea, select, summary,
 .shell-fill {
   height: 100%;
   min-height: 0;
+}
+
+/* === The center canvas (layer 1) ===
+   The scrolling viewport (`#main-scroll`) and the page box inside it
+   (`#main-content`) ARE the content canvas, so both take the canvas token in ONE
+   place instead of the markup's `bg-base-100` utility. Unlayered author CSS
+   beats the layered utility on purpose: the canvas tone is a surface decision
+   (see surfaces.css), not a per-page one, and it is what the active workbench
+   tab joins. Background only — every other canvas property stays in markup. */
+#main-content,
+#main-scroll {
+  background: var(--surface-canvas);
 }
 
 /* === Agents Page Fixed Layout === */
@@ -809,6 +821,9 @@ button, a, input, textarea, select, summary,
   line-height: 1.25;
   text-align: center;
   pointer-events: none;
+  /* A tooltip is an OVERLAY, so it takes the shared elevation instead of a
+     hand-picked drop shadow. */
+  box-shadow: var(--elev-2);
   opacity: 0;
   transition: opacity var(--motion-fast) var(--motion-ease-in);
 }
@@ -1640,10 +1655,6 @@ button, a, input, textarea, select, summary,
   .animation-delay-1000 {
     animation-delay: 0ms;
   }
-
-  .hover-lift:hover {
-    transform: none;
-  }
 }
 
 /* Active card shimmer for running tasks (running/finalizing/cancelling are
@@ -1956,7 +1967,8 @@ button, a, input, textarea, select, summary,
   animation: palette-fade-in 0.15s ease;
 }
 
-/* Palette overlay — centered modal */
+/* Palette overlay — centered modal. An OVERLAY, so it is one of the few
+   surfaces that carries a real elevation (layer 2). */
 .project-palette-overlay {
   position: fixed;
   top: 15vh;
@@ -1969,11 +1981,11 @@ button, a, input, textarea, select, summary,
   display: flex;
   flex-direction: column;
   border-radius: 0.75rem;
-  background: color-mix(in oklab, var(--color-base-100) 98%, transparent);
+  background: color-mix(in oklab, var(--surface-raised) 98%, transparent);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--color-base-300);
-  box-shadow: 0 16px 48px -8px color-mix(in oklab, var(--color-base-content) 30%, transparent);
+  border: 1px solid var(--border-hairline);
+  box-shadow: var(--elev-3);
   overflow: hidden;
   animation: palette-slide-down 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -2085,14 +2097,15 @@ button, a, input, textarea, select, summary,
 
 /* --- The single card containing BOTH the textarea and the controls row ---
    Decoration is UNIFIED on this base rule so both layouts render identically:
-   accent-tinted border + the layered glow box-shadow (base elevation shadow,
-   a FAINT 2px accent ring at low alpha — a subtle hint, not a prominent
-   ring — plus a two-layer glow: a mid glow with negative spread and a wide,
-   very-low-alpha bloom that extends beyond the card, so the accent reads as
-   depth BEHIND the card rather than a ring hugging it) + a 2px accent
-   top-edge gradient via ::before (below). The card has NO overflow: hidden,
-   so nothing clips the ::before — it carries its own border-radius
-   (1rem 1rem 0 0) to follow the card's top corners. */
+   an accent-tinted border, the FAINT 2px accent ring at low alpha (a subtle
+   hint, not a prominent ring) and the two-layer accent glow (a mid glow with
+   negative spread plus a wide, very-low-alpha bloom) so the accent reads as an
+   accent BEHIND the card. There is deliberately NO elevation shadow here: the
+   card is a layer-1 content surface (see surfaces.css) and only overlays carry
+   `--elev-*`; the ring/bloom are GLOWS, not depth. The 2px accent top edge is a
+   ::before pseudo-element (below). The card has NO overflow: hidden, so nothing
+   clips the ::before — it carries its own border-radius (1rem 1rem 0 0) to
+   follow the card's top corners. */
 .input-card {
   position: relative;
   display: flex;
@@ -2103,7 +2116,6 @@ button, a, input, textarea, select, summary,
   -webkit-backdrop-filter: blur(8px);
   border: 1px solid color-mix(in oklch, var(--project-accent) 25%, var(--color-base-300));
   box-shadow:
-    0 4px 16px -4px color-mix(in oklab, var(--color-base-content) 15%, transparent),
     0 0 0 2px color-mix(in oklch, var(--project-accent) 15%, transparent),
     0 0 90px -18px color-mix(in oklch, var(--project-accent) 25%, transparent),
     0 0 160px 20px color-mix(in oklch, var(--project-accent) 12%, transparent);
@@ -2903,6 +2915,9 @@ dialog.modal .modal-box {
   max-height: min(90dvh, 48rem);
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* A native modal is an OVERLAY, so its elevation is the shared layer-2 token
+     instead of whatever the plugin picked. */
+  box-shadow: var(--elev-3);
 }
 /* Code shown for approval must stay readable verbatim: `pre` scrolls
    horizontally instead of forcing the box wider than the viewport, while
@@ -2930,11 +2945,13 @@ dialog.modal .modal-box :not(pre) > code {
      grown states. */
   align-items: stretch;
   padding: 0 0.5rem;
-  border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
+  border: 1px solid var(--border-hairline);
   min-width: 0;
   border-radius: 1.25rem;
   background-color: var(--color-base-100);
-  box-shadow: 0 1px 2px color-mix(in oklab, var(--color-base-content) 5%, transparent);
+  /* A content surface: the hairline is the only edge, the bootstrapped 1px drop
+     shadow is gone (depth belongs to overlays — see surfaces.css). The accent
+     RING on :focus-within below is a focus glow, not elevation. */
   transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 .help-composer:focus-within {

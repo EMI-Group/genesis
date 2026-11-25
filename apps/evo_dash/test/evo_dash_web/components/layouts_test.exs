@@ -139,22 +139,32 @@ defmodule EvoDashWeb.LayoutsTest do
           ]
         )
 
-      # Sessions group first, then the project group's live row before its
-      # finished one.
-      assert row_keys(html) == ["s-1", "t-run", "t-done"]
+      # The live row is the ONLY Active Tasks row (a session belongs to the
+      # Conversations block, a finished task to the review section) …
+      assert row_keys(html) == ["t-run"]
+      # … and the review candidate keeps its own key in its own section.
+      assert review_row_keys(html) == ["t-done"]
 
       # The SAME task keeps its key when its status changes (here live →
-      # reviewable, which changes href, sub-line and title): a status change
-      # must never replay the entrance animation.
+      # reviewable, which changes section, href, sub-line and title): a status
+      # change must never replay the entrance animation.
       live = row_keys(render_app(running_tasks: [task_entry("t-run", :running)]))
-      reviewable = row_keys(render_app(running_tasks: [task_entry("t-run", :completed)]))
+      reviewable = review_row_keys(render_app(running_tasks: [task_entry("t-run", :completed)]))
       assert live == ["t-run"]
       assert reviewable == ["t-run"]
 
       # … and a task that becomes an interactive session (running →
-      # :awaiting_input) keeps it too, because session rows use the same key.
-      session = row_keys(render_app(running_tasks: [task_entry("t-run", :awaiting_input, true)]))
-      assert session == ["t-run"]
+      # :awaiting_input) leaves Active Tasks for the Conversations block instead
+      # of lingering as a duplicated row.
+      session =
+        render_app(
+          running_tasks: [
+            task_entry("t-run", :running),
+            task_entry("t-sess", :awaiting_input, true)
+          ]
+        )
+
+      assert row_keys(session) == ["t-run"]
     end
 
     test "keys are unique per render, one per row, and the group headers stay unkeyed" do
@@ -181,17 +191,22 @@ defmodule EvoDashWeb.LayoutsTest do
         )
 
       keys = row_keys(html)
+      review_keys = review_row_keys(html)
       # One key per rendered row and no duplicates: the hook keeps only the FIRST
       # element per key, so a duplicate would silently drop a row. Uniqueness is
-      # structural — `session_tasks/2` keeps interactive entries only while
-      # `group_tasks_by_project/2` rejects them, and the feed's running/pending
-      # partitions are disjoint by status (`:completed` vs the live set).
+      # structural — the two sections partition the feed by lifecycle (live
+      # statuses vs `:completed` review candidates) and `live_tasks/2` rejects
+      # the interactive sessions outright.
       assert length(keys) == sidebar_task_links(html)
       assert length(keys) == length(Enum.uniq(keys))
+      assert length(review_keys) == review_task_links(html)
+      assert length(review_keys) == length(Enum.uniq(review_keys))
+      # Two SECTIONS, two disjoint key sets (each with its own hook scope).
+      assert MapSet.disjoint?(MapSet.new(keys), MapSet.new(review_keys))
 
       tree = parse(html)
-      # Only rows carry a key: the "Sessions"/project group headers do not (and
-      # they stay exactly where they are).
+      # Only rows carry a key: the project group headers do not (and they stay
+      # exactly where they are).
       keyed = Floki.find(tree, "#workbench-active-tasks [data-list-enter-key]")
       assert length(keyed) == length(keys)
 
@@ -222,8 +237,11 @@ defmodule EvoDashWeb.LayoutsTest do
       assert sidebar_group_names(html) == ["proj"]
       assert sidebar_task_labels(html) == ["Pausing task"]
 
-      [link] = html |> parse() |> Floki.find("[data-sidebar-task-link]")
-      assert Floki.attribute(link, "href") == ["/agents"]
+      [link] = html |> parse() |> Floki.find("#workbench-active-tasks [data-sidebar-task-link]")
+      # The tasks page's FOCUS mode is the destination that opens this run
+      # (`/agents` accepts no task param, so it would drop the user on the whole
+      # inspector instead of this task).
+      assert Floki.attribute(link, "href") == ["/tasks?task=pa"]
 
       [dot] = Floki.find(link, "span.rounded-full")
       # Still working → the row keeps its pulse; the wording names the drain.
@@ -233,7 +251,7 @@ defmodule EvoDashWeb.LayoutsTest do
       refute html =~ "Pending Review"
     end
 
-    test "a :paused task is a live, non-animated row: agents link, 'Paused' tooltip, before finished rows" do
+    test "a :paused task is a live, non-animated row: tasks-focus link, 'Paused' tooltip, never a review row" do
       html =
         render_app(
           running_tasks: [
@@ -255,14 +273,21 @@ defmodule EvoDashWeb.LayoutsTest do
         )
 
       assert sidebar_group_names(html) == ["proj"]
-      # Live rows sort before their group's finished rows.
-      assert sidebar_task_labels(html) == ["Paused task", "Finished task"]
+      # The paused task is Active Tasks' ONLY row …
+      assert sidebar_task_labels(html) == ["Paused task"]
+      # … while the finished one is listed by the SEPARATE review section, so it
+      # can never be read as part of the active list.
+      assert review_task_labels(html) == ["Finished task"]
 
-      [paused_link, completed_link] = html |> parse() |> Floki.find("[data-sidebar-task-link]")
+      [paused_link] =
+        html |> parse() |> Floki.find("#workbench-active-tasks [data-sidebar-task-link]")
 
-      # A paused task is NOT reviewable: it opens the agent inspector, never
-      # `/review/<id>`, and it is never titled "Pending Review".
-      assert Floki.attribute(paused_link, "href") == ["/agents"]
+      [completed_link] =
+        html |> parse() |> Floki.find("#workbench-needs-review [data-sidebar-task-link]")
+
+      # A paused task is NOT reviewable: it focuses its own run on the tasks
+      # page, never `/review/<id>`, and it is never titled "Pending Review".
+      assert Floki.attribute(paused_link, "href") == ["/tasks?task=pz"]
       assert Floki.attribute(completed_link, "href") == ["/review/done"]
 
       [paused_dot] = Floki.find(paused_link, "span.rounded-full")
@@ -274,15 +299,22 @@ defmodule EvoDashWeb.LayoutsTest do
 
       [completed_dot] = Floki.find(completed_link, "span.rounded-full")
       assert Floki.attribute(completed_dot, "title") == ["Pending Review"]
+      # A finished row is not activity either: it never pulses.
+      completed_classes =
+        completed_dot |> Floki.attribute("class") |> Enum.join(" ") |> String.split()
+
+      refute "animate-pulse" in completed_classes
     end
   end
 
-  describe "app/1 — sidebar interactive sessions group" do
-    # Interactive agent sessions get their OWN sidebar group ("Sessions", chat
-    # icon, violet dot) above the per-project one-shot groups — a session must
-    # never fall into "Other". A summary map without a `:session_mode` key is a
-    # one-shot task (the defensive default is "oneshot").
-    test "an interactive session renders in the Sessions group and never under Other" do
+  describe "app/1 — interactive sessions stay out of Active Tasks" do
+    # Interactive agent sessions are listed by the sidebar's Conversations block
+    # (`#workbench-conversations` → `HomeLive.SessionList`). Injecting them into
+    # Active Tasks as well duplicated every conversation and made one task
+    # appear twice, so the task sections reject `session_mode: "interactive"`.
+    # A summary map without a `:session_mode` key is a one-shot task (the
+    # defensive default is "oneshot").
+    test "an interactive session never appears in Active Tasks" do
       html =
         render_app(
           running_tasks: [
@@ -290,18 +322,37 @@ defmodule EvoDashWeb.LayoutsTest do
           ]
         )
 
-      assert sidebar_session_headers(html) == ["Sessions"]
-      # No project/Other group for a path-less session.
+      # An idle session is not an active task, so there is no task section …
+      assert Floki.find(parse(html), "#workbench-active-tasks") == []
+      assert Floki.find(parse(html), "#workbench-needs-review") == []
+      assert sidebar_task_links(html) == 0
       assert sidebar_group_names(html) == []
-      assert sidebar_task_labels(html) == ["Session one"]
+      refute html =~ "Pending Review"
+      refute html =~ "Session one"
+      # … and no "Sessions" group exists inside the task lists at all: the
+      # Conversations block is the ONE place a session is listed.
+      assert sidebar_session_headers(html) == []
+    end
 
-      # Sessions link to the task list and carry the violet idle-session dot,
-      # pulsing like a running task.
-      [link] = html |> parse() |> Floki.find("[data-sidebar-task-link]")
-      assert Floki.attribute(link, "href") == ["/tasks"]
-      assert [dot] = Floki.find(link, "span.rounded-full")
-      assert_classes(dot, ~w(bg-violet-500 animate-pulse))
-      assert Floki.text(link) =~ "Waiting for you"
+    test "a running session does not join a one-shot task's group" do
+      html =
+        render_app(
+          running_tasks: [
+            session_task(id: "s-running", status: :running, objective: "Session running"),
+            task(
+              id: "b1",
+              status: :running,
+              project_path: "/home/user/Beta",
+              objective: "Beta running"
+            )
+          ]
+        )
+
+      assert sidebar_group_names(html) == ["Beta"]
+      assert sidebar_task_labels(html) == ["Beta running"]
+      assert sidebar_task_links(html) == 1
+      # A session never falls into "Other" — it is not in the list at all.
+      refute html =~ "Session running"
     end
 
     test "one-shot tasks with no path still group under Other (with or without a session_mode key)" do
@@ -326,7 +377,7 @@ defmodule EvoDashWeb.LayoutsTest do
       assert sidebar_task_labels(html) == ["No session_mode key", "Explicit one-shot"]
     end
 
-    test "sessions keep feed order (running then pending) while project grouping is unchanged" do
+    test "sessions in both buckets leave the project groups in feed order" do
       html =
         render_app(
           running_tasks: [
@@ -349,18 +400,14 @@ defmodule EvoDashWeb.LayoutsTest do
           ]
         )
 
-      assert sidebar_session_headers(html) == ["Sessions"]
+      assert sidebar_session_headers(html) == []
       assert sidebar_group_names(html) == ["alpha", "Beta"]
-
-      assert sidebar_task_labels(html) == [
-               "Session running",
-               "Session pending",
-               "Alpha pending",
-               "Beta running"
-             ]
+      # Dropping the sessions changes nothing else: the groups keep their
+      # alphabetical order and each group keeps feed order.
+      assert sidebar_task_labels(html) == ["Alpha pending", "Beta running"]
     end
 
-    test "non-map entries in either list are skipped without crashing" do
+    test "non-map entries and sessions in either list are skipped without crashing" do
       html =
         render_app(
           running_tasks: [
@@ -370,9 +417,27 @@ defmodule EvoDashWeb.LayoutsTest do
           pending_tasks: ["not a task map", 42]
         )
 
-      assert sidebar_session_headers(html) == ["Sessions"]
-      assert sidebar_group_names(html) == []
-      assert sidebar_task_labels(html) == ["Valid session"]
+      # Nothing renderable among the junk: the layout survives and paints no
+      # task section instead of crashing the whole page.
+      assert html =~ "Conversations"
+      assert Floki.find(parse(html), "#workbench-active-tasks") == []
+      assert Floki.find(parse(html), "#workbench-needs-review") == []
+      assert sidebar_task_links(html) == 0
+
+      # A valid one-shot entry alongside the same junk still renders (and a
+      # session in the other bucket stays out of it).
+      with_task =
+        render_app(
+          running_tasks: [
+            :junk_atom,
+            task(id: "ok", status: :running, project_path: nil, objective: "Valid task")
+          ],
+          pending_tasks: [session_task(id: "s2", status: :awaiting_input, objective: "Sess"), 42]
+        )
+
+      assert sidebar_group_names(with_task) == ["Other"]
+      assert sidebar_task_labels(with_task) == ["Valid task"]
+      refute with_task =~ "Sess"
     end
   end
 
@@ -567,7 +632,8 @@ defmodule EvoDashWeb.LayoutsTest do
       assert [section] = Floki.find(tree, "#workbench-active-tasks")
       assert [row] = Floki.find(section, "[data-sidebar-task-link]")
       assert sidebar_task_links(html) == 1
-      assert Floki.attribute(row, "href") == ["/agents"]
+      # A live task opens the run that focuses it on the tasks page.
+      assert Floki.attribute(row, "href") == ["/tasks?task=task-1"]
       assert Floki.attribute(row, "title") |> hd() =~ "Active task"
 
       ancestors = ancestors_where(tree, &has_id?(&1, "workbench-active-tasks"))
@@ -632,6 +698,179 @@ defmodule EvoDashWeb.LayoutsTest do
     end
   end
 
+  describe "app/1 — Needs review section" do
+    # Finished-but-unreviewed tasks are NOT active tasks: they get their own
+    # compact section with a count, at most five newest rows and a "View all"
+    # link, so the sidebar never grows a second full task list.
+    test "lists at most five newest candidates, with the honest count and a tasks-page link" do
+      base = ~U[2026-01-01 00:00:00Z]
+      at = fn seconds -> DateTime.add(base, seconds, :second) end
+
+      pending =
+        for index <- 1..6 do
+          task(
+            id: "rev-#{index}",
+            status: :completed,
+            project_path: "/home/user/proj",
+            objective: "Review #{index}",
+            finished_at: at.(index)
+          )
+        end
+
+      html =
+        render_app(
+          running_tasks: [
+            task(
+              id: "run-1",
+              status: :running,
+              project_path: "/home/user/proj",
+              objective: "Live one"
+            )
+          ],
+          pending_tasks: pending
+        )
+
+      tree = parse(html)
+      # Five rows, newest first — the section is a nudge, not a list.
+      assert review_task_labels(html) == [
+               "Review 6",
+               "Review 5",
+               "Review 4",
+               "Review 3",
+               "Review 2"
+             ]
+
+      # The count is the FULL number of candidates, not the rendered rows.
+      assert [count] = Floki.find(tree, "#workbench-needs-review-count")
+      assert String.trim(Floki.text(count)) == "6"
+      # The heading names the section …
+      [heading] = Floki.find(tree, "#workbench-needs-review .workbench-section-heading")
+      assert Floki.text(heading) =~ "Needs review"
+      # … and "View all" is the way to the rest.
+      assert [more] = Floki.find(tree, "#workbench-needs-review-more")
+      assert Floki.attribute(more, "href") == ["/tasks?status=needs_review"]
+      assert Floki.text(more) =~ "View all"
+      # Nothing finished leaks into Active Tasks, and the live task is not
+      # duplicated in the review section.
+      assert sidebar_task_labels(html) == ["Live one"]
+      assert review_task_links(html) == 5
+    end
+
+    test "a failed task is reviewable on its card but never a triage candidate" do
+      # `:failed` gets a `/review/<id>` ROUTE (card + history panel), but the
+      # "Needs review" bucket stays the store's composite predicate:
+      # `:completed` + nil `review_status` + a live branch. A failure must not
+      # occupy a triage slot.
+      html =
+        render_app(
+          pending_tasks: [
+            task(
+              id: "rev-1",
+              status: :completed,
+              project_path: "/home/user/proj",
+              objective: "Review one",
+              finished_at: ~U[2026-01-01 00:00:00Z]
+            ),
+            task(
+              id: "fail-1",
+              status: :failed,
+              project_path: "/home/user/proj",
+              objective: "Failed one",
+              finished_at: ~U[2026-01-02 00:00:00Z]
+            )
+          ]
+        )
+
+      tree = parse(html)
+
+      # Only the completed candidate is listed, with the honest count of 1.
+      assert review_task_labels(html) == ["Review one"]
+      assert [count] = Floki.find(tree, "#workbench-needs-review-count")
+      assert String.trim(Floki.text(count)) == "1"
+      assert Floki.find(tree, "#workbench-needs-review [href='/review/fail-1']") == []
+      # Nor does the failure leak into the LIVE task list.
+      assert Floki.find(tree, "#workbench-active-tasks [data-sidebar-task-link]") == []
+    end
+
+    test "it is its own sidebar section, directly after Active Tasks and outside every disclosure" do
+      html =
+        render_app(
+          current_page: :dashboard,
+          running_tasks: [
+            task(
+              id: "run-1",
+              status: :running,
+              project_path: "/home/user/proj",
+              objective: "Live one"
+            )
+          ],
+          pending_tasks: [
+            task(
+              id: "rev-1",
+              status: :completed,
+              project_path: "/home/user/proj",
+              objective: "Review one"
+            )
+          ]
+        )
+
+      tree = parse(html)
+      assert [active] = Floki.find(tree, "#workbench-active-tasks")
+      assert [review] = Floki.find(tree, "#workbench-needs-review")
+      # A finished task is never inside Active Tasks.
+      assert Floki.find(active, "[href^='/review/']") == []
+      assert [_] = Floki.find(review, "[href='/review/rev-1']")
+      # Both sections sit in the sidebar nav, in that order, as siblings of the
+      # Assistant link and the project shortcuts.
+      [nav] = Floki.find(tree, "nav.workbench-sidebar-nav")
+      assert [active_child, review_child, assistant, projects, utilities] = element_children(nav)
+      assert has_id?(active_child, "workbench-active-tasks")
+      assert has_id?(review_child, "workbench-needs-review")
+      assert match?({"a", _, _}, assistant)
+      assert has_id?(projects, "workbench-projects")
+      assert has_class?(utilities, "workbench-sidebar-utilities")
+
+      for id <- ["workbench-active-tasks", "workbench-needs-review"] do
+        ancestors = ancestors_where(tree, &has_id?(&1, id))
+        refute Enum.any?(ancestors, &match?({"details", _, _}, &1))
+        refute Enum.any?(ancestors, &has_id?(&1, "workbench-conversations"))
+        refute Enum.any?(ancestors, &has_class?(&1, "workbench-sidebar-utilities"))
+      end
+    end
+
+    test "both sections' destinations preserve the viewed remote node" do
+      html =
+        render_app(
+          current_node_id: "target-7",
+          running_tasks: [
+            task(
+              id: "run-1",
+              status: :paused,
+              project_path: "/home/user/proj",
+              objective: "Live one"
+            )
+          ],
+          pending_tasks: [
+            task(
+              id: "rev-1",
+              status: :completed,
+              project_path: "/home/user/proj",
+              objective: "Review one"
+            )
+          ]
+        )
+
+      tree = parse(html)
+      # The live row joins the node filter and the focus param with `&`.
+      assert [live] = Floki.find(tree, "#workbench-active-tasks [data-sidebar-task-link]")
+      assert Floki.attribute(live, "href") == ["/tasks?node=target-7&task=run-1"]
+      assert [review] = Floki.find(tree, "#workbench-needs-review [data-sidebar-task-link]")
+      assert Floki.attribute(review, "href") == ["/review/rev-1?node=target-7"]
+      assert [more] = Floki.find(tree, "#workbench-needs-review-more")
+      assert Floki.attribute(more, "href") == ["/tasks?node=target-7&status=needs_review"]
+    end
+  end
+
   describe "app/1 — recent-project shortcuts" do
     # `#workbench-projects` is a LiveComponent mounted by the layout, so through
     # `render_component(&Layouts.app/1, ...)` it renders its DEAD render: the
@@ -680,7 +919,9 @@ defmodule EvoDashWeb.LayoutsTest do
       # Name first, then the host label of the node the shortcut belongs to.
       assert [server] = Floki.find(link, ".workbench-project-server")
       assert Floki.text(server) == "Local"
-      assert [_] = Floki.find(row, "[data-workbench-project-windows]")
+      # A project row carries NO open-view container: the tab rail is the ONE
+      # open-view list, so the sidebar never grows a per-project window list.
+      assert Floki.find(row, "[data-workbench-project-windows]") == []
 
       # A project row is a SHORTCUT: no task rows, no create actions …
       assert Floki.find(section, "[data-sidebar-task-link]") == []
@@ -819,6 +1060,66 @@ defmodule EvoDashWeb.LayoutsTest do
       assert Floki.find(section, "a[href^='/agents']") == []
       assert Floki.find(section, "a[href^='/review/']") == []
       assert Floki.find(section, "#chat-session-list") == []
+    end
+  end
+
+  describe "app/1 — workbench tab rail" do
+    # The tab rail is the ONE open-view list: `#workbench-tabs` (server-empty,
+    # filled by the `Workbench` hook) followed by the rail's two `<details>`
+    # menus, the last of which is the overflow shell the hook reveals only when
+    # the rail overflows. `#app-layout` carries the labels that shell consumes.
+    test "the rail-end overflow shell starts hidden and comes after the create menu" do
+      tree = render_app(current_page: :dashboard) |> parse()
+
+      # One rail, and one tab list inside it that states the keyboard cycle
+      # contract; the list itself renders EMPTY on the server.
+      assert [rail] = Floki.find(tree, ".workbench-tab-rail")
+      assert [tabs] = Floki.find(rail, "#workbench-tabs")
+
+      assert Floki.attribute(tabs, "role") == ["navigation"]
+      assert Floki.attribute(tabs, "phx-update") == ["ignore"]
+
+      assert Floki.attribute(tabs, "aria-label") ==
+               ["Open tabs — Alt+Left / Alt+Right cycles tabs"]
+
+      assert element_children(tabs) == []
+
+      # Exactly ONE overflow shell: a rail-end `<details>`, hidden until the
+      # hook finds the rail overflowing and IGNORED by LiveView so the hook
+      # owns both its children and the native `open` state.
+      assert [overflow] = Floki.find(rail, "#workbench-tabs-overflow")
+      assert has_class?(overflow, "workbench-tab-overflow")
+      assert Floki.attribute(overflow, "hidden") == ["hidden"]
+      assert Floki.attribute(overflow, "phx-update") == ["ignore"]
+
+      assert [summary] = Floki.find(overflow, "summary.workbench-icon-button")
+      assert Floki.attribute(summary, "aria-label") == ["All open tabs"]
+      assert contains?(summary, "span.hero-ellipsis-horizontal")
+
+      # The panel is the hook-populated list on the create menu's surface, and
+      # it is EMPTY on a server render.
+      assert [list] = Floki.find(overflow, "#workbench-tabs-overflow-list")
+      assert_classes(list, ["workbench-create-menu"])
+      assert element_children(list) == []
+
+      # Rail order: tab list → create menu → overflow shell (the shell is the
+      # rail-END menu, after `#workbench-create`).
+      rail_ids =
+        rail
+        |> element_children()
+        |> Enum.map(fn child -> child |> Floki.attribute("id") |> List.first() end)
+
+      assert rail_ids == ["workbench-tabs", "workbench-create", "workbench-tabs-overflow"]
+    end
+
+    test "the shell ships the tab-rail labels the overflow shell consumes" do
+      tree = render_app(current_page: :dashboard) |> parse()
+
+      assert [layout] = Floki.find(tree, "#app-layout")
+
+      assert Floki.attribute(layout, "data-workbench-keep-open") == ["Keep this tab open"]
+      assert Floki.attribute(layout, "data-workbench-next-tab") == ["Next tab (Alt+Right)"]
+      assert Floki.attribute(layout, "data-workbench-prev-tab") == ["Previous tab (Alt+Left)"]
     end
   end
 
@@ -1057,14 +1358,12 @@ defmodule EvoDashWeb.LayoutsTest do
     |> Enum.map(&String.trim/1)
   end
 
-  # Session group headers, in sidebar order. The "Sessions" header is the only
-  # `span.sidebar-label` carrying the chat icon INSIDE the Active Tasks rows
-  # container (`div.space-y-1`, where the Assistant nav link's icon is a
-  # SIBLING of its label span, not a descendant). The layout-owned
-  # "Conversations" header carries the same icon but sits OUTSIDE that
-  # container — it is a sibling of its own `#chat-session-list` body — so the
-  # `:not(#chat-session-list)` scope keeps this helper meaning exactly what it
-  # meant before the conversations moved into the shared sidebar.
+  # "Sessions" group headers of the task lists. The task sections no longer have
+  # one (interactive sessions live in the Conversations block), so every use of
+  # this helper now asserts its ABSENCE — a session injected back into Active
+  # Tasks would fail here. The layout-owned "Conversations" header carries the
+  # same chat icon but sits outside the `div.space-y-1` bodies, so the
+  # `:not(#chat-session-list)` scope keeps this helper about the task lists only.
   defp sidebar_session_headers(html) do
     html
     |> parse()
@@ -1075,8 +1374,36 @@ defmodule EvoDashWeb.LayoutsTest do
     |> Enum.map(&String.trim/1)
   end
 
+  # Task rows of the ACTIVE Tasks section — live tasks only, so a finished
+  # review candidate is counted by `review_task_links/1` instead.
   defp sidebar_task_links(html) do
-    html |> parse() |> Floki.find("[data-sidebar-task-link]") |> length()
+    html |> parse() |> Floki.find("#workbench-active-tasks [data-sidebar-task-link]") |> length()
+  end
+
+  # Task rows of the separate "Needs review" section.
+  defp review_task_links(html) do
+    html |> parse() |> Floki.find("#workbench-needs-review [data-sidebar-task-link]") |> length()
+  end
+
+  # Review-candidate labels, in section order.
+  defp review_task_labels(html) do
+    html
+    |> parse()
+    |> Floki.find("#workbench-needs-review [data-sidebar-task-link]")
+    |> Enum.map(fn link ->
+      link |> Floki.find("span.truncate") |> Floki.text() |> String.trim()
+    end)
+  end
+
+  # The `data-list-enter-key` of every review row, in section order.
+  defp review_row_keys(html) do
+    html
+    |> parse()
+    |> Floki.find("#workbench-needs-review [data-sidebar-task-link]")
+    |> Enum.map(fn link ->
+      assert [key] = Floki.attribute(link, "data-list-enter-key")
+      key
+    end)
   end
 
   # The layout-owned Conversations block: the one sidebar section carrying the
@@ -1200,7 +1527,7 @@ defmodule EvoDashWeb.LayoutsTest do
   defp sidebar_task_labels(html) do
     html
     |> parse()
-    |> Floki.find("[data-sidebar-task-link]")
+    |> Floki.find("#workbench-active-tasks [data-sidebar-task-link]")
     |> Enum.map(fn link ->
       link |> Floki.find("span.truncate") |> Floki.text() |> String.trim()
     end)
@@ -1215,7 +1542,7 @@ defmodule EvoDashWeb.LayoutsTest do
       status: Keyword.fetch!(attrs, :status),
       project_path: Keyword.get(attrs, :project_path),
       started_at: DateTime.utc_now(),
-      finished_at: nil,
+      finished_at: Keyword.get(attrs, :finished_at),
       opts: [objective: Keyword.fetch!(attrs, :objective)]
     }
 
