@@ -4029,6 +4029,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:flash]["error"] == "Repo 'x' not found."
     end
 
+    # Both Save tests need a stable primary project: on a bare mount, a late
+    # VCT auto-activation can replace the foreign repo list even after Save.
     test "save_foreign_repo updates writable/base_sha/description in place", %{
       conn: conn,
       tmp_dir: tmp_dir
@@ -4056,7 +4058,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {new_sha, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: repo_path)
       new_sha = String.trim(new_sha)
 
-      {:ok, view, _html} = live(conn, ~p"/projects")
+      stub_github_upstream_check!()
+      {:ok, view, _html} = live(conn, ~p"/projects?#{[project: tmp_dir, wb_task: "1"]}")
+      assert assigns(view)[:active_project_path] == tmp_dir
 
       # Add as read-only at HEAD, then save with writable + a new base_sha
       render_click(view, "add_foreign_repo", %{
@@ -4100,7 +4104,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         end
       end)
 
-      {:ok, view, _html} = live(conn, ~p"/projects")
+      stub_github_upstream_check!()
+      {:ok, view, _html} = live(conn, ~p"/projects?#{[project: tmp_dir, wb_task: "1"]}")
+      assert assigns(view)[:active_project_path] == tmp_dir
 
       render_click(view, "add_foreign_repo", %{
         "repo_id" => "repo1",
