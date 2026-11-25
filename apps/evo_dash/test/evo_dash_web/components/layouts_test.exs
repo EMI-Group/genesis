@@ -928,9 +928,20 @@ defmodule EvoDashWeb.LayoutsTest do
       assert Floki.find(section, "[data-workbench-new-task]") == []
       assert Floki.find(section, "[data-workbench-new-conversation]") == []
 
-      # … while the top bar still offers both, so the absence above is real.
-      assert contains?(tree, "#workbench-create [data-workbench-new-task]")
-      assert contains?(tree, "#workbench-create [data-workbench-new-conversation]")
+      # … while the connected project gets both entry points in the top bar.
+      assert [task_link] = Floki.find(tree, "#workbench-create a[data-workbench-new-task]")
+      assert [href] = Floki.attribute(task_link, "href")
+      assert %URI{path: "/projects", query: query} = URI.parse(href)
+      assert URI.decode_query(query) == %{"project" => path, "wb_task" => "1"}
+      assert Floki.attribute(task_link, "data-phx-link") == ["redirect"]
+
+      assert [_] =
+               Floki.find(
+                 tree,
+                 "#workbench-create button[type=button][data-workbench-new-conversation]"
+               )
+
+      assert Floki.find(tree, "#workbench-create [data-workbench-project-window]") == []
     end
   end
 
@@ -1112,14 +1123,70 @@ defmodule EvoDashWeb.LayoutsTest do
       assert rail_ids == ["workbench-tabs", "workbench-create", "workbench-tabs-overflow"]
     end
 
-    test "the shell ships the tab-rail labels the overflow shell consumes" do
+    test "the create menu offers project actions without an executable scope" do
+      for assigns <- [[], [workbench_project: "/repos/pending", current_node_id: "pending-node"]] do
+        tree = render_app(assigns) |> parse()
+        assert [menu] = Floki.find(tree, "details#workbench-create")
+        assert [_] = Floki.find(menu, "summary#workbench-create-toggle[aria-label=Create]")
+
+        assert Floki.attribute(menu, "button[type=button]", "data-workbench-project-window") ==
+                 ["create", "open"]
+
+        assert Floki.find(menu, "[data-workbench-new-task], [data-workbench-new-conversation]") ==
+                 []
+      end
+    end
+
+    test "the shell ships the labels consumed by the client-owned rail" do
       tree = render_app(current_page: :dashboard) |> parse()
 
-      assert [layout] = Floki.find(tree, "#app-layout")
+      assert [layout] = Floki.find(tree, "#app-layout[phx-hook=Workbench]")
 
+      assert Floki.attribute(layout, "data-workbench-close") == ["Close tab"]
       assert Floki.attribute(layout, "data-workbench-keep-open") == ["Keep this tab open"]
       assert Floki.attribute(layout, "data-workbench-next-tab") == ["Next tab (Alt+Right)"]
       assert Floki.attribute(layout, "data-workbench-prev-tab") == ["Previous tab (Alt+Left)"]
+    end
+  end
+
+  describe "app/1 — Source Control wiring" do
+    test "the Git panel starts closed and its portal host is a sibling of the main scroll region" do
+      path = "/repos/active"
+
+      tree =
+        render_app(
+          workbench_project: path,
+          workbench_git_project: path,
+          github_status: %{state: :ok, owner: "acme", repo: "active"}
+        )
+        |> parse()
+
+      assert [_] =
+               Floki.find(
+                 tree,
+                 "#workbench-git-toggle[aria-controls=workbench-git][aria-expanded=false]"
+               )
+
+      assert [_] = Floki.find(tree, "#workbench-git-toggle-label[phx-update=ignore]")
+      assert [pane] = Floki.find(tree, "aside#workbench-git[hidden][data-panel-state=closed]")
+      assert [content] = Floki.find(pane, "#workbench-git-content[phx-hook=WorkbenchSection]")
+      assert Floki.attribute(content, "data-workbench-git-target") == [Atom.to_string(node())]
+      assert Floki.attribute(content, "h2", "title") == [path]
+      assert [_] = Floki.find(content, ".workbench-git-github [phx-click=open_github_issues]")
+
+      assert [_] =
+               Floki.find(
+                 tree,
+                 ".workbench-content-stack > #main-scroll + #workbench-git-diff-host"
+               )
+    end
+
+    test "a fresh shell with no project offers neither a Git toggle nor a portal host" do
+      tree = render_app([]) |> parse()
+      assert [_] = Floki.find(tree, "header.workbench-top")
+
+      assert Floki.find(tree, "#workbench-git, #workbench-git-toggle, #workbench-git-diff-host") ==
+               []
     end
   end
 
