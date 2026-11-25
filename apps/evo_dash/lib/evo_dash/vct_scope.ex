@@ -69,11 +69,20 @@ defmodule EvoDash.VCTScope do
 
   # One chain entry's designation. `Process.info/2` answers `nil` for a dead
   # pid, and a pid on another node has no readable dictionary here.
+  # The PER-KEY form (`{:dictionary, key}`) is load-bearing, not cosmetic: it
+  # copies only that one entry into this process, whereas the whole-dictionary
+  # form copies every key of the probed process. Production designates nothing,
+  # so the walk always runs to the end of an `$ancestors` chain that reaches into
+  # the OTP supervisors — on every wrapped `EvoDash.NodeContext` delegation —
+  # and only then falls through to `nil`. Same shape as `EvoDash.Seam.dict_value/2`.
   defp caller_designation(pid) when is_pid(pid) do
     if node(pid) == node() do
-      case Process.info(pid, :dictionary) do
-        {:dictionary, dictionary} -> Keyword.get(dictionary, @server_key)
-        nil -> nil
+      case Process.info(pid, {:dictionary, @server_key}) do
+        # A live pid that simply does not hold the key.
+        {{:dictionary, _key}, :undefined} -> nil
+        {{:dictionary, _key}, value} -> value
+        # Dead or otherwise unreadable pid — fall through to the next entry.
+        _other -> nil
       end
     end
   end

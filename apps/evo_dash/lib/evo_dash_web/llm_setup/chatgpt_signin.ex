@@ -413,10 +413,14 @@ defmodule EvoDashWeb.LLMSetup.ChatGPTSignIn do
 
   defp caller_seam(_key, callers) when not is_list(callers), do: nil
 
+  # The PER-KEY `Process.info/2` form copies only this one entry instead of the
+  # caller's whole dictionary; `:undefined` is a live pid without the key and
+  # `nil` is a dead pid, both of which mean "keep walking".
   defp caller_seam(key, callers) do
     Enum.find_value(callers, fn pid ->
-      case Process.info(pid, :dictionary) do
-        {:dictionary, dictionary} -> Keyword.get(dictionary, key)
+      case Process.info(pid, {:dictionary, key}) do
+        {{:dictionary, _key}, :undefined} -> nil
+        {{:dictionary, _key}, value} -> value
         _ -> nil
       end
     end)
