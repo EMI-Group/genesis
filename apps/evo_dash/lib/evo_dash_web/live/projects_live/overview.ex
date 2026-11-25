@@ -35,6 +35,8 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
       (`/assistant?wb_project=…&wb_draft=…[&node=…]`): `wb_project` is the OS
       path for a project and the WORKSPACE POINT for a workspace (a member path
       is never silently substituted — the assistant resolves the group itself).
+    * `default_draft_path/1` advertises that same URL for a confirmed explicit
+      overview. The browser decides whether its restored tab rail is empty.
     * `draft_id/0` mints the 24-lowercase-hex workbench draft id `HomeLive`
       requires (`byte_size(draft) == 24`).
     * `load/2` reads BOTH halves of the async payload off-process —
@@ -67,7 +69,7 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
   alias EvoDash.ProjectGit
   alias EvoDash.SafeCall
   alias EvoDashWeb.DraftScope
-  alias EvoDashWeb.ProjectsLive.{ProjectFlow, StatePersistence, Workspace}
+  alias EvoDashWeb.ProjectsLive.{ModelSelectionScope, ProjectFlow, StatePersistence, Workspace}
   alias EvoDashWeb.WorkbenchComponent
 
   @runner_seam :projects_overview_runner
@@ -352,6 +354,50 @@ defmodule EvoDashWeb.ProjectsLive.Overview do
 
     WorkbenchComponent.navigation_path("/assistant", Map.get(assigns, :current_node_id), params)
   end
+
+  @doc """
+  The same already-minted Assistant draft URL as the overview link, or nil
+  until the URL explicitly selects a confirmed, visible project or workspace.
+
+  Confirmation uses the loaded VCT registry, never Git state or extra I/O.
+  Whether to open the draft depends on the browser's restored tab rail.
+  """
+  @spec default_draft_path(map()) :: String.t() | nil
+  def default_draft_path(
+        %{
+          workbench_reconnect_params: %{"project" => selected} = params,
+          overview_draft_id: draft
+        } = assigns
+      ) do
+    with true <- present?(selected) and present?(draft),
+         true <- visible?(assigns) and not ModelSelectionScope.pending_remote?(assigns),
+         nil <- assigns[:remote_project_loading],
+         false <- assigns[:project_palette_open] == true or params["wb_open"] == "1",
+         false <-
+           Enum.any?(~w(wb_home wb_task resume_from starting_commit), &Map.has_key?(params, &1)),
+         %{exec_path: path} = selection <- scope(assigns),
+         true <- ProjectFlow.absolute_path_for_node?(assigns[:current_node] || node(), path),
+         true <- confirmed_selection?(selection, selected, assigns) do
+      assistant_path(assigns, selection)
+    else
+      _ -> nil
+    end
+  end
+
+  def default_draft_path(_assigns), do: nil
+
+  defp confirmed_selection?(%{kind: :workspace, point: point}, point, _assigns), do: true
+
+  defp confirmed_selection?(
+         %{kind: :project, path: path, point: point},
+         path,
+         %{active_project_path: path, active_project: %{path: path}} = assigns
+       ) do
+    DraftScope.point?(point) and
+      Enum.any?(as_list(assigns[:projects]), &match?(%{path: ^path, point: ^point}, &1))
+  end
+
+  defp confirmed_selection?(_scope, _selected, _assigns), do: false
 
   @doc """
   A fresh workbench draft id: `:crypto.strong_rand_bytes(12)` hex-encoded →
