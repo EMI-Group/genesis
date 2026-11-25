@@ -1351,34 +1351,6 @@
 }
 
 .workbench-project-heading .workbench-project-link { flex: 1; }
-/* A project entry's own activity rows are a LIST under the title pill: the
-   title row and the FIRST child row are both accent-tinted `is-current` pills,
-   so they need a real block gap of their own or the two tints fuse into one
-   continuous coloured shape. The inline indent is the hierarchy, this gap is
-   the separation. */
-.workbench-project-activity {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  min-width: 0;
-  margin-inline-start: 1.1rem;
-  gap: .15rem;
-}
-/* The gap rides the FIRST row, never the container: the container is filled by
-   JS and HEEx renders it with a whitespace-only body even when it holds no
-   rows, so a container margin would reserve dead space under every entry
-   without rows. `> :first-child` only exists when a row does. */
-.workbench-project-activity > :first-child {
-  margin-block-start: .3rem;
-}
-.workbench-project-activity-link[hidden] { display: none; }
-
-.workbench-project-activity-link { gap: .4rem; color: var(--workbench-text-muted); }
-.workbench-project-activity-link:hover { color: var(--color-base-content); }
-.workbench-project-activity-link time { flex: none; font-size: var(--text-2xs); }
-.workbench-project-activity .workbench-hint { padding-block: .25rem; }
-@media (max-width: 1023.98px) {
-  .workbench-project-activity-link { min-block-size: var(--touch-target); }
-}
 
 .workbench-project-window { width: 38rem; }
 .project-picker { padding: 1.2rem; }

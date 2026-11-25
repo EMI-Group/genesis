@@ -1969,6 +1969,51 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert render_tasks_list(view) =~ "MARKER REVIEW SEARCH HIT"
       refute render_tasks_list(view) =~ "MARKER REVIEW SEARCH MISS"
     end
+
+    test "a node switch keeps the page's filters in the patched URL", %{conn: conn} do
+      target_id = register_remote_target!("tasks-node-switch-filters")
+
+      insert_fixture!(
+        status: :completed,
+        branch_name: "evogit/node-switch-needs-review",
+        opts: [prompt: "MARKER NODE SWITCH CANDIDATE"]
+      )
+
+      # Every node-aware read is served from the LOCAL store: the fake remote
+      # node is unreachable, so the patched load stays renderable.
+      install_tasks_page_load_runner(fn _node, page, page_size, filters ->
+        EvoDashWeb.TasksLive.PageLoad.load(node(), page, page_size, filters)
+      end)
+
+      {:ok, view, _html} = live(conn, "/tasks?status=needs_review")
+      flush_tasks_load(view)
+
+      # NodeAware.handle_node_selected/2 rebuilds the URL from the page's
+      # `@current_path`, so that assign carries the CURRENT filters — a bare
+      # `~p"/tasks"` would reset the view to the default list on a node switch.
+      send(view.pid, {:node_selected, target_id})
+      # ONE extra render flushes the self-message so the push_patch lands before
+      # assert_patch polls.
+      render(view)
+      assert_patch(view, "/tasks?status=needs_review&node=#{target_id}", @async_wait_budget_ms)
+      flush_tasks_load(view)
+
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.status_filter ==
+               "needs_review"
+
+      assert render_tasks_list(view) =~ "MARKER NODE SWITCH CANDIDATE"
+
+      # Switching back to "local" DROPS the `node` key and still keeps them.
+      send(view.pid, {:node_selected, "local"})
+      render(view)
+      assert_patch(view, "/tasks?status=needs_review", @async_wait_budget_ms)
+      flush_tasks_load(view)
+
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.status_filter ==
+               "needs_review"
+
+      assert render_tasks_list(view) =~ "MARKER NODE SWITCH CANDIDATE"
+    end
   end
 
   describe "cancel task action" do

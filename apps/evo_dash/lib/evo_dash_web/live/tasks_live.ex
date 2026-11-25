@@ -32,8 +32,12 @@ defmodule EvoDashWeb.TasksLive do
   `awaiting_sessions: %{task_id => agent_id}`; an idle session's card posts a
   message (`NodeContext.send_session_message/4`) or closes the session
   (`NodeContext.close_session/3`, the only non-cancellation way out) through
-  this page. `:session_mode_filter` (`all`/`oneshot`/`interactive`) is applied
-  by the page loader — the core SQL WHERE builder has no `session_mode`.
+  this page. `:session_mode_filter` (`all`/`oneshot`/`interactive`) travels in
+  the `filters` keyword list the page loader builds, and the core's shared
+  WHERE builder applies it
+  (`EvoGit.Store.Operations.Filters.where_session_mode_filter/2`), so it is a
+  real SQL predicate beside status/project/review/search — never an in-memory
+  post-filter.
   """
   use EvoDashWeb, :live_view
   use Gettext, backend: EvoDashWeb.Gettext
@@ -889,7 +893,6 @@ defmodule EvoDashWeb.TasksLive do
     socket =
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
-      |> assign(:current_path, ~p"/tasks")
       |> assign(workbench_reconnect_params: Map.take(params, ["task"]))
       |> assign(
         focused_task_id: focused_task_id(params["task"]),
@@ -903,6 +906,15 @@ defmodule EvoDashWeb.TasksLive do
       # "assign + reload" pair. `show_reflect_tasks` is deliberately NOT here —
       # it is a page-local reveal preference, never URL state.
       |> seed_filters(params)
+
+    # Node-switch URL rule (`LiveHooks.NodeAware.handle_node_selected/2` rebuilds
+    # the URL from `@current_path`): this page's state IS its query string, so the
+    # assign carries the page's CURRENT url — built by `tasks_url/3`, the page's
+    # ONE URL builder, from the filters just seeded — instead of the bare route
+    # path, or a node switch would reset `/tasks?status=needs_review` to the
+    # default view. No other page needs this: their state is not in the URL the
+    # same way, and they intentionally reset on a node switch.
+    socket = assign(socket, :current_path, tasks_url(socket, requested_page))
 
     socket =
       case socket.assigns.focused_task_id do
@@ -1265,8 +1277,9 @@ defmodule EvoDashWeb.TasksLive do
   end
 
   # Session-kind filter — whitelist match only (never an atom conversion); an
-  # unknown value keeps the current filter. The page loader applies it
-  # server-side (the core SQL WHERE builder has no `session_mode` predicate).
+  # unknown value keeps the current filter. The value travels in the store's
+  # `filters` keyword list, where the core's shared WHERE builder applies it
+  # (`EvoGit.Store.Operations.Filters.where_session_mode_filter/2`).
   @impl true
   def handle_event("filter_session_mode", %{"session_mode_filter" => mode}, socket)
       when mode in @session_filters do
