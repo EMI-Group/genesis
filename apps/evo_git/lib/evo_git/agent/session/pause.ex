@@ -3,7 +3,7 @@ defmodule EvoGit.Agent.Session.Pause do
   The ONE pause finalizer of an agent session: everything a PAUSED run must make
   durable before its session stops.
 
-  A task-level pause is honoured at a TURN BOUNDARY by the exchange engine
+  A task-level pause is honoured by the exchange engine
   (`EvoGit.Agent.Exchange`), which returns `{:pause, %State{}}` with the whole
   conversation already checkpointed through the session's `:checkpoint` seam.
   The remaining work is expensive — a git checkpoint commit, the durable
@@ -17,7 +17,7 @@ defmodule EvoGit.Agent.Session.Pause do
 
       %{agent_id: pos_integer(), task_id: String.t(),
         checkpoint: String.t() | nil, branch: String.t() | nil,
-        durable: boolean(), reason: :task_pause}
+        durable: boolean(), clean_freeze: boolean(), reason: :task_pause}
 
   **The `checkpoint` key IS the run's persisted `pause_commit`** — the very sha
   `EvoGit.AgentState.put_pause_commit/3` writes to `agent_states.pause_commit`
@@ -25,6 +25,22 @@ defmodule EvoGit.Agent.Session.Pause do
   resumed run's worktree. The key spelling is kept because consumers outside
   this module read it (`agent_scheduler/subagents.ex`), so only the LOCAL step
   and variable names call it `pause_commit`.
+
+  ## The in-flight batch marker is PRESERVED, never cleared or written
+
+  A pause is a SNAPSHOT of the whole agent tree: `%State{pending_tool_batch: _}`
+  is handed to this finalizer exactly as the exchange produced it — a frozen
+  subagent batch keeps its marker, and this module never clears, rewrites or
+  re-derives it. The durable pre-batch checkpoint (written before the batch ran)
+  is therefore the resume position.
+
+  `clean_freeze` is the AGENT's contribution to the TASK-level pause kind: `true`
+  when the frozen batch was EMPTY or exclusively `:subagent`
+  (`EvoGit.Agent.ToolBatch.subagent_only?/1`) — a parent waiting on children had
+  nothing interrupted — and `false` when a mixed or non-subagent call was in
+  flight, because such a call may have been interrupted half-way and the task
+  pause must then be persisted dirty.
+
 
   ## The ordered steps (each one total)
 
@@ -72,6 +88,7 @@ defmodule EvoGit.Agent.Session.Pause do
   alias EvoGit.Agent.Session.Durable
   alias EvoGit.Agent.Session.Setup
   alias EvoGit.Agent.State
+  alias EvoGit.Agent.ToolBatch
   alias EvoGit.AgentState
   alias EvoGit.AgentScheduler.WorktreeManager
   alias EvoGit.BackgroundJobs
@@ -83,7 +100,9 @@ defmodule EvoGit.Agent.Session.Pause do
 
   `checkpoint` is the PAUSE COMMIT sha — the value persisted in
   `agent_states.pause_commit` and the one the scheduler names
-  `worktree_resume_from`.
+  `worktree_resume_from`. `clean_freeze` is this agent's contribution to the
+  TASK-level pause kind: `true` when the frozen batch was empty or purely
+  `:subagent`, `false` when a mixed/non-subagent call may have been interrupted.
   """
   @type info :: %{
           agent_id: pos_integer() | nil,
@@ -91,6 +110,7 @@ defmodule EvoGit.Agent.Session.Pause do
           checkpoint: String.t() | nil,
           branch: String.t() | nil,
           durable: boolean(),
+          clean_freeze: boolean(),
           reason: :task_pause
         }
 
@@ -167,8 +187,20 @@ defmodule EvoGit.Agent.Session.Pause do
       checkpoint: pause_commit,
       branch: branch,
       durable: durable == true,
+      # The frozen batch is READ, never cleared or rewritten here (see the moduledoc).
+      clean_freeze: clean_freeze?(state),
       reason: :task_pause
     }
+  end
+
+  # The agent's contribution to the TASK-level pause kind: an EMPTY frozen batch
+  # (or no marker at all) and a purely `:subagent` one both mean nothing was
+  # interrupted; a mixed/non-subagent batch means an in-flight call may have been.
+  defp clean_freeze?(%State{pending_tool_batch: batch}) do
+    case ToolBatch.normalize(batch) do
+      nil -> true
+      normalized -> ToolBatch.subagent_only?(normalized)
+    end
   end
 
   # --- the finalizer body ---

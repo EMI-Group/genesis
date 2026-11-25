@@ -17,11 +17,13 @@ defmodule EvoGit.Agent.Exchange do
       input, or close). No `%EvoGit.Agent.Result{}` is built and no completion
       side effect is written;
     * `{:pause, %State{}}` — a TASK-LEVEL PAUSE was requested for this agent and
-      has been honoured at a turn boundary. A pause is a NON-TERMINAL RESTING
-      outcome, distinct from `{:ok, %Result{}}` and from `{:error, _}`: the
-      state is checkpointed exactly once (so the durable conversation and the
-      worktree are resumable), and NO completion side effect, NO report and NO
-      `%Result{}` is produced — the session turns it into a paused delivery;
+      has been honoured. A pause is a NON-TERMINAL RESTING outcome, distinct from
+      `{:ok, %Result{}}` and from `{:error, _}`: the state is checkpointed exactly
+      once — VERBATIM, i.e. WITH its in-flight tool-batch marker when the pause
+      froze a subagent batch — so the durable conversation and the worktree are
+      resumable at exactly the frozen position, and NO completion side effect, NO
+      report and NO `%Result{}` is produced — the session turns it into a paused
+      delivery;
     * `{:finish, %State{}, %EvoGit.Agent.Result{}}` — the run is complete (every
       `:oneshot` agent); the completion side effects were written exactly once by
       `EvoGit.Agent.Completion.Builder.finalize/2`;
@@ -30,15 +32,21 @@ defmodule EvoGit.Agent.Exchange do
 
   ## Where a pause is honoured
 
-  The pause flag is probed at exactly TWO turn boundaries and NEVER mid-batch:
+  The pause flag is probed at exactly TWO turn boundaries:
 
     * the top of the loop, immediately AFTER the cancel check returns `:no_cancel`
       and before the turn-limit check / `Turn.run/3` — this is the boundary that
       catches a pause that arrived during an in-flight LLM call;
     * right after a tool batch completed (results appended, the in-flight marker
       cleared) and before the next loop step — see
-      `EvoGit.Agent.ToolDispatch.continue_after_tools/7`. In-flight tool calls are
-      never interrupted, which is what makes a pause clean.
+      `EvoGit.Agent.ToolDispatch.continue_after_tools/7`.
+
+  Neither probe interrupts an in-flight call. There is ONE further way a pause is
+  born, and it is not a probe: a SUBAGENT batch whose spawn the scheduler answers
+  with `{:freeze, :task_pause}` comes back as `{:pause, state}` straight from the
+  turn (`EvoGit.Agent.ToolDispatch.process_regular_tool_calls/4`) with the batch
+  marker INTACT — a parent waiting on children had nothing interrupted, and a
+  resumed parent rebuilds/waits on the restored children.
 
   Cancel ALWAYS wins: the pause is only probed on the `:no_cancel` branch, so an
   agent that is both cancelling and pausing takes the cancel-grace path.
@@ -140,11 +148,16 @@ defmodule EvoGit.Agent.Exchange do
         # A PAUSE is a resting, non-terminal outcome: the state is checkpointed
         # here (exactly once, like `:finish`/`:yield`) so the durable row and the
         # session's last adopted state describe the same boundary, and the value
-        # is returned verbatim. No `{:finished, _}` delta is emitted — a pause is
-        # not one of the stream's terminal statuses; the session's own terminal
-        # snapshot (from `finalize/1`) is the only end-of-run publication.
+        # is returned verbatim. It is checkpointed VERBATIM — NOT through
+        # `terminal_state/1` — because a pause now also freezes an in-flight
+        # subagent batch: clearing `pending_tool_batch` would destroy exactly the
+        # frozen position the snapshot exists to preserve (a resumed parent
+        # rebuilds/waits on the restored children). No `{:finished, _}` delta is
+        # emitted — a pause is not one of the stream's terminal statuses; the
+        # session's own terminal snapshot (from `finalize/1`) is the only
+        # end-of-run publication.
         {:pause, %State{} = final_state} = outcome ->
-          checkpoint(terminal_state(final_state), seams)
+          checkpoint(final_state, seams)
           outcome
 
         {:error, _reason} = error ->
@@ -171,7 +184,8 @@ defmodule EvoGit.Agent.Exchange do
   # A TERMINAL state never carries the in-flight batch marker: a `:finish`/`:yield`
   # comes from a tool-free completion turn, so the marker is already nil, and this
   # normalisation makes that an invariant of the durable row instead of a
-  # coincidence.
+  # coincidence. A `{:pause, _}` is deliberately NOT normalised through here: a
+  # pause preserves the marker (see `run/2`).
   defp terminal_state(%State{} = state), do: EvoGit.Agent.Resume.clear_marker(state)
 
   # The ONE `:checkpoint` call site shared by both turn paths: called once per
