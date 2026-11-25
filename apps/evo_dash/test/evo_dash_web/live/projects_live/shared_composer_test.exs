@@ -79,6 +79,8 @@ defmodule EvoDashWeb.ProjectsLive.AssistantComposerTest do
     assert has_element?(projects, "#workbench-project-overview [data-overview-path]", project)
     refute has_element?(projects, ".workbench-composer")
 
+    await_assistant_link(projects, project)
+
     navigation =
       projects |> element("a#overview-chat-assistant", "Chat with Assistant") |> render_click()
 
@@ -135,6 +137,71 @@ defmodule EvoDashWeb.ProjectsLive.AssistantComposerTest do
 
   defp await_project(view, project) do
     await_project(view, project, System.monotonic_time(:millisecond) + @async_wait_budget_ms)
+  end
+
+  # The overview's Assistant entry point, awaited as the page's OWN rendered
+  # evidence. `Overview.assistant_path/1` stays nil until the connected mount's
+  # async VCT batch has APPLIED this project's registry row — `confirmed_scope?/2`
+  # matches the mount in `assigns[:projects]` and the mount seeds `projects: []`
+  # (`{:async_project_load, …}` fills it a frame later) — so the overview first
+  # renders a DISABLED `button#overview-chat-assistant` beside the "Open this
+  # project through the project picker" hint. The enabled link IS the claim.
+  defp await_assistant_link(view, project) do
+    await_assistant_link(
+      view,
+      project,
+      System.monotonic_time(:millisecond) + @async_wait_budget_ms
+    )
+  end
+
+  defp await_assistant_link(view, project, deadline) do
+    selector = "#workbench-project-overview a#overview-chat-assistant[href]"
+
+    cond do
+      has_element?(view, selector) ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("""
+        The Assistant link for #{project} did not render within #{@async_wait_budget_ms} ms.
+        #{assistant_entry_report(view)}\
+        """)
+
+      true ->
+        # The suites' poll cadence: a bounded receive, never a fixed wait.
+        receive do
+        after
+          @poll_interval_ms -> :ok
+        end
+
+        await_assistant_link(view, project, deadline)
+    end
+  end
+
+  # The failing render named clause by clause, so a timeout says WHICH overview
+  # state the page was still in instead of "an element was missing".
+  defp assistant_entry_report(view) do
+    doc = view |> render() |> Floki.parse_document!()
+    disabled? = Floki.find(doc, "button#overview-chat-assistant[disabled]") != []
+    hint? = Floki.find(doc, "#overview-assistant-project-picker") != []
+
+    """
+    Overview state at the deadline:
+      disabled button#overview-chat-assistant: #{disabled?}
+      project-picker hint rendered:           #{hint?}
+      loaded registry paths:                  #{inspect(registry_paths(view))}
+    """
+  end
+
+  defp registry_paths(view) do
+    %{socket: %{assigns: assigns}} = :sys.get_state(view.pid, @async_wait_budget_ms)
+
+    assigns[:projects]
+    |> List.wrap()
+    |> Enum.flat_map(fn
+      %{path: path} when is_binary(path) -> [path]
+      _other -> []
+    end)
   end
 
   defp await_project(view, project, deadline) do

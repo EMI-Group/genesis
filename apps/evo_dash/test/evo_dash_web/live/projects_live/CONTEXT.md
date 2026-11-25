@@ -17,6 +17,7 @@ The broader mounted ProjectsLive integration suite lives in the parent directory
 
 - `inline_settings_test.exs` follows the rendered New task patch, checks mode-specific form controls and persistence, and exercises foreign-repository validation and add/edit/remove through the rendered inline Project Settings forms.
 - `shared_composer_test.exs` follows both rendered overview entry points, checks the task composer and its quality-control persistence event, and changes the Assistant form to prove the unsent project draft survives a remount without a session.
+  Its Assistant test awaits `#workbench-project-overview a#overview-chat-assistant[href]` (`await_assistant_link/2`, a bounded poll that flunks with the rendered overview state) before clicking, because the overview renders a DISABLED `button#overview-chat-assistant` plus the project-picker hint until the connected mount's async VCT batch (`{:async_project_load, …}`) applies the project's registry row — that link is the settled evidence.
 
 ## Constraints
 
