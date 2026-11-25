@@ -792,7 +792,6 @@
 }
 .workbench-window::backdrop { background: color-mix(in srgb, black 38%, transparent); }
 .workbench-project-window { width: 29rem; }
-.workbench-task-settings { width: 32rem; }
 .workbench-window-header {
   display: flex;
   align-items: center;

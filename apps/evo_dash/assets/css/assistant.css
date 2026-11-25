@@ -185,7 +185,7 @@
 }
 
 .workbench-composer :is(.assistant-context-bar, .input-controls) :is(button, summary):focus-visible,
-.workbench-task-options summary:focus-visible {
+:is(#task-advanced-options, #workbench-task-settings) > summary:focus-visible {
   outline: 2px solid var(--color-primary-standalone);
   outline-offset: 2px;
 }
@@ -226,18 +226,14 @@
   white-space: nowrap;
 }
 
-/* Keep Task Options on the page like Project Settings: aligned fields and
-   controls, with a single divider for the advanced disclosure. */
-.workbench-task-options #task-options-title {
-  font-size: var(--text-sm);
-  line-height: var(--text-sm--line-height);
-}
-
-.workbench-task-options :is(#task-options > .grid, #task-advanced-options > .grid) {
+/* Target the options component directly; its labelled section retains the
+   section-heading scale, and the two native disclosures share a divider. */
+:is(#task-options, #task-advanced-options) > .grid {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  overflow-wrap: anywhere;
 }
 
-.workbench-task-options label:has(> .toggle) {
+#task-options > .grid > label:has(> .toggle) {
   align-items: flex-start;
   padding-inline: 0;
   border: 0;
@@ -245,23 +241,25 @@
   background: transparent;
 }
 
-.workbench-task-options label > .toggle {
-  flex-shrink: 0;
-}
-
-.workbench-task-options #task-advanced-options {
+#task-advanced-options {
   border: 0;
-  border-block-start: 1px solid var(--border-hairline);
   border-radius: 0;
 }
 
-.workbench-task-options #task-advanced-options > :is(summary, .grid) {
+:is(#task-advanced-options, #workbench-task-settings) {
+  border-block-start: 1px solid var(--border-hairline);
+}
+
+#task-advanced-options > :is(summary, .grid) {
   padding-inline: 0;
 }
 
-.workbench-task-options #task-advanced-options > summary {
+:is(#task-advanced-options, #workbench-task-settings) > summary {
   min-block-size: var(--row-h);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 @media (pointer: coarse) {
@@ -273,7 +271,7 @@
     min-block-size: var(--touch-target);
   }
 
-  .workbench-task-options #task-advanced-options > summary {
+  :is(#task-advanced-options, #workbench-task-settings) > summary {
     min-block-size: var(--touch-target);
   }
 }

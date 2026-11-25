@@ -219,7 +219,6 @@ const composerStyles = source["assistant.css"];
 const composer = "#app-layout :is(.workbench-composer.assistant-input-card, .workbench-composer .input-card)";
 const toolbar = ".workbench-composer :is(.assistant-context-bar, .input-controls)";
 const trigger = `${toolbar} details.capsule > .capsule-trigger`;
-const advancedSummary = ".workbench-task-options #task-advanced-options > summary";
 
 test("shared composer rules are wired to the rendered card and toolbar classes", () => {
   const web = join(__dirname, "../../lib/evo_dash_web");
@@ -307,16 +306,59 @@ test("composer capsule summaries are flat at rest and distinct while open", () =
   assert.equal(values(opened).background, "var(--surface-selected)");
 });
 
-test("inline task options flatten the toggles and keep only a division above advanced fields", () => {
-  const [toggles] = blocks(".workbench-task-options label:has(> .toggle)", composerStyles);
+const webSources = join(__dirname, "../../lib/evo_dash_web");
+const taskConfiguration = readFileSync(join(webSources, "live/projects_live/remote_view.ex"), "utf8");
+const taskOptions = readFileSync(join(webSources, "components/task_options_components.ex"), "utf8")
+  .replace(/<%!--[^]*?--%>/g, "");
+const taskDisclosures = ":is(#task-advanced-options, #workbench-task-settings)";
+
+test("the labelled Task Options section uses the real form controls and their flat layout", () => {
+  assert.match(taskConfiguration,
+    /<section\b[^>]*aria-labelledby="task-options-title"[^>]*>\s*<h2\b[^>]*id="task-options-title"[^>]*class="[^"\n]*\btext-lg\b[^>]*>[\s\S]*?<EvoDashWeb\.TaskFormComponents\.task_options_tab\b[^>]*\/\s*>\s*<\/section>/);
+  const taskForm = readFileSync(join(webSources, "components/task_form_components.ex"), "utf8");
+  assert.match(taskForm, /def task_options_tab\(assigns\) do[^]*?\|> TaskOptionsComponents\.options\(\)/);
+
+  for (const id of ["task-options", "task-advanced-options"]) {
+    assert.match(taskOptions, new RegExp(`<(?:div|details)\\b[^>]*id="${id}"[^>]*>\\s*(?:<summary\\b[^]*?<\\/summary>\\s*)?<div class="grid\\b`));
+  }
+  for (const name of ["build_system", "archive", "node_path", "starting_commit", "resume_from"]) {
+    assert.match(taskOptions, new RegExp(`<(?:input|select)\\b[^>]*name="${name}"[^>]*form="task-form"`));
+  }
+  assert.equal([...taskOptions.matchAll(/<label\b[^>]*min-h-\[var\(--row-h-tall\)\][^>]*>\s*<input\b[^>]*class="toggle\b/g)].length, 2,
+    "both native toggle labels cover a full touch target");
+  assert.match(taskOptions, /<div id="task-options"[^>]*>\s*<div class="grid\b[^]*?\{persist_agent_state_toggle\(assigns\)\}\s*<\/div>/);
+
+  const [grids] = blocks(":is(#task-options, #task-advanced-options) > .grid", composerStyles);
+  assert.match(values(grids)["grid-template-columns"], /repeat\(auto-fit, minmax\(min\(100%,/);
+  assert.equal(values(grids)["overflow-wrap"], "anywhere");
+  const [toggles] = blocks("#task-options > .grid > label:has(> .toggle)", composerStyles);
   assert.equal(values(toggles).border, "0");
   assert.equal(values(toggles).background, "transparent");
+  assert.doesNotMatch(composerStyles, /#task-options-title\b/, "the section heading keeps its type scale");
+});
 
-  const [advanced] = blocks(".workbench-task-options #task-advanced-options", composerStyles);
+test("Advanced Options and Project Settings share divider and keyboard/touch styling without replacing native disclosures", () => {
+  assert.match(taskOptions, /<details\b[^>]*id="task-advanced-options"[^>]*phx-hook="DisclosureMotion"[^>]*>\s*<summary\b/);
+  assert.match(taskConfiguration, /<details\b[^>]*id="workbench-task-settings"[^>]*>\s*<summary\b[^>]*id="workbench-task-settings-title"/);
+  assert.match(taskConfiguration, /<EvoDashWeb\.ProjectComponents\.project_settings_tab\b/);
+
+  const [advanced] = blocks("#task-advanced-options", composerStyles);
   assert.equal(values(advanced).border, "0");
-  assert.equal(values(advanced)["border-block-start"], "1px solid var(--border-hairline)");
-  const [summary] = blocks(advancedSummary, composerStyles);
-  assert.equal(values(summary)["min-block-size"], "var(--row-h)");
+  const [divider] = blocks(taskDisclosures, composerStyles);
+  assert.equal(values(divider)["border-block-start"], "1px solid var(--border-hairline)");
+
+  const summary = `${taskDisclosures} > summary`;
+  const [resting] = blocks(summary, composerStyles);
+  assert.equal(values(resting)["min-block-size"], "var(--row-h)");
+  assert.equal(values(resting)["font-size"], "var(--text-sm)");
+  assert.equal(values(resting)["overflow-wrap"], "anywhere");
+  assert.equal(values(resting).display, undefined, "keep each summary's native or chevron presentation");
+
+  const [focus] = blocks(`${summary}:focus-visible`, composerStyles);
+  assert.equal(values(focus).outline, "2px solid var(--color-primary-standalone)");
+  const [coarse] = blocks("@media (pointer: coarse)", composerStyles);
+  const [touch] = blocks(summary, coarse);
+  assert.equal(values(touch)["min-block-size"], "var(--touch-target)");
 });
 
 // --- right-panel scroll containment ----------------------------------------
@@ -475,9 +517,6 @@ test("composer controls reach the touch floor for coarse pointers", () => {
       .every(selector => rule.selectorText.includes(selector)));
   assert.equal(values(touchTargets.body)["min-inline-size"], "var(--touch-target)");
   assert.equal(values(touchTargets.body)["min-block-size"], "var(--touch-target)");
-
-  const [advanced] = blocks(advancedSummary, coarse);
-  assert.equal(values(advanced)["min-block-size"], "var(--touch-target)");
 });
 
 test("a coarse pointer gets 16px inputs and a 44px row floor", () => {
