@@ -2490,6 +2490,74 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert datalist =~ ~s(<option value="#{project_path}"></option>)
       assert length(String.split(datalist, ~s(value="#{project_path}"))) == 2
     end
+
+    # The page's initial project seed is ASYNC ("one frame later"), and its
+    # deferred AUTO-ACTIVATION must never take the surface away from a palette
+    # the user has already opened: activating the newest project CLOSES the
+    # palette and resets its mode, which drops the open-path form and its
+    # `path-suggestions` datalist from the render. That is exactly how the
+    # dedup assertion above used to flake (a VCT broadcast reload satisfies
+    # `wait_for_projects` while the mount batch is still in flight, and the
+    # late batch then closed the palette).
+    #
+    # The ordering is FORCED, not timed: the batch body is held by the
+    # `:projects_async_load_runner` seam until this test releases it AFTER
+    # opening the palette, and the same `{:vct_updated, node}` broadcast a
+    # concurrently running test would make populates `:projects` meanwhile.
+    test "a seed landing after the palette opens keeps the open-path datalist", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      project_path = Path.join(tmp_dir, "alpha")
+      File.mkdir_p!(project_path)
+      seed_project(project_path, "alpha")
+      test_pid = self()
+
+      install_projects_async_load_runner(fn ->
+        send(test_pid, {:batch_started, self()})
+
+        receive do
+          :release ->
+            EvoDashWeb.ProjectsLive.AsyncLoad.default_batch(node(), false, nil, nil, true, true)
+        after
+          5_000 ->
+            EvoDashWeb.ProjectsLive.AsyncLoad.default_batch(node(), false, nil, nil, true, true)
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      assert_receive {:batch_started, batch_pid}, async_wait_budget()
+
+      # Another test's VCT mutation (the broadcast is shared, every page reacts
+      # to it) makes THIS page reload the registry, so `:projects` is already
+      # populated while the mount batch is still in flight.
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "vct", {:vct_updated, node()})
+      wait_for_projects(view, [project_path])
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      # ORDERING PROOF: the batch is still held, so nothing can have activated a
+      # project yet (a leaked batch fails HERE instead of passing silently).
+      assert is_nil(assigns(view)[:active_project])
+
+      # The held batch now lands — the deferred auto-activation's chance to
+      # steal the palette. `notified_task_ids_ready?` flips when the result is
+      # APPLIED (the batch carries the terminal-id seed), so the assertions
+      # below run after the continuation, not before it.
+      send(batch_pid, :release)
+      wait_assigns(view, fn assigns -> assigns[:notified_task_ids_ready?] == true end)
+
+      assert assigns(view)[:project_palette_open] == true
+      assert assigns(view)[:palette_mode] == :open_path
+      assert is_nil(assigns(view)[:active_project])
+
+      datalist =
+        path_suggestions_datalist(render_change(view, "path_input", %{"path" => project_path}))
+
+      assert datalist =~ ~s(<option value="#{project_path}"></option>)
+      assert length(String.split(datalist, ~s(value="#{project_path}"))) == 2
+    end
   end
 
   describe "new project path input suggestions" do

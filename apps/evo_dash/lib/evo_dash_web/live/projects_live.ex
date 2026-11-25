@@ -2928,8 +2928,18 @@ defmodule EvoDashWeb.ProjectsLive do
     end
   end
 
+  # A DEFERRED seed must never take the surface away from work the user has
+  # already started: `activate_project/2` CLOSES the project palette (it resets
+  # `:project_palette_open` and `:palette_mode`), so a batch that lands AFTER
+  # the user opened the palette would yank the open-path form — and its
+  # `path-suggestions` datalist — out from under them (the palette is then
+  # re-rendered by whatever the next interaction asks for, with the typed path
+  # and its suggestions gone). The user chose the palette over the auto-opened
+  # project, so auto-activation stands down; it is deliberately NOT retried
+  # later, because from then on the user is picking a project themselves.
   defp maybe_auto_activate_project(socket) do
     if socket.assigns.auto_activate_candidate? == true and
+         socket.assigns[:project_palette_open] != true and
          is_nil(socket.assigns[:current_node_id]) and
          is_nil(socket.assigns.active_project) do
       case List.first(socket.assigns.projects) do
