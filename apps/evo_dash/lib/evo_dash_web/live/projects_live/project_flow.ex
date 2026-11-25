@@ -23,7 +23,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   """
 
   use Gettext, backend: EvoDashWeb.Gettext
-  import Phoenix.Component, only: [assign: 3]
+  import Phoenix.Component, only: [assign: 2, assign: 3]
   import Phoenix.LiveView, only: [put_flash: 3, push_patch: 2]
   import EvoDashWeb.Helpers, only: [mode_info_message: 1]
 
@@ -479,12 +479,18 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
            )}
 
         {:ok, expanded} ->
-          # An explicit open can reuse a same-path URL activation already in
-          # flight, but the owned success still needs to discard old URL intent.
+          # Reusing a same-path URL activation skips the spawn's palette close,
+          # but an explicit open still dismisses the palette and owns the result.
           {:noreply,
            socket
            |> spawn_remote_project_activation(expanded)
-           |> assign(:remote_project_open_requested, expanded)}
+           |> assign(
+             remote_project_open_requested: expanded,
+             project_palette_open: false,
+             palette_mode: :menu,
+             palette_search: "",
+             palette_selected_index: 0
+           )}
       end
     end
   end
