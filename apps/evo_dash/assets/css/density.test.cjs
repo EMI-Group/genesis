@@ -23,7 +23,7 @@ const {join} = require("node:path");
 
 const strip = source => source.replace(/\/\*[\s\S]*?\*\//g, "");
 
-const FILES = ["density.css", "app.css", "workbench.css", "assistant.css", "motion.css"];
+const FILES = ["density.css", "surfaces.css", "app.css", "workbench.css", "assistant.css", "motion.css"];
 const source = Object.fromEntries(
   FILES.map(name => [name, strip(readFileSync(join(__dirname, name), "utf8"))])
 );
@@ -81,11 +81,15 @@ test("density.css is imported right after Tailwind and before every component sh
   assert.deepEqual(imports, [
     "tailwindcss",
     "./density.css",
+    "./surfaces.css",
     "./assistant.css",
     "./workbench.css",
     "./motion.css",
     "./view_transitions.css"
   ]);
+
+  // The surface/elevation layer sits between the scale and the component sheets.
+  assert.match(app, /@import "\.\/density\.css";\s*@import "\.\/surfaces\.css";/);
 
   // The pinned adjacency and the last-import rule stay intact.
   assert.match(app, /@import "\.\/workbench\.css";\s*@import "\.\/motion\.css";/);

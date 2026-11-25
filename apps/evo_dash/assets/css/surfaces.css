@@ -1,0 +1,162 @@
+/* ===========================================================================
+   Surfaces & elevation — the dashboard's ONE layering vocabulary.
+
+   THREE layers, and only the top one is shadowed:
+
+     Layer 0  chrome / shell   recessed, recessive   --surface-shell, --surface-rail
+              the workbench top bar, the sidebar, the docked right panel and the
+              Settings window's nav rail.
+     Layer 1  content canvas   continuous, flat     --surface-canvas
+              the center column (#main-content / #main-scroll), a flat task-card
+              row, a nested task-card panel.
+     Layer 2  overlays         the ONLY shadowed   --surface-raised,
+              surfaces                            --elev-1 / --elev-2 / --elev-3
+              the command palette, native dialogs, popover menus and tooltips.
+
+   A content surface NEVER carries an elevation shadow: depth on layer 0/1 is
+   expressed with a hairline border plus the two surface tones. Focus rings and
+   accent glows (`0 0 0 2px …`) are NOT elevation and stay exactly as they are.
+
+   Rules:
+     * every value is derived from the EXISTING base/neutral palette (directly or
+       through `color-mix()`) — no new colors and no brand hues;
+     * light elevations are near-invisible; the dark theme carries real depth
+       with an achromatic black shadow (a base-content/white shadow would read
+       as a glow, not as depth on a dark surface);
+     * this file declares TOKENS (colors, borders, shadows, radii) plus the
+       handful of surface CONSUMERS (the task-card chrome) — never a size, a
+       padding or a gap, so `density.css` stays the only owner of the scale.
+
+   Import slot: `app.css` imports this immediately after `./density.css` and
+   before `./assistant.css`. Both the dashboard shell and the Settings window's
+   own document (which has no `#app-layout`) consume it, so the tokens live on
+   `:root` / `[data-theme="dark"]` and never on a shell id.
+   =========================================================================== */
+
+:root {
+  /* --- Layer 0: chrome (top bar, rails, docked right panel) ---------------- */
+  --surface-shell: color-mix(in srgb, var(--color-base-200) 94%, var(--color-base-300));
+  --surface-rail: color-mix(in srgb, var(--color-base-200) 86%, var(--color-base-300));
+
+  /* --- Layer 1: the content canvas (flat, continuous, never shadowed) ------ */
+  --surface-canvas: var(--color-base-100);
+
+  /* --- Interaction fills, shared by every layer --------------------------- */
+  --surface-hover: color-mix(in srgb, var(--color-base-content) 6%, transparent);
+  --surface-selected: color-mix(in srgb, var(--color-primary) 12%, var(--color-base-100));
+
+  /* --- Layer 2: overlays — the raised surface and the three elevations ----- */
+  --surface-raised: var(--color-base-100);
+  --elev-1: 0 1px 2px color-mix(in srgb, var(--color-base-content) 8%, transparent);
+  --elev-2: 0 10px 26px -14px color-mix(in srgb, var(--color-base-content) 24%, transparent);
+  --elev-3: 0 18px 48px -16px color-mix(in srgb, var(--color-base-content) 32%, transparent);
+
+  /* --- Borders: the hairline separates surfaces, `-strong` marks a hover --- */
+  --border-hairline: var(--color-base-300);
+  --border-strong: color-mix(in srgb, var(--color-base-content) 26%, transparent);
+
+  /* --- Radii (theme-independent geometry, so it has no dark counterpart) --- */
+  --radius-tab: 0.5rem;
+}
+
+/* Dark: the canvas stays the darkest tone while the chrome and the rails lift
+   ABOVE it (the libadwaita headerbar relationship), and the elevations carry
+   real alpha — a dark surface separates by light, not by a hairline alone. */
+[data-theme="dark"] {
+  --surface-shell: color-mix(in srgb, var(--color-base-200) 78%, var(--color-base-300));
+  --surface-rail: color-mix(in srgb, var(--color-base-200) 88%, var(--color-base-100));
+  --surface-canvas: color-mix(in srgb, var(--color-base-100) 94%, var(--color-base-300));
+  --surface-hover: color-mix(in srgb, var(--color-base-content) 10%, transparent);
+  --surface-selected: color-mix(in srgb, var(--color-primary) 24%, var(--color-base-100));
+  --surface-raised: color-mix(in srgb, var(--color-base-200) 70%, var(--color-base-300));
+  --elev-1: 0 1px 2px color-mix(in srgb, #000 55%, transparent);
+  --elev-2: 0 12px 32px -12px color-mix(in srgb, #000 72%, transparent);
+  --elev-3: 0 20px 56px -16px color-mix(in srgb, #000 80%, transparent);
+  --border-hairline: color-mix(in srgb, var(--color-base-300) 72%, transparent);
+  --border-strong: color-mix(in srgb, var(--color-base-content) 32%, transparent);
+}
+
+/* ===========================================================================
+   Task-card chrome — the surface CONSUMERS.
+
+   `lib/evo_dash_web/components/task_card_components.ex` renders this contract
+   verbatim:
+     div.task-card[data-variant="flat"|"raised"][data-selected="true"]
+       div.task-card-accent                     (the accent bar wrapper)
+       span.task-card-status                    (the status chip)
+       div.task-card-panel                      (a nested detail/options panel)
+
+   A regular list row is FLAT (no elevation, no accent flood). HOVER, SELECTED
+   and FOCUS are three visibly different treatments and the accent marks ONLY
+   the current object.
+   =========================================================================== */
+
+.task-card {
+  position: relative;
+  border: 1px solid var(--border-hairline);
+  border-radius: 0.75rem;
+}
+
+/* A list row: a flat canvas surface with a small radius, no shadow and no
+   accent bar — the accent belongs to a raised or selected object. */
+.task-card[data-variant="flat"] {
+  background: var(--surface-canvas);
+  border-radius: var(--radius-tab);
+  box-shadow: none;
+}
+.task-card[data-variant="flat"] > .task-card-accent { display: none; }
+
+/* The opt-in raised variant: the one card shape allowed to lift off the canvas
+   (still the layer-1 elevation, never an overlay's). */
+.task-card[data-variant="raised"] {
+  background: var(--surface-raised);
+  box-shadow: var(--elev-1);
+}
+
+/* A nested detail/options panel is RECESSED inside its card: the shell tone
+   plus a hairline, never a shadow. */
+.task-card-panel {
+  background: var(--surface-shell);
+  border: 1px solid var(--border-hairline);
+  border-radius: 0.5rem;
+  box-shadow: none;
+}
+
+/* The status chip's shape only; its size and padding stay in the markup (this
+   file declares no size). */
+.task-card-status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9999px;
+}
+
+/* HOVER: a tint plus the stronger hairline. */
+.task-card:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+/* SELECTED (also the `aria-current` spelling): the selected fill, an accent
+   hairline and a 2px accent inline-start bar — never a full accent flood. */
+.task-card[data-selected="true"],
+.task-card[aria-current] {
+  background: var(--surface-selected);
+  border-color: var(--color-primary-standalone);
+}
+.task-card[data-selected="true"]::before,
+.task-card[aria-current]::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: 2px;
+  border-start-start-radius: inherit;
+  border-end-start-radius: inherit;
+  background: var(--color-primary-standalone);
+}
+
+/* FOCUS: the accent outline only — the fill never changes on focus. */
+.task-card:focus-visible {
+  outline: 2px solid var(--color-primary-standalone);
+  outline-offset: 2px;
+}
