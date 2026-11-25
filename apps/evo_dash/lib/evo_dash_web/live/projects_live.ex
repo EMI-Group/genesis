@@ -598,7 +598,6 @@ defmodule EvoDashWeb.ProjectsLive do
           compose_task?: false,
           overview_workspace_point: nil,
           overview_draft_id: nil,
-          overview_recent_project_path: nil,
           overview_git: nil,
           overview_tasks: nil,
           overview_load_seq: 0,
@@ -743,8 +742,7 @@ defmodule EvoDashWeb.ProjectsLive do
         # async re-renders, so the link stays stable for the page's lifetime).
         compose_task?: overview_compose_task?(params),
         overview_workspace_point: overview_workspace_point(params["project"]),
-        overview_draft_id: Overview.draft_id(),
-        overview_recent_project_path: nil
+        overview_draft_id: Overview.draft_id()
       )
 
     socket =
@@ -2809,7 +2807,6 @@ defmodule EvoDashWeb.ProjectsLive do
               |> assign(:projects, results.projects)
               |> assign(:active_project, results.active_project)
               |> assign(:active_project_path, results.active_project_path)
-              |> assign(:overview_recent_project_path, nil)
               |> assign(:task_mode, results.task_mode)
               |> assign(:task_mode_info, results.task_mode_info)
               |> use_git_task_mode()
@@ -2904,10 +2901,7 @@ defmodule EvoDashWeb.ProjectsLive do
       case List.first(socket.assigns.projects) do
         %{path: project_path} when is_binary(project_path) ->
           if File.dir?(project_path) do
-            activated =
-              socket
-              |> activate_project(project_path)
-              |> assign(:overview_recent_project_path, project_path)
+            activated = activate_project(socket, project_path)
 
             if socket.assigns.workbench_open_requested,
               do: open_project_palette(activated),
@@ -3142,7 +3136,6 @@ defmodule EvoDashWeb.ProjectsLive do
         point: ProjectFlow.mount_point_for(socket.assigns.projects, path)
       },
       active_project_path: path,
-      overview_recent_project_path: nil,
       task_mode: mode,
       task_mode_info: mode_info,
       project_palette_open: false,
