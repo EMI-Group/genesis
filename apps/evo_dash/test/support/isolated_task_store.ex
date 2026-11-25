@@ -115,17 +115,33 @@ defmodule EvoDash.Test.IsolatedTaskStore do
       last close can only ever UNLINK files (it never creates or writes one):
       deleting them here makes the template ONE immutable file for the whole
       run;
+    * the build is ATOMIC: it runs at a private, run-unique build path in the
+      DESTINATION's own directory, is PROVEN there, and only then is renamed onto
+      the destination (`File.rename/2`, atomic within one directory / volume).
+      No caller can ever observe a partially built artifact, and two builders can
+      never migrate the same file — the destination name only ever comes into
+      existence complete and read-only;
     * the build then PROVES the result by copying the template's main file alone
       and asserting the copy reports every version in
       `EvoGit.Store.Boot.migration_source/0` as applied (0.2 ms, once per run).
-      A template that fails the proof is REMOVED (with a warning) and the run
-      boots fresh databases as before — correct either way, and a rejected
-      artifact can never be mistaken for a good one;
+      A template that fails the proof is REMOVED (with ONE warning naming the
+      attempt, the destination and the failure) and the run boots fresh
+      databases as before — correct either way, and a rejected artifact can
+      never be mistaken for a good one;
+    * a FAILED build is NEVER cached: only a build that passed its self-check
+      publishes a path, so a failure is retried (a bounded number of attempts,
+      no sleeping) by the next caller instead of being handed to every caller
+      for the rest of the run. That is the difference between one interrupted
+      build and a whole-suite cascade of "the template is not there";
     * a proven template is then made READ-ONLY, so an accidental shared write
       (a store opened on the template instead of on a copy) fails loudly instead
       of silently corrupting every later isolation;
     * each test gets its OWN file inside its OWN temp dir; the template is only
-      ever read (`File.cp!/2`), never written, and sidecars are never shared;
+      ever read (`File.cp/2`), never written, and sidecars are never shared;
+    * a published path is re-checked with one `File.stat/1` per call, so an
+      artifact deleted behind this module's back is REBUILT rather than handed
+      out dead (the recorded cascade also had that shape: a cached path whose
+      file no longer existed);
     * a template whose content were ever older than expected is still CORRECT:
       the migrator is idempotent and would simply re-run the remaining
       migrations on the copy.
@@ -239,14 +255,27 @@ defmodule EvoDash.Test.IsolatedTaskStore do
   # each per-test temp dir so the isolated store boots against an
   # already-migrated schema and the boot migrator becomes a verified no-op.
   #
-  # Cached in `:persistent_term` under a BINARY path (or `nil` when no template
-  # could be placed: see `template_destination/0`), with `:unset` as the
-  # "never resolved" marker so a `nil` result is cached too and the decision is
-  # made exactly once per run. One `put` per run: `:persistent_term` writes are
+  # Cached in `:persistent_term` under a BINARY path, with `:unset` as the
+  # "never resolved" marker. A FAILED build is NEVER cached, so `:unset` is the
+  # only non-path state the cache can hold: publishing the result of a failed
+  # build (as this helper once did) handed a `nil`/dead path to every later
+  # caller for the remainder of the run, which is exactly how one interrupted
+  # build turned into a cascade of failures in suites that never touched the
+  # template themselves. One `put` per run: `:persistent_term` writes are
   # expensive, reads are not.
   @template_key {__MODULE__, :template_path}
   @template_basename "isolated_store_template.sqlite"
   @template_sidecars ["-wal", "-shm", "-journal"]
+
+  # How many times ONE resolution tries to PRODUCE a template before it reports
+  # the failure. A build can lose its artifact to an actor outside this module
+  # (the recorded failure was a `File.Error` on the final `chmod` of a freshly
+  # written file, i.e. the file was gone before it could be published), so the
+  # whole attempt — build at a NEW unique path, prove, rename — is repeated
+  # instead of degrading the rest of the run to fresh databases. No
+  # `Process.sleep`: every attempt is a real build (~10–15 ms), so the retries
+  # only cost anything once something has already gone wrong.
+  @build_attempts 3
 
   @doc """
   The absolute path of the run-scoped, already-migrated sqlite TEMPLATE, or
@@ -256,35 +285,87 @@ defmodule EvoDash.Test.IsolatedTaskStore do
   Public because `EvoDash.Test.IsolatedVCT` seeds its PRIVATE per-test store from
   this SAME artifact: one artifact per run, built once, shared read-only.
 
+  A path is published here ONLY after a build that PASSED its self-check, so a
+  failure is never cached and the next caller rebuilds instead of inheriting
+  it. A published path is re-checked per call (one `File.stat/1`), so an
+  artifact deleted behind this module's back is rebuilt rather than returned
+  dead.
+
   The build is serialized by a `:global` lock (a lock that cannot be taken
   answers `nil`, i.e. the fresh-database path) because the dashboard's
-  `async: true` suites resolve it concurrently from their `setup` callbacks.
+  `async: true` suites resolve it concurrently from their `setup` callbacks. The
+  lock's requester id is `self/0`, so the lock really is process-scoped: with a
+  constant requester every caller looks like the SAME requester and would be
+  granted it concurrently.
   """
   @spec store_template_path() :: Path.t() | nil
   def store_template_path do
     case :persistent_term.get(@template_key, :unset) do
-      :unset ->
-        case :global.trans({__MODULE__, :template_path}, &build_and_cache_template/0) do
-          :aborted -> nil
-          path -> path
-        end
-
-      cached ->
-        cached
+      :unset -> resolve_template()
+      cached -> cached_template_path(cached)
     end
   end
 
-  # The build itself, run while holding the `:global` lock `store_template_path/0`
+  # The cached path is honoured only while its artifact is really there. It is
+  # deleted behind this module's back in recorded failures (nothing in the suite
+  # `rm_rf`s the run data dir, so the deleter is something else), and handing
+  # such a path to a caller means the caller's `File.cp!/2` fails or, worse, a
+  # suite asserts on a template that is not there. One `File.stat/1` per call
+  # (microseconds) buys that guarantee.
+  defp cached_template_path(path) when is_binary(path) do
+    if File.regular?(path) do
+      path
+    else
+      Logger.warning(
+        "IsolatedTaskStore: the cached migrated template #{path} is gone (deleted " <>
+          "outside this module); dropping the cache entry and rebuilding it before " <>
+          "handing a path to a caller."
+      )
+
+      :persistent_term.erase(@template_key)
+      resolve_template()
+    end
+  end
+
+  # A failed build is never published, so anything that is not a path in the
+  # cache can only be a leftover from an older revision of this helper. Never
+  # honour it — treat it as "never resolved".
+  defp cached_template_path(other) do
+    Logger.warning(
+      "IsolatedTaskStore: discarding a non-path template cache entry " <>
+        "(#{inspect(other)}); rebuilding instead of handing it to a caller."
+    )
+
+    :persistent_term.erase(@template_key)
+    resolve_template()
+  end
+
+  defp resolve_template do
+    case :global.trans({{__MODULE__, :template_path}, self()}, &build_and_cache_template/0) do
+      :aborted -> nil
+      path -> path
+    end
+  end
+
+  # The build itself, run while holding the `:global` lock `resolve_template/0`
   # takes. The cache is re-read INSIDE the lock, so concurrent first callers
   # (`EvoDash.Test.IsolatedVCT` reaches this from `async: true` setups) build the
-  # artifact exactly ONCE: two builds would race on the same path — one deleting
-  # the file the other is migrating.
+  # artifact exactly ONCE.
   defp build_and_cache_template do
     case :persistent_term.get(@template_key, :unset) do
       :unset ->
-        path = build_template!()
-        :persistent_term.put(@template_key, path)
-        path
+        # PUBLISH ONLY A PASSED BUILD. A `nil` here is a failure the caller
+        # already handled (fresh database); caching it would convert that ONE
+        # failure into every later caller's result for the rest of the run, so
+        # nothing is stored and the next caller retries.
+        case build_template() do
+          path when is_binary(path) ->
+            :persistent_term.put(@template_key, path)
+            path
+
+          nil ->
+            nil
+        end
 
       cached ->
         cached
@@ -304,60 +385,188 @@ defmodule EvoDash.Test.IsolatedTaskStore do
   end
 
   # The template is seeded into the ISOLATED sqlite path by a plain file copy.
-  # `File.cp!/2` only READS the template, so the template itself stays
+  # `File.cp/2` only READS the template, so the template itself stays
   # byte-identical for the whole run (and no sidecar is ever shared: the copy
   # lives in the test's own temp dir).
   #
-  # `File.cp!/2` ALSO carries the source's permissions, and the template is
-  # READ-ONLY (see `make_template_read_only!/1`) — so the copy needs owner write
-  # back, or the isolated store could not write a single row. 0600 keeps the
-  # copy as private as its 0700 temp dir.
+  # `File.cp/2` ALSO carries the source's permissions, and the template is
+  # READ-ONLY (see `publish_template/2`) — so the copy needs owner write back,
+  # or the isolated store could not write a single row. 0600 keeps the copy as
+  # private as its 0700 temp dir.
   defp seed_isolated_database!(nil, _sqlite_path), do: :ok
 
-  defp seed_isolated_database!(template, sqlite_path) do
-    File.cp!(template, sqlite_path)
-    File.chmod!(sqlite_path, 0o600)
+  defp seed_isolated_database!(template, sqlite_path), do: seed_copy(template, sqlite_path, 1)
+
+  # The artifact can be deleted between `store_template_path/0`'s check and this
+  # copy (the same unexplained deletion the build defends against). That ONE
+  # outcome is not a caller's problem: drop the dead cache entry and let a
+  # rebuild re-seed. Bounded, and it never turns a missing DESTINATION directory
+  # into a rebuild (`File.cp/2` answers `:enoent` for both, so the two are told
+  # apart by re-checking the template itself).
+  defp seed_copy(nil, _sqlite_path, _attempt), do: :ok
+
+  defp seed_copy(template, sqlite_path, attempt) do
+    case File.cp(template, sqlite_path) do
+      :ok ->
+        File.chmod!(sqlite_path, 0o600)
+
+      {:error, :enoent} when attempt < 2 ->
+        if File.regular?(template) do
+          raise "cannot seed #{sqlite_path} from the migrated template #{template}: " <>
+                  "the destination could not be created (no such file or directory)"
+        else
+          :persistent_term.erase(@template_key)
+          seed_copy(store_template_path(), sqlite_path, attempt + 1)
+        end
+
+      {:error, :enoent} ->
+        # A template that keeps vanishing is handled exactly like one that could
+        # not be built: leave the target ABSENT (the caller's store then migrates
+        # the fresh file itself) and say so once.
+        Logger.warning(
+          "IsolatedTaskStore: the migrated template #{template} vanished again while " <>
+            "seeding #{sqlite_path}; leaving the target absent so its store migrates " <>
+            "a fresh database (correct, just without the template speedup)."
+        )
+
+        :ok
+
+      {:error, reason} ->
+        raise "cannot seed #{sqlite_path} from the migrated template #{template}: " <>
+                inspect(reason)
+    end
   end
 
-  # Build the migrated template through the SAME code path the isolated store
-  # boots with (`EvoGit.Store.Boot.start_dynamic/2`, which opens a
+  # Produce the migrated template, retrying the whole attempt a bounded number
+  # of times (see `@build_attempts`). `nil` means "no template for this call":
+  # either no destination exists, or the artifact could not be proven — a caller
+  # then boots a fresh database exactly as before. A build that RAISES keeps
+  # raising (with the attempt count and the destination in the message), because
+  # an unreadable/unwritable destination is a real environment failure that a
+  # silent fallback would hide.
+  defp build_template do
+    case template_destination() do
+      nil -> nil
+      destination -> attempt_build(destination, 1)
+    end
+  end
+
+  defp attempt_build(destination, attempt) when attempt <= @build_attempts do
+    case build_attempt(destination, attempt) do
+      {:ok, path} ->
+        path
+
+      {:failed, kind, detail} ->
+        cond do
+          attempt < @build_attempts ->
+            attempt_build(destination, attempt + 1)
+
+          kind == :build_error ->
+            raise_build_error(destination, attempt, detail)
+
+          true ->
+            # One warning for the failed resolution — naming HOW MANY attempts
+            # were made, WHY the last one failed and the exact path, so a future
+            # run's log says whether the artifact was deleted, unreadable or
+            # failed its self-check.
+            warn_build_failure(destination, attempt, kind, detail)
+            nil
+        end
+    end
+  end
+
+  # ONE build attempt, at a PRIVATE path: the destination is never written, so
+  # nothing half-built is visible under the published name and no concurrent
+  # builder can touch the file this one is migrating. `build_path/2` is unique
+  # per attempt, so there is never a stale artifact to clear first.
+  defp build_attempt(destination, attempt) do
+    temp = build_path(destination, attempt)
+
+    try do
+      build_migrated_database!(temp)
+
+      case verify_template(temp) do
+        :ok -> publish_template(temp, destination)
+        {:error, detail} -> {:failed, :self_check, detail}
+      end
+    rescue
+      # A raise anywhere in the build (an unwritable destination directory, a
+      # vanished temp file, a SQLite I/O error) is a FAILED ATTEMPT, not a
+      # crash: the retry loop above decides whether to try again or report.
+      # Nothing is cached either way.
+      error -> {:failed, :build_error, {error, __STACKTRACE__}}
+    after
+      # Never leave a half-built artifact (or its sidecars) behind for the next
+      # attempt or caller. On the success path `publish_template/2` has already
+      # RENAMED `temp` away, so this removes nothing.
+      remove_database_files(temp)
+    end
+  end
+
+  # A UNIQUE build path in the DESTINATION's own directory: same volume, so the
+  # publish below is one atomic `File.rename/2` (never a cross-device copy); one
+  # per attempt, so two builders can never migrate the same file; and
+  # dot-PREFIXED, so it can never be mistaken for the published template (a
+  # `Path.wildcard(template <> "*")` cannot see it).
+  defp build_path(destination, attempt) do
+    Path.join(
+      Path.dirname(destination),
+      ".#{Path.basename(destination)}.build-#{attempt}-#{System.unique_integer([:positive])}"
+    )
+  end
+
+  # Build the migrated database at `path` through the SAME code path the isolated
+  # store boots with (`EvoGit.Store.Boot.start_dynamic/2`, which opens a
   # single-connection boot repo, runs `Ecto.Migrator.run(…, all: true)` and
   # returns the repo), force the migrated schema out of the WAL into the main
-  # file, stop the repo, FINISH materialization (delete the leftover sidecars
-  # and make the file read-only), and PROVE the resulting file is a
-  # fully-migrated database. `nil` is returned when no template can be placed or
-  # the proof fails — the caller then boots fresh databases exactly as before.
+  # file, stop the repo, and FINISH materialization (delete the leftover
+  # sidecars) so the file is exactly ONE immutable artifact.
   #
   # `pool_size: 1` is deliberate: the returned repo IS the boot instance (no
   # pool reopen), so the whole build runs on ONE connection.
-  defp build_template! do
-    case template_destination() do
-      nil ->
-        nil
+  defp build_migrated_database!(path) do
+    {:ok, repo} = EvoGit.Store.Boot.start_dynamic(path, pool_size: 1)
 
-      path ->
-        # A leftover artifact here is only possible if a previous run died with
-        # an identical run-unique dir name; dropping the main file AND its
-        # sidecars makes the template always the product of THIS run.
-        remove_database_files(path)
+    try do
+      :ok = checkpoint_into_main_file!(repo)
+    after
+      # The repo must never stay open on a file this module is about to rename or
+      # remove: a lingering handle keeps writing `-wal`/`-shm` and can recreate
+      # what `finalize_template!/1` just deleted.
+      :ok = EvoGit.Store.Boot.stop(repo)
+    end
 
-        {:ok, repo} = EvoGit.Store.Boot.start_dynamic(path, pool_size: 1)
-        :ok = checkpoint_into_main_file!(repo)
-        :ok = EvoGit.Store.Boot.stop(repo)
-        # Everything downstream (the byte-identity assertion included) relies on
-        # the template being COMPLETE and immutable from this point on.
-        :ok = finalize_template!(path)
+    :ok = finalize_template!(path)
+    :ok
+  end
 
-        if main_file_carries_full_schema?(path) do
-          make_template_read_only!(path)
-          path
+  # Publish ATOMICALLY: the artifact is made read-only while it still has its
+  # private build name, then renamed ONTO the destination. `File.rename/2` is
+  # atomic within one directory, so a caller either sees no template at all or a
+  # complete, proven, read-only one — never a partially built or half-deleted
+  # file — and the read-only mode is in force from the instant the name exists.
+  #
+  # The race this handles explicitly: the destination's DIRECTORY disappearing
+  # between the self-check and the rename (the run's `:evo_git` data dir removed
+  # by a concurrent `after_suite` hook, or by whatever deleted the template in
+  # the recorded failures) makes `File.rename/2` answer `{:error, :enoent}` even
+  # though the artifact itself is fine. That is reported as a retryable
+  # `:publish` failure; a retry rebuilds (re-creating the directory through
+  # `EvoGit.Store.Boot.start_dynamic/2`) at a NEW path, and a directory that is
+  # really gone for good ends as one warning plus the fresh-database fallback.
+  defp publish_template(temp, destination) do
+    File.chmod!(temp, 0o444)
+
+    case File.rename(temp, destination) do
+      :ok ->
+        if File.regular?(destination) do
+          {:ok, destination}
         else
-          # Never leave a half-usable artifact behind: without one the caller
-          # boots fresh databases (correct), and a stale template can never be
-          # mistaken for a good one.
-          remove_database_files(path)
-          nil
+          {:failed, :publish, {:vanished, destination}}
         end
+
+      {:error, reason} ->
+        {:failed, :publish, {:rename, reason}}
     end
   end
 
@@ -385,9 +594,10 @@ defmodule EvoDash.Test.IsolatedTaskStore do
     end
   end
 
-  # Finish materializing the template: delete whatever sidecars the finished
-  # build left behind, so the template is exactly ONE file from the moment
-  # `build_template!/0` returns.
+  # Finish materializing a built database: delete whatever sidecars the finished
+  # build left behind, so it is exactly ONE file from the moment
+  # `build_migrated_database!/1` returns (and, once renamed, from the moment
+  # `publish_template/2` makes the template's name exist).
   #
   # This is NOT cosmetic, and it is the one thing `EvoGit.Store.Boot.stop/1`
   # cannot do for us. `stop/1` returns as soon as the pool is down, but SQLite's
@@ -415,20 +625,15 @@ defmodule EvoDash.Test.IsolatedTaskStore do
     :ok
   end
 
-  # Make the template read-only, so an accidental SHARED write — any code that
-  # opens the template with a store instead of copying it first — fails loudly
-  # (SQLite cannot open a 0444 file read-write) instead of silently corrupting
-  # every later isolation.
-  #
-  # Strict on purpose: this is part of the template contract the suite pins, and
-  # chmod on a private temp file always succeeds on the platforms this suite runs
-  # on (Windows included — it maps to the read-only attribute, which
-  # `seed_isolated_database!/2` clears again on the COPY).
-  defp make_template_read_only!(path), do: File.chmod!(path, 0o444)
-
   # Where the run-scoped template lives: inside the run's own `:evo_git,
   # :data_dir` (set by `config/test.exs` to a per-run unique temp dir that
   # `test_helper.exs` removes in its `after_suite` hook).
+  #
+  # The path is therefore unique PER BEAM RUN, which is what makes the artifact
+  # safe to share between every suite of this run: `config/test.exs` derives the
+  # data dir from the OS pid plus an Erlang-unique integer, so two concurrent
+  # `mix test` runs (or two Genesis worker worktrees under one `TMPDIR`) can
+  # never resolve the same template file.
   #
   # Deliberately NO fallback when the app env is unset: the next candidate is
   # `EvoGit.Platform.data_dir/0`, which on macOS resolves to the developer's
@@ -451,11 +656,13 @@ defmodule EvoDash.Test.IsolatedTaskStore do
   # equivalent to "the boot migrator would be a no-op" — the property the
   # template exists to provide.
   #
-  # A copy that fails the check is still a VALID database (a consistent, merely
-  # older snapshot): booting it just re-runs the remaining migrations on it. So
-  # a failure is a loud WARNING plus a fall-back to freshly booted databases
-  # (correct, unoptimized) — never a broken or silently wrong test run.
-  defp main_file_carries_full_schema?(path) do
+  # Answers `:ok` or `{:error, detail}`; the DETAIL is what the caller's single
+  # warning reports, so a failed build names the failure precisely (`mismatch`
+  # with both version lists, or `unreadable` with the adapter's message). A copy
+  # that fails the check is still a VALID database (a consistent, merely older
+  # snapshot) — hence a warning plus the fresh-database fallback rather than a
+  # raise.
+  defp verify_template(path) do
     scratch = path <> ".verify"
     remove_database_files(scratch)
     File.cp!(path, scratch)
@@ -465,26 +672,57 @@ defmodule EvoDash.Test.IsolatedTaskStore do
     result =
       case applied_migration_versions(scratch) do
         {:ok, ^expected} -> :ok
-        {:ok, other} -> {:mismatch, expected, other}
-        {:error, reason} -> {:unreadable, reason}
+        {:ok, other} -> {:error, {:mismatch, expected, other}}
+        {:error, reason} -> {:error, {:unreadable, reason}}
       end
 
     remove_database_files(scratch)
-
-    case result do
-      :ok ->
-        true
-
-      other ->
-        Logger.warning(
-          "IsolatedTaskStore: the migrated template at #{path} failed its self-check " <>
-            "(#{inspect(other)}) — per-test stores will boot from a fresh database instead " <>
-            "(correct, just without the template speedup)."
-        )
-
-        false
-    end
+    result
   end
+
+  # ONE warning per failed resolution, naming HOW MANY attempts were made, WHY
+  # the last one failed and the exact path. Deliberately one line: the failure is
+  # not cached, so later callers retry (and log their own), and the run continues
+  # with freshly migrated per-test databases.
+  defp warn_build_failure(destination, attempts, kind, detail) do
+    Logger.warning(
+      "IsolatedTaskStore: no usable migrated template after #{attempts} build " <>
+        "attempt(s) — #{failure_label(kind)}: #{describe_failure(detail)}; " <>
+        "destination: #{destination}. Nothing was cached, so the next caller rebuilds " <>
+        "and every per-test store boots from a fresh database meanwhile (correct, just " <>
+        "without the template speedup)."
+    )
+  end
+
+  # A build that RAISED on every attempt is a real environment failure (an
+  # unwritable/missing destination directory, a SQLite I/O error, a file deleted
+  # mid-build). It keeps raising — with the attempt count and the destination in
+  # the banner — because a silent fallback would hide it. Nothing is cached, so
+  # the raise is confined to the caller that hit it.
+  defp raise_build_error(destination, attempts, {error, stacktrace}) do
+    message =
+      "IsolatedTaskStore: the migrated template build failed on all #{attempts} " <>
+        "attempt(s) — nothing was cached, so a later caller will retry. " <>
+        "destination: #{destination}; cause: " <> Exception.format_banner(:error, error)
+
+    reraise RuntimeError.exception(message), stacktrace
+  end
+
+  defp failure_label(:self_check), do: "the artifact failed its self-check"
+  defp failure_label(:publish), do: "the artifact could not be published"
+  defp failure_label(:build_error), do: "the build raised"
+
+  defp describe_failure({:mismatch, expected, actual}),
+    do: "applied migration versions #{inspect(actual)} do not match #{inspect(expected)}"
+
+  defp describe_failure({:unreadable, reason}), do: "the artifact was unreadable (#{reason})"
+
+  defp describe_failure({:rename, reason}),
+    do: "the rename into place failed (#{inspect(reason)})"
+
+  defp describe_failure({:vanished, path}), do: "the published file is not there (#{path})"
+
+  defp describe_failure(other), do: inspect(other)
 
   # Opens the given database file and reads its applied migration versions.
   #
@@ -509,14 +747,19 @@ defmodule EvoDash.Test.IsolatedTaskStore do
   end
 
   # Removes a sqlite database file together with any sidecar of its own. Used
-  # for the template (so a stale artifact from a crashed run can never be
-  # reused) and for the scratch verification copy (so the `-wal`/`-shm` the
-  # verification connection may create are cleaned up too).
+  # for a failed/interrupted BUILD path (so a half-built artifact can never be
+  # reused and the temp file never outlives its attempt), and for the scratch
+  # verification copy (so the `-wal`/`-shm` the verification connection may
+  # create are cleaned up too). The published template is never passed here:
+  # publishing is a rename, and its sidecars are removed before that.
   #
-  # Every removal tolerates `:enoent`: SQLite's last-close cleanup UNLINKS the
-  # sidecars of a stopped database asynchronously (see `finalize_template!/1`),
-  # so it can race this function for the very files it is deleting. Losing that
-  # race is the desired end state, not an error.
+  # Every removal tolerates `:enoent` (nothing there) and `:enotdir` (the path's
+  # parent is not a directory, so no file can exist at the path — the state a
+  # failed build in an unbuildable destination starts and ends in). SQLite's
+  # last-close cleanup also UNLINKS the sidecars of a stopped database
+  # asynchronously (see `finalize_template!/1`), so it can race this function
+  # for the very files it is deleting: losing that race is the desired end state,
+  # not an error.
   defp remove_database_files(path) do
     Enum.each([path | Enum.map(@template_sidecars, &(path <> &1))], &remove_file!/1)
   end
@@ -525,6 +768,7 @@ defmodule EvoDash.Test.IsolatedTaskStore do
     case File.rm(path) do
       :ok -> :ok
       {:error, :enoent} -> :ok
+      {:error, :enotdir} -> :ok
       {:error, reason} -> raise "cannot remove #{path}: #{inspect(reason)}"
     end
   end

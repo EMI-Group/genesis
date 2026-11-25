@@ -158,6 +158,90 @@ defmodule EvoDash.Test.IsolatedTaskStoreTest do
     record_isolated_path!(isolated_sqlite_path())
   end
 
+  test "a template deleted behind the helper's back is REBUILT, never handed out dead" do
+    template = IsolatedTaskStore.store_template_path()
+    assert is_binary(template), "the run-scoped template was never built"
+
+    # Exactly the recorded failure shape: the artifact disappears while the
+    # helper still holds its path in the run-wide cache. Before the cache was
+    # re-checked, every later caller received this dead path — the "the cached
+    # template points at nothing" cascade.
+    File.rm!(template)
+    assert template_snapshot().main == :absent
+
+    rebuilt = IsolatedTaskStore.store_template_path()
+
+    assert rebuilt == template
+
+    assert File.regular?(rebuilt),
+           "store_template_path/0 handed out a path whose file is gone: #{inspect(rebuilt)}"
+
+    # The rebuilt artifact carries the same contract as a first build: ONE
+    # non-empty, READ-ONLY file.
+    assert %{main: {:present, size, _}} = template_snapshot()
+    assert size > 0
+    assert Path.wildcard(rebuilt <> "*") == [rebuilt]
+    assert {:ok, %File.Stat{mode: mode}} = File.stat(rebuilt)
+    assert Bitwise.band(mode, 0o222) == 0
+
+    # … and it is a real template: the next isolation is a fully migrated,
+    # empty, working store.
+    :ok = IsolatedTaskStore.isolate!(@prefix)
+    assert applied_migration_versions() == expected_migration_versions()
+    assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
+
+    record_isolated_path!(isolated_sqlite_path())
+  end
+
+  test "a FAILED build is never cached: the next call still produces a working template" do
+    # A cache MISS on both counts: drop the artifact (so the cached path fails its
+    # re-check) …
+    File.rm!(IsolatedTaskStore.store_template_path())
+
+    # … and make the destination UNBUILDABLE deterministically — its parent is a
+    # regular FILE, so the build's `mkdir_p` fails on every attempt (no
+    # permission-dependent behaviour, nothing to clean up if a step is skipped).
+    # This needs the process-global `:evo_git, :data_dir` app env for the length
+    # of one `assert_raise` (one more BEAM-global input to the `async: false`
+    # rationale at the top of this module), and restores it in `after`.
+    blocker =
+      Path.join(System.tmp_dir!(), "evotest_blocked_#{System.unique_integer([:positive])}")
+
+    File.write!(blocker, "not a directory")
+    previous_data_dir = Application.fetch_env(:evo_git, :data_dir)
+    Application.put_env(:evo_git, :data_dir, Path.join(blocker, "genesis"))
+
+    try do
+      error = assert_raise RuntimeError, fn -> IsolatedTaskStore.store_template_path() end
+
+      # Honest and diagnosable: the attempts made, the exact path and the fact
+      # that nothing was cached; the underlying cause is kept verbatim.
+      assert error.message =~ "attempt(s)"
+      assert error.message =~ blocker
+      assert error.message =~ "nothing was cached"
+      assert error.message =~ "File.Error"
+    after
+      restore_data_dir(previous_data_dir)
+      File.rm_rf(blocker)
+    end
+
+    # The failed build is NOT cached: the very next call builds a real template
+    # and answers a path that exists (the historical defect cached the failure —
+    # usually `nil` — for the rest of the run, so every later caller got a dead
+    # or absent template).
+    rebuilt = IsolatedTaskStore.store_template_path()
+
+    assert is_binary(rebuilt)
+    assert File.regular?(rebuilt), "a FAILED build was cached: #{inspect(rebuilt)}"
+
+    # And that recovered template seeds a fully migrated, working store.
+    :ok = IsolatedTaskStore.isolate!(@prefix)
+    assert applied_migration_versions() == expected_migration_versions()
+    assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
+
+    record_isolated_path!(isolated_sqlite_path())
+  end
+
   # The sqlite FILE the isolated `EvoGit.Store` (which holds the singleton name
   # while a test isolates) is opened on; the temp dirs this module's own
   # `isolate!/1` calls created (asserted EMPTY by the post-teardown hook).
@@ -166,6 +250,11 @@ defmodule EvoDash.Test.IsolatedTaskStoreTest do
   defp isolated_root_dirs do
     Path.wildcard(Path.join(System.tmp_dir!(), "evogit_test_#{@prefix}_*"))
   end
+
+  # `:evo_git, :data_dir` is a PROCESS-GLOBAL app env, so the forced-failure test
+  # restores it to exactly what it was (set by `config/test.exs` for every run).
+  defp restore_data_dir({:ok, dir}), do: Application.put_env(:evo_git, :data_dir, dir)
+  defp restore_data_dir(:error), do: Application.delete_env(:evo_git, :data_dir)
 
   defp put_task_in_isolated_store! do
     id = "isolated_task_store_test_#{System.unique_integer([:positive])}"
