@@ -1,12 +1,8 @@
 /* Shared project navigation. The views inside #main-content keep their styling. */
 #app-layout {
-  /* The workbench top bar's height lives HERE and nowhere else. #main-content's
-     height is (viewport − this bar − its own padding), so every rule that has to
-     account for the shell chrome reads this variable instead of re-deriving the
-     3.5rem (or subtracting it from a viewport unit — never do that). The bar is
-     only rendered for chrome pages (`:if={!@simple_nav}` in layouts.ex); a
-     `simple_nav` page has no bar and simply gets 3.5rem more content box, so no
-     second constant is ever needed. */
+  /* The top bar's only height definition. The shell's flex/grid chain gives
+     #main-content the remaining space after the bar and frame; simple_nav
+     pages have neither. In-shell pages must not derive a viewport height. */
   --shell-topbar-h: 3.5rem;
   /* The rails' own interaction tones. The FILLS come from the shared surface
      vocabulary (`surfaces.css`: `--surface-shell`, `--surface-rail`,
@@ -16,6 +12,7 @@
   --workbench-text-muted: color-mix(in srgb, var(--color-base-content) 65%, transparent);
   --workbench-hover: var(--surface-hover);
   --workbench-selected: var(--surface-selected);
+  background: var(--surface-shell);
 }
 
 .workbench-main, .workbench-center {
@@ -34,6 +31,16 @@
   min-width: 0;
 }
 .workbench-content-stack > * { grid-area: 1 / 1; }
+/* Frame the view, not its page or scroller: normal content and the Git diff
+   portal share one inset canvas without changing their height chain. */
+.workbench-top + .workbench-content-stack {
+  margin-inline: calc(var(--page-gutter) / 2);
+  margin-block-end: calc(var(--page-gutter) / 2);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-box);
+  background: var(--surface-canvas);
+}
+.workbench-top + .workbench-content-stack > * { border-radius: inherit; }
 #workbench-project-preview {
   position: fixed;
   z-index: 10;
@@ -89,23 +96,17 @@
   .workbench-resizer::after { transition: none; }
 }
 
-/* The workbench top bar (layer 0 chrome). ONE rule owns its geometry, its
-   surface tone and its single hairline; the tab rail inside it is stretched so
-   the tabs can sit on the bar's bottom edge (below). The only responsive
-   override is the narrow-viewport padding/gap shift further down. */
+/* The top bar and framed canvas share the same side gutter. The rail can
+   shrink without squeezing its fixed-size create/overflow controls. */
 .workbench-top {
   display: flex;
   align-items: center;
   flex: 0 0 var(--shell-topbar-h);
   gap: .5rem;
   min-width: 0;
-  padding: 0 .55rem;
-  border-bottom: 1px solid var(--border-hairline);
+  padding-inline: calc(var(--page-gutter) / 2);
   background: var(--surface-shell);
 }
-
-/* The tab rail stretches to the bar's full height so the tab strip can sit ON
-   the bar's bottom edge; the icon buttons beside it stay vertically centered. */
 .workbench-tab-rail {
   display: flex;
   align-items: center;
@@ -114,45 +115,30 @@
   flex: 1;
   min-width: 0;
 }
-
-/* === The native tab strip ===
-   A VS Code / ChatGPT-desktop style strip: tabs live in the content region's top
-   edge, bottom-aligned inside the fixed-height bar, and the ACTIVE one is
-   CONTINUOUS with the canvas below it.
-   The 1px bottom padding + the -1px bottom margin are load-bearing: together
-   they let the active tab's canvas-coloured bottom border land exactly on the
-   bar's hairline (interrupting it) without overflowing this horizontal scroller
-   by a pixel. */
 .workbench-tabs {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   align-self: stretch;
-  gap: .3rem;
+  gap: .25rem;
   flex: 0 1 auto;
   min-width: 0;
-  padding-block-end: 1px;
-  margin-block-end: -1px;
   overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
   scrollbar-width: thin;
-  /* Paints the active tab's bottom edge above the bar's hairline. */
-  position: relative;
-  z-index: 1;
 }
-
 .workbench-tabs:empty { display: none; }
 
-/* ONE tab shape (and only ONE rule declares it): a bottom-anchored slab with the
-   top corners rounded, so the inactive hover silhouette and the active tab share
-   the same outline. */
+/* Resting, active and pending tabs share one silhouette and never shift when
+   their state changes. The canvas and active tab each have their own frame. */
 .workbench-tab {
   display: flex;
   align-items: center;
-  align-self: flex-end;
   flex: 0 0 auto;
   block-size: var(--row-h-sm);
   max-width: min(14rem, 55vw);
   border: 1px solid transparent;
-  border-radius: var(--radius-tab) var(--radius-tab) 0 0;
+  border-radius: var(--radius-field);
   font-size: var(--text-xs);
   color: var(--workbench-text-muted);
 }
@@ -160,28 +146,46 @@
 .workbench-tab:hover, .workbench-row:hover, .workbench-icon-button:hover,
 .workbench-history-row > button:hover { background: var(--workbench-hover); }
 
-/* The active tab joins the canvas: canvas fill, hairline on the sides and the
-   top only, and a bottom border in the CANVAS colour that paints over the bar's
-   hairline (the -1px bottom margin puts that border exactly on the hairline
-   band). No shadow and no underline pill — continuity, not decoration. */
 .workbench-tab.is-current {
-  position: relative;
-  z-index: 1;
-  margin-block-end: -1px;
   background: var(--surface-canvas);
   border-color: var(--border-hairline);
-  border-block-end-color: var(--surface-canvas);
+  color: var(--color-base-content);
+  font-weight: 600;
+}
+
+/* The client may mark its immediate navigation target before aria-current
+   moves. Keep its separate accent edge and dot visible even without motion. */
+.workbench-tab[data-pending="true"], .workbench-tab.is-pending {
+  background: var(--workbench-selected);
+  border-color: var(--color-primary-standalone);
   color: var(--color-base-content);
 }
+.workbench-tab:is([data-pending="true"], .is-pending) .workbench-tab-icon { opacity: 1; }
+.workbench-tab:is([data-pending="true"], .is-pending) .workbench-tab-link::after {
+  content: "";
+  position: absolute;
+  inset-block-start: .35rem;
+  inset-inline-start: .25rem;
+  inline-size: .4rem;
+  block-size: .4rem;
+  border-radius: 50%;
+  background: var(--color-primary-standalone);
+}
+.workbench-tab[data-kind="draft"] .workbench-tab-icon,
+.workbench-tab[data-kind="assistant"] .workbench-tab-icon { color: var(--color-primary-standalone); }
+.workbench-tab[data-kind="diff"] .workbench-tab-icon { color: var(--color-info); }
 
 /* ONE link rule: the icon/text/padding geometry of every tab. */
 .workbench-tab-link {
+  position: relative;
   display: flex;
   align-items: center;
+  align-self: stretch;
   gap: .38rem;
   min-width: 0;
   overflow: hidden;
-  padding: .42rem .35rem .42rem .58rem;
+  padding-inline: .58rem .3rem;
+  border-radius: inherit;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -189,10 +193,10 @@
   display: grid;
   flex: none;
   place-items: center;
-  inline-size: 1.75rem;
-  block-size: 1.75rem;
-  margin-inline-end: .2rem;
-  border-radius: .3rem;
+  inline-size: var(--control-h-sm);
+  block-size: var(--control-h-sm);
+  margin-inline-end: .1rem;
+  border-radius: var(--radius-selector);
   /* Hidden until the tab is hovered/focused — the ACTIVE tab always shows it.
      Opacity + visibility only: the button keeps its box, so revealing it never
      shifts the label. */
@@ -208,8 +212,10 @@
 .workbench-tab-close:hover { background: var(--workbench-hover); color: var(--color-base-content); }
 @media (prefers-reduced-motion: no-preference) {
   .workbench-tab-close {
-    transition: background-color 100ms ease-out, opacity 100ms ease-out,
-      visibility 100ms ease-out, scale 100ms ease-out;
+    transition: background-color var(--motion-fast) var(--motion-ease-out),
+      opacity var(--motion-fast) var(--motion-ease-out),
+      visibility var(--motion-fast) var(--motion-ease-out),
+      scale var(--motion-fast) var(--motion-ease-out);
   }
   .workbench-tab-close:active { scale: .96; }
 }
@@ -275,17 +281,29 @@
 }
 .workbench-create-menu > .workbench-row { min-height: var(--row-h-sm); cursor: pointer; }
 
-.workbench-sidebar-nav { display: flex; flex-direction: column; scrollbar-gutter: stable; }
-/* The always-visible destination block (Agents/Tasks/Processes/System) plus the
-   Conversations disclosure: one group, separated from the shortcuts above by a
-   hairline so the four direct links read as a set instead of loose rows. */
+.workbench-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: .35rem;
+  overscroll-behavior: contain;
+}
+/* Space, rather than dividers, separates the sidebar's destinations. */
 .workbench-sidebar-utilities {
   display: flex;
+  flex: none;
   flex-direction: column;
   gap: .1rem;
   margin-top: auto;
-  padding-top: .85rem;
-  border-block-start: 1px solid var(--color-base-300);
+  padding-block-start: var(--card-pad);
+}
+.workbench-sidebar-nav :is(a, button, summary):focus-visible {
+  outline: 2px solid var(--color-primary-standalone);
+  outline-offset: -2px;
+}
+.workbench-sidebar-nav :is(a, button, summary):hover { background: var(--workbench-hover); }
+.workbench-sidebar-nav :is([aria-current="page"], .is-current) {
+  background: var(--workbench-selected);
 }
 .workbench-tools > summary { padding: .5rem .75rem; color: var(--workbench-text-muted); }
 .workbench-tools > summary::-webkit-details-marker { display: none; }
@@ -327,15 +345,11 @@
 }
 
 #sidebar[data-sidebar-collapsed="true"] #workbench-projects { display: none; }
-/* The shortcut list is a titled LIST: a hairline plus real gaps separate the
-   section heading from the first row and every row from the next one, so a
-   project name never fuses with the row below it. */
+/* Recent projects keep a visible gap between shortcut rows. */
 .workbench-project-list {
   display: grid;
   gap: .45rem;
   margin-block-start: .4rem;
-  padding-block-start: .5rem;
-  border-block-start: 1px solid var(--color-base-300);
 }
 .workbench-project-entry { display: block; min-width: 0; }
 .workbench-project-heading { display: flex; align-items: center; min-width: 0; }
@@ -398,7 +412,7 @@
      No card shadow and no floating look — the dock is part of the shell. */
   background: var(--surface-rail);
   border-inline-start: 1px solid var(--border-hairline);
-  padding: .55rem .6rem;
+  padding: calc(var(--card-pad) / 2);
   /* Right-panel entrance/exit driven by the shared motion vocabulary: every
      listed property uses var(--motion-slow) + var(--motion-ease-out), never a
      literal duration or easing keyword.
@@ -470,7 +484,9 @@
 #workbench-history .workbench-section-heading,
 #workbench-git-content .workbench-section-heading,
 #workbench-history-project,
-#workbench-history-filters {
+#workbench-history-filters,
+.workbench-git-summary,
+.workbench-git-views {
   flex: none;
 }
 #workbench-history-content,
@@ -490,13 +506,17 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.workbench-history-controls { padding: .25rem .25rem .6rem; }
+.workbench-history-controls {
+  padding: .25rem .25rem calc(var(--card-pad) / 2);
+  border-block-end: 1px solid var(--border-hairline);
+  margin-block-end: .35rem;
+}
 /* The two filter selects sit in ONE two-column row under the full-width
    search box, each with its own micro label, so the block reads as a single
    control system instead of stray native form debris. */
 .workbench-history-filters {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: .5rem;
   margin-top: .5rem;
 }
@@ -517,9 +537,9 @@
   height: var(--control-h);
   min-height: var(--control-h);
   padding-inline: .625rem;
-  border: 1px solid var(--color-base-300);
-  border-radius: .5rem;
-  background: var(--color-base-100);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-field);
+  background: var(--surface-canvas);
   color: var(--color-base-content);
   font-size: var(--text-sm);
   text-overflow: ellipsis;
@@ -527,31 +547,29 @@
 }
 /* The kind switch closes the filter block as its last row. */
 #workbench-history-filters .workbench-segmented { margin-top: .5rem; }
-#workbench-history-filters .workbench-segmented button {
-  min-height: var(--control-h-sm);
-  border-radius: .35rem;
-  font-size: var(--text-xs);
-}
-@media (pointer: coarse) {
-  .workbench-history-filter,
-  #workbench-history-filters .workbench-segmented button { min-height: var(--touch-target); }
-}
 .workbench-segmented {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: .2rem;
   padding: .2rem;
-  border: 1px solid var(--color-base-300);
-  border-radius: .45rem;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-field);
+  background: var(--surface-shell);
 }
 .workbench-segmented button {
-  padding: .25rem .35rem;
-  border-radius: .3rem;
+  min-width: 0;
+  min-height: var(--control-h-sm);
+  padding: .15rem .25rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-selector);
   color: var(--workbench-text-muted);
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
 }
+.workbench-segmented button:hover { background: var(--workbench-hover); }
 .workbench-segmented button[aria-pressed="true"] {
-  background: var(--workbench-selected);
+  background: var(--surface-canvas);
+  border-color: var(--border-strong);
   color: var(--color-base-content);
   font-weight: 600;
 }
@@ -824,16 +842,29 @@
 
 /* The rails and the docked right panel consume the shared layer-0 tones
    (`surfaces.css`), so a rail is never a second, independent surface definition. */
-#app-layout #sidebar { background: var(--surface-rail); flex-shrink: 0; }
+#app-layout #sidebar {
+  flex-shrink: 0;
+  border-right: 0;
+  background: var(--surface-rail);
+}
 #sidebar[data-sidebar-collapsed="false"] { width: var(--workbench-left-width, 16rem); }
 #sidebar-mobile-close { display: none; }
 @media (max-width: 1023.98px) {
+  #app-layout #sidebar {
+    border-inline-end: 1px solid var(--border-hairline);
+    box-shadow: var(--elev-2);
+  }
   #sidebar[data-sidebar-collapsed="false"] { width: min(18rem, 86vw); }
+  /* Clear the fixed sidebar toggle and keep the canvas gutter narrow. */
+  .workbench-top { padding-inline-start: calc(var(--shell-topbar-h) + .05rem); gap: .4rem; }
+  .workbench-top + .workbench-content-stack {
+    margin-inline: calc(var(--page-gutter) / 4);
+    margin-block-end: calc(var(--page-gutter) / 4);
+  }
 }
-/* Narrow chrome keeps its natural width; only the inline start shifts to clear
-   the mobile sidebar toggle. */
-@media (max-width: 1023.98px) {
-  .workbench-top { padding-inline-start: 3.55rem; gap: .4rem; }
+@media (max-width: 480px) {
+  #workbench-git-toggle { inline-size: var(--touch-target); padding-inline: 0; }
+  #workbench-git-toggle :is(#workbench-git-toggle-label, .hero-chevron-down) { display: none; }
 }
 .workbench-tab-icon { flex: none; width: .875rem; height: .875rem; opacity: .75; }
 .workbench-tab-instance {
@@ -875,7 +906,7 @@
 .workbench-query input::placeholder { color: var(--workbench-text-muted); }
 
 .workbench-history-project {
-  margin-top: .18rem;
+  margin: .18rem .25rem 0;
   max-width: 13rem;
   color: var(--workbench-text-muted);
   white-space: nowrap;
@@ -946,18 +977,30 @@
   font-variant-numeric: tabular-nums;
 }
 .workbench-git-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: .65rem;
-  margin-block-start: .55rem;
-  padding-inline: .1rem;
-  /* The git pane's ONE scroller (the heading above it stays pinned). */
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  margin-block-start: .5rem;
+  /* Keep the summary and segmented controls at intrinsic height, even for an
+     empty or short view. Only the selected view below can scroll. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.workbench-git-views { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.workbench-git-body > :is(#workbench-git-changes, #workbench-git-branches, #workbench-git-history) {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.workbench-git-views { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+#workbench-git-branches { scroll-padding-block-start: calc(var(--touch-target) + .4rem); }
+#workbench-git-search {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  background: var(--surface-rail);
+}
 .workbench-git-history-entry {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1155,6 +1198,25 @@
 @media (max-width: 1279.98px) {
   .workbench-git-toggle { min-block-size: var(--touch-target); }
   .workbench-git-file, .workbench-git-branch { min-block-size: var(--touch-target); }
+}
+@media (pointer: coarse) {
+  .workbench-tabs > .workbench-tab { block-size: calc(var(--touch-target) + 2px); }
+  .workbench-tab .workbench-tab-link { min-inline-size: var(--touch-target); }
+  .workbench-tab .workbench-tab-close,
+  .workbench-tab[data-preview="true"] .workbench-tab-close,
+  .workbench-tab[data-preview="true"].is-current .workbench-tab-close {
+    inline-size: var(--touch-target);
+    block-size: var(--touch-target);
+    opacity: 1;
+    visibility: visible;
+  }
+  .workbench-sidebar-nav :is(a[aria-current], summary),
+  .workbench-history-filter, .workbench-query, .workbench-segmented button,
+  .workbench-git-chip, .workbench-git-search, .workbench-git-more {
+    min-height: var(--touch-target);
+  }
+  /* Keep the iOS focus-zoom floor above these controls' desktop type rules. */
+  .workbench-history-filter, .workbench-query input, .workbench-git-search { font-size: 16px; }
 }
 /* A history row is a comfortable two-line card: the kind icon in a tinted
    square, a title clamped to two lines and a muted meta line underneath.
