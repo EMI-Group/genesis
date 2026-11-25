@@ -517,12 +517,14 @@ defmodule EvoGit.TaskRegistry do
   - `:running` → the row is written `:pausing` (broadcast to the dashboard
     immediately after the persist) and
     `EvoGit.AgentScheduler.begin_task_pause/1` FREEZES the task's whole agent
-    tree, so each agent stops at its NEXT TURN BOUNDARY — never mid-tool — after
-    checkpointing its conversation and committing its worktree. When the freeze
-    completes the root reports `{:paused, info}` and the row becomes `:paused`
-    with a `pause_kind` DERIVED from that report (`:clean` when every agent
-    proved an uninterrupted, durable stop, `:dirty` when anything was forced or
-    could not be proven), the lease cleared and `finished_at` nil, and the
+    tree, so each agent freezes at its exact position (a turn boundary, or
+    parked while waiting on its subagent batch) after checkpointing its
+    conversation and committing its worktree, and an in-flight tool batch gets a
+    bounded quiesce before a forced freeze. When the freeze completes the root
+    reports `{:paused, info}` and the row becomes `:paused` with a `pause_kind`
+    DERIVED from that report (`:clean` when every agent proved an uninterrupted,
+    durable freeze, `:dirty` when anything was forced or could not be proven),
+    the lease cleared and `finished_at` nil, and the
     task's `result`/`usage`/archive are preserved (see the `{:paused, info}` arm
     of `handle_wrapper_result/3`).
   - `:pausing`/`:paused` → `:ok` (IDEMPOTENT: no write, no scheduler call, no

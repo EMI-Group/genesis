@@ -722,10 +722,12 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   end
 
   @doc """
-  Requests a TASK-LEVEL PAUSE by id: the task moves to `:pausing`, every agent
-  of the task is flagged to stop at its next turn boundary, and the task parks
-  in `:paused` (with `pause_kind: :clean`) once the drain completes. A task that
-  is already `:pausing`/`:paused` is idempotent `:ok`.
+  Requests a TASK-LEVEL PAUSE by id: the task moves to `:pausing`, the whole
+  agent tree of the task freezes at its current position (an in-flight tool
+  batch gets a bounded chance to finish, then it is force-frozen), and the task
+  parks in `:paused` with a `pause_kind` derived from the report (`:clean` only
+  when every agent proved it froze inside the quiesce, otherwise `:dirty`). A
+  task that is already `:pausing`/`:paused` is idempotent `:ok`.
   Delegates to `EvoGit.TaskRegistry.pause_task/1` (a `GenServer.call`).
   This runs on the REMOTE node when called via `:erpc.call/5`.
   Returns `:ok` on success or `{:error, reason}` (`:not_found`, `:not_pausable`

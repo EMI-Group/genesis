@@ -67,13 +67,14 @@ defmodule EvoGit.AgentScheduler do
 
   A task can be PAUSED instead of cancelled (`begin_task_pause/1`): the task's
   agents get a `pause_requested` control-plane flag, are purged from the
-  LLM/tool waiting queues with `{:error, :paused}`, and stop at their next turn
-  boundary — never mid-tool — delivering `{:paused, info}` as their terminal
-  outcome. `clear_task_pause/1` abandons a pause; a graceful cancel always WINS
-  over a pending pause and a pause that arrives while the task is cancelling is
-  ignored.
+  LLM/tool waiting queues with `{:error, :paused}`, and freeze at their exact
+  position — a turn boundary, or parked while waiting on a subagent batch, with
+  an in-flight tool batch given a bounded chance to finish — delivering
+  `{:paused, info}` as their terminal outcome. `clear_task_pause/1` abandons a
+  pause; a graceful cancel always WINS over a pending pause and a pause that
+  arrives while the task is cancelling is ignored.
 
-  A pause is a whole-TREE drain, so it is coordinated by ONE
+  A pause is a whole-TREE FREEZE, so it is coordinated by ONE
   `EvoGit.AgentScheduler.TaskFreeze` record per task (`state.task_freezes`):
   `begin_task_pause/1` freezes the task's roster, PARKS every parent blocked in
   `spawn_sub_agents/2` (replying `{:freeze, :task_pause}` and clearing its batch
@@ -81,7 +82,7 @@ defmodule EvoGit.AgentScheduler do
   reports its own paused outcome. NOBODY replies to the root's caller until the
   LAST pending agent reports; only then is the whole tree answered with one
   `{:paused, %{… pause_kind: :clean | :dirty, frozen_agents: [...]}}` term. A
-  `spawn_sub_agents/2` that arrives while the task is draining is refused with
+  `spawn_sub_agents/2` that arrives while the task is freezing is refused with
   `{:freeze, :task_pause}` instead of registering children, and a quiesce timer
   (`:task_pause_quiesce_ms`, default 120 s) force-freezes whatever is left and
   records the task DIRTY rather than hanging the pause forever.
