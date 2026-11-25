@@ -155,7 +155,7 @@ test('re-opening an open tab updates in place by canonical key or same-kind href
   assert.equal(count(tabs), 3, 'another kind with the same non-task href remains separate');
 });
 
-test('the live, review and commit routes share one canonical task key', () => {
+test('the live, review, commit and focused Agents routes share one canonical task key', () => {
   const node = 'remote-target';
   const key = tabKey(node, PROJECT, 'task', 't #1');
   assert.equal(key, tabKey(node, '', 'task', 't #1'));
@@ -166,6 +166,7 @@ test('the live, review and commit routes share one canonical task key', () => {
   const live = '/tasks?task=t+%231&node=remote-target';
   const review = '/review/t%20%231?node=remote-target&file=a%20b';
   const commit = '/review/t%20%231/commit/abcdef?file=a%20b&node=remote-target#diff';
+  const agents = '/agents?task=t+%231&agent=42&node=remote-target#inspector';
   let tabs = openTab([], task('pending-assign', {href: live, projectPath: ''}), {preview: true});
   assert.equal(tabs[0].key, key);
   assert.equal(tabs[0].projectPath, '');
@@ -186,8 +187,22 @@ test('the live, review and commit routes share one canonical task key', () => {
   assert.equal(count(tabsForProject(tabs, node, '')), 0);
   assert.equal(count(tabsForProject(tabs, 'other-target', PROJECT)), 0);
 
-  tabs = openTab(tabs, task('t #1', {href: '/tasks?task=t+%231&node=other-target'}));
+  const inspector = tab('agents', '42', {href: agents, projectPath: '', project: 'unscoped'});
+  const expected = {...tabs[0], href: agents};
+  tabs = openTab(tabs, {...inspector, title: '', location: ''}, {preview: true});
+  assert.equal(count(tabs), 1);
+  assert.deepEqual({...tabs[0]}, expected, 'inspecting updates only the exact destination');
+
+  const remoteInspector = agents.replace('remote-target', 'other-target');
+  tabs = openTab(tabs, {...inspector, href: remoteInspector, projectPath: OTHER});
   assert.equal(count(tabs), 2, 'another node can have the same task id');
+  assert.equal(tabs[1].key, tabKey('other-target', '', 'task', 't #1'));
+  assert.equal(tabs[1].href, remoteInspector);
+
+  tabs = openTab(tabs, task('t #1', {href: live, projectPath: ''}), {preview: true});
+  assert.equal(count(tabs), 2);
+  assert.equal(tabs[0].href, live, 'returning to the live route reuses the same tab');
+  assert.equal(tabs[1].href, remoteInspector, 'a different node keeps its own route');
 });
 
 test('a preview that learns its scope replaces the destination preview, not pinned tabs', () => {
@@ -342,10 +357,13 @@ test('restore merges legacy task aliases, keeping scope and pin but the last exa
   const commit = {
     ...tab('commit', 'abcdef', {projectPath: '', href: '/review/a/commit/abcdef?file=a%20b&node=local#diff'}),
     preview: true,
-    active: true,
+  };
+  const agents = {
+    ...tab('agents', '42', {projectPath: '', href: '/agents?agent=42&task=%61&node=local&wb_workspace=1#agent'}),
+    title: '', location: '', preview: true, active: true,
   };
   const remote = {...task('a', {href: '/tasks?task=a&node=other-target'}), preview: true};
-  const tabs = restore([live, review, commit, remote]);
+  const tabs = restore([live, review, commit, agents, remote]);
   assert.equal(count(tabs), 2);
   const [local, otherNode] = Array.from(tabs);
   assert.equal(local.key, tabKey('', PROJECT, 'task', 'a'));
@@ -356,7 +374,9 @@ test('restore merges legacy task aliases, keeping scope and pin but the last exa
   assert.equal(local.project, 'Known project');
   assert.equal(local.preview, false);
   assert.equal(local.active, true);
-  assert.equal(local.href, commit.href);
+  assert.equal(local.title, commit.title);
+  assert.equal(local.location, commit.location);
+  assert.equal(local.href, agents.href);
   assert.equal(otherNode.key, tabKey('other-target', PROJECT, 'task', 'a'));
   assert.equal(otherNode.preview, true);
   assert.equal(JSON.stringify(restore(JSON.stringify(tabs))), JSON.stringify(tabs), 'migration is idempotent');
@@ -365,6 +385,30 @@ test('restore merges legacy task aliases, keeping scope and pin but the last exa
   assert.equal(knownLast.href, live.href, 'latest route wins regardless of route type');
   assert.equal(knownLast.projectPath, PROJECT);
   assert.equal(knownLast.preview, false);
+});
+
+test('only a focused, same-origin Agents URL is a restorable task destination', () => {
+  const origin = 'https://genesis.example';
+  const accept = href => safeHref(href, origin);
+  assert.equal(accept('/agents?task=a'), true);
+  for (const href of [
+    '/agents',
+    '/agents?node=other-target',
+    '/agents?agent=42',
+    '/agents?task=',
+    '/agents/other?task=a',
+    'https://genesis.example/agents?task=a',
+    '//evil.example/agents?task=a',
+    '/\\evil.example/agents?task=a',
+  ]) {
+    assert.equal(accept(href), false, href);
+    assert.equal(count(restore([{kind: 'task', id: 'a', href}], accept)), 0, href);
+  }
+
+  const tabs = openTab([], task('a'));
+  const globalAgents = {...task('a'), href: '/agents?agent=42'};
+  assert.equal(JSON.stringify(openTab(tabs, globalAgents)), JSON.stringify(tabs),
+    'a global Agents route cannot overwrite the task even with stale task metadata');
 });
 
 test('restore dedupes by key (last wins) and rejects untrusted hrefs', () => {
