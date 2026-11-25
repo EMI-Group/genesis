@@ -121,9 +121,10 @@
 .assistant-send-button:disabled { background: color-mix(in srgb, var(--color-base-content) 18%, var(--color-base-100)); color: var(--color-base-100); opacity: .65; cursor: not-allowed; }
 @container assistant (inline-size < 540px) { .assistant-brand { gap: 12px; } .assistant-brand-mark { inline-size: 36px; block-size: 30px; } .assistant-brand h2 { font-size: var(--text-2xl); } }
 
-/* Shared Workbench Composer. In Assistant the wrapper and surface coincide;
-   in New Task the surface is inside the AdaptiveInput layout, not around the
-   whole form. Section spacing and options never belong to the editor's edge. */
+/* Shared Workbench Composer role classes own the chrome; the native classes
+   are fallbacks for markup without those roles. In Assistant the wrapper and
+   surface coincide; in New Task the surface is inside the AdaptiveInput layout,
+   not around the whole form. */
 .workbench-composer[data-composer-kind] {
   --composer-surface: color-mix(in oklab, var(--surface-canvas) 96%, var(--color-base-content));
   --composer-focus-transition: border-color var(--motion-fast) var(--motion-ease-out),
@@ -141,7 +142,8 @@
   --composer-surface: color-mix(in oklab, var(--surface-canvas) 95%, var(--color-base-content));
 }
 
-#app-layout :is(.workbench-composer.assistant-input-card, .workbench-composer .input-card) {
+#app-layout :is(.workbench-composer:is(.workbench-composer-surface, .assistant-input-card),
+  .workbench-composer :is(.workbench-composer-surface, .input-card)) {
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-2xl);
   background: var(--composer-surface);
@@ -149,18 +151,19 @@
   transition: var(--composer-transition, var(--composer-focus-transition));
 }
 
-#app-layout :is(.workbench-composer.assistant-input-card, .workbench-composer .input-card):focus-within {
+#app-layout :is(.workbench-composer:is(.workbench-composer-surface, .assistant-input-card),
+  .workbench-composer :is(.workbench-composer-surface, .input-card)):focus-within {
   border-color: var(--color-primary-standalone);
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary-standalone) 25%, transparent);
 }
 
-.workbench-composer :is(.assistant-textarea, .input-prompt) {
+.workbench-composer :is(.workbench-composer-editor, .assistant-textarea, .input-prompt) {
   caret-color: var(--color-primary-standalone);
 }
 
 /* The root summary is a flat toolbar action; the dropdown is still a popover
    and its items/animation/positioning are owned by the capsule. */
-.workbench-composer :is(.assistant-context-bar, .input-controls) details.capsule > .capsule-trigger {
+.workbench-composer :is(.workbench-composer-toolbar, .assistant-context-bar, .input-controls) details.capsule > .capsule-trigger {
   min-inline-size: var(--control-h-sm);
   min-block-size: var(--control-h-sm);
   padding-block: 0;
@@ -171,7 +174,7 @@
 }
 
 @media (hover: hover) {
-  .workbench-composer :is(.assistant-context-bar, .input-controls) details.capsule > .capsule-trigger:hover {
+  .workbench-composer :is(.workbench-composer-toolbar, .assistant-context-bar, .input-controls) details.capsule > .capsule-trigger:hover {
     background: var(--surface-hover);
   }
 
@@ -180,18 +183,19 @@
   }
 }
 
-.workbench-composer :is(.assistant-context-bar, .input-controls) details.capsule[open] > .capsule-trigger {
+.workbench-composer :is(.workbench-composer-toolbar, .assistant-context-bar, .input-controls) details.capsule[open] > .capsule-trigger {
   background: var(--surface-selected);
 }
 
-.workbench-composer :is(.assistant-context-bar, .input-controls) :is(button, summary):focus-visible,
+.workbench-composer :is(.workbench-composer-toolbar, .assistant-context-bar, .input-controls) :is(button, summary):focus-visible,
 :is(#task-advanced-options, #workbench-task-settings) > summary:focus-visible {
   outline: 2px solid var(--color-primary-standalone);
   outline-offset: 2px;
 }
 
 @media (forced-colors: active) {
-  #app-layout :is(.workbench-composer.assistant-input-card, .workbench-composer .input-card):focus-within {
+  #app-layout :is(.workbench-composer:is(.workbench-composer-surface, .assistant-input-card),
+    .workbench-composer :is(.workbench-composer-surface, .input-card)):focus-within {
     outline: 2px solid Highlight;
     outline-offset: -2px;
   }
@@ -234,6 +238,7 @@
 }
 
 #task-options > .grid > label:has(> .toggle) {
+  display: flex;
   align-items: flex-start;
   padding-inline: 0;
   border: 0;
@@ -263,14 +268,15 @@
 }
 
 @media (pointer: coarse) {
-  .workbench-composer .assistant-context-bar :is(.assistant-icon-button, .assistant-send-button, .assistant-stop-button),
-  .workbench-composer .input-controls :is(#objective-file-button, #task-launch-button),
-  .workbench-composer :is(.assistant-context-bar, .input-controls) details.capsule > .capsule-trigger,
+  .workbench-composer :is(.workbench-composer-toolbar, .assistant-context-bar, .input-controls)
+    :is(.assistant-icon-button, .assistant-send-button, .assistant-stop-button, #objective-file-button, #task-launch-button),
+  .workbench-composer :is(.workbench-composer-toolbar, .assistant-context-bar, .input-controls) details.capsule > .capsule-trigger,
   .workbench-composer[data-composer-kind="task"] .input-controls > .capsule {
     min-inline-size: var(--touch-target);
     min-block-size: var(--touch-target);
   }
 
+  #task-options > .grid > label:has(> .toggle),
   :is(#task-advanced-options, #workbench-task-settings) > summary {
     min-block-size: var(--touch-target);
   }
