@@ -235,7 +235,23 @@ defmodule EvoGit.Agent.ToolDispatch do
     # carried on the struct itself now. Identical values: the runner populates
     # both fields from that same row when it builds the state.
     max_retries = state.max_retries
-    llm_gen_opts = state.llm_generation_params
+    # The prompt-cache/routing identity is FROZEN at registration (injected once
+    # into `provider_options` by `AgentScheduler.Dispatch`) and RE-ASSERTED here,
+    # because this is the ONE request boundary and a rebuilt or restored param
+    # list (resume, retry, a list re-derived from the profile) would otherwise
+    # silently drop it. The key VALUE is never re-derived — only attached — so
+    # this is a safety net, not a second derivation. `put_cache_identity/3` is
+    # idempotent (a no-op once the key is present), provider-gated (`:openai`,
+    # `:openai_codex`) and byte-identical for every other provider, so it is
+    # inert for a nil/blank key, a non-GPT model or a non-keyword option list,
+    # and it only ever APPENDS the identity keys, never replacing an existing
+    # `provider_options` entry (`auth_mode`, `oauth_file`, the resolved api key).
+    llm_gen_opts =
+      EvoGit.Config.Schema.LLM.put_cache_identity(
+        state.llm_generation_params,
+        EvoGit.Config.Schema.LLM.provider_from_model(state.llm_model),
+        state.prompt_cache_key
+      )
 
     case llm_call.(
            context,
