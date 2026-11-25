@@ -337,8 +337,8 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   `:awaiting_input` — the NON-TERMINAL idle state of an interactive agent
   session parked until the next user message (no worker, no LLM/tool slot, no
   timer, yet the task is still live and must stay visible) — plus the pause
-  pair (`:pausing` while a pause request drains the agents, and `:paused` while
-  the task is stopped but still resumable) plus `:completed`, which feeds the
+  pair (`:pausing` while the task's agent tree is being frozen, and `:paused`
+  while it rests frozen but still resumable) plus `:completed`, which feeds the
   sidebar's review candidates.
 
   Pending-remote guard: when a remote context was requested
@@ -385,8 +385,9 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   waiting for the next user message, so it must render in the sidebar's active
   list (and its later transitions still arrive as `"tasks"` broadcasts, which
   reload the lists through the debounce). The pause pair belongs here too: a
-  `:pausing` task is still WORKING (a pause request is draining its agents and a
-  wrapper plus lease are alive), and a `:paused` task is stopped but
+  `:pausing` task is still WORKING (its agent tree is being frozen, with
+  in-flight tool batches getting a bounded chance to finish, and a wrapper plus
+  lease are alive), and a `:paused` task is stopped but
   NON-TERMINAL — its state is durable and resumable, `finished_at` stays nil and
   it survives `clear_finished_tasks`, so it renders in the active list (that is
   the "active" in the loose sense of "live, not finished": the user must be able
