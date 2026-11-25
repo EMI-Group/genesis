@@ -6,25 +6,25 @@ ExUnit suites for the global on-mount hooks.
 The `live_view/0` macro (`apps/evo_dash/lib/evo_dash_web.ex`) registers them in order SetLocale → **NodeAware** → Appearance → DesktopQuit → UpdateStatus → **Guide**, so EVERY real LiveView mount (dead render AND connected) runs the full chain — including the NodeAware sidebar hub seed (`on_mount/4` → `hub_snapshot/2` → `EvoDash.ActiveTasks.get` + the `assign_new` seed chain).
 Two styles: pure unit/socket tests (no LiveView boot, split into `*_pure_test.exs` so they can be `async: true`) and full LiveView integration through `Layouts.app`.
 
-`async:` split — 123 tests total across 8 case modules: 6 `async: true` (74 tests: `node_aware_pure_test`, `guide_pure_test`, `desktop_quit_test`, `guide_test`, `appearance_test` and `node_aware_test.exs`'s `EvoDashWeb.NodeAwareRunWideTest`) and 2 `async: false` (49: `node_aware_test.exs`'s `EvoDashWeb.NodeAwareTest` and `update_status_test`).
+`async:` split — 141 tests total across 8 case modules: 6 `async: true` (92 tests: `node_aware_pure_test`, `guide_pure_test`, `desktop_quit_test`, `guide_test`, `appearance_test` and `node_aware_test.exs`'s `EvoDashWeb.NodeAwareRunWideTest`) and 2 `async: false` (49: `node_aware_test.exs`'s `EvoDashWeb.NodeAwareTest` and `update_status_test`).
 Rationale per suite: "Notes for Agents — async policy".
 
 ## Routing Table
 
 | File | Hook | Style | Lines / tests |
 |------|------|-------|---------------|
-| `node_aware_test.exs` | NodeAware | DIRECT `NodeAware.on_mount/4` calls on dead + connected boot-shaped sockets, plus tests needing the isolated Store/TaskRegistry, an exact read of the local `EvoDash.ActiveTasks` key, the `EvoGit.TaskRegistry` name, or fake ConnectionManagers. **No real LiveViews.** TWO modules: `EvoDashWeb.NodeAwareRunWideTest` (`async: true`, 18 tests) + `EvoDashWeb.NodeAwareTest` (`async: false`, 38 tests). | 1984 / 56 |
-| `node_aware_pure_test.exs` | NodeAware | Pure socket/function tests: `handle_connection_status/2`, `partition_active_tasks/1`, `handle_task_info/2` debounce, `event_from_current_node?/2` on hand-built `%Phoenix.LiveView.Socket{}` (`socket/1` + `patch_to/1`). `async: true`. | 466 / 26 |
-| `guide_test.exs` | Guide | 8 real `/tasks` mounts (read-only: no task is ever written). `async: true`. | 169 / 8 |
+| `node_aware_test.exs` | NodeAware | DIRECT `NodeAware.on_mount/4` calls on dead + connected boot-shaped sockets, plus tests needing the isolated Store/TaskRegistry, an exact read of the local `EvoDash.ActiveTasks` key, the `EvoGit.TaskRegistry` name, or fake ConnectionManagers. **No real LiveViews.** TWO modules: `EvoDashWeb.NodeAwareRunWideTest` (`async: true`, 30 tests) + `EvoDashWeb.NodeAwareTest` (`async: false`, 38 tests). | 2296 / 68 |
+| `node_aware_pure_test.exs` | NodeAware | Pure socket/function tests: `handle_connection_status/2`, `partition_active_tasks/1`, `handle_task_info/2` debounce, `event_from_current_node?/2` on hand-built `%Phoenix.LiveView.Socket{}` (`socket/1` + `patch_to/1`). `async: true`. | 522 / 32 |
+| `guide_test.exs` | Guide | 8 real `/tasks` mounts (read-only: no task is ever written). `async: true`. | 173 / 8 |
 | `guide_pure_test.exs` | Guide | Pure `normalize_guide/2` + `relevant?/2`. `async: true`. | 49 / 2 |
 | `desktop_quit_test.exs` | DesktopQuit | 2 folded tests covering the whole dialog state machine over real `/system` + `/welcome` mounts. `async: true`. | 107 / 2 |
 | `update_status_test.exs` | UpdateStatus | Pure handler units (`handle_check_result/1`, `handle_download_result/1`, `handle_apply_failed/1`, `stop_backend/0`, `initial_assign/2`). No mounts, no direct `on_mount` calls. `async: false`. | 163 / 11 |
-| `appearance_test.exs` | Appearance | Pure seams + DIRECT `Appearance.on_mount/4` + real `/welcome` / `/system` mounts asserting `#app-layout`'s `data-accent-color`. `async: true` (config dir per process). | 441 / 18 |
+| `appearance_test.exs` | Appearance | Pure seams + DIRECT `Appearance.on_mount/4` + real `/welcome` / `/system` mounts asserting `#app-layout`'s `data-accent-color`. `async: true` (config dir per process). | 449 / 18 |
 
 ## Per-suite facts
 
-- **`node_aware_test.exs`** — SPLIT BY DESCRIBE into two modules in one file (1 984 lines, 56 tests).
-  `EvoDashWeb.NodeAwareRunWideTest` (`use ExUnit.Case, async: true`, 18 tests) holds every describe that mutates no process-global EXCEPT the `EvoDash.ActiveTasks` hub: its two `handle_tasks_result/2` tests write and then exact-assert a PER-TEST UNIQUE remote key (`{target, remote_node}`, `node_aware_test.exs:577` / `:592`).
+- **`node_aware_test.exs`** — SPLIT BY DESCRIBE into two modules in one file (2 296 lines, 68 tests).
+  `EvoDashWeb.NodeAwareRunWideTest` (`use ExUnit.Case, async: true`, 30 tests) holds every describe that mutates no process-global EXCEPT the `EvoDash.ActiveTasks` hub: its two `handle_tasks_result/2` tests write and then exact-assert a PER-TEST UNIQUE remote key (`{target, remote_node}`, `node_aware_test.exs:577` / `:592`).
   That write is concurrency-safe because the hub entry is keyed by a per-test-unique remote context AND every async-visible wipe is node-scoped (`EvoDash.ActiveTasks.invalidate(nil, node())` — ConnCase and every async module), so a concurrently running module can only ever clear the LOCAL `{nil, node()}` context.
   A whole-table `reset/0` survives only in `async: false` modules, which never run concurrently (`:592` asserts `:empty` on its own cold key and is wipe-immune either way).
   Otherwise it inserts its fixtures into the RUN-WIDE per-run store under per-test unique ids, deletes them in `on_exit` through the direct store (`EvoGit.Store.delete_task/2`, no `TaskRegistry` broadcast), and scopes assertions to those ids. Its fake `ConnectionManager` registers only under target ids unique to this file.
@@ -61,6 +61,8 @@ Rationale per suite: "Notes for Agents — async policy".
 
 - **The NodeAware hub seed runs on every real mount**: `EvoDash.ActiveTasks` is a boot-created named public ETS table (`:evo_dash_active_tasks`, owned by the long-lived application process — the module is a pure ETS helper with no process), alive for the whole `mix test` run, and its `{nil, node()}` local key is shared across ALL evo_dash suites.
   Every mounting suite here clears the hub before each test (`ConnCase` does it for its users, node_aware_test's sync module calls `reset/0`) so a warm non-empty local hub never seeds sidebar tasks into a later suite's dead-render html.
+- **Connection-status patches obey the node-switch URL rule**: `NodeAware.handle_connection_status/2`'s transition patch is rebuilt from `@current_path` through the SAME text splice as `handle_node_selected/2` (`put_query_params/2` for `workbench_reconnect_params`, then `put_node_param/2`), so a page that carries its state in the query string (`/tasks?status=needs_review`) keeps its filters and gains exactly one `?` — never the old `<path>?node=<id>` appended after an existing query.
+  Pinned in `node_aware_test.exs`'s `handle_connection_status/2` describe: a filtered `@current_path` keeps `status=needs_review`, a bare path still becomes `<path>?node=<id>`, and a reconnect param joins the same query string.
 - **`EvoDash.ActiveTasks` wipe invariant**: an async-visible wipe may clear ONLY the local context, through the public `EvoDash.ActiveTasks.invalidate(nil, node())` API.
   A whole-table `EvoDash.ActiveTasks.reset/0` (an `:ets.delete_all_objects` over `:evo_dash_active_tasks`) belongs to `async: false` modules only, because a concurrent module's `reset/0` deletes another module's per-test snapshot between its `put` and its `get`.
   This is safe because pending contexts only ever hold `{[], []}` (`NodeAware.fetch_active_tasks/2`'s pending guard), task-bearing remote keys need a successful cross-node `:erpc` (impossible in-process), and a local whole-page mount seeds only from `{nil, node()}`.
