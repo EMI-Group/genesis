@@ -172,7 +172,8 @@ The decisions are pinned by `./workbench_panel.test.cjs` and its DOM half by `./
 ### Workbench tab strip — pure tab store, preview/pin, overflow and Alt+Arrow
 
 `./workbench_tabs.js` is the PURE tab store (`MAX_TABS_PER_PROJECT = 40`, `alwaysPinned/1`, `tabKey/4`, `tabGroup/1`, `sameScope/2`, `tabsForProject/3`, `safeHref/2`, `restore/2`, `openTab/3`, `pinTab/2`, `closeTab/2`, `cycleTab/5`, `activate/2`), with no dependency on the DOM, storage or timers.
-A task has ONE key per node and task id, independent of its project membership and exact `/tasks?task=…`, `/review/:id`, or `/review/:id/commit/:sha` href; a commit subroute is not a new tab.
+A task has ONE key per node and task id, independent of its project membership and exact `/tasks?task=…`, `/agents?task=…`, `/review/:id`, or `/review/:id/commit/:sha` href; global `/agents` without a task id stays outside the task tab store.
+A focused Agents view confirms only when the layout publishes the matching `data-workbench-page="agents"`, task id and node; the project and title attributes must describe that task (omit unknown values so the hook can retain stored scope and metadata).
 `restore/2` reads `sessionStorage` data from `genesis-workbench.tabs.v1`, validates destinations, normalizes legacy keys and scopes, and collapses task aliases while retaining known scope and pin state alongside the latest valid exact href.
 `tabsForProject/3`, close-neighbour selection, and cycling share the same stable group order: project, task, chat (including Assistant and drafts), diff, then other; eviction order uses insertion age, not group order.
 VS Code semantics: ONE reusable preview tab per project — opening a `task`/`chat` view that is not already open REPLACES the project's preview AT ITS POSITION; `draft`, `project` (the task form), `assistant` and the client-only Git `diff` view are ALWAYS pinned; an already-open key (or the same kind + href) is updated and selected, never duplicated; pinning is ONE-WAY.
@@ -191,7 +192,7 @@ Alt+ArrowRight / Alt+ArrowLeft cycles this project's tabs (wrapping) ONLY from i
 A default draft opens only on an eligible confirmed overview (the server exposes its exact same-origin Assistant draft URL as `data-workbench-default-draft` on `#app-layout`), after restoration shows no tab for its project scope.
 The auto-open is one-shot for that entry, respects existing/restorable rail tabs, explicit routes, Back/Forward and deliberate last-tab close, and opens an unsent draft without creating a server session.
 The left sidebar no longer enumerates open tabs (the rail is the only open-view list); the project shortcuts' `is-current`/`aria-current` are SERVER-rendered and the hook only resolves a shortcut's remembered tab from the store when one is clicked.
-`workbench_tabs.test.cjs` covers storage and task identity migration, group ordering, preview/pin and project scope; `workbench.test.cjs` covers the patch-sync probe, and `workbench_navigation.test.cjs` covers exact URL confirmation, first-entry eligibility, pending history feedback, stale focus and close-during-navigation.
+`workbench_tabs.test.cjs` covers storage and task identity migration across all aliases, node isolation, group ordering, preview/pin and project scope; `workbench.test.cjs` covers the patch-sync probe, and `workbench_navigation.test.cjs` covers focused and global Agents navigation, exact-route confirmation, pending/current rail and history states, focus races, project shortcut restoration and local Git diff dismissal.
 
 ### Workbench settings window — closing re-runs the Projects model selection
 
@@ -208,6 +209,8 @@ Nothing is pushed, and nothing throws, when `#workbench-settings-window` or its 
 `./workbench_project_preview.js` keeps the last rendered `#main-content` snapshot of each project for the visual handoff while its live view mounts, and the cache is BOUNDED: `MAX_WINDOWS = 2` entries, because only the project being LEFT is ever handed off.
 Recency is Map insertion order (a hit is a `delete` + `set` touch), and an insert or an over-full cache evicts the OLDEST entries, never the entry just inserted, so a live handoff is never evicted by its own insert.
 `projectPreview.release()` is the teardown seam: it clears a pending handoff, empties the cache and removes the shadow-DOM host (a later `remember()` re-creates it and re-clones the stylesheets); `workbench.js`'s `destroyed()` calls it UNLESS `document.body` carries `data-workbench-project-switching` (a project-switch navigation keeps painting the old window until the new one mounts).
+Only sidebar project shortcuts start the preview handoff; the fixed overlay fits the live `#main-scroll` rectangle without scaling, and regular task-tab, history and review routes do not use it.
+Native View Transition group geometry on LiveView patches belongs to `../../css/view_transitions.css`, not the preview hook.
 The pure planning (`touch`/`keysToEvict`/`store`) carries no DOM and is pinned by `./workbench_project_preview.test.cjs`.
 
 ### Server→client push_event patterns

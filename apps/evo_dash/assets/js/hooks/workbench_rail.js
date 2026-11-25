@@ -65,8 +65,16 @@ export const railMethods = {
     }
     const previous = this.tabs.find(entry => entry.key === tab.key)
     tab.projectPath = scope || this.project || previous?.projectPath || ""
-    tab.project = this.projectName || previous?.project
-    tab.location = data.workbenchNodeName
+    if (tab.kind === "task") {
+      // A focused inspector may identify the task before its project loads.
+      // Keep the alias in its known rail, but accept a confirmed project change
+      // without reusing the old project's label on the new path.
+      const knownProject = previous?.projectPath === tab.projectPath ? previous.project : ""
+      tab.project = this.projectLabel || knownProject || this.projectName
+    } else {
+      tab.project = this.projectName || previous?.project
+    }
+    tab.location = data.workbenchNodeName || previous?.location
     const row = this.rows.find(row => historyKey(this.node, row.dataset) === tab.key)
     tab.title = tab.title || row?.dataset.itemTitle || previous?.title || tab.id
 

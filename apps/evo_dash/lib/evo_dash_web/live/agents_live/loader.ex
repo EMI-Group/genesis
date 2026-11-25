@@ -1,85 +1,177 @@
 defmodule EvoDashWeb.AgentsLive.Loader do
   @moduledoc """
-  LiveView-side async spawners for the Agents page.
-  It spawns the page load and the broadcast-triggered refresh in
-  `EvoDash.TaskSupervisor` children, sends the tagged results to the caller and
-  returns the updated socket (never renders, never blocks).
+  Owns asynchronous agent page loads and their result admission. A focused task
+  uses one generation for both initial load and refresh: its row and agent tree
+  are applied together, never independently across scopes.
   """
+
   import Phoenix.Component, only: [assign: 2, assign: 3]
+  import Phoenix.LiveView, only: [connected?: 1]
+
   alias EvoDash.SafeCall
-  alias EvoDashWeb.AgentsLive.LoadData
+  alias EvoDashWeb.AgentsLive.{AgentMerge, CommitGraphState, Inspector, LoadData, Scope}
 
-  # ---------------------------------------------------------------------------
-  # Async load machinery
-  # ---------------------------------------------------------------------------
-
-  @doc """
-  Kicks off the async page load (agents + config status + threshold cache).
-  """
-  # Kicks off the async page load (agents + config status + threshold cache).
-  # Sets the loading flag and a fresh generation; the task sends
-  # {:agents_data_loaded, node, gen, result} back, which is stale-guarded by
-  # generation + node in handle_info/2.
   def start_page_load(socket) do
-    parent = self()
-    node = socket.assigns.current_node
-    gen = Map.get(socket.assigns, :load_generation, 0) + 1
-    threshold_cache = socket.assigns.threshold_cache
+    if connected?(socket) and Scope.available?(socket.assigns) do
+      {_, node, task_id} = scope = Scope.identity(socket.assigns)
+      gen = Map.get(socket.assigns, :load_generation, 0) + 1
+      cache = socket.assigns.threshold_cache
+      tag = {:agents_data_loaded, scope, gen}
 
-    # A new load supersedes any previous failure: the banner clears as soon as
-    # the retry is in flight.
-    socket = assign(socket, agents_loading: true, load_generation: gen, agents_error: nil)
+      socket = assign(socket, agents_loading: true, load_generation: gen, agents_error: nil)
 
-    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      # Exit-safe boundary: the load RPCs to a possibly-dead remote daemon (or a
-      # node that disconnected mid-flight). `SafeCall.run/1` captures an `exit`
-      # (a GenServer.call timeout / dead target, which `rescue` cannot catch) as
-      # an error VALUE, so the result message is ALWAYS sent and
-      # `agents_loading` can never wedge.
-      result =
-        case SafeCall.run(fn -> LoadData.load(node, threshold_cache) end) do
-          {:ok, {:ok, data}} -> {:ok, data}
-          {:ok, {:error, reason}} -> {:error, reason}
-          {:error, reason} -> {:error, reason}
-          {:ok, other} -> {:error, {:unexpected_load_result, other}}
-        end
+      socket =
+        if task_id && !socket.assigns[:scoped_task],
+          do: assign(socket, :scoped_task_state, :loading),
+          else: socket
 
-      send(parent, {:agents_data_loaded, node, gen, result})
-    end)
+      runner =
+        if task_id,
+          do: fn -> LoadData.load_scoped(node, task_id, cache) end,
+          else: fn -> LoadData.load(node, cache) end
 
-    socket
+      case SafeCall.start(self(), tag, runner) do
+        {:ok, _pid} -> socket
+        {:error, reason} -> fail_page(socket, reason)
+      end
+    else
+      socket
+    end
   end
 
-  @doc """
-  Spawns the shared async agent refresh (one per coalesced flush window).
-  """
-  # Spawns the shared async agent refresh (used by the {:agents_updated, node}
-  # broadcasts, the {:agent_registered} summary-fallback, and the
-  # {:agent_updated} missing-agent race). Bumps the monotonic :refresh_seq
-  # (never reset); the result is stale-guarded by seq + node in handle_info/2.
   def spawn_refresh(socket) do
-    parent = self()
-    node = socket.assigns.current_node
-    seq = Map.get(socket.assigns, :refresh_seq, 0) + 1
-    threshold_cache = socket.assigns.threshold_cache
+    cond do
+      socket.assigns[:task_scope_id] -> start_page_load(socket)
+      connected?(socket) and Scope.available?(socket.assigns) -> spawn_unscoped_refresh(socket)
+      true -> socket
+    end
+  end
 
+  defp spawn_unscoped_refresh(socket) do
+    {_, node, nil} = scope = Scope.identity(socket.assigns)
+    seq = Map.get(socket.assigns, :refresh_seq, 0) + 1
+    cache = socket.assigns.threshold_cache
+    tag = {:agents_refresh_result, scope, seq}
     socket = assign(socket, :refresh_seq, seq)
 
-    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      # Exit-safe boundary: the refresh RPCs to a possibly-dead remote daemon.
-      # `SafeCall.run/1` turns an exit (which `rescue` cannot catch) into an
-      # error value, so the result message is always sent; the seq stale-guard
-      # drops late/duplicate results and an error keeps the last good tree.
-      result =
-        case SafeCall.run(fn -> LoadData.refresh(node, threshold_cache) end) do
-          {:ok, {agents, cache}} -> {:ok, agents, cache}
-          {:error, reason} -> {:error, reason}
-          {:ok, other} -> {:error, {:unexpected_refresh_result, other}}
-        end
+    case SafeCall.start(self(), tag, fn -> LoadData.refresh(node, cache) end) do
+      {:ok, _pid} -> socket
+      {:error, _reason} -> socket
+    end
+  end
 
-      send(parent, {:agents_refresh_result, seq, node, result})
-    end)
+  def loaded(socket, scope, gen, result) do
+    if owns?(socket, scope, gen, :load_generation) do
+      {:noreply, apply_page(socket, result)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def refreshed(socket, {_, _, nil} = scope, seq, result) do
+    if owns?(socket, scope, seq, :refresh_seq) do
+      case result do
+        {:ok, {agents, cache}} ->
+          {:noreply,
+           socket
+           |> assign(:threshold_cache, cache)
+           |> AgentMerge.apply_result(agents)
+           |> CommitGraphState.maybe_load([])}
+
+        _ ->
+          # Unscoped refresh keeps the last good tree; later pushes can retry.
+          {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def refreshed(socket, _scope, _seq, _result), do: {:noreply, socket}
+
+  # Legacy unscoped receipts cannot stand in for a scoped production receipt.
+  def legacy_loaded(socket, node, gen, result),
+    do: loaded(socket, {nil, node, nil}, gen, {:ok, result})
+
+  def legacy_refreshed(socket, node, seq, {:ok, agents, cache}),
+    do: refreshed(socket, {nil, node, nil}, seq, {:ok, {agents, cache}})
+
+  def legacy_refreshed(socket, _node, _seq, _result), do: {:noreply, socket}
+
+  @doc "Drains only the current timer's events, deferring scoped pushes during a snapshot read."
+  def flush(socket, token) do
+    cond do
+      not Scope.available?(socket.assigns) ->
+        {:noreply, socket}
+
+      not AgentMerge.flush_due?(socket, token) ->
+        {:noreply, socket}
+
+      socket.assigns[:task_scope_id] && socket.assigns.agents_loading ->
+        {:noreply, AgentMerge.defer_flush(socket)}
+
+      true ->
+        {socket, action} = AgentMerge.flush(socket)
+
+        socket =
+          case action do
+            :refresh -> spawn_refresh(socket)
+            :refetch -> Inspector.refetch_selected_history(socket)
+            :none -> socket
+          end
+
+        {:noreply, CommitGraphState.maybe_load(socket, [])}
+    end
+  end
+
+  defp owns?(socket, scope, seq, counter) do
+    Scope.available?(socket.assigns) and scope == Scope.identity(socket.assigns) and
+      seq == Map.get(socket.assigns, counter)
+  end
+
+  defp apply_page(socket, {:ok, {:ok, %{task: nil} = data}}) do
+    refresh? = socket.assigns.pending_agents_refresh
+
+    socket =
+      socket
+      |> assign(config_status: data.config_status, threshold_cache: data.threshold_cache)
+      |> Scope.missing_task()
+
+    if refresh?, do: AgentMerge.buffer_refresh(socket), else: socket
+  end
+
+  defp apply_page(socket, {:ok, {:ok, %{agents: agents} = data}}) when is_list(agents) do
+    socket =
+      case Map.fetch(data, :task) do
+        {:ok, task} -> assign(socket, scoped_task: task, scoped_task_state: :ready)
+        :error -> socket
+      end
 
     socket
+    |> assign(
+      config_status: data.config_status,
+      threshold_cache: data.threshold_cache,
+      agents_loading: false,
+      agents_error: nil
+    )
+    |> AgentMerge.apply_result(agents)
+    |> Inspector.select_requested()
+    |> AgentMerge.resume_flush()
+    |> CommitGraphState.maybe_load([])
+  end
+
+  defp apply_page(socket, {:ok, {:error, reason}}), do: fail_page(socket, reason)
+  defp apply_page(socket, {:error, reason}), do: fail_page(socket, reason)
+  defp apply_page(socket, _result), do: fail_page(socket, :invalid_load_result)
+
+  defp fail_page(socket, reason) do
+    socket = assign(socket, agents_loading: false, agents_error: reason)
+
+    socket =
+      if socket.assigns[:task_scope_id] && !socket.assigns[:scoped_task],
+        do: assign(socket, :scoped_task_state, :error),
+        else: socket
+
+    AgentMerge.resume_flush(socket)
   end
 end

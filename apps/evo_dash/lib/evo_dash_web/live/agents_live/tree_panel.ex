@@ -30,6 +30,7 @@ defmodule EvoDashWeb.AgentsLive.TreePanel do
   attr(:commit_graph_loading, :boolean, required: true)
   attr(:commit_graph_error, :any, default: nil)
   attr(:current_node_id, :any, default: nil)
+  attr(:scoped_task_state, :atom, default: nil)
 
   def tree_panel(assigns) do
     ~H"""
@@ -114,67 +115,98 @@ defmodule EvoDashWeb.AgentsLive.TreePanel do
             </div>
           </div>
 
-          <%= if @left_view == :tree do %>
-            <%= if @agents_loading do %>
-              <div class="text-center py-16 bg-base-200/40 rounded-xl">
-                <.icon
-                  name="hero-arrow-path"
-                  class="size-8 mx-auto mb-4 text-base-content/60 animate-spin"
-                />
-                <%!-- 加载中提示：智能体列表从当前节点异步拉取时的占位加载态 --%>
-                <p class="text-sm text-base-content/70">{gettext("Loading agents…")}</p>
-              </div>
-            <% else %>
-              <%= if @agents == [] do %>
-                <div class="text-center py-16">
-                  <.icon
-                    name="hero-server"
-                    class="size-10 mx-auto mb-4 text-base-content/40"
-                  />
-                  <p class="text-lg text-base-content">
-                    {gettext("No agents currently registered")}
-                  </p>
-                  <p class="text-sm mt-2 text-base-content/60">
-                    {gettext("Start a task from the dashboard to see agents here.")}
-                  </p>
-                </div>
-              <% else %>
-                <div class="space-y-4">
-                  <%= for {repo_name, tree_nodes} <- @repo_trees do %>
-                    <div>
-                      <!-- Repo Header -->
-                      <div class="flex items-center gap-2 mb-2 pb-1 border-b border-base-300">
-                        <.icon
-                          name="hero-server-stack"
-                          class="size-5 text-primary-content p-1.5 rounded-lg bg-primary"
-                        />
-                        <span class="min-w-0 break-all font-semibold text-sm text-base-content">{repo_name}</span>
-                        <span class="text-xs text-base-content/70">({length(tree_nodes)} {gettext(
-                          "directories"
-                        )})</span>
-                      </div>
-                      <div class="space-y-4 font-mono text-sm">
-                        <EvoDashWeb.AgentsComponents.path_tree
-                          nodes={tree_nodes}
-                          depth={0}
-                          selected_id={@selected_agent_id}
-                          new_agent_ids={@new_agent_ids}
-                          changed_status_ids={@changed_status_ids}
-                        />
-                      </div>
+          <p
+            :if={@scoped_task_state == :ready and @agents_loading}
+            class="text-sm text-base-content/70"
+            role="status"
+          >
+            {gettext("Refreshing task agents…")}
+          </p>
+          <%= cond do %>
+            <% @scoped_task_state == :loading -> %>
+              <p id="scoped-agents-loading" class="text-sm text-base-content/70" role="status">
+                {gettext("Loading agents…")}
+              </p>
+            <% @scoped_task_state == :missing -> %>
+              <p id="scoped-agents-missing" class="text-sm text-base-content/70">
+                {gettext("Task not found on this node.")}
+              </p>
+            <% @scoped_task_state == :unavailable -> %>
+              <p class="text-sm text-base-content/70">
+                {gettext("The selected node is unavailable.")}
+              </p>
+            <% @scoped_task_state == :error -> %>
+              <%!-- The retryable error above owns the first-load failure. --%>
+            <% true -> %>
+              <%= if @left_view == :tree do %>
+                <%= if @agents_loading and is_nil(@scoped_task_state) do %>
+                  <div class="text-center py-16 bg-base-200/40 rounded-xl">
+                    <.icon
+                      name="hero-arrow-path"
+                      class="size-8 mx-auto mb-4 text-base-content/60 animate-spin"
+                    />
+                    <%!-- 加载中提示：智能体列表从当前节点异步拉取时的占位加载态 --%>
+                    <p class="text-sm text-base-content/70">{gettext("Loading agents…")}</p>
+                  </div>
+                <% else %>
+                  <%= if @agents == [] do %>
+                    <div class="text-center py-16">
+                      <.icon
+                        name="hero-server"
+                        class="size-10 mx-auto mb-4 text-base-content/40"
+                      />
+                      <p
+                        :if={@scoped_task_state == :ready}
+                        id="scoped-agents-empty"
+                        class="text-base text-base-content"
+                      >
+                        {gettext("No live agents for this task.")}
+                      </p>
+                      <p :if={is_nil(@scoped_task_state)} class="text-lg text-base-content">
+                        {gettext("No agents currently registered")}
+                      </p>
+                      <p :if={is_nil(@scoped_task_state)} class="text-sm mt-2 text-base-content/60">
+                        {gettext("Start a task from the dashboard to see agents here.")}
+                      </p>
+                    </div>
+                  <% else %>
+                    <div class="space-y-4">
+                      <%= for {repo_name, tree_nodes} <- @repo_trees do %>
+                        <div>
+                          <!-- Repo Header -->
+                          <div class="flex items-center gap-2 mb-2 pb-1 border-b border-base-300">
+                            <.icon
+                              name="hero-server-stack"
+                              class="size-5 text-primary-content p-1.5 rounded-lg bg-primary"
+                            />
+                            <span class="min-w-0 break-all font-semibold text-sm text-base-content">{repo_name}</span>
+                            <span class="text-xs text-base-content/70">({length(tree_nodes)} {gettext(
+                              "directories"
+                            )})</span>
+                          </div>
+                          <div class="space-y-4 font-mono text-sm">
+                            <EvoDashWeb.AgentsComponents.path_tree
+                              nodes={tree_nodes}
+                              depth={0}
+                              selected_id={@selected_agent_id}
+                              new_agent_ids={@new_agent_ids}
+                              changed_status_ids={@changed_status_ids}
+                            />
+                          </div>
+                        </div>
+                      <% end %>
                     </div>
                   <% end %>
-                </div>
+                <% end %>
+              <% else %>
+                <EvoDashWeb.AgentsComponents.CommitGraphView.commit_graph_view
+                  repos={@commit_graph}
+                  selected_id={@selected_agent_id}
+                  loading={@commit_graph_loading}
+                  error={@commit_graph_error}
+                  node_key={@current_node_id || "local"}
+                />
               <% end %>
-            <% end %>
-          <% else %>
-            <EvoDashWeb.AgentsComponents.CommitGraphView.commit_graph_view
-              repos={@commit_graph}
-              selected_id={@selected_agent_id}
-              loading={@commit_graph_loading}
-              error={@commit_graph_error}
-              node_key={@current_node_id || "local"}
-            />
           <% end %>
         </div>
 

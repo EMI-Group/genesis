@@ -3,7 +3,7 @@
 // Contract (detail: assets/css/CONTEXT.md, "Surfaces & elevation"):
 //   * `surfaces.css` is the ONE owner of the layering vocabulary and it is
 //     imported right after `density.css`, before every component sheet.
-//   * three layers — chrome (`--surface-shell` / `--surface-rail`), the content
+//   * three layers — chrome (`--surface-shell` / `--surface-rail` / `--surface-dock`), the content
 //     canvas (`--surface-canvas`) and the overlays (`--surface-raised` plus
 //     `--elev-1/2/3`). Overlays are the ONLY shadowed surfaces.
 //   * every token is declared exactly once, on `:root` (plus a
@@ -11,8 +11,8 @@
 //     another stylesheet.
 //   * `surfaces.css` declares no size, padding or gap: `density.css` stays the
 //     only owner of the scale.
-//   * the compact rail centers one tab silhouette with distinct resting,
-//     current and pending treatments; the inset canvas owns its own frame.
+//   * the compact rail joins the committed tab to the canvas without letting
+//     pending feedback change the committed destination's silhouette.
 //   * the published behaviour hooks (preview, optional kind icons, and the
 //     rail-end overflow menu) have CSS treatments without requiring new markup.
 //   * content surfaces carry NO elevation (only `var(--elev-*)` where a surface
@@ -81,6 +81,7 @@ function merge(rules) {
 const TONES = [
   "--surface-shell",
   "--surface-rail",
+  "--surface-dock",
   "--surface-canvas",
   "--surface-hover",
   "--surface-selected",
@@ -148,8 +149,8 @@ test("the light and dark token values are both present and differ", () => {
     const declared = token in light ? light[token] : dark[token];
     assert.match(
       declared,
-      /var\(--color-(base|primary)-/,
-      `${token} must resolve from a base/neutral/primary token, got: ${declared}`
+      /var\(--color-(?:base-[\w-]+|primary(?:-standalone)?|secondary)\)/,
+      `${token} must resolve from an existing palette role, got: ${declared}`
     );
   }
 });
@@ -172,14 +173,14 @@ test("app.css imports surfaces.css between the scale and the component sheets", 
     "./surfaces.css",
     "./assistant.css",
     "./workbench.css",
-    "./motion.css",
-    "./view_transitions.css"
+    "./motion.css"
   ]);
 });
 
 // --- the native tab strip --------------------------------------------------
 
 const workbench = source["workbench.css"];
+const canvasFill = "var(--workbench-canvas, var(--surface-canvas))";
 
 test("the tab strip has ONE declaration per selector group", () => {
   for (const selector of [".workbench-tab", ".workbench-tab-link", ".workbench-tabs"]) {
@@ -205,28 +206,28 @@ test("the tab strip has ONE declaration per selector group", () => {
 test("current and pending tabs have distinct treatments within a stable silhouette", () => {
   const [tab] = rulesWith(".workbench-tab", workbench, {exactSelectorText: true});
   const resting = values(tab.body);
-  assert.equal(resting["border-radius"], "var(--radius-field)");
+  assert.equal(resting["border-radius"], "var(--radius-tab) var(--radius-tab) 0 0");
   assert.equal(resting.border, "1px solid transparent", "reserve the border even before selection");
   assert.equal(resting["font-size"], "var(--text-xs)");
 
-  const current = rulesWith(".workbench-tab.is-current", workbench);
-  const pending = rulesWith('.workbench-tab[data-pending="true"]', workbench);
-  assert.equal(current.length, 1);
-  assert.equal(pending.length, 1);
-  assert.ok(pending[0].selectors.includes(".workbench-tab.is-pending"));
-  assert.deepEqual(values(current[0].body), {
-    background: "var(--surface-canvas)",
-    "border-color": "var(--border-hairline)",
-    color: "var(--color-base-content)",
-    "font-weight": "600"
-  });
-  assert.deepEqual(values(pending[0].body), {
+  const [current] = rulesWith(".workbench-tab.is-current", workbench);
+  const [pending] = rulesWith('.workbench-tab[data-tab-pending="true"]:not(.is-current)', workbench);
+  const committed = values(current.body);
+  assert.equal(committed.background, canvasFill);
+  assert.equal(committed["border-color"], "var(--border-hairline)");
+  assert.equal(committed["border-block-end-color"], "transparent");
+  assert.equal(committed["z-index"], "1", "the tab paints over the canvas's top hairline");
+  assert.deepEqual(values(pending.body), {
     background: "var(--workbench-selected)",
     "border-color": "var(--color-primary-standalone)",
     color: "var(--color-base-content)"
   });
+  for (const state of [current, pending]) {
+    assert.doesNotMatch(state.body, /(?:size|width|padding|margin|font-weight)\s*:/,
+      "confirmation or pending must not resize or move the tab");
+  }
 
-  const [dot] = ruleContaining(':is([data-pending="true"], .is-pending) .workbench-tab-link::after', workbench);
+  const [dot] = rulesWith('.workbench-tab[data-tab-pending="true"] .workbench-tab-link::after', workbench);
   const indicator = values(dot.body);
   assert.equal(indicator.content, '""', "pending adds a static decorative marker");
   assert.equal(indicator.position, "absolute", "the marker must not shift the title");
@@ -237,14 +238,14 @@ test("current and pending tabs have distinct treatments within a stable silhouet
   assert.doesNotMatch(dot.body, /\banimation(?:-[\w-]+)?\s*:/);
 });
 
-test("the compact rail centers tabs and contains horizontal overflow", () => {
+test("the compact bottom-aligned rail contains horizontal overflow", () => {
   const [strip] = rulesWith(".workbench-tabs", workbench, {exactSelectorText: true});
   const declared = values(strip.body);
   assert.equal(declared["overflow-x"], "auto");
   assert.equal(declared["overflow-y"], "hidden");
   assert.equal(declared["overscroll-behavior-inline"], "contain");
-  assert.equal(declared["scrollbar-width"], "thin");
-  assert.equal(declared["align-items"], "center");
+  assert.equal(declared["scrollbar-width"], "none", "a native scrollbar gutter must not break the canvas join");
+  assert.equal(declared["align-items"], "end");
   assert.equal(declared["align-self"], "stretch");
   assert.equal(declared.flex, "0 1 auto", "the strip shrinks to make room for its sibling controls");
   assert.equal(declared["min-width"], "0");
@@ -252,7 +253,11 @@ test("the compact rail centers tabs and contains horizontal overflow", () => {
 
   const [tab] = rulesWith(".workbench-tab", workbench, {exactSelectorText: true});
   assert.equal(values(tab.body).flex, "0 0 auto", "scroll rather than squeeze a tab");
-  assert.equal(values(tab.body)["block-size"], "var(--row-h-sm)");
+  assert.equal(values(tab.body)["block-size"], "calc(var(--control-h-sm) + 2px)");
+  assert.equal(values(tab.body)["max-inline-size"], "min(10rem, 55vw)", "long labels leave more space for neighboring tabs");
+  const [separator] = rulesWith('.workbench-tab[data-tab-group-start="true"]::before', workbench);
+  assert.equal(values(separator.body)["pointer-events"], "none");
+  assert.equal(values(separator.body)["border-inline-start"], "1px solid var(--border-hairline)");
 
   const [rail] = rulesWith(".workbench-tab-rail", workbench);
   assert.equal(values(rail.body)["min-width"], "0", "the rail must shrink with the shell");
@@ -260,7 +265,7 @@ test("the compact rail centers tabs and contains horizontal overflow", () => {
   assert.equal(values(empty.body).display, "none", "an empty strip adds no space beside Create");
 });
 
-test("the inset canvas owns the hairline instead of joining the active tab", () => {
+test("the inset canvas retains its frame and meets the committed tab at the hairline", () => {
   const [bar] = rulesWith(".workbench-top", workbench, {exactSelectorText: true});
   const top = values(bar.body);
   assert.doesNotMatch(bar.body, /\bborder-(?:bottom|block-end)\s*:/);
@@ -270,7 +275,8 @@ test("the inset canvas owns the hairline instead of joining the active tab", () 
   const frame = values(canvas.body);
   assert.equal(frame["margin-inline"], top["padding-inline"], "align the canvas with the top bar gutter");
   assert.equal(frame.border, "1px solid var(--border-hairline)");
-  assert.equal(frame.background, "var(--surface-canvas)");
+  assert.equal(frame["margin-block-start"], "-1px", "overlap only the single top hairline");
+  assert.equal(frame.background, canvasFill);
   assert.equal(frame["box-shadow"], undefined);
 });
 
@@ -286,6 +292,22 @@ test("the close button reveals on hover/focus and is always visible when current
 
   const always = ruleContaining(".workbench-tab.is-current .workbench-tab-close", workbench);
   assert.equal(always.length, 1, "the active tab must always show its close control");
+
+  // Inset focus rings remain visible at either clipped edge of the scroller.
+  const [focus] = rulesWith(".workbench-top :focus-visible", workbench);
+  assert.equal(values(focus.body).outline, "2px solid var(--color-primary-standalone)");
+  assert.equal(values(focus.body)["outline-offset"], "-2px");
+
+  const coarse = workbench.split("@media (pointer: coarse)")[1];
+  const [tabFloor] = rulesWith(".workbench-tabs > .workbench-tab", coarse);
+  assert.equal(values(tabFloor.body)["block-size"], "calc(var(--touch-target) + 2px)");
+  const [touchLink] = rulesWith(".workbench-tab .workbench-tab-link", coarse);
+  assert.equal(values(touchLink.body)["min-inline-size"], "var(--touch-target)");
+  const [touchClose] = rulesWith(".workbench-tab .workbench-tab-close", coarse);
+  const touch = values(touchClose.body);
+  assert.equal(touch["inline-size"], "var(--touch-target)");
+  assert.equal(touch["block-size"], "var(--touch-target)");
+  assert.equal(touch.visibility, "visible", "touch has no hover for revealing close");
 });
 
 // --- the published behaviour hooks -----------------------------------------
@@ -337,7 +359,16 @@ test("the published tab hooks are styled", () => {
 test("the right dock is a shell-layer panel with ONE hairline", () => {
   const [history] = rulesWith(".workbench-history", workbench, {exactSelectorText: true});
   const declared = values(history.body);
-  assert.equal(declared.background, "var(--surface-rail)");
+  assert.equal(declared.background, "var(--surface-dock)");
+  const [sidebar] = rulesWith("#app-layout #sidebar", workbench);
+  assert.equal(values(sidebar.body).background, "var(--surface-rail)");
+  for (const theme of [":root", '[data-theme="dark"]']) {
+    const palette = values(rulesWith(theme)[0].body);
+    assert.notEqual(palette["--surface-dock"], palette["--surface-rail"]);
+    assert.match(palette["--surface-dock"], /var\(--color-secondary\) [1-9]%/,
+      "the dock has a restrained secondary wash in either theme");
+  }
+  assert.match(declared["--workbench-selected"], /var\(--color-primary\) 10%/, "accents tint local choices, not the whole dock");
   assert.equal(declared["border-inline-start"], "1px solid var(--border-hairline)");
   assert.equal(declared["box-shadow"], undefined, "the dock never floats");
   assert.equal(declared.padding, "calc(var(--card-pad) / 2)", "the panel frame uses the shared density scale");
@@ -461,11 +492,34 @@ test("hover, selected and focus are three different treatments", () => {
 
 // --- the center canvas ----------------------------------------------------
 
-test("the center canvas takes the canvas token, once", () => {
-  const canvas = leafRules(source["app.css"]).filter(rule =>
-    rule.selectors.includes("#main-content") && rule.selectors.includes("#main-scroll")
+test("the page and scroller consume the same fill as the tab and frame, with no competing paint", () => {
+  const canvas = FILES.flatMap(name => leafRules(source[name])).filter(rule =>
+    /#main-(?:content|scroll)\b/.test(rule.selectorText) && /\bbackground(?:-color)?\s*:/.test(rule.body)
   );
   assert.equal(canvas.length, 1, "expected ONE #main-content + #main-scroll canvas rule");
-  assert.deepEqual(values(canvas[0].body), {background: "var(--surface-canvas)"},
+  assert.deepEqual(canvas[0].selectors, ["#main-content", "#main-scroll"]);
+  assert.deepEqual(values(canvas[0].body), {background: canvasFill},
     "the canvas rule stays background-only");
+});
+
+test("only the uncovered New Task page changes the inherited canvas, separately from composer fill", () => {
+  const overrides = FILES.flatMap(name => leafRules(source[name])).filter(rule =>
+    "--workbench-canvas" in values(rule.body)
+  );
+  const draft = ".workbench-center:has(> .workbench-content-stack > #main-scroll #workbench-task-composer):not(:has(#workbench-git-diff))";
+  const dark = '[data-theme="dark"] ';
+  assert.deepEqual(overrides.map(rule => rule.selectorText), [draft, dark + draft]);
+
+  const task = '.workbench-composer[data-composer-kind="task"]';
+  for (const [index, [prefix, tone]] of [
+    ["", "color-mix(in oklab, var(--surface-canvas) 45%, var(--surface-shell))"],
+    [dark, "var(--color-base-100)"]
+  ].entries()) {
+    assert.deepEqual(values(overrides[index].body), {"--workbench-canvas": tone});
+    const [composer] = rulesWith(prefix + task, source["assistant.css"]);
+    const fill = values(composer.body)["--composer-surface"];
+    assert.ok(fill);
+    assert.notEqual(fill, tone, "the resting composer is distinct from the surrounding canvas");
+    assert.doesNotMatch(fill, /--workbench-canvas/, "the editor never inherits the page's draft fill");
+  }
 });

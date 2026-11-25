@@ -109,66 +109,76 @@ defmodule EvoDashWeb.HomeLive.Composer do
       >
         {assigns[:workspace_error]}
       </p>
-      <ComposerComponents.composer kind="assistant" class="assistant-input-card">
-        <form
-          id="chat-form"
-          phx-submit="send_message"
-          phx-change="chat_input"
-          phx-debounce="250"
-          class="assistant-message-form"
+      <ComposerComponents.composer kind="assistant">
+        <ComposerComponents.composer_surface
+          class="assistant-input-card"
+          editor_tag="form"
+          editor_class="assistant-message-form"
+          editor_attrs={
+            %{
+              "id" => "chat-form",
+              "phx-submit" => "send_message",
+              "phx-change" => "chat_input",
+              "phx-debounce" => "250"
+            }
+          }
+          toolbar_id="chat-composer-controls"
+          toolbar_class="assistant-context-bar"
         >
-          <.attachment_chips {assigns} />
-          <textarea
-            id="chat-message-input"
-            name="message"
-            phx-hook="AssistantComposer"
-            disabled={@composer_textarea_disabled?}
-            placeholder={gettext("Message Genesis Assistant…")}
-            rows="3"
-            aria-label={gettext("Message Genesis Assistant…")}
-            aria-describedby="chat-keyboard-hint"
-            class="assistant-textarea"
-          >{@composer_draft}</textarea>
-        </form>
-        <div id="chat-composer-controls" class="assistant-context-bar">
-          <div class="assistant-context-start">
-            <.attach_menu {assigns} />
-            <%= if is_nil(assigns[:workbench_draft]) do %>
-              {EvoDashWeb.HomeLive.WorkspaceComponent.selector(assigns)}
-            <% end %>
-            {EvoDashWeb.HomeLive.TaskCard.follow_control(assigns)}
-          </div>
-          <div class="assistant-context-end">
-            <.llm_selection
-              id="chat-llm-selection"
-              provider_profiles={@composer_provider_profiles}
-              model_selections={@composer_model_selections}
-              model_spec={@composer_model_spec}
-              show_auto_option={@composer_model_selection_enabled}
-              disabled={@composer_picker_disabled?}
-              compact
-              class="assistant-model-control"
-            />
-            <button
-              type="submit"
-              form="chat-form"
-              disabled={@composer_send_disabled?}
-              class={["assistant-send-button", @composer_send_hidden? && "hidden"]}
-            >
-              <.icon name="hero-arrow-up" class="size-4" />
-              <span class="sr-only">{gettext("Send")}</span>
-            </button>
-            <button
-              type="button"
-              phx-click="stop"
-              disabled={@composer_stop_disabled?}
-              class={["assistant-stop-button", not @composer_stop_visible? && "hidden"]}
-            >
-              <.icon name="hero-stop" class="size-4" />
-              <span class="sr-only">{gettext("Stop reply")}</span>
-            </button>
-          </div>
-        </div>
+          <:editor>
+            <.attachment_chips {assigns} />
+            <textarea
+              id="chat-message-input"
+              name="message"
+              phx-hook="AssistantComposer"
+              disabled={@composer_textarea_disabled?}
+              placeholder={gettext("Message Genesis Assistant…")}
+              rows="3"
+              aria-label={gettext("Message Genesis Assistant…")}
+              aria-describedby="chat-keyboard-hint"
+              class="assistant-textarea"
+            >{@composer_draft}</textarea>
+          </:editor>
+          <:toolbar>
+            <div class="assistant-context-start">
+              <.attach_menu {assigns} />
+              <%= if is_nil(assigns[:workbench_draft]) do %>
+                {EvoDashWeb.HomeLive.WorkspaceComponent.selector(assigns)}
+              <% end %>
+              {EvoDashWeb.HomeLive.TaskCard.follow_control(assigns)}
+            </div>
+            <div class="assistant-context-end">
+              <.llm_selection
+                id="chat-llm-selection"
+                provider_profiles={@composer_provider_profiles}
+                model_selections={@composer_model_selections}
+                model_spec={@composer_model_spec}
+                show_auto_option={@composer_model_selection_enabled}
+                disabled={@composer_picker_disabled?}
+                compact
+                class="assistant-model-control"
+              />
+              <button
+                type="submit"
+                form="chat-form"
+                disabled={@composer_send_disabled?}
+                class={["assistant-send-button", @composer_send_hidden? && "hidden"]}
+              >
+                <.icon name="hero-arrow-up" class="size-4" />
+                <span class="sr-only">{gettext("Send")}</span>
+              </button>
+              <button
+                type="button"
+                phx-click="stop"
+                disabled={@composer_stop_disabled?}
+                class={["assistant-stop-button", not @composer_stop_visible? && "hidden"]}
+              >
+                <.icon name="hero-stop" class="size-4" />
+                <span class="sr-only">{gettext("Stop reply")}</span>
+              </button>
+            </div>
+          </:toolbar>
+        </ComposerComponents.composer_surface>
       </ComposerComponents.composer>
       <p id="chat-keyboard-hint" class="sr-only">
         {gettext("Enter to send · Shift+Enter for a new line")}

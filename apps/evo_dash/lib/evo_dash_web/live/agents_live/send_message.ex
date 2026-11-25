@@ -7,14 +7,18 @@ defmodule EvoDashWeb.AgentsLive.SendMessage do
   import Phoenix.Component, only: [assign: 2, assign: 3]
   import Phoenix.LiveView, only: [put_flash: 3]
   alias EvoDash.SafeCall
-  alias EvoDashWeb.AgentsLive.OptimisticMessages
+  alias EvoDashWeb.AgentsLive.{Inspector, OptimisticMessages, Scope}
 
   @doc """
   Opens the modal for the agent named by a STRING id.
   """
   def open(socket, id) do
-    agent_id = String.to_integer(id)
-    {:noreply, assign(socket, send_message_agent_id: agent_id, send_message_text: "")}
+    with agent_id when is_integer(agent_id) <- Inspector.parse_agent_id(id),
+         true <- Scope.selectable_agent?(socket.assigns, agent_id) do
+      {:noreply, assign(socket, send_message_agent_id: agent_id, send_message_text: "")}
+    else
+      _ -> {:noreply, socket}
+    end
   end
 
   @doc """
@@ -36,7 +40,15 @@ defmodule EvoDashWeb.AgentsLive.SendMessage do
   `{:ok, :ok}` is a success.
   """
   def send(socket, id, message) do
-    agent_id = String.to_integer(id)
+    with agent_id when is_integer(agent_id) <- Inspector.parse_agent_id(id),
+         true <- Scope.selectable_agent?(socket.assigns, agent_id) do
+      deliver(socket, agent_id, message)
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  defp deliver(socket, agent_id, message) do
     node = socket.assigns.current_node
 
     # Return shapes (verified): success = {:ok, :ok} (local and remote); a

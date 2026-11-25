@@ -21,16 +21,21 @@ export function routeTab(url, data, compose) {
   if (localNode(node) !== localNode(params.get("node"))) return undefined
   const page = data.workbenchPage
   const review = /^\/review\/([^/]+)(?:\/commit\/[^/]+)?$/.exec(url.pathname)
-  const task = url.pathname === "/tasks" ? params.get("task") : decoded(review?.[1])
+  const queryTaskPage = url.pathname === "/agents" ? "agents" : url.pathname === "/tasks" ? "tasks" : null
+  const task = queryTaskPage ? params.get("task") : decoded(review?.[1])
   const session = params.get("session")
   const draft = params.get("wb_draft")
   const project = params.get("wb_project")
   const href = exactHref(url)
-  if (task && ((review && page === "review") || (!review && page === "tasks"))) {
-    if (task === data.workbenchTask) return {kind: "task", id: task, href, title: data.workbenchTitle}
+  if (task) {
+    if (page === (review ? "review" : queryTaskPage) && task === data.workbenchTask) {
+      return {kind: "task", id: task, href, title: data.workbenchTitle}
+    }
     return undefined
   }
-  if (data.workbenchTask || review || (url.pathname === "/tasks" && task)) return undefined
+  if (data.workbenchTask || review) return undefined
+  // The global inspector is not a task view, even when an agent is selected.
+  if (url.pathname === "/agents") return page === "agents" ? null : undefined
   if (url.pathname === "/assistant") {
     if (page !== "assistant") return undefined
     if (session || data.workbenchSession) {

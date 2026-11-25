@@ -1,6 +1,10 @@
+<% scoped_task = if Scope.available?(assigns), do: assigns[:scoped_task] %>
 <EvoDashWeb.Layouts.app
   flash={@flash}
   current_page={:agents}
+  workbench_task={assigns[:task_scope_id]}
+  workbench_project={scoped_task && scoped_task.project_path}
+  workbench_title={scoped_task && scoped_task.objective}
   config_status={@config_status}
   current_node_id={@current_node_id}
   remote_targets={assigns[:remote_targets] || []}
@@ -27,16 +31,35 @@
     independently — the header can never eat into the panels' scrollers or
     force page-level scroll. Below xl it is normal page flow. -->
     <div class="grid min-h-0 gap-4 xl:h-full xl:grid-rows-[auto_minmax(0,1fr)]">
-      <header class="min-w-0">
-        <h1 class="text-xl font-semibold text-base-content">{gettext("Agents")}</h1>
-        <p class="mt-1 text-sm text-base-content/70">
-          {gettext("Inspect the agent tree, live activity and commit history on this node.")}
-        </p>
+      <header class="flex min-w-0 flex-wrap items-start justify-between gap-3">
+        <div class="min-w-0 flex-1">
+          <h1 class="text-xl font-semibold text-base-content">{gettext("Agents")}</h1>
+          <div :if={assigns[:task_scope_id]} id="agents-task-scope" class="mt-1 min-w-0">
+            <p class="truncate text-xs text-base-content/70" title={assigns[:task_scope_id]}>
+              {gettext("Task: %{id}", id: assigns[:task_scope_id])}
+            </p>
+            <p :if={scoped_task && scoped_task.objective} class="line-clamp-2 text-base">
+              {scoped_task.objective}
+            </p>
+          </div>
+          <p :if={!assigns[:task_scope_id]} class="mt-1 text-sm text-base-content/70">
+            {gettext("Inspect the agent tree, live activity and commit history on this node.")}
+          </p>
+        </div>
+        <.link
+          :if={assigns[:task_scope_id]}
+          id="agents-clear-task-scope"
+          patch={Scope.path(nil, @current_node_id)}
+          class="btn btn-sm btn-ghost shrink-0"
+        >
+          {gettext("All agents")}
+        </.link>
       </header>
       <div class="agents-page-layout shell-fill animate-fade-in-up animation-delay-100">
         <EvoDashWeb.AgentsLive.TreePanel.tree_panel
           agents_error={@agents_error}
           agents_loading={@agents_loading}
+          scoped_task_state={assigns[:scoped_task_state]}
           left_view={@left_view}
           agents={@agents}
           repo_trees={@repo_trees}

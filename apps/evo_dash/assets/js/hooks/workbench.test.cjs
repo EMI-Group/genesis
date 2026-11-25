@@ -35,6 +35,7 @@ function cleanState(overrides = {}) {
   return {
     dataset: {
       workbenchNode: 'local',
+      workbenchNodeName: 'Local',
       workbenchProject: '/tmp/project',
       workbenchTask: '',
       workbenchSession: '',
@@ -90,6 +91,7 @@ test('identical inputs decide identically — repeated patches cost no sweep', (
     workbenchProject: '/tmp/project',
     workbenchTitle: state.dataset.workbenchTitle,
     workbenchDefaultDraft: state.dataset.workbenchDefaultDraft,
+    workbenchNodeName: 'Local',
     workbenchNode: 'local',
   };
   assert.equal(workbenchSyncNeeded(reordered, state), false);

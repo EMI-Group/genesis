@@ -3,15 +3,11 @@ defmodule EvoDashWeb.TaskFormComponents do
   Task form component for the dashboard — a single-card, two-layout
   "pageless editor".
 
-  One card contains the objective textarea AND a bottom toolbar
-  (`.input-controls` — attach-kind dropdown | mode+speed fused capsule (LEFT),
-  then a right-aligned cluster of (custom-agent select)? | model capsule |
-  circular icon-only send button) as its last
-  element. The
-  layout is server-seeded at render time via `layout_for/1` and client-driven
-  by the
-  AdaptiveInput JS hook (which adds a height-based trigger on top of the
-  server thresholds): the hook
+  The shared composer surface is `.input-layout > .input-card`: its editor
+  zone holds the textarea and its final toolbar zone is `.input-controls`.
+  The layout is server-seeded via `layout_for/1` and client-driven by the
+  AdaptiveInput JS hook, which adds a height-based trigger to the server
+  thresholds. The hook
   re-asserts the client-computed layout (a) while typing, on mount/updates,
   and (b) whenever the server re-seeds `data-layout` from its possibly-stale
   `@task_prompt` — a MutationObserver on `.input-layout` (attributeFilter:
@@ -25,23 +21,14 @@ defmodule EvoDashWeb.TaskFormComponents do
       row is the card's last line. The compact textarea keeps its own
       max-height cap (~16 wrapped lines) — load-bearing for the AdaptiveInput
       hook's flip-to-expanded decision.
-    * Layout B (`data-layout="expanded"`) — the input card fills the available
-      page height (flex column): `.input-card` is `flex: 1; min-height: 0;
-      overflow: hidden`, the textarea is `flex: 1` with internal scrolling
-      (`overflow-y: auto`) and NO max-height cap, and the in-flow
-      `.input-controls` launch panel is pinned at the bottom of the card by
-      flexbox — the card's overflow containment bounds the textarea on any
-      viewport height.
+    * Layout B (`data-layout="expanded"`) — the card and its editor zone fill
+      the available height. The textarea scrolls internally and the in-flow
+      `.input-controls` toolbar stays at the bottom.
 
-  Both layouts share the same bottom toolbar (`.input-controls`) — the card's
-  last element, ChatGPT/Gemini input-box style: the attach-kind dropdown
-  (text / image / audio, bottom-left) and the fused mode+speed capsule sit on
-  the LEFT, then the right-aligned cluster of (custom-agent select) → model
-  capsule → circular icon-only send button (far right). Only the textarea size
-  differs. The accent
-  decorations (accent border-color, layered box-shadow glow, top-edge
-  gradient) are defined on the base `.input-card` CSS rule and are shared by
-  both layouts.
+  Both layouts share the same toolbar: attach-kind dropdown (text / image /
+  audio) and mode+speed capsule on the left; optional custom-agent select,
+  model capsule and icon-only launch button on the right. CSS owns the
+  surface styling and layout geometry.
 
   There is NO per-keystroke server round trip: the textarea sends no
   `phx-change` event. The AdaptiveInput JS hook autogrows the textarea AND
@@ -59,10 +46,10 @@ defmodule EvoDashWeb.TaskFormComponents do
   persistence is purely client-side (the StatePersistence input watcher in
   app.js).
 
-  Routine task options and the optional advanced disclosure sit below the
-  editor, associated with `task-form`. A page that renders its own Task Options
-  section sets `show_options={false}` and renders `task_options_tab/1` there
-  instead. Project settings belong to the page.
+  The labelled Task Options section sits below the editor, with its fields
+  associated with `task-form`. A page that places the section separately sets
+  `show_options={false}` and renders `task_options_tab/1` once instead. Project
+  settings belong to the page.
 
   Passing `provider_profiles`, `model_selections`, or a non-empty `model_spec`
   moves the shared `LLMSelectionComponents.llm_selection/1` capsule INSIDE the
@@ -79,7 +66,7 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   use EvoDashWeb, :html
 
-  import EvoDashWeb.ComposerComponents, only: [composer: 1]
+  import EvoDashWeb.ComposerComponents, only: [composer: 1, composer_surface: 1]
   alias EvoDashWeb.TaskOptionsComponents
 
   @short_objective_threshold 1200
@@ -161,18 +148,18 @@ defmodule EvoDashWeb.TaskFormComponents do
     ~H"""
     <.composer kind="task" class="w-full flex-1 flex flex-col min-h-0">
       {task_editor(assigns)}
-      <div :if={@show_options && !@disabled} class="mx-auto mt-3 w-full max-w-3xl shrink-0 px-4">
-        <.task_options_tab
-          mode={@mode}
-          node_path={@node_path}
-          starting_commit={@starting_commit}
-          resume_from={@resume_from}
-          archive={@archive}
-          persist_agent_state?={@persist_agent_state?}
-          build_systems={@build_systems}
-          selected_build_system={@selected_build_system}
-        />
-      </div>
+      <.task_options_tab
+        :if={@show_options && !@disabled}
+        class="mx-auto mt-3 w-full max-w-3xl shrink-0 px-4"
+        mode={@mode}
+        node_path={@node_path}
+        starting_commit={@starting_commit}
+        resume_from={@resume_from}
+        archive={@archive}
+        persist_agent_state?={@persist_agent_state?}
+        build_systems={@build_systems}
+        selected_build_system={@selected_build_system}
+      />
     </.composer>
     """
   end
@@ -250,57 +237,40 @@ defmodule EvoDashWeb.TaskFormComponents do
           data-layout={layout}
           id="input-layout"
         >
-          <div class="input-card relative">
-            <textarea
-              name="prompt"
-              id="prompt"
-              phx-update="ignore"
-              phx-hook="AdaptiveInput"
-              class="input-prompt w-full text-base bg-transparent border-0 focus:outline-none resize-none placeholder:text-base-content/45 transition-colors"
-              placeholder={placeholder}
-              data-placeholder={placeholder}
-            ><%= @prompt %></textarea>
+          <.composer_surface class="input-card" toolbar_class="input-controls flex-nowrap">
+            <:editor>
+              <textarea
+                name="prompt"
+                id="prompt"
+                phx-update="ignore"
+                phx-hook="AdaptiveInput"
+                class="input-prompt text-base"
+                placeholder={placeholder}
+                data-placeholder={placeholder}
+              ><%= @prompt %></textarea>
+            </:editor>
 
-            <%!-- Bottom toolbar (.input-controls) — the card's LAST element, in
-                 normal document flow (never position: fixed). ChatGPT/Gemini
-                 input-box style: ALL controls live in ONE toolbar row pinned to
-                 the card's bottom — the ATTACH-KIND DROPDOWN (text / image /
-                 audio; bottom-LEFT; a <details class="dropdown"> whose <summary>
-                 is the visual "+" trigger — see below) and the fused
-                 mode+speed capsule (#mode-speed-capsule, also bottom-LEFT,
-                 right after "+"), then free space, then a RIGHT-ALIGNED
-                 cluster: (custom-agent select) → model capsule → circular
-                 icon-only send button (the cluster's LAST element = the row's
-                 far right, no auto margin of its own). The row's auto-margin
-                 lives on the FIRST element of the right cluster — the model
-                 capsule's ml-auto when @use_llm_selection?, else the
-                 custom-agent select's ml-auto, else the legacy model select's
-                 ml-auto — absorbing the free space and packing the cluster at
-                 the right edge with the uniform flex gap between members. DOM
-                 order == visual order (no order-* overrides). The attach
-                 dropdown, the mode+speed capsule and the hidden manual-fallback
-                 panel are DIRECT children of the toolbar; .file-manual is
-                 positioned absolutely just above the toolbar's left side, near
-                 the "+" trigger (see app.css), so it never takes part in the
-                 flex row. Both fused-capsule panels open UPWARD (daisyUI
-                 dropdown-top) so .input-card's overflow containment (expanded
-                 layout) never clips them below the card. The row is guaranteed
-                 ONE LINE (flex-nowrap — never wraps): selects and capsules use
-                 min-w-0 + truncate + max-w so long labels (agent names, mode
-                 descriptions, model ids) are clipped with an ellipsis instead
-                 of forcing the row wider than its container. Staged media
-                 attachments (@staged_attachments) render as a chip row directly
-                 ABOVE this toolbar, inside the card. --%>
+            <:before_toolbar :if={!@disabled}>
+              <p
+                :if={@mode == "custom_agent"}
+                class={[
+                  "workbench-composer-hint flex items-center gap-1.5 text-xs",
+                  if(@custom_agents == [], do: "text-warning", else: "text-base-content/70")
+                ]}
+              >
+                <%= if @custom_agents == [] do %>
+                  <.icon name="hero-exclamation-triangle" class="size-3.5 shrink-0" />
+                  <%!-- zh_CN: Custom Agent → "自定义智能体"（用户自定义的根智能体） --%>
+                  {gettext(
+                    "No custom agents defined. Add one in Settings → Agents to use Custom Agent mode."
+                  )}
+                <% else %>
+                  <.icon name="hero-user-circle" class="size-3.5 shrink-0" />
+                  <%!-- zh_CN: Custom Agent → "自定义智能体", root agent → "根智能体" --%>
+                  {gettext("Runs the selected custom agent as the root agent of an evolution task.")}
+                <% end %>
+              </p>
 
-            <%!-- The launch panel renders ONLY when a project is open
-                 (@disabled == false). When no project is active the row is
-                 hidden entirely — the textarea's task-launch hint is
-                 suppressed too (task_placeholder/2 returns "" for @disabled,
-                 so BOTH the SSR placeholder and the live data-placeholder are
-                 empty), so the empty state shows just the faded textarea
-                 (wrapper opacity) + the centered "Open a project to get
-                 started" hint overlay. --%>
-            <%= unless @disabled do %>
               <%!-- Staged media attachments — image/audio files picked via the
                    attach-kind dropdown above are staged server-side by
                    ProjectsLive into the @staged_attachments assign: a list of
@@ -361,9 +331,10 @@ defmodule EvoDashWeb.TaskFormComponents do
                   <% end %>
                 </div>
               <% end %>
+            </:before_toolbar>
 
-              <div class="input-controls flex-nowrap">
-                <%!-- Attach-kind dropdown — bottom-LEFT of the toolbar. A
+            <:toolbar :if={!@disabled}>
+              <%!-- Attach-kind dropdown — bottom-LEFT of the toolbar. A
                      native <details class="dropdown"> whose <summary> is the
                      visual "+" trigger (id objective-file-button — stable
                      test/UI marker). The FilePicker JS hook owns the whole
@@ -383,58 +354,58 @@ defmodule EvoDashWeb.TaskFormComponents do
                      (the hook derives the per-kind ids from the menu items).
                      dropdown-top opens the menu UPWARD so .input-card's
                      overflow containment (expanded layout) never clips it. --%>
-                <%!-- zh_CN: Attach file → "附加文件" --%>
-                <details
-                  id="objective-file-attach"
-                  class="dropdown dropdown-top"
-                  phx-hook="FilePicker"
+              <%!-- zh_CN: Attach file → "附加文件" --%>
+              <details
+                id="objective-file-attach"
+                class="dropdown dropdown-top"
+                phx-hook="FilePicker"
+              >
+                <summary
+                  id="objective-file-button"
+                  aria-label={gettext("Attach file")}
+                  title={gettext("Attach file")}
+                  class="btn btn-ghost btn-sm btn-square shrink-0"
                 >
-                  <summary
-                    id="objective-file-button"
-                    aria-label={gettext("Attach file")}
-                    title={gettext("Attach file")}
-                    class="btn btn-ghost btn-sm btn-square shrink-0"
-                  >
-                    <.icon name="hero-plus" class="size-4" />
-                  </summary>
-                  <ul class="menu menu-sm dropdown-content z-50 mb-2 p-1 shadow-lg bg-base-100 rounded-lg w-44 border border-base-300">
-                    <li>
-                      <button
-                        type="button"
-                        data-picker-kind="text"
-                        data-picker-id="objective_file"
-                      >
-                        <.icon name="hero-document-text" class="size-4" />
-                        <%!-- zh_CN: Text / PDF → "文字/PDF 文档类附件" --%>
-                        {gettext("Text / PDF")}
-                      </button>
-                    </li>
-                    <li>
-                      <button
-                        type="button"
-                        data-picker-kind="image"
-                        data-picker-id="objective_file_image"
-                      >
-                        <.icon name="hero-photo" class="size-4" />
-                        <%!-- zh_CN: Image → "图片"（图片类附件，服务端暂存） --%>
-                        {gettext("Image")}
-                      </button>
-                    </li>
-                    <li>
-                      <button
-                        type="button"
-                        data-picker-kind="audio"
-                        data-picker-id="objective_file_audio"
-                      >
-                        <.icon name="hero-musical-note" class="size-4" />
-                        <%!-- zh_CN: Audio → "音频"（音频类附件，服务端暂存） --%>
-                        {gettext("Audio")}
-                      </button>
-                    </li>
-                  </ul>
-                </details>
+                  <.icon name="hero-plus" class="size-4" />
+                </summary>
+                <ul class="menu menu-sm dropdown-content z-50 mb-2 p-1 shadow-lg bg-base-100 rounded-lg w-44 border border-base-300">
+                  <li>
+                    <button
+                      type="button"
+                      data-picker-kind="text"
+                      data-picker-id="objective_file"
+                    >
+                      <.icon name="hero-document-text" class="size-4" />
+                      <%!-- zh_CN: Text / PDF → "文字/PDF 文档类附件" --%>
+                      {gettext("Text / PDF")}
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      type="button"
+                      data-picker-kind="image"
+                      data-picker-id="objective_file_image"
+                    >
+                      <.icon name="hero-photo" class="size-4" />
+                      <%!-- zh_CN: Image → "图片"（图片类附件，服务端暂存） --%>
+                      {gettext("Image")}
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      type="button"
+                      data-picker-kind="audio"
+                      data-picker-id="objective_file_audio"
+                    >
+                      <.icon name="hero-musical-note" class="size-4" />
+                      <%!-- zh_CN: Audio → "音频"（音频类附件，服务端暂存） --%>
+                      {gettext("Audio")}
+                    </button>
+                  </li>
+                </ul>
+              </details>
 
-                <%!-- Manual path fallback for the attach dropdown's TEXT kind —
+              <%!-- Manual path fallback for the attach dropdown's TEXT kind —
                      rendered hidden; the FilePicker JS hook reveals it when the
                      native picker is unavailable (headless server, remote node,
                      picker disabled) and submits the typed path via the
@@ -448,65 +419,65 @@ defmodule EvoDashWeb.TaskFormComponents do
                      mode toggles) must never reset the open input. All
                      user-facing strings are gettext-wrapped here (the JS hook
                      only toggles visibility and reads payload.reason). --%>
-                <div
-                  id="objective-file-manual"
-                  class="file-manual"
-                  phx-update="ignore"
-                  hidden
-                >
-                  <div class="file-manual-input-wrap">
-                    <%!-- zh_CN: 手动输入完整文件路径的占位提示 → "输入完整文件路径…" --%>
-                    <input
-                      type="text"
-                      class="file-manual-input"
-                      placeholder={gettext("Type a full file path…")}
-                      aria-label={gettext("File path to attach")}
-                      autocomplete="off"
-                      spellcheck="false"
-                    />
-                    <%!-- zh_CN: 确认输入的文件路径 → "确认附加文件路径" --%>
-                    <button
-                      type="button"
-                      class="file-manual-confirm"
-                      aria-label={gettext("Confirm attach file path")}
-                      title={gettext("Confirm attach file path")}
+              <div
+                id="objective-file-manual"
+                class="file-manual"
+                phx-update="ignore"
+                hidden
+              >
+                <div class="file-manual-input-wrap">
+                  <%!-- zh_CN: 手动输入完整文件路径的占位提示 → "输入完整文件路径…" --%>
+                  <input
+                    type="text"
+                    class="file-manual-input"
+                    placeholder={gettext("Type a full file path…")}
+                    aria-label={gettext("File path to attach")}
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                  <%!-- zh_CN: 确认输入的文件路径 → "确认附加文件路径" --%>
+                  <button
+                    type="button"
+                    class="file-manual-confirm"
+                    aria-label={gettext("Confirm attach file path")}
+                    title={gettext("Confirm attach file path")}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
                     >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path d="M5 13l4 4L19 7" />
-                      </svg>
-                    </button>
-                    <%!-- zh_CN: 取消手动附加文件 → "取消附加文件路径" --%>
-                    <button
-                      type="button"
-                      class="file-manual-cancel"
-                      aria-label={gettext("Cancel attach file path")}
-                      title={gettext("Cancel attach file path")}
+                      <path d="M5 13l4 4L19 7" />
+                    </svg>
+                  </button>
+                  <%!-- zh_CN: 取消手动附加文件 → "取消附加文件路径" --%>
+                  <button
+                    type="button"
+                    class="file-manual-cancel"
+                    aria-label={gettext("Cancel attach file path")}
+                    title={gettext("Cancel attach file path")}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
                     >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                  <span class="file-manual-error" role="alert" hidden></span>
+                      <path d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
                 </div>
+                <span class="file-manual-error" role="alert" hidden></span>
+              </div>
 
-                <%!-- Fused mode + speed/quality capsule — a ChatGPT-style
+              <%!-- Fused mode + speed/quality capsule — a ChatGPT-style
                      collapsed pill sitting at the toolbar's LEFT, right after
                      the attach "+" trigger (its `.file-manual` sibling is
                      position:absolute and takes no flex space). The pill shows
@@ -532,243 +503,243 @@ defmodule EvoDashWeb.TaskFormComponents do
                      (phx-value-mode "<value>"). The quality value is threaded to
                      the task opt :quality_level (STRING); mode/quality and the
                      model capsule's reasoning stay independent. --%>
-                <details
-                  id="mode-speed-capsule"
-                  phx-hook="CapsulePanel"
-                  class="capsule dropdown dropdown-top min-w-0 shrink-0"
+              <details
+                id="mode-speed-capsule"
+                phx-hook="CapsulePanel"
+                class="capsule dropdown dropdown-top min-w-0 shrink-0"
+              >
+                <summary
+                  class="capsule-trigger flex items-center gap-1.5 rounded-full border border-base-300 bg-base-100 px-3 py-1.5 text-sm cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden"
+                  title={mode_description(@mode)}
                 >
-                  <summary
-                    class="capsule-trigger flex items-center gap-1.5 rounded-full border border-base-300 bg-base-100 px-3 py-1.5 text-sm cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden"
-                    title={mode_description(@mode)}
-                  >
-                    <span class="capsule-main min-w-0 max-w-[9rem] truncate font-medium text-base-content">
-                      {mode_label(@mode)}
-                    </span>
-                    <span class="capsule-secondary shrink-0 text-xs text-base-content/60">
-                      {quality_label(@quality_level)}
-                    </span>
-                    <span class="capsule-chevron shrink-0 text-base-content/50" aria-hidden="true">
-                      <.icon name="hero-chevron-down" class="size-3.5" />
-                    </span>
-                  </summary>
+                  <span class="capsule-main min-w-0 max-w-[9rem] truncate font-medium text-base-content">
+                    {mode_label(@mode)}
+                  </span>
+                  <span class="capsule-secondary shrink-0 text-xs text-base-content/60">
+                    {quality_label(@quality_level)}
+                  </span>
+                  <span class="capsule-chevron shrink-0 text-base-content/50" aria-hidden="true">
+                    <.icon name="hero-chevron-down" class="size-3.5" />
+                  </span>
+                </summary>
 
-                  <div class="capsule-panel dropdown-content z-50 mb-2 w-max min-w-72 max-w-[92vw] rounded-2xl border border-base-300 bg-base-100 p-2 shadow-lg">
-                    <%!-- Layer 1: speed ↔ quality hero (discrete stops) — ONE
+                <div class="capsule-panel dropdown-content z-50 mb-2 w-max min-w-72 max-w-[92vw] rounded-2xl border border-base-300 bg-base-100 p-2 shadow-lg">
+                  <%!-- Layer 1: speed ↔ quality hero (discrete stops) — ONE
                          line (flex-nowrap + whitespace-nowrap/flex-shrink-0 on
                          .capsule-stop in app.css): the three labels must never
                          wrap into a stack. --%>
-                    <div
-                      class="capsule-stops flex flex-nowrap gap-1"
-                      role="group"
-                      aria-label={gettext("Speed / quality trade-off")}
+                  <div
+                    class="capsule-stops flex flex-nowrap gap-1"
+                    role="group"
+                    aria-label={gettext("Speed / quality trade-off")}
+                  >
+                    <%!-- zh_CN: 速度优先（信任上下文、少做校验） --%>
+                    <button
+                      type="button"
+                      id="quality-level-fast"
+                      phx-click="select_quality_level"
+                      phx-value-level="fast"
+                      aria-pressed={to_string(@quality_level == "fast")}
+                      disabled={@disabled}
+                      class={[
+                        "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium",
+                        @quality_level == "fast" && "capsule-stop-active"
+                      ]}
+                      title={gettext("Prioritise speed — trust the context, run fewer checks")}
                     >
-                      <%!-- zh_CN: 速度优先（信任上下文、少做校验） --%>
-                      <button
-                        type="button"
-                        id="quality-level-fast"
-                        phx-click="select_quality_level"
-                        phx-value-level="fast"
-                        aria-pressed={to_string(@quality_level == "fast")}
-                        disabled={@disabled}
-                        class={[
-                          "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium",
-                          @quality_level == "fast" && "capsule-stop-active"
-                        ]}
-                        title={gettext("Prioritise speed — trust the context, run fewer checks")}
-                      >
-                        <.icon name="hero-bolt" class="size-3.5" />
-                        {gettext("Fast")}
-                      </button>
-                      <%!-- zh_CN: 均衡（默认，速度与正确性折中） --%>
-                      <button
-                        type="button"
-                        id="quality-level-balanced"
-                        phx-click="select_quality_level"
-                        phx-value-level="balanced"
-                        aria-pressed={to_string(@quality_level == "balanced")}
-                        disabled={@disabled}
-                        class={[
-                          "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium",
-                          @quality_level == "balanced" && "capsule-stop-active"
-                        ]}
-                        title={
-                          gettext("Balanced — the default trade-off between speed and correctness")
-                        }
-                      >
-                        <.icon name="hero-scale" class="size-3.5" />
-                        {gettext("Balanced")}
-                      </button>
-                      <%!-- zh_CN: 高质量（正确性优先，多验证、跑测试/编译） --%>
-                      <button
-                        type="button"
-                        id="quality-level-high_quality"
-                        phx-click="select_quality_level"
-                        phx-value-level="high_quality"
-                        aria-pressed={to_string(@quality_level == "high_quality")}
-                        disabled={@disabled}
-                        class={[
-                          "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium",
-                          @quality_level == "high_quality" && "capsule-stop-active"
-                        ]}
-                        title={gettext("Prioritise correctness — verify more, run tests and compile")}
-                      >
-                        <.icon name="hero-check-badge" class="size-3.5" />
-                        {gettext("High quality")}
-                      </button>
-                    </div>
+                      <.icon name="hero-bolt" class="size-3.5" />
+                      {gettext("Fast")}
+                    </button>
+                    <%!-- zh_CN: 均衡（默认，速度与正确性折中） --%>
+                    <button
+                      type="button"
+                      id="quality-level-balanced"
+                      phx-click="select_quality_level"
+                      phx-value-level="balanced"
+                      aria-pressed={to_string(@quality_level == "balanced")}
+                      disabled={@disabled}
+                      class={[
+                        "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium",
+                        @quality_level == "balanced" && "capsule-stop-active"
+                      ]}
+                      title={
+                        gettext("Balanced — the default trade-off between speed and correctness")
+                      }
+                    >
+                      <.icon name="hero-scale" class="size-3.5" />
+                      {gettext("Balanced")}
+                    </button>
+                    <%!-- zh_CN: 高质量（正确性优先，多验证、跑测试/编译） --%>
+                    <button
+                      type="button"
+                      id="quality-level-high_quality"
+                      phx-click="select_quality_level"
+                      phx-value-level="high_quality"
+                      aria-pressed={to_string(@quality_level == "high_quality")}
+                      disabled={@disabled}
+                      class={[
+                        "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium",
+                        @quality_level == "high_quality" && "capsule-stop-active"
+                      ]}
+                      title={gettext("Prioritise correctness — verify more, run tests and compile")}
+                    >
+                      <.icon name="hero-check-badge" class="size-3.5" />
+                      {gettext("High quality")}
+                    </button>
+                  </div>
 
-                    <%!-- Layer-1 → Layer-2 entry: SHORT mode label + right arrow
+                  <%!-- Layer-1 → Layer-2 entry: SHORT mode label + right arrow
                          (the long description sentence lives in the trigger's
                          title tooltip, never inline here). --%>
-                    <details class="capsule-sub">
-                      <summary class="capsule-subrow flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm cursor-pointer select-none list-none hover:bg-base-200 [&::-webkit-details-marker]:hidden">
-                        <span class="capsule-subrow-label min-w-0 flex-1 truncate text-base-content/80">
-                          {gettext("Mode")} · {mode_label(@mode)}
+                  <details class="capsule-sub">
+                    <summary class="capsule-subrow flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm cursor-pointer select-none list-none hover:bg-base-200 [&::-webkit-details-marker]:hidden">
+                      <span class="capsule-subrow-label min-w-0 flex-1 truncate text-base-content/80">
+                        {gettext("Mode")} · {mode_label(@mode)}
+                      </span>
+                      <span
+                        class="capsule-subrow-arrow shrink-0 text-base-content/50"
+                        aria-hidden="true"
+                      >
+                        <.icon name="hero-chevron-right" class="size-4" />
+                      </span>
+                    </summary>
+
+                    <div
+                      class="capsule-list mt-1 space-y-0.5"
+                      role="listbox"
+                      aria-label={gettext("Mode")}
+                    >
+                      <button
+                        type="button"
+                        id="mode-option-genesis_existing"
+                        phx-click="task_change"
+                        phx-value-mode="genesis_existing"
+                        disabled={@disabled}
+                        class={[
+                          "capsule-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left",
+                          @mode == "genesis_existing" && "capsule-item-active"
+                        ]}
+                      >
+                        <span class="capsule-item-label min-w-0 flex-1 truncate">
+                          <%!-- zh_CN: Initialize existing project → "初始化已有项目" --%>
+                          {gettext("Initialize existing project")}
                         </span>
                         <span
-                          class="capsule-subrow-arrow shrink-0 text-base-content/50"
+                          :if={@mode == "genesis_existing"}
+                          class="capsule-item-check shrink-0 text-primary-standalone"
                           aria-hidden="true"
                         >
-                          <.icon name="hero-chevron-right" class="size-4" />
+                          <.icon name="hero-check" class="size-4" />
                         </span>
-                      </summary>
-
-                      <div
-                        class="capsule-list mt-1 space-y-0.5"
-                        role="listbox"
-                        aria-label={gettext("Mode")}
+                      </button>
+                      <button
+                        type="button"
+                        id="mode-option-genesis_new"
+                        phx-click="task_change"
+                        phx-value-mode="genesis_new"
+                        disabled={@disabled}
+                        class={[
+                          "capsule-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left",
+                          @mode == "genesis_new" && "capsule-item-active"
+                        ]}
                       >
-                        <button
-                          type="button"
-                          id="mode-option-genesis_existing"
-                          phx-click="task_change"
-                          phx-value-mode="genesis_existing"
-                          disabled={@disabled}
-                          class={[
-                            "capsule-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left",
-                            @mode == "genesis_existing" && "capsule-item-active"
-                          ]}
+                        <span class="capsule-item-label min-w-0 flex-1 truncate">
+                          <%!-- zh_CN: Create new project → "新建空白项目" --%>
+                          {gettext("Create new project")}
+                        </span>
+                        <span
+                          :if={@mode == "genesis_new"}
+                          class="capsule-item-check shrink-0 text-primary-standalone"
+                          aria-hidden="true"
                         >
-                          <span class="capsule-item-label min-w-0 flex-1 truncate">
-                            <%!-- zh_CN: Initialize existing project → "初始化已有项目" --%>
-                            {gettext("Initialize existing project")}
-                          </span>
-                          <span
-                            :if={@mode == "genesis_existing"}
-                            class="capsule-item-check shrink-0 text-primary-standalone"
-                            aria-hidden="true"
-                          >
-                            <.icon name="hero-check" class="size-4" />
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          id="mode-option-genesis_new"
-                          phx-click="task_change"
-                          phx-value-mode="genesis_new"
-                          disabled={@disabled}
-                          class={[
-                            "capsule-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left",
-                            @mode == "genesis_new" && "capsule-item-active"
-                          ]}
+                          <.icon name="hero-check" class="size-4" />
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        id="mode-option-evolve_simple"
+                        phx-click="task_change"
+                        phx-value-mode="evolve_simple"
+                        disabled={@disabled}
+                        class={[
+                          "capsule-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left",
+                          @mode == "evolve_simple" && "capsule-item-active"
+                        ]}
+                      >
+                        <span class="capsule-item-label min-w-0 flex-1 truncate">
+                          <%!-- zh_CN: Evolve existing project → "演进已有项目" --%>
+                          {gettext("Evolve existing project")}
+                        </span>
+                        <span
+                          :if={@mode == "evolve_simple"}
+                          class="capsule-item-check shrink-0 text-primary-standalone"
+                          aria-hidden="true"
                         >
-                          <span class="capsule-item-label min-w-0 flex-1 truncate">
-                            <%!-- zh_CN: Create new project → "新建空白项目" --%>
-                            {gettext("Create new project")}
-                          </span>
-                          <span
-                            :if={@mode == "genesis_new"}
-                            class="capsule-item-check shrink-0 text-primary-standalone"
-                            aria-hidden="true"
-                          >
-                            <.icon name="hero-check" class="size-4" />
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          id="mode-option-evolve_simple"
-                          phx-click="task_change"
-                          phx-value-mode="evolve_simple"
-                          disabled={@disabled}
-                          class={[
-                            "capsule-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left",
-                            @mode == "evolve_simple" && "capsule-item-active"
-                          ]}
+                          <.icon name="hero-check" class="size-4" />
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        id="mode-option-custom_agent"
+                        phx-click="task_change"
+                        phx-value-mode="custom_agent"
+                        disabled={@disabled}
+                        class={[
+                          "capsule-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left",
+                          @mode == "custom_agent" && "capsule-item-active"
+                        ]}
+                      >
+                        <span class="capsule-item-label min-w-0 flex-1 truncate">
+                          <%!-- zh_CN: Custom Agent → "自定义智能体"（用户自定义的根智能体） --%>
+                          {gettext("Custom Agent")}
+                        </span>
+                        <span
+                          :if={@mode == "custom_agent"}
+                          class="capsule-item-check shrink-0 text-primary-standalone"
+                          aria-hidden="true"
                         >
-                          <span class="capsule-item-label min-w-0 flex-1 truncate">
-                            <%!-- zh_CN: Evolve existing project → "演进已有项目" --%>
-                            {gettext("Evolve existing project")}
-                          </span>
-                          <span
-                            :if={@mode == "evolve_simple"}
-                            class="capsule-item-check shrink-0 text-primary-standalone"
-                            aria-hidden="true"
-                          >
-                            <.icon name="hero-check" class="size-4" />
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          id="mode-option-custom_agent"
-                          phx-click="task_change"
-                          phx-value-mode="custom_agent"
-                          disabled={@disabled}
-                          class={[
-                            "capsule-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left",
-                            @mode == "custom_agent" && "capsule-item-active"
-                          ]}
-                        >
-                          <span class="capsule-item-label min-w-0 flex-1 truncate">
-                            <%!-- zh_CN: Custom Agent → "自定义智能体"（用户自定义的根智能体） --%>
-                            {gettext("Custom Agent")}
-                          </span>
-                          <span
-                            :if={@mode == "custom_agent"}
-                            class="capsule-item-check shrink-0 text-primary-standalone"
-                            aria-hidden="true"
-                          >
-                            <.icon name="hero-check" class="size-4" />
-                          </span>
-                        </button>
-                      </div>
-                    </details>
-                  </div>
-                </details>
+                          <.icon name="hero-check" class="size-4" />
+                        </span>
+                      </button>
+                    </div>
+                  </details>
+                </div>
+              </details>
 
-                <%!-- Custom agent select — rendered only when custom agents
+              <%!-- Custom agent select — rendered only when custom agents
                    exist in agents.toml. "Auto (recommended)" (empty value)
                    lets the runtime spawn its default root agent; a custom
                    agent id is threaded as the task's :agent opt. In Custom
                    Agent mode the Auto option is hidden (an agent MUST be
                    chosen — the server auto-selects the first one on mode
                    switch and re-validates on submit). --%>
-                <%= if @custom_agents != [] do %>
-                  <select
-                    name="agent"
-                    phx-change="select_agent"
-                    class={[
-                      "select select-ghost select-sm text-sm bg-transparent font-medium min-w-0 truncate max-w-[10rem]",
-                      not @use_llm_selection? && "ml-auto"
-                    ]}
-                  >
-                    <%= if @mode != "custom_agent" do %>
-                      <%!-- zh_CN: Auto → "自动"（推荐：由运行时选择默认智能体） --%>
-                      <option value="" selected={@selected_agent_id in [nil, ""]}>
-                        {gettext("Auto (recommended)")}
-                      </option>
-                    <% end %>
-                    <%= for agent <- @custom_agents do %>
-                      <option
-                        value={agent_attr(agent, :id)}
-                        selected={@selected_agent_id == agent_attr(agent, :id)}
-                      >
-                        {agent_attr(agent, :name)}
-                      </option>
-                    <% end %>
-                  </select>
-                <% end %>
+              <%= if @custom_agents != [] do %>
+                <select
+                  name="agent"
+                  phx-change="select_agent"
+                  class={[
+                    "select select-ghost select-sm text-sm bg-transparent font-medium min-w-0 truncate max-w-[10rem]",
+                    not @use_llm_selection? && "ml-auto"
+                  ]}
+                >
+                  <%= if @mode != "custom_agent" do %>
+                    <%!-- zh_CN: Auto → "自动"（推荐：由运行时选择默认智能体） --%>
+                    <option value="" selected={@selected_agent_id in [nil, ""]}>
+                      {gettext("Auto (recommended)")}
+                    </option>
+                  <% end %>
+                  <%= for agent <- @custom_agents do %>
+                    <option
+                      value={agent_attr(agent, :id)}
+                      selected={@selected_agent_id == agent_attr(agent, :id)}
+                    >
+                      {agent_attr(agent, :name)}
+                    </option>
+                  <% end %>
+                </select>
+              <% end %>
 
-                <%!-- Shared model capsule (fused model + reasoning picker) — the
+              <%!-- Shared model capsule (fused model + reasoning picker) — the
                      RIGHT cluster's model control when @use_llm_selection? is
                      true. It sits AFTER the custom-agent select (if present)
                      and BEFORE the send button, and carries the row's ml-auto
@@ -779,101 +750,75 @@ defmodule EvoDashWeb.TaskFormComponents do
                      provider list) rather than a <select>, and it needs no
                      form owner: every control emits phx-click/phx-value
                      events, so no `form` association is threaded. --%>
-                <EvoDashWeb.LLMSelectionComponents.llm_selection
-                  :if={@use_llm_selection?}
-                  id="task-llm-selection"
-                  provider_profiles={@provider_profiles}
-                  model_selections={@model_selections}
-                  model_spec={@model_spec}
-                  provider_event={@provider_event}
-                  model_event={@model_event}
-                  reasoning_event={@reasoning_event}
-                  show_auto_option={@show_auto_model_option}
-                  compact
-                  disabled={@disabled}
-                  class={
-                    if right_cluster_ml_auto?(@use_llm_selection?),
-                      do: "mx-1 ml-auto",
-                      else: "mx-1"
-                  }
-                />
+              <EvoDashWeb.LLMSelectionComponents.llm_selection
+                :if={@use_llm_selection?}
+                id="task-llm-selection"
+                provider_profiles={@provider_profiles}
+                model_selections={@model_selections}
+                model_spec={@model_spec}
+                provider_event={@provider_event}
+                model_event={@model_event}
+                reasoning_event={@reasoning_event}
+                show_auto_option={@show_auto_model_option}
+                compact
+                disabled={@disabled}
+                class={
+                  if right_cluster_ml_auto?(@use_llm_selection?),
+                    do: "mx-1 ml-auto",
+                    else: "mx-1"
+                }
+              />
 
-                <!-- Legacy model switch -->
-                <%= if not @use_llm_selection? and @model_profiles != [] do %>
-                  <select
-                    name="model_id"
-                    phx-change="select_model"
-                    class={[
-                      "select select-ghost select-sm text-sm bg-transparent font-medium min-w-0 truncate max-w-[11rem]",
-                      @custom_agents == [] && "ml-auto"
-                    ]}
-                  >
-                    <%!-- "Auto (by rules)" is offered when a model-selection
+              <!-- Legacy model switch -->
+              <%= if not @use_llm_selection? and @model_profiles != [] do %>
+                <select
+                  name="model_id"
+                  phx-change="select_model"
+                  class={[
+                    "select select-ghost select-sm text-sm bg-transparent font-medium min-w-0 truncate max-w-[11rem]",
+                    @custom_agents == [] && "ml-auto"
+                  ]}
+                >
+                  <%!-- "Auto (by rules)" is offered when a model-selection
                        script is configured (show_auto_model_option) — and
                        ALWAYS when the current selection is nil/"" so the
                        select is never visually empty. Choosing it sets
                        neither :model_id nor :model_id_locked, leaving the
                        runtime script (or default model) to decide. --%>
-                    <%= if @show_auto_model_option or @selected_model_id in [nil, ""] do %>
-                      <%!-- zh_CN: Auto → "自动"（按模型选择规则/脚本自动选择模型） --%>
-                      <option value="" selected={@selected_model_id in [nil, ""]}>
-                        {gettext("Auto (by rules)")}
-                      </option>
-                    <% end %>
-                    <%= for profile <- @model_profiles do %>
-                      <option value={profile.id} selected={@selected_model_id == profile.id}>
-                        {profile.id}
-                      </option>
-                    <% end %>
-                  </select>
-                <% end %>
-
-                <div class={[
-                  "flex items-center gap-1 shrink-0",
-                  !@use_llm_selection? && @custom_agents == [] && @model_profiles == [] && "ml-auto"
-                ]}>
-                  {render_slot(@controls)}
-                  <button
-                    type="submit"
-                    id="task-launch-button"
-                    class="btn btn-primary btn-circle btn-sm shrink-0"
-                    data-mode={@mode}
-                    data-resume={String.trim(@resume_from) != ""}
-                    disabled={@launch_disabled}
-                    aria-label={gettext("Launch")}
-                    title={gettext("Launch")}
-                  >
-                    <.icon name="hero-arrow-up" class="size-4" />
-                  </button>
-                </div>
-              </div>
-
-              <%!-- Custom Agent mode hint — a single-line explanation under the
-                 controls row (the row stays the card's last element only for
-                 the OTHER modes; in custom mode the hint appends below it,
-                 still inside .input-card normal flow). Two variants: with
-                 agents defined it explains the mode; with none it points to
-                 the Settings → Agents editor. The server also guards submit
-                 (task_submit) so a missing agent can never launch a task. --%>
-              <%= if @mode == "custom_agent" do %>
-                <%= if @custom_agents == [] do %>
-                  <p class="px-4 pb-3 text-xs text-warning/80 flex items-center gap-1.5">
-                    <.icon name="hero-exclamation-triangle" class="size-3.5 shrink-0" />
-                    <%!-- zh_CN: Custom Agent → "自定义智能体"（用户自定义的根智能体） --%>
-                    {gettext(
-                      "No custom agents defined. Add one in Settings → Agents to use Custom Agent mode."
-                    )}
-                  </p>
-                <% else %>
-                  <p class="px-4 pb-3 text-xs text-base-content/70 flex items-center gap-1.5">
-                    <.icon name="hero-user-circle" class="size-3.5 shrink-0" />
-                    <%!-- zh_CN: Custom Agent → "自定义智能体", root agent → "根智能体" --%>
-                    {gettext("Runs the selected custom agent as the root agent of an evolution task.")}
-                  </p>
-                <% end %>
+                  <%= if @show_auto_model_option or @selected_model_id in [nil, ""] do %>
+                    <%!-- zh_CN: Auto → "自动"（按模型选择规则/脚本自动选择模型） --%>
+                    <option value="" selected={@selected_model_id in [nil, ""]}>
+                      {gettext("Auto (by rules)")}
+                    </option>
+                  <% end %>
+                  <%= for profile <- @model_profiles do %>
+                    <option value={profile.id} selected={@selected_model_id == profile.id}>
+                      {profile.id}
+                    </option>
+                  <% end %>
+                </select>
               <% end %>
-            <% end %>
-          </div>
+
+              <div class={[
+                "flex items-center gap-1 shrink-0",
+                !@use_llm_selection? && @custom_agents == [] && @model_profiles == [] && "ml-auto"
+              ]}>
+                {render_slot(@controls)}
+                <button
+                  type="submit"
+                  id="task-launch-button"
+                  class="btn btn-primary btn-circle btn-sm shrink-0"
+                  data-mode={@mode}
+                  data-resume={String.trim(@resume_from) != ""}
+                  disabled={@launch_disabled}
+                  aria-label={gettext("Launch")}
+                  title={gettext("Launch")}
+                >
+                  <.icon name="hero-arrow-up" class="size-4" />
+                </button>
+              </div>
+            </:toolbar>
+          </.composer_surface>
 
           <!-- Welcome hint overlay when disabled (no project active) -->
           <%= if @disabled do %>
@@ -979,6 +924,7 @@ defmodule EvoDashWeb.TaskFormComponents do
   attr(:build_systems, :list, default: [])
   attr(:selected_build_system, :string, default: nil)
   attr(:disabled, :boolean, default: false)
+  attr(:class, :any, default: nil)
 
   def task_options_tab(assigns) do
     assigns

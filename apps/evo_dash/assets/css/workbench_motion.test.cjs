@@ -58,9 +58,8 @@ function panelFamily(rule) {
 }
 
 test("the right panel transitions with the shared motion tokens only", () => {
-  // `workbench.css` carries several `.workbench-history` leaf rules (base,
-  // drawer, a later background-only rule, the reduced-motion guard), so the
-  // transition-bearing one is located explicitly instead of assuming one match.
+  // Locate the transition-bearing panel rule without assuming the drawer or
+  // reduced-motion blocks have any particular position in the stylesheet.
   const transitionBodies = blocks(".workbench-history")
     .filter(body => "transition" in values(body))
     .filter(body => body.includes("var(--motion-slow)"));
@@ -144,6 +143,30 @@ test("the per-component reduced-motion guard stays alongside the global backstop
     .filter(rule => selectorsOf(rule).includes(".workbench-history") && "transition" in values(rule.body));
   assert.equal(guards.length, 1);
   assert.equal(values(guards[0].body).transition, "none");
+});
+
+test("history selection animates only the local pill and only with motion enabled", () => {
+  const pill = ".workbench-history-switch [data-workbench-kind]::before";
+  const pillRules = blocks(pill).map(values);
+  const resting = pillRules.find(rule => rule.transform);
+  assert.equal(resting.opacity, "0");
+  assert.match(resting.transform, /^scale\(\.\d+\)$/);
+  assert.equal(resting["pointer-events"], "none");
+
+  const [selected] = blocks('.workbench-history-switch [data-workbench-kind][aria-pressed="true"]::before');
+  assert.deepEqual(values(selected), {opacity: "1", transform: "none"});
+
+  const allTransitions = pillRules.filter(rule => rule.transition);
+  const motionAllowed = blocks("@media (prefers-reduced-motion: no-preference)")
+    .flatMap(body => leafRules(body))
+    .filter(rule => rule.selectors.includes(pill));
+  assert.equal(allTransitions.length, 1);
+  assert.equal(motionAllowed.length, 1);
+  assert.equal(values(motionAllowed[0].body).transition, allTransitions[0].transition);
+  assert.deepEqual(allTransitions[0].transition.split(",").map(part => part.trim()), [
+    "opacity var(--motion-fast) var(--motion-ease-out)",
+    "transform var(--motion-fast) var(--motion-ease-out)"
+  ]);
 });
 
 test("the accent pill tint contract stays untouched", () => {

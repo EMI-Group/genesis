@@ -9,7 +9,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphState do
   """
   import Phoenix.Component, only: [assign: 2, assign: 3]
   alias EvoDash.SafeCall
-  alias EvoDashWeb.AgentsLive.{CommitGraph, CommitGraphRefresh}
+  alias EvoDashWeb.AgentsLive.{CommitGraph, CommitGraphRefresh, Scope}
 
   # Minimum interval between commit-graph fetches. Refreshes are already coalesced
   # by the agent-event flush; this further throttles the (heavier) per-repo git
@@ -50,7 +50,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphState do
   # raw data stores the CURRENT fingerprint; the next flush then compares
   # equal and skips).
   def maybe_load(socket, opts) do
-    if socket.assigns.left_view != :commits do
+    if socket.assigns.left_view != :commits or not Scope.available?(socket.assigns) or
+         socket.assigns[:scoped_task_state] in [:loading, :error, :missing] do
       socket
     else
       agents = commit_graph_agents(socket)
@@ -82,11 +83,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphState do
   # success (≥1 group ok, others failed) is an {:ok, ...} carrying the successful
   # groups only — the failed groups' lanes still render from the agent set, their
   # commits just stop at the last fetch.
-  def loaded(socket, node, seq, result) do
-    if node != socket.assigns.current_node or
-         seq < Map.get(socket.assigns, :commit_graph_seq, 0) do
-      {:noreply, socket}
-    else
+  def loaded(socket, scope, seq, result) do
+    if Scope.available?(socket.assigns) and owns_result?(socket, scope, seq) do
       case result do
         {:ok, raw_by_repo} ->
           # Lanes come from the MERGED agent set (live + in-session retained) so
@@ -114,8 +112,19 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphState do
              commit_graph_error: reason
            )}
       end
+    else
+      {:noreply, socket}
     end
   end
+
+  defp owns_result?(socket, {_, _, _} = scope, seq),
+    do: scope == Scope.identity(socket.assigns) and seq == socket.assigns.commit_graph_seq
+
+  # Older unscoped receipt shape is never admissible in a focused/target view.
+  defp owns_result?(socket, node, seq),
+    do:
+      Scope.identity(socket.assigns) == {nil, node, nil} and
+        seq >= Map.get(socket.assigns, :commit_graph_seq, 0)
 
   @doc """
   Serves a throttled request: re-attempts with the throttle bypassed.
@@ -124,9 +133,15 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphState do
   # throttled: re-attempt with the throttle bypassed so a commit created inside
   # the throttle window (a new dot, or an agent ring that moved to a fresh tip)
   # is still reflected. Not periodic — it is armed ONLY by a throttled request.
-  def tick(socket) do
-    socket = assign(socket, :commit_graph_tick_scheduled, false)
-    {:noreply, maybe_load(socket, force: true)}
+  def tick(socket), do: tick(socket, socket.assigns[:commit_graph_tick_token])
+
+  def tick(socket, token) do
+    if is_reference(token) and token == socket.assigns[:commit_graph_tick_token] do
+      socket = assign(socket, commit_graph_tick_scheduled: false, commit_graph_tick_token: nil)
+      {:noreply, maybe_load(socket, force: true)}
+    else
+      {:noreply, socket}
+    end
   end
 
   @doc """
@@ -362,8 +377,9 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphState do
     if socket.assigns.commit_graph_tick_scheduled do
       socket
     else
-      Process.send_after(self(), :commit_graph_tick, commit_graph_min_interval_ms())
-      assign(socket, :commit_graph_tick_scheduled, true)
+      token = make_ref()
+      Process.send_after(self(), {:commit_graph_tick, token}, commit_graph_min_interval_ms())
+      assign(socket, commit_graph_tick_scheduled: true, commit_graph_tick_token: token)
     end
   end
 
@@ -381,7 +397,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphState do
   # bookkeeping value (see fetch_commit_graph/3).
   defp spawn_commit_graph_fetch(socket, fingerprint) do
     parent = self()
-    node = socket.assigns.current_node
+    {_, node, _} = scope = Scope.identity(socket.assigns)
     seq = Map.get(socket.assigns, :commit_graph_seq, 0) + 1
     groups = commit_graph_groups(commit_graph_agents(socket))
 
@@ -391,7 +407,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphState do
         commit_graph_loading: true,
         commit_graph_fingerprint: fingerprint,
         commit_graph_fetched_at: System.monotonic_time(:millisecond),
-        commit_graph_tick_scheduled: false
+        commit_graph_tick_scheduled: false,
+        commit_graph_tick_token: nil
       )
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
@@ -414,7 +431,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphState do
           {:error, _reason} -> {:error, :commit_graph_fetch_failed}
         end
 
-      send(parent, {:commit_graph_loaded, node, seq, result})
+      send(parent, {:commit_graph_loaded, scope, seq, result})
     end)
 
     socket

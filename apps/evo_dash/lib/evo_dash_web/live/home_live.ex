@@ -268,11 +268,12 @@ defmodule EvoDashWeb.HomeLive do
               {EvoDashWeb.HomeLive.Composer.interrupt_button(assigns)}
             </div>
           </div>
-          <!-- Composer: pinned bottom, outside the messages scroller. ONE form
-             owns the textarea's `chat_input` draft handler, the pending
-             attachment chips, the shared provider/model/reasoning capsule and
-             the Send/Stop controls; the attach affordance and its manual-path
-             fallback sit outside it because no form may ever be nested. -->
+          <!-- Composer: pinned at the bottom, outside the messages scroller.
+             The shared surface's editor contains #chat-form, which owns the
+             textarea, the chat_input draft handler and the attachment chips.
+             The final sibling toolbar contains the model picker, Send/Stop and
+             the attach controls; the manual-path fallback has its own form.
+             Send submits the editor form via form="chat-form". -->
           {EvoDashWeb.HomeLive.Composer.composer(assigns)}
           <.quick_actions :if={@transcript == [] and @chat_status != :ended} />
         </div>

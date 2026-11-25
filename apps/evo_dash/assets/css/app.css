@@ -6,7 +6,7 @@
    REPLACES the stock `text-*` steps for every rule below it; the component
    stylesheets then consume `var(--text-*)` / `var(--row-h)` / `var(--control-h)`.
    It must stay OUT of the workbench→motion adjacency (pinned by
-   assistant_motion.test.cjs) and before `./view_transitions.css` (last). */
+   assistant_motion.test.cjs). */
 @import "./density.css";
 /* The surface + elevation vocabulary (three layers; overlays are the ONLY
    shadowed surfaces). Right after the scale so both the dashboard shell and the
@@ -19,11 +19,6 @@
    so it is "last" within the import block (a literal append at EOF is invalid
    and would be dropped); its !important reduced-motion backstop is order-proof. */
 @import "./motion.css";
-/* View-transition motion (page loads, theme switch, per-patch cross-fades).
-   CSS requires @import before every other rule, so "last import" is the correct
-   reading of "loaded last" — this file only styles ::view-transition-* pseudo
-   elements and names two elements, so it cannot fight the layers above it. */
-@import "./view_transitions.css";
 @source "../css";
 @source "../js";
 @source "../../lib/evo_dash_web";
@@ -384,9 +379,6 @@
 
 /* Make LiveView wrapper divs transparent for layout */
 [data-phx-session], [data-phx-teleported-src] { display: contents }
-
-/* Smooth scrolling */
-html { scroll-behavior: smooth; }
 
 /* Better scrollbar styling */
 .scrollbar-thin {
@@ -758,10 +750,11 @@ button, a, input, textarea, select, summary,
    place instead of the markup's `bg-base-100` utility. Unlayered author CSS
    beats the layered utility on purpose: the canvas tone is a surface decision
    (see surfaces.css), not a per-page one, and it is what the active workbench
-   tab joins. Background only — every other canvas property stays in markup. */
+   tab joins. The workbench center can supply a New Task fill; all other views
+   use the theme canvas. Background only; the rest stays in markup. */
 #main-content,
 #main-scroll {
-  background: var(--surface-canvas);
+  background: var(--workbench-canvas, var(--surface-canvas));
 }
 
 /* === Agents Page Fixed Layout === */
@@ -806,9 +799,7 @@ button, a, input, textarea, select, summary,
 /* Legend tooltip — rendered by the LegendTooltip JS hook as a fixed-position
    element appended to document.body. It must live outside the page layout:
    every ancestor (.agents-page-layout, .agents-left-col, #main-scroll,
-   #app-layout) clips overflow, and .agents-page-layout's persisted translateY
-   transform (animation-fill-mode: both) creates a containing block that would
-   trap even position:fixed descendants inside the layout's overflow clip. */
+   #app-layout) clips overflow. */
 .agents-legend-tip {
   position: fixed;
   z-index: 9999;
@@ -1893,16 +1884,6 @@ button, a, input, textarea, select, summary,
   right: auto;
 }
 
-/* Node switch fade animation — plays on the <main> content area when the
-   node context changes (local ↔ remote switch via the sidebar node selector) */
-@keyframes node-switch-fade {
-  0% { opacity: 0.4; }
-  100% { opacity: 1; }
-}
-.node-switch-fade {
-  animation: node-switch-fade 0.25s ease-out;
-}
-
 /* RTL: Shimmer animation direction */
 [dir="rtl"] .task-card-active {
   background-image: linear-gradient(
@@ -2272,54 +2253,6 @@ button, a, input, textarea, select, summary,
     gap 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* --- Launch button: colored hover ring keyed on the selected mode ---
-   The Launch button carries a server-side data-mode attribute with values
-   genesis_new | genesis_existing | evolve_simple | custom_agent. Each mode
-   gets its own accent ring (plus a soft outer glow) on hover, framing the
-   daisyUI btn-primary hover state — btn-primary sets no box-shadow, so the
-   ring is additive and the hover bg still shows. Colors are literal oklch
-   values mixed via color-mix so they read on BOTH custom DaisyUI themes
-   (dark + light); never nest oklch(var(--x) / a) (Known Issue (i)). */
-.input-controls button[data-mode="genesis_new"]:hover {
-  box-shadow:
-    0 0 0 2px color-mix(in oklch, oklch(0.62 0.19 25) 60%, transparent),
-    0 0 20px -4px color-mix(in oklch, oklch(0.62 0.19 25) 50%, transparent);
-}
-
-.input-controls button[data-mode="genesis_existing"]:hover {
-  box-shadow:
-    0 0 0 2px color-mix(in oklch, oklch(0.62 0.19 255) 60%, transparent),
-    0 0 20px -4px color-mix(in oklch, oklch(0.62 0.19 255) 50%, transparent);
-}
-
-.input-controls button[data-mode="evolve_simple"]:hover {
-  box-shadow:
-    0 0 0 2px color-mix(in oklch, oklch(0.72 0.17 152) 60%, transparent),
-    0 0 20px -4px color-mix(in oklch, oklch(0.72 0.17 152) 50%, transparent);
-}
-
-.input-controls button[data-mode="custom_agent"]:hover {
-  box-shadow:
-    0 0 0 2px color-mix(in oklch, oklch(0.68 0.17 290) 60%, transparent),
-    0 0 20px -4px color-mix(in oklch, oklch(0.68 0.17 290) 50%, transparent);
-}
-
-/* Resumed evolve run: lighter green ring, mirrors the objective-box accent
-   in resume state (server sets data-resume="true" when a resume task id is
-   selected; see task_form_components.ex). Custom-agent mode is
-   evolve-family, so it gets the same resume-ring treatment in violet. */
-.input-controls button[data-mode="evolve_simple"][data-resume="true"]:hover {
-  box-shadow:
-    0 0 0 2px color-mix(in oklch, oklch(0.78 0.16 152) 60%, transparent),
-    0 0 20px -4px color-mix(in oklch, oklch(0.78 0.16 152) 50%, transparent);
-}
-
-.input-controls button[data-mode="custom_agent"][data-resume="true"]:hover {
-  box-shadow:
-    0 0 0 2px color-mix(in oklch, oklch(0.78 0.16 290) 60%, transparent),
-    0 0 20px -4px color-mix(in oklch, oklch(0.78 0.16 290) 50%, transparent);
-}
-
 /* --- Mobile keyboard-aware overrides (narrow touch viewports) ---
    The expanded task-form card pins .input-controls to the bottom of the app
    shell's height chain. On phones the VISIBLE viewport is smaller than the
@@ -2489,7 +2422,7 @@ details[data-capsule-view="provider"] .capsule-view[data-view="provider"] {
   display: block;
 }
 
-/* View transitions: forward (drilling into the provider list) slides in from
+/* Capsule view switching: forward (drilling into the provider list) slides in from
    the right, the reverse variant slides in from the left when returning to the
    model list — so the direction of travel reads correctly both ways.
    The animation restarts on every switch because the switched-in view goes
@@ -2731,10 +2664,8 @@ details.capsule-sub[data-capsule-sub-state="closing"] > .capsule-list {
    transcript scrolls INSIDE it instead of pushing the composer/rail down and
    making the page itself scroll (the nested-scroll bounce).
    `overscroll-behavior: contain` stops scroll chaining at either end.
-   `scroll-behavior: auto` is load-bearing: the document sets
-   `html { scroll-behavior: smooth }` (not inherited today), and a smooth
-   behavior on THESE elements would animate every `scrollTop = scrollHeight`
-   assignment — exactly the perpetual-animation shaking the hook removes. */
+   `scroll-behavior: auto` keeps every `scrollTop = scrollHeight` assignment
+   instant rather than letting a smooth scroll fight the hook. */
 #chat-messages,
 .agent-history-scroll {
   min-height: 0;
@@ -2912,60 +2843,6 @@ dialog.modal .modal-box :not(pre) > code {
   gap: 0.5rem;
   min-width: 0;
   padding: 0 0.25rem 0.375rem;
-}
-
-/* === Workbench Composer === */
-/* Add .workbench-composer to the surface that wraps the textarea AND toolbar.
-   Bridge both existing wrappers and match the specificity of the task-card
-   override in workbench.css; the shared rule comes later in the cascade.
-   The zero-blur ring marks this layer-1 surface without giving it elevation. */
-#app-layout :is(.workbench-composer, .assistant-input-card, .help-composer, .input-layout .input-card) {
-  --composer-chrome-transition: border-color var(--motion-fast) var(--motion-ease-out),
-    box-shadow var(--motion-fast) var(--motion-ease-out);
-  border: 1px solid color-mix(in oklab, var(--color-primary) 16%, var(--border-hairline));
-  border-radius: var(--radius-2xl);
-  background: color-mix(in oklab, var(--color-primary) 4%, var(--surface-canvas));
-  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-primary) 9%, transparent);
-  transition: var(--composer-transition, var(--composer-chrome-transition));
-}
-
-/* Preserve AdaptiveInput's size transition without adding it to Assistant. */
-:is(.input-card, .workbench-composer[data-composer-kind="task"]) {
-  --composer-transition: min-height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    var(--composer-chrome-transition);
-}
-
-#app-layout :is(.workbench-composer, .assistant-input-card, .help-composer, .input-layout .input-card):focus-within {
-  border-color: var(--color-primary-standalone);
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary-standalone) 25%, transparent);
-}
-
-#app-layout :is(.assistant-textarea, .input-prompt, .help-composer textarea) {
-  caret-color: var(--color-primary-standalone);
-}
-
-/* The surface ring shows focus within the editor; the outline identifies the
-   precise toolbar control when tabbing. Padding leaves room in expanded mode. */
-:is(.assistant-context-bar, .help-composer-controls, .input-controls) :is(button, summary):focus-visible {
-  outline: 2px solid var(--color-primary-standalone);
-  outline-offset: 3px;
-}
-
-@media (forced-colors: active) {
-  #app-layout :is(.workbench-composer, .assistant-input-card, .help-composer, .input-layout .input-card):focus-within {
-    outline: 2px solid Highlight;
-    outline-offset: -2px;
-  }
-}
-
-@media (pointer: coarse) {
-  .assistant-context-bar :is(.assistant-icon-button, .assistant-send-button, .assistant-stop-button) {
-    min-inline-size: var(--touch-target);
-    min-block-size: var(--touch-target);
-  }
-  :is(.assistant-context-bar, .input-controls) .capsule-trigger {
-    min-block-size: var(--touch-target);
-  }
 }
 
 /* /assistant only: no heading rules or quote panels competing with the answer.

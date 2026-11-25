@@ -11,7 +11,7 @@ defmodule EvoDashWeb.AgentsLive.Inspector do
 
   alias EvoDash.SafeCall
 
-  alias EvoDashWeb.AgentsLive.{AgentList, HistoryGate, OptimisticMessages, StreamWatch}
+  alias EvoDashWeb.AgentsLive.{AgentList, HistoryGate, OptimisticMessages, Scope, StreamWatch}
 
   alias EvoDashWeb.ContentText
 
@@ -463,6 +463,12 @@ defmodule EvoDashWeb.AgentsLive.Inspector do
   # -- private -----------------------------------------------------------------
 
   defp select_agent_impl(socket, agent_id) do
+    if Scope.selectable_agent?(socket.assigns, agent_id),
+      do: select_known_agent(socket, agent_id),
+      else: socket
+  end
+
+  defp select_known_agent(socket, agent_id) do
     socket =
       socket
       |> assign(

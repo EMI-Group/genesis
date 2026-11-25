@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const {readFileSync} = require("node:fs");
+const {readFileSync, readdirSync} = require("node:fs");
 const {join} = require("node:path");
 
 // Source contracts for the hook-driven surfaces whose exit used to be missing
@@ -46,6 +46,15 @@ function assertTokenOnly(animation, label) {
   assert.doesNotMatch(literals, /\b(ease-out|ease-in|ease|linear)\b/, `literal easing in ${label}: ${animation}`);
   assert.match(animation, /^motion-(fade|slide)-[a-z]+ var\(--motion-[a-z]+\) var\(--motion-ease-[a-z]+\)/);
 }
+
+test("dashboard styles do not animate page navigation or the document scroll", () => {
+  for (const name of readdirSync(__dirname).filter(name => name.endsWith(".css"))) {
+    const css = strip(readFileSync(join(__dirname, name), "utf8"));
+    assert.doesNotMatch(css, /@view-transition\b|::view-transition\b|\bview-transition-(?:name|class)\s*:/, name);
+    assert.doesNotMatch(css, /\bnode-switch-fade\b/, name);
+    assert.doesNotMatch(css, /(?:^|[}\n])\s*(?:html|:root)\s*\{[^{}]*scroll-behavior:\s*smooth\b/, name);
+  }
+});
 
 test("the native modal animates the .modal-box in BOTH directions and only fades ::backdrop", () => {
   // dialog_modal.js settles each phase on a target-verified animationend whose
