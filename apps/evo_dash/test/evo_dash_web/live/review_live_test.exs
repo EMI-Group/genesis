@@ -101,7 +101,7 @@
 # NOT in a replaced app-env value, which a concurrently starting sibling module's
 # `setup_all` would clobber mid-test.
 
-Code.require_file("review_test_helpers.exs", __DIR__)
+Code.require_file("review_test_helper.exs", __DIR__)
 
 defmodule EvoDashWeb.ReviewLiveTest.CaseHelpers do
   @moduledoc false

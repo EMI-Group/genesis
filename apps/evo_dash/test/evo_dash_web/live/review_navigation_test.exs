@@ -1,4 +1,4 @@
-Code.require_file("review_test_helpers.exs", __DIR__)
+Code.require_file("review_test_helper.exs", __DIR__)
 
 defmodule EvoDashWeb.ReviewNavigationTest do
   use EvoDashWeb.ConnCase, async: true
