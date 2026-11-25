@@ -373,7 +373,7 @@ defmodule EvoGit.AgentScheduler.TaskPauseTest do
       refute AgentScheduler.task_freezing?(cancelled_state, task_id),
              "the cancel abandoned the freeze"
 
-      assert Store.cancel_requested?(agent_id), "the cancel flag owns the drain now"
+      assert Store.cancel_requested?(agent_id), "the cancel flag owns the freeze now"
     end
 
     test "a force kill clears the task pause marker" do

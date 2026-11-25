@@ -160,7 +160,7 @@ defmodule EvoGit.TaskRegistry do
   # `force_kill_task/1` acts on these: the live agents and the wrapper are
   # brutal-killed and the row is persisted `:failed` with no result. An idle
   # `:awaiting_input` session is killable exactly like a running task, and so are
-  # BOTH pause states: `:pausing` still has agents (the drain must be abortable)
+  # BOTH pause states: `:pausing` still has agents (the freeze must be abortable)
   # and `:paused` has no wrapper at all (the "no live process" arm handles it).
   @killable_statuses [:running, :awaiting_input, :cancelling, :pausing, :paused]
 
@@ -178,7 +178,7 @@ defmodule EvoGit.TaskRegistry do
   # `start_task/2` refuses a task id already in one of these statuses. A waiting
   # session owns its id: restarting it would run a second session over the same
   # row, so the id is unstartable until the session ends. Both pause states are
-  # listed for the same reason: a paused (or draining) row owns its id and is
+  # listed for the same reason: a paused (or freezing) row owns its id and is
   # resumed IN PLACE by `resume_task/1` — `start_task/2` mints a FRESH id and must
   # never take over a paused row (it would reset the archive roster and lose the
   # paused run's report).
@@ -195,7 +195,7 @@ defmodule EvoGit.TaskRegistry do
   # "A live task whose wrapper exists" — the in-flight set. This is NOT the
   # busy set: an idle `:awaiting_input` session holds no LLM slot, no tool slot
   # and no worker, so an update/idle gate must never count it as busy.
-  # `:pausing` is live (its wrapper is alive and draining); `:paused` is
+  # `:pausing` is live (its wrapper is alive and freezing); `:paused` is
   # NON-terminal and must stay visible as an active task in the UI, but it has no
   # wrapper and no lease — which is why the lease sets exclude it while these
   # liveness sets include it.
@@ -853,7 +853,7 @@ defmodule EvoGit.TaskRegistry do
     # becomes a DIRTY PAUSE (`:paused` + `pause_kind: :dirty`, `finished_at` nil,
     # lease cleared, result/usage untouched) instead of `:failed`. This arm owns
     # `:running` (which otherwise keeps today's "leave it to the one-shot
-    # :lease_sweep" behaviour) AND `:pausing` (a drain that was interrupted by the
+    # :lease_sweep" behaviour) AND `:pausing` (a freeze that was interrupted by the
     # restart) — a NON-resumable row falls through to today's behaviour in both
     # cases (the sweep maps its expired lease to `:failed`).
     #
@@ -1137,7 +1137,7 @@ defmodule EvoGit.TaskRegistry do
                 # Pause + graceful-cancel teardown: this direct terminal write
                 # bypasses `handle_update_status/6`, so BOTH markers must be
                 # cleared here — a force-killed task must not leave the scheduler
-                # believing a pause is still draining (and, for a `:pausing` row,
+                # believing a pause is still freezing (and, for a `:pausing` row,
                 # no agent keeps honouring a pause only to be killed anyway).
                 Pause.abandon(task_id)
                 clear_cancelling_marker(task_id)
@@ -1152,7 +1152,7 @@ defmodule EvoGit.TaskRegistry do
 
             nil ->
               # No wrapper at all: a `:paused` task ALWAYS looks like this (its
-              # wrapper ended when the drain completed), so the kill must work
+              # wrapper ended when the freeze completed), so the kill must work
               # from this arm too.
               force_kill_without_wrapper(state, task_id, status)
           end
@@ -1240,7 +1240,7 @@ defmodule EvoGit.TaskRegistry do
             request_graceful_cancel(state, task_id)
 
           :pausing ->
-            # A pause that is still DRAINING loses to a cancel. Abandon the pause
+            # A pause that is still FREEZING loses to a cancel. Abandon the pause
             # FIRST (task marker + every agent's `pause_requested` flag, so no
             # agent keeps walking to a pause), then proceed EXACTLY like
             # `:running`: the wrapper is still alive and honours the cancel.
@@ -1768,7 +1768,7 @@ defmodule EvoGit.TaskRegistry do
   end
 
   # Steps 1–2 of a graceful cancel for a LIVE wrapper (`:running`, and a
-  # still-draining `:pausing` after its pause is abandoned).
+  # still-freezing `:pausing` after its pause is abandoned).
   defp request_graceful_cancel(state, task_id) do
     # 1. Transition to :cancelling via the normal status-update path so
     #    handle_update_status broadcasts {:task_updated, task_id,
@@ -1907,7 +1907,7 @@ defmodule EvoGit.TaskRegistry do
   end
 
   # FORCE KILL with no live wrapper to stop. A `:paused` task ALWAYS has this
-  # shape (no task_refs entry — the wrapper ended when the drain completed) and a
+  # shape (no task_refs entry — the wrapper ended when the freeze completed) and a
   # `:pausing` one can lose its wrapper to a crash, so both are killable here;
   # any other status keeps today's `{:error, :not_running}`.
   defp force_kill_without_wrapper(state, task_id, status) when status in [:pausing, :paused] do

@@ -392,7 +392,7 @@ defmodule EvoGit.AgentScheduler.Store do
   `task_id` (the `:evogit_sched_meta` scan).
 
   Used when a pause is ABANDONED (a cancel that arrives while `:pausing` wins)
-  and when a force kill or a completed drain ends the pause. Total: an agent
+  and when a force kill or a completed freeze ends the pause. Total: an agent
   whose row is already gone is simply skipped, and a missing table is a no-op.
   """
   @spec clear_pause_requested_for_task(String.t()) :: :ok

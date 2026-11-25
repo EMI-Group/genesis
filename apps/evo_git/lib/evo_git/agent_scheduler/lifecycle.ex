@@ -400,7 +400,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   SAME post-injection terminal term — are answered.
 
   The PAUSED shape (`{:paused, info}`, the terminal term of a TASK PAUSE) has NO
-  completion semantics and NO root/child split: a pause is a WHOLE-TREE drain, so
+  completion semantics and NO root/child split: a pause is a WHOLE-TREE FREEZE, so
   every agent's report is routed to the task's
   `%EvoGit.AgentScheduler.TaskFreeze{}` (`state.task_freezes`). `info` is
   `%{agent_id, task_id, checkpoint, branch, durable, clean_freeze, reason:

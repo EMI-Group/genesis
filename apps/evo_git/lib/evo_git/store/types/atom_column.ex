@@ -77,7 +77,7 @@ defmodule EvoGit.Store.Types.Status do
   renewable (the wrapper is alive), so both liveness lists in
   `EvoGit.Store.Operations.Lightweight` include it.
 
-  `:pausing` is a pause request DRAINING the task's agents: the wrapper is
+  `:pausing` is a pause request FREEZING the task's agents: the wrapper is
   alive and its lease is renewed, so it is a live status in both liveness
   lists — but it is not the resting state, `finished_at` is still nil.
 

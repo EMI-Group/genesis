@@ -6,12 +6,12 @@ defmodule EvoGit.TaskRegistry.Pause do
   resumable resting state (`docs/task-pause.md`): the row becomes `:pausing`, the
   scheduler opens ONE freeze over the task
   (`EvoGit.AgentScheduler.begin_task_pause/1` + `EvoGit.AgentScheduler.TaskFreeze`),
-  every parent blocked in `spawn_sub_agents/2` is parked, and each agent stops at
-  its next TURN BOUNDARY (never mid-tool) after checkpointing its conversation
-  and committing its worktree. The wrapper result `{:paused, info}` reaches the
-  runtime only once the freeze COMPLETED — i.e. once every agent of the tree
-  reported (or the bounded quiesce forced the leftovers) — and it lands the row
-  `:paused`:
+  every parent blocked in `spawn_sub_agents/2` is parked, and each agent freezes
+  at its next TURN BOUNDARY — or while PARKED on its subagent batch — never
+  mid-tool, after checkpointing its conversation and committing its worktree.
+  The wrapper result `{:paused, info}` reaches the runtime only once the freeze
+  COMPLETED — i.e. once every agent of the tree reported (or the bounded quiesce
+  forced the leftovers) — and it lands the row `:paused`:
 
       %{agent_id, task_id, reason: :task_pause, pause_kind: :clean | :dirty,
         checkpoint, branch, durable, clean_freeze, frozen_agents}
@@ -132,16 +132,16 @@ defmodule EvoGit.TaskRegistry.Pause do
     * `:persistent_state` stored as `false` (or as any non-boolean) →
       `{:error, :not_resumable}` (nothing durable to restore; read the RAW value,
       never `RuntimeOpts.persistent_state/1`, which raises);
-    * any other status — `:pending` (no wrapper and no agents to drain), the
+    * any other status — `:pending` (no wrapper and no agents to freeze), the
       terminal set, `:finalizing`, `:cancelling` → `{:error, :not_running}`.
 
   On a real transition the row is written `:pausing` FIRST and the scheduler is
-  asked SECOND, so the drain is visible before any agent can observe the flag. A
+  asked SECOND, so the freeze is visible before any agent can observe the flag. A
   scheduler that is down (or a call that times out/exits) must never leave the
   row stuck in `:pausing`: the status is reverted to `:running` (the only status
   a pause can be requested from) and `{:error, :scheduler_unavailable}` is
   answered. Costs one extra write in the failure case; the alternative — a
-  `:pausing` row with no agents to drain — is unrecoverable without a restart.
+  `:pausing` row with no agents to freeze — is unrecoverable without a restart.
 
   The status is read through `EvoGit.TaskRegistry.StoreRead.update_info/2` (the
   three-state wrapper over the narrow `select_task_update_info/2` read: status +
@@ -180,7 +180,7 @@ defmodule EvoGit.TaskRegistry.Pause do
             {:ok, :pausing}
 
           {:error, _reason} = error ->
-            # Best-effort revert: the drain can never complete without a live
+            # Best-effort revert: the freeze can never complete without a live
             # scheduler, so the row must not stay `:pausing`. A failed revert
             # write is logged by StoreGuard and the caller still gets the error.
             _ = write_columns(store, task_id, status: :running)
@@ -565,7 +565,7 @@ defmodule EvoGit.TaskRegistry.Pause do
   The PAUSE-AWARE TEARDOWN: clears the task's scheduler pause marker and every
   pause flag of its agents (`EvoGit.AgentScheduler.clear_task_pause/1`).
 
-  Called wherever a pause can no longer be honoured — the drain completed, the
+  Called wherever a pause can no longer be honoured — the freeze completed, the
   pause was abandoned, the task was cancelled/force-killed, the task was resumed,
   or a direct terminal status write removed the wrapper. BEST-EFFORT and total:
   a scheduler that is down (or was never started) is logged at `:debug` and

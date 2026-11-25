@@ -23,7 +23,7 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
     * `:evogit_task_pause` — a `:set` of `{task_id}`: the TASK-level pause
       marker. `EvoGit.AgentScheduler.begin_task_pause/1` marks the task here
       BEFORE it flags the task's live agents, so an agent registered AFTER the
-      pause began (a crash-retry, a subagent spawned just before the drain, a
+      pause began (a crash-retry, a subagent spawned just before the freeze, a
       late dispatch) is seeded with `pause_requested = true` by `ensure_row/1`
       instead of running a whole extra turn.
 
@@ -133,7 +133,7 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
 
   `:ets.insert_new/2` only writes when the key is absent, so an existing flag
   is never reset. The pause flag of a NEW row is SEEDED from the task pause
-  marker: an agent registered for a task whose pause is already draining starts
+  marker: an agent registered for a task whose pause is already freezing starts
   with `pause_requested = true`, so a crash-retried or late-queued agent stops
   at its first turn boundary instead of running a whole extra turn.
   """
@@ -219,7 +219,7 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
   # ---------------------------------------------------------------------------
 
   @doc """
-  Marks `task_id` as pausing (a task-level pause is draining its agents).
+  Marks `task_id` as pausing (a task-level pause is freezing its agents).
 
   Total: an absent table (app shutdown) is a no-op. Idempotent.
   """
@@ -242,7 +242,7 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
 
   Called when the pause is abandoned — a cancel that arrives while `:pausing`
   wins, and a force-killed task must not leave the scheduler believing a pause
-  is in progress — and when the drain completes and the task becomes `:paused`.
+  is in progress — and when the freeze completes and the task becomes `:paused`.
   Idempotent, total.
   """
   @spec clear_task_pausing(String.t()) :: :ok
@@ -312,7 +312,7 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
     end
   end
 
-  # A NEW agent of a task whose pause is already draining starts paused.
+  # A NEW agent of a task whose pause is already freezing starts paused.
   # The task binding is the scheduler's own `SchedMeta.task_id` (the summary row
   # carries no task id); a missing row/table simply seeds nothing.
   defp initial_pause_flag(agent_id) do

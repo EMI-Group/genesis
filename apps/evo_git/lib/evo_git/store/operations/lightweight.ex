@@ -62,7 +62,7 @@ defmodule EvoGit.Store.Operations.Lightweight do
   # finished (terminal-ish cleanup target).
   #
   # The pause pair is live for cleanup for the same reason `:awaiting_input`
-  # is: `:pausing` is a pause request still DRAINING its agents (the work is in
+  # is: `:pausing` is a pause request still FREEZING its agents (the work is in
   # flight), and `:paused` is the non-terminal RESTING state — a paused task
   # keeps its row, result and resumable state and has `finished_at` nil, so
   # `clear_finished_tasks` must never delete it. Mirrors the old literal
@@ -184,7 +184,7 @@ defmodule EvoGit.Store.Operations.Lightweight do
   'cancelling')` — `:cancelling` is included so startup reconciliation can
   resolve orphaned cancelling tasks, `:awaiting_input` so an idle session whose
   wrapper is gone is reconciled instead of waiting forever, and `:pausing` so a
-  pause that is still draining is reconciled too. `:paused` is deliberately
+  pause that is still freezing is reconciled too. `:paused` is deliberately
   ABSENT: the resting state has no lease and no wrapper to reconcile.
   """
   @spec select_running_lease_info(pid()) :: [

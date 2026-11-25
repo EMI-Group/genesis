@@ -247,7 +247,7 @@ defmodule EvoGit.TaskRegistry.PauseTest do
       assert_receive {:task_updated, ^task_id, :pausing, _node}, 1_000
       refute_receive {:task_updated, ^task_id, _, _}, 0
 
-      # The scheduler half: the task is marked as draining, which is what makes
+      # The scheduler half: the task is marked as freezing, which is what makes
       # an agent registered from now on start with `pause_requested = true`.
       assert ControlPlane.task_pausing?(task_id)
     end
@@ -431,7 +431,7 @@ defmodule EvoGit.TaskRegistry.PauseTest do
       refute_receive {:task_updated, ^task_id, _, _}, 0
 
       # The wrapper is done: its ref is dropped and the scheduler pause marker
-      # is cleared (the drain is over).
+      # is cleared (the freeze is over).
       refute Map.has_key?(:sys.get_state(TaskRegistry.server()).task_refs, task_id)
       refute ControlPlane.task_pausing?(task_id)
     end

@@ -164,7 +164,7 @@ defmodule EvoGit.AgentScheduler do
     * `{:error, reason}` — it failed (including `:llm_not_configured`,
       `:cancelled` for a task already cancelling, and
       `:agent_max_retries_exceeded`);
-    * `{:paused, info}` — a TASK PAUSE drained the whole agent TREE, with
+    * `{:paused, info}` — a TASK PAUSE froze the whole agent TREE, with
       `info = %{agent_id, task_id, reason: :task_pause, pause_kind, checkpoint,
       branch, durable, clean_freeze, frozen_agents}`; `pause_kind` is `:clean`
       when every agent stopped with nothing interrupted and its state durable,
@@ -932,7 +932,7 @@ defmodule EvoGit.AgentScheduler do
   Ends a task-level pause: clears the task marker and every `pause_requested`
   flag of the task's currently registered agents.
 
-  Called when the drain completes (the task becomes `:paused`), when the pause is
+  Called when the freeze completes (the task becomes `:paused`), when the pause is
   abandoned (a cancel that arrives while `:pausing` wins) or when the task is
   resumed. Total and idempotent — a task with no agents left is a no-op.
   Returns `:ok`.
@@ -1301,7 +1301,7 @@ defmodule EvoGit.AgentScheduler do
   def handle_call({:begin_task_pause, task_id}, _from, %State{} = state) do
     if cancelling_task?(task_id) do
       # A pause that arrives while the task is being CANCELLED is ignored: no
-      # marker, no flag, no purge — the cancel owns the drain.
+      # marker, no flag, no purge — the cancel owns the freeze.
       Logger.info("AgentScheduler: Pause for task #{task_id} ignored — the task is cancelling")
 
       {:reply, :ok, state}
@@ -1444,8 +1444,8 @@ defmodule EvoGit.AgentScheduler do
       # raising a MatchError inside the shared scheduler GenServer.
       case Store.get_sched_meta(parent_id) do
         {:ok, parent} ->
-          # A TASK PAUSE drains the whole tree: registering children now would
-          # extend the drain with agents that were not part of the freeze. The
+          # A TASK PAUSE freezes the whole tree: registering children now would
+          # extend the freeze with agents that were not part of it. The
           # parent's exchange is answered `{:freeze, :task_pause}` instead, which
           # makes it pause at this very boundary (nothing is installed, spawned
           # or dispatched).
@@ -2217,7 +2217,7 @@ defmodule EvoGit.AgentScheduler do
     # 0. A force kill ABANDONS any in-flight task pause: clear the task marker,
     #    every pause flag and the freeze with its timers, so a killed task cannot
     #    leave the scheduler (or a late-registered agent) believing a pause is
-    #    still draining.
+    #    still freezing.
     ControlPlane.clear_task_pausing(task_id)
     Store.clear_pause_requested_for_task(task_id)
     state = drop_freeze(state, task_id)

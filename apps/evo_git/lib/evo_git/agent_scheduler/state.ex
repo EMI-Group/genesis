@@ -67,7 +67,7 @@ defmodule EvoGit.AgentScheduler.State do
     `{:reattach_timeout, agent_id, token}` message, so a timer whose waiter was
     already claimed is ignored instead of clearing a newer batch
   - `task_freezes` — `%{task_id => %EvoGit.AgentScheduler.TaskFreeze{}}` for every
-    task pause currently DRAINING: the roster of agents that still owe a paused
+    task pause currently FREEZING: the roster of agents that still owe a paused
     outcome (see `EvoGit.AgentScheduler.TaskFreeze`). Present ⟺ the task is
     freezing; deleted when the pause completes, is abandoned by a cancel or is
     cleared.
