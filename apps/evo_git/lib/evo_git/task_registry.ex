@@ -516,13 +516,15 @@ defmodule EvoGit.TaskRegistry do
 
   - `:running` → the row is written `:pausing` (broadcast to the dashboard
     immediately after the persist) and
-    `EvoGit.AgentScheduler.begin_task_pause/1` flags every agent of the task, so
-    each one stops at its NEXT TURN BOUNDARY — never mid-tool — after
-    checkpointing its conversation and committing its worktree. When the root
-    agent reports `{:paused, info}` the row becomes `:paused` with
-    `pause_kind: :clean`, the lease cleared and `finished_at` nil, and the
-    task's `result`/`usage`/archive are preserved (see `pause_task` on the
-    wrapper-result path in `handle_wrapper_result/3`).
+    `EvoGit.AgentScheduler.begin_task_pause/1` FREEZES the task's whole agent
+    tree, so each agent stops at its NEXT TURN BOUNDARY — never mid-tool — after
+    checkpointing its conversation and committing its worktree. When the freeze
+    completes the root reports `{:paused, info}` and the row becomes `:paused`
+    with a `pause_kind` DERIVED from that report (`:clean` when every agent
+    proved an uninterrupted, durable stop, `:dirty` when anything was forced or
+    could not be proven), the lease cleared and `finished_at` nil, and the
+    task's `result`/`usage`/archive are preserved (see the `{:paused, info}` arm
+    of `handle_wrapper_result/3`).
   - `:pausing`/`:paused` → `:ok` (IDEMPOTENT: no write, no scheduler call, no
     broadcast).
   - `:awaiting_input` (or any interactive-session task) →
@@ -536,7 +538,7 @@ defmodule EvoGit.TaskRegistry do
 
   A scheduler that is DOWN (or a call that times out) reverts the row to
   `:running` and answers `{:error, :scheduler_unavailable}` — a pause must never
-  leave a row stuck in `:pausing` with no agents to drain.
+  leave a row stuck in `:pausing` with no agents to freeze.
 
   Returns `:ok` on success (including the idempotent case) or `{:error, reason}`.
   The validation/persistence itself lives in `EvoGit.TaskRegistry.Pause`.
@@ -569,20 +571,23 @@ defmodule EvoGit.TaskRegistry do
   `:resume_branch` and `:resume_anchor_ref` — resolved up front so the resumed
   run restores the persisted identity, branch and worktree base without the
   scheduler reading the durable store itself.
-  Only the ROOT run is re-enqueued, and the resume is WHOLE-TREE because the
-  resumed root rebuilds its dangling subagent batch from the children's own
-  durable rows (a finished child by its stored result, a still-running one by a
-  re-spawn from its own checkpoint), recursively down the tree.
+  Only the ROOT run is re-enqueued, and the resume restores the WHOLE frozen
+  tree: the root plus every `running` child at any depth, each with the same
+  durable identity, its own conversation, worktree base and recorded position —
+  the resumed root's thaw planner rebuilds the children from their own durable
+  rows, recursively down the tree, so nothing about a paused child is consumed
+  by this registry.
 
   Admission re-runs the SAME gates as `start_task/2` (`:path` must be an OS path,
   never a VCT point, model selection against the current config,
   `:session_mode`, `:persistent_state`); a failure answers that
   `{:error, reason}` and leaves the row `:paused`. The resumability gate is the
-  task's durable ROOT run (`EvoGit.TaskRegistry.AgentStateRead.roster/2`, the
-  record whose `parent_id` is absent): a roster with no root row — no durable
-  state at all, or only CHILD runs — is `{:error, :not_resumable}`, because a
-  resume that cannot restore a root would silently start the objective from
-  scratch.
+  task's durable ROOT run (`EvoGit.TaskRegistry.AgentStateRead.roster/2` behind
+  the pure `EvoGit.AgentState.Snapshot.build/2`, the record whose `parent_id` is
+  absent): a roster with no root row — no durable state at all, or only CHILD
+  runs — is `{:error, :not_resumable}`, because a resume that cannot restore a
+  root would silently start the objective from scratch. An unreadable store is
+  `{:error, :store_unavailable}` instead (retryable, never a verdict).
 
   Returns `:ok` on success or `{:error, reason}`.
   """
@@ -2805,8 +2810,8 @@ defmodule EvoGit.TaskRegistry do
     state =
       if task_id do
         case result do
-          # TASK-LEVEL PAUSE: the drain completed, so the wrapper reported a
-          # pause instead of a `%Result{}`. The task parks in `:paused`; a paused
+          # TASK-LEVEL PAUSE: the whole-tree FREEZE completed, so the wrapper
+          # reported a pause instead of a `%Result{}`. The task parks in `:paused`; a paused
           # task is NOT finished (`finished_at` stays nil) and has no lease.
           {:paused, info} ->
             persist_paused(state, task_id, info)
@@ -2903,30 +2908,36 @@ defmodule EvoGit.TaskRegistry do
 
   # --- Task-level pause: wrapper result handling ---
 
-  # The wrapper reported `{:paused, info}`: the drain completed and the task
-  # parks in the PAUSED RESTING STATE.
+  # The wrapper reported `{:paused, info}`: the task pause is COMPLETE and the
+  # task parks in the PAUSED RESTING STATE.
   #
   # A TARGETED write (never a full `put_task`) — `result`, `usage`, `commit_sha`,
   # `branch_name`, `started_at` and `opts` are left byte-identical, which is what
   # makes a later resume ACCUMULATE usage and keep the same report. `finished_at`
   # is written NIL: a paused task is not finished, and the dashboard must not
-  # date it. `pause_kind: :clean` records that the agents stopped at a turn
-  # boundary (no in-flight tool batch to repair), which the resume turns into
-  # `resume_kind: :clean_pause`.
+  # date it.
   #
-  # WHY ONE RESULT IS ENOUGH for a multi-agent drain: the scheduler orders the
-  # drain — the ROOT agent only reports `{:paused, info}` once its children have
-  # paused, so this single wrapper result closes the whole task.
-  defp persist_paused(state, task_id, _info) do
+  # `pause_kind` is DERIVED from the report (`Pause.pause_kind/1`), never
+  # assumed: `:clean` only when the report proves every agent stopped
+  # uninterrupted and durably, `:dirty` when it says `pause_kind: :dirty`,
+  # `durable: false` or `clean_freeze: false` — a report that cannot prove a
+  # clean snapshot must never claim one, because the resume would then skip the
+  # crash repair it needs.
+  #
+  # WHY ONE RESULT IS ENOUGH for a multi-agent freeze: the scheduler answers the
+  # ROOT's caller only after its `TaskFreeze` completed (every agent of the tree
+  # reported, or the quiesce forced the leftovers), so this single wrapper result
+  # closes the whole task.
+  defp persist_paused(state, task_id, info) do
     # THREE-STATE read via `StoreRead` (never a degraded `nil` that would read as
     # "no row"): the decision below depends on the CURRENT row, and an outage is
     # not an answer.
     case StoreRead.update_info(state.task_store, task_id) do
       {:ok, %{status: status}} when status in [:pausing, :running] ->
-        write_paused(state, task_id)
+        write_paused(state, task_id, Pause.pause_kind(info))
 
       {:ok, %{status: :cancelling}} ->
-        # A cancel that arrived while the drain was in flight WINS (the pause was
+        # A cancel that arrived while the freeze was in flight WINS (the pause was
         # abandoned scheduler-side). The wrapper is gone, so resolve the row the
         # way the cancellation model does: the normal status path force-maps a
         # terminal phase of a `:cancelling` task to `:cancelled` and runs the
@@ -2977,18 +2988,18 @@ defmodule EvoGit.TaskRegistry do
     end
   end
 
-  defp write_paused(state, task_id) do
+  defp write_paused(state, task_id, kind) do
     case safe_store_write("paused wrapper result update_task_columns", fn ->
            EvoGit.Store.update_task_columns(state.task_store, task_id,
              status: :paused,
-             pause_kind: :clean,
+             pause_kind: kind,
              finished_at: nil,
              lease_expires_at: nil
            )
          end) do
       :ok ->
         Logger.info(
-          "TaskRegistry: Task #{task_id} PAUSED (clean checkpoint) — resume re-enqueues the same id"
+          "TaskRegistry: Task #{task_id} PAUSED (#{kind} snapshot) — resume re-enqueues the same id"
         )
 
         Phoenix.PubSub.broadcast(
@@ -3017,7 +3028,7 @@ defmodule EvoGit.TaskRegistry do
 
   # Shared in-memory cleanup of the paused transition: the wrapper is done (drop
   # its ref exactly like a terminal result) and the scheduler pause marker/flags
-  # are cleared — the drain is over, so nothing may keep honouring a pause.
+  # are cleared — the freeze is over, so nothing may keep honouring a pause.
   defp finish_paused_bookkeeping(state, task_id) do
     Pause.abandon(task_id)
     %{state | task_refs: Map.delete(state.task_refs, task_id)}
@@ -3070,7 +3081,7 @@ defmodule EvoGit.TaskRegistry do
 
       # STRAGGLER GUARD (same rule as the wrapper result): a `:pausing`/`:paused`
       # task is never flipped to `:completed`/`:failed` by a wrapper that died
-      # after the drain.
+      # after the freeze.
       pause_settled?(state, task_id) ->
         {:noreply, discard_paused_result(state, task_id, {:down, reason})}
 

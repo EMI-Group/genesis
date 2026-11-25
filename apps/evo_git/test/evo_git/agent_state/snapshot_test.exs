@@ -120,8 +120,52 @@ defmodule EvoGit.AgentState.SnapshotTest do
 
       assert {:ok, snapshot} = Snapshot.read(task_id, store: pid)
       assert Enum.map(Snapshot.live(snapshot), & &1.agent_id) == [1, 2]
+      assert Snapshot.running_count(snapshot) == 2
 
       assert Snapshot.live(:not_a_snapshot) == []
+      assert Snapshot.running_count(:not_a_snapshot) == 0
+    end
+  end
+
+  ## build/2 + root?/1 — the PURE constructors
+
+  describe "build/2" do
+    test "splits an ALREADY-READ roster with no store access", %{tmp_dir: tmp_dir} do
+      pid = start_store!(tmp_dir)
+      task_id = "task_snapshot_build"
+
+      row!(pid, task_id, 1, %{depth: 0, parent_id: nil})
+      row!(pid, task_id, 2, %{depth: 1, parent_id: 1})
+      records = AgentState.roster(task_id, store: pid)
+
+      assert {:ok, snapshot} = Snapshot.build(task_id, records)
+      assert snapshot.task_id == task_id
+      assert snapshot.root.agent_id == 1
+      assert Snapshot.agent_ids(snapshot) == [1, 2]
+
+      # A bounded caller's roster (the registry path) and the direct read agree
+      # byte-for-byte on the value they produce.
+      assert {:ok, ^snapshot} = Snapshot.read(task_id, store: pid)
+    end
+
+    test "an empty or rootless roster answers the documented error, never a crash",
+         %{tmp_dir: _tmp_dir} do
+      assert {:error, :empty} = Snapshot.build("task_snapshot_build_empty", [])
+      assert {:error, :empty} = Snapshot.build(nil, [])
+      assert {:error, :empty} = Snapshot.build("task_snapshot_build_junk", :not_a_list)
+
+      child = %Record{task_id: "task_snapshot_build_child", agent_id: 2, fields: %{parent_id: 1}}
+      assert {:error, :no_root} = Snapshot.build("task_snapshot_build_child", [child])
+    end
+  end
+
+  describe "root?/1" do
+    test "only a NIL-parent record is a root, and it is total over any input" do
+      assert Snapshot.root?(%Record{task_id: "t", agent_id: 1, fields: %{parent_id: nil}})
+      assert Snapshot.root?(%Record{task_id: "t", agent_id: 1, fields: %{}})
+      refute Snapshot.root?(%Record{task_id: "t", agent_id: 2, fields: %{parent_id: 1}})
+      refute Snapshot.root?(:not_a_record)
+      refute Snapshot.root?(nil)
     end
   end
 

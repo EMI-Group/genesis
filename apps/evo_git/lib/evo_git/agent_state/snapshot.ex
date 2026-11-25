@@ -18,6 +18,17 @@ defmodule EvoGit.AgentState.Snapshot do
   plain list of records, so a consumer holding only the rows reuses the same
   filter instead of growing a private copy of it.
 
+  ## Reading through a BOUNDED reader
+
+  A life-critical caller (`EvoGit.TaskRegistry`) must never block on the durable
+  store, so it reads its roster through
+  `EvoGit.TaskRegistry.AgentStateRead.roster/2` and asks
+  `build/2` — the PURE constructor — for the snapshot instead of calling
+  `read/2`. `read/2` is exactly `build/2` over the direct roster read, with the
+  store probe (`available?/1`) deciding the `{:error, :unavailable}` answer, so
+  both paths produce the same value and a consumer never grows a private
+  root/roster split of its own.
+
   The snapshot is DURABLE-BY-NATURE — it is built from `agent_state.sqlite`,
   which holds one row per RUNNING agent — so it survives the scheduler and even
   a BEAM restart. It is deliberately a plain data structure (no pids, no
@@ -88,22 +99,76 @@ defmodule EvoGit.AgentState.Snapshot do
       # `EvoGit.AgentState.roster/2` flattens EVERY store/read error to `[]`, so
       # an unavailable store is answered by the probe above — which is exactly
       # why that probe exists — and inside this branch the list is the truth.
-      case AgentState.roster(task_id, opts) do
-        [] ->
-          {:error, :empty}
-
-        agents ->
-          case Enum.find(agents, &(parent_id(&1) == nil)) do
-            nil -> {:error, :no_root}
-            root -> {:ok, %__MODULE__{task_id: task_id, root: root, agents: agents}}
-          end
-      end
+      build(task_id, AgentState.roster(task_id, opts))
     else
       {:error, :unavailable}
     end
   end
 
   def read(_task_id, _opts), do: {:error, :empty}
+
+  @doc """
+  Builds the snapshot from a roster the caller ALREADY read — no store access.
+
+  This is the PURE half of `read/2`, for a caller that must use its own bounded
+  reader (`EvoGit.TaskRegistry.AgentStateRead`) and still wants the ONE
+  root/roster split. Answers
+
+    * `{:error, :empty}` — the roster is empty (a non-list roster included);
+    * `{:error, :no_root}` — rows exist but none of them is a root.
+
+  The store-availability answer (`{:error, :unavailable}`) belongs to
+  `read/2`/`available?/1`, because a reader that answered `[]` for a degraded
+  store cannot be distinguished from one that found no rows.
+  """
+  @spec build(String.t(), [Record.t()] | term()) :: {:ok, t()} | {:error, :empty | :no_root}
+  def build(task_id, records) when is_binary(task_id) and is_list(records) do
+    case records do
+      [] ->
+        {:error, :empty}
+
+      records ->
+        case Enum.find(records, &root?/1) do
+          nil -> {:error, :no_root}
+          root -> {:ok, %__MODULE__{task_id: task_id, root: root, agents: records}}
+        end
+    end
+  end
+
+  def build(_task_id, _records), do: {:error, :empty}
+
+  @doc """
+  `true` when a durable agent-state record is a ROOT run — the record whose
+  `parent_id` is absent or `nil`.
+
+  The durable tree is keyed `(task_id, agent_id)` and only a ROOT record can
+  restore a paused task (a resume starts from the root), so this ONE predicate
+  is what `read/2`/`build/2` select the root with and what every resumability
+  classification asks. Total: a non-record answers `false`.
+  """
+  @spec root?(Record.t() | term()) :: boolean()
+  def root?(%Record{} = record), do: is_nil(parent_id(record))
+  def root?(_record), do: false
+
+  @doc """
+  Whether the durable agent-state store can answer at all — the probe behind
+  `read/2`'s `{:error, :unavailable}` verdict.
+
+  `false` means "cannot tell", never "no rows": a caller assembling the
+  snapshot from its own bounded roster read asks this first so it reports an
+  absent/degraded store honestly instead of an empty tree. `opts` is
+  `EvoGit.AgentState`'s own (`:store`, the server or its supervisor). Total.
+  """
+  @spec available?(keyword()) :: boolean()
+  def available?(opts \\ []) do
+    store =
+      case Keyword.get(opts, :store) do
+        nil -> AgentState.server()
+        store -> store
+      end
+
+    not is_nil(AgentState.repo(store))
+  end
 
   @doc """
   The snapshot records whose persisted `status` is `"running"`.
@@ -181,19 +246,16 @@ defmodule EvoGit.AgentState.Snapshot do
 
   def agent_ids(_snapshot), do: []
 
+  @doc """
+  How many records of the tree are still LIVE (`live/1`) — the size of the run
+  a resume has to restore.
+
+  Total: a non-snapshot answers `0`.
+  """
+  @spec running_count(t() | term()) :: non_neg_integer()
+  def running_count(snapshot), do: length(live(snapshot))
+
   # --- Private helpers ---
-
-  # The store probe: `roster/2` cannot distinguish "no store" from "no rows",
-  # so availability is asked of the facade directly.
-  defp available?(opts) do
-    store =
-      case Keyword.get(opts, :store) do
-        nil -> AgentState.server()
-        store -> store
-      end
-
-    not is_nil(AgentState.repo(store))
-  end
 
   defp batch_class(calls) do
     Enum.find(@class_order, :read, fn class ->

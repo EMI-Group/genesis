@@ -146,7 +146,7 @@ defmodule EvoGit.TaskRegistry.AgentStateReadTest do
   end
 
   describe "a resume" do
-    test "REFUSES instead of re-enqueueing an unrestorable run when the store is gone",
+    test "REFUSES to re-enqueue when the store is unreadable, reported as retryable",
          %{agent_state: agent_state} do
       task_id = unique_task_id()
       seed_task!(task_id, :paused)
@@ -156,8 +156,11 @@ defmodule EvoGit.TaskRegistry.AgentStateReadTest do
 
       elapsed =
         timed(fn ->
+          # "Cannot tell" is NEVER a verdict about the tree: the row may well be
+          # perfectly resumable, so the answer is the retryable
+          # `:store_unavailable`, not `:not_resumable`.
           assert Pause.resume(store(), task_id, nil, spawn_report(test_pid)) ==
-                   {:error, :not_resumable}
+                   {:error, :store_unavailable}
         end)
 
       assert elapsed < 2_000
