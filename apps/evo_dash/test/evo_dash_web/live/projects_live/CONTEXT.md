@@ -40,7 +40,6 @@ Missing ownership/readiness fields remain compatible only for valid unstamped lo
 
 The mounted tests drive server-rendered events but do not execute the browser's native `<details>` opening or browser storage hooks.
 These mounted tests exercise local-node controls; they do not assert remote inline settings behavior.
-The manual composer route renders duplicate `task-options` and `persist-agent-state-toggle` IDs from `TaskFormComponents` and `RemoteView.task_configuration/1`, so strict LiveView checks fail before the affected interactions can run.
 Legacy Project profile-selection assertions expect the first configured profile id without a selection script, the empty-string Auto sentinel with a script, `{[], nil}` for no profiles without a script, and `{[], ""}` for no profiles with a script.
 Remote legacy profile loading must ignore a local `:memo_config_resolve` and degrade to `{[], nil}` on an unreachable node.
 Canonical launches distinguish nil/uninitialized selection, which locks the configured default even with rules enabled, from explicit empty-map/empty-string Auto, which removes every model lock.
