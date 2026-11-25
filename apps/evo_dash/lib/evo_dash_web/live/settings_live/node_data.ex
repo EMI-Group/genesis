@@ -58,7 +58,9 @@ defmodule EvoDashWeb.SettingsLive.NodeData do
   # into a value).
   def start(socket, tag, category_param) do
     parent = self()
-    node = socket.assigns.current_node
+    # A LOCAL context must follow `node()` so the read stays local (never an
+    # `:erpc` to a node identity this page merely recorded at mount).
+    node = EvoDashWeb.SettingsLive.PageState.target_node(socket)
     all_schemas = socket.assigns.all_schemas_by_category
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->

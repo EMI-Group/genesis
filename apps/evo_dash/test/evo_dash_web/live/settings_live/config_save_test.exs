@@ -18,7 +18,7 @@
 defmodule EvoDashWeb.SettingsLive.ConfigSaveTest do
   use ExUnit.Case, async: true
 
-  alias EvoDashWeb.SettingsLive.{ConfigIO, ConfigSave}
+  alias EvoDashWeb.SettingsLive.{ConfigIO, ConfigSave, PageState}
 
   # The exact failure shape observed in the flake: a default-5s scheduler call
   # timing out inside the write's best-effort reload.
@@ -55,6 +55,10 @@ defmodule EvoDashWeb.SettingsLive.ConfigSaveTest do
   }
 
   @previous_config %{llm: %{default_provider_profile: nil, providers: []}}
+
+  # The recorded identity a page mounted before a runtime distribution change
+  # still carries.
+  @stale_node :stale_local@host
 
   test "an unacknowledged write proven by the authoritative read is a SAVED receipt" do
     socket = socket()
@@ -185,6 +189,167 @@ defmodule EvoDashWeb.SettingsLive.ConfigSaveTest do
     end
   end
 
+  # A LOCAL context (`current_node_id == nil`) whose recorded `current_node` no
+  # longer names this BEAM: the VM's distribution identity started/stopped while
+  # the page was mounted, so every scope the page keyed is stale.
+  describe "a stale LOCAL node identity" do
+    test "refuses the save with ONE warning naming both identities and never writes" do
+      test_pid = self()
+      socket = stale_local_socket()
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:rejected, :node_identity_changed, refused} =
+                   ConfigSave.start(
+                     socket,
+                     @candidate,
+                     @success_msg,
+                     writer: fn node, _candidate ->
+                       send(test_pid, {:writer_called, node})
+                       :ok
+                     end,
+                     reader: fn node ->
+                       send(test_pid, {:reader_called, node})
+                       {:ok, @candidate}
+                     end
+                   )
+
+          # A rejected start is a strict no-op on the socket.
+          assert refused.assigns == socket.assigns
+        end)
+
+      # Nothing reached the injected writer OR the authoritative read: no
+      # foreign-node write, no erpc probe.
+      refute_received {:writer_called, _node}
+      refute_received {:reader_called, _node}
+
+      # The ONE log line names the recorded and the live identity.
+      assert log =~ inspect(@stale_node)
+      assert log =~ inspect(node())
+    end
+
+    test "an in-flight receipt from the pre-flip scope settles stale, never failed" do
+      token = make_ref()
+      pre_flip_scope = {nil, @stale_node}
+
+      socket =
+        local_socket(
+          config_save_request: %{
+            token: token,
+            scope: pre_flip_scope,
+            candidate: @candidate,
+            success_msg: @success_msg,
+            runtime?: true,
+            editor_token: nil
+          },
+          config_saving: true
+        )
+
+      assert {:stale, stale_socket} =
+               ConfigSave.complete(
+                 socket,
+                 {{:settings_config_saved, token, pre_flip_scope},
+                  {:ok, {:saved, @candidate, []}}}
+               )
+
+      # A strict no-op: nothing applied, the ownership guard still held.
+      assert stale_socket.assigns == socket.assigns
+      assert stale_socket.assigns.config_saving == true
+      assert stale_socket.assigns.config_save_request.token == token
+    end
+
+    test "the same receipt for the LIVE identity settles saved" do
+      token = make_ref()
+
+      socket =
+        local_socket(
+          config_save_request: %{
+            token: token,
+            scope: {nil, node()},
+            candidate: @candidate,
+            success_msg: @success_msg,
+            runtime?: true,
+            editor_token: nil
+          },
+          config_saving: true
+        )
+
+      assert {:saved, receipt, saved_socket} =
+               ConfigSave.complete(
+                 socket,
+                 {{:settings_config_saved, token, {nil, node()}}, {:ok, {:saved, @candidate, []}}}
+               )
+
+      assert receipt.scope == {nil, node()}
+      assert receipt.file_config == @candidate
+      assert saved_socket.assigns.config_saving == false
+      assert saved_socket.assigns.config_save_request == nil
+    end
+
+    test "a remote target is unaffected: writer and reader both get the remote node" do
+      test_pid = self()
+
+      socket =
+        socket(
+          current_node_id: "target-1",
+          current_node: :remote@host,
+          remote_status: %{phase: :connected}
+        )
+
+      socket =
+        start(socket, @candidate,
+          writer: fn node, _candidate ->
+            send(test_pid, {:writer_called, node})
+            :ok
+          end,
+          reader: fn node ->
+            send(test_pid, {:reader_called, node})
+            {:ok, @candidate}
+          end
+        )
+
+      assert_receive {:writer_called, :remote@host}, 5_000
+      assert_receive {:reader_called, :remote@host}, 5_000
+
+      assert {:saved, receipt, _socket} = complete(socket)
+      assert receipt.scope == {"target-1", :remote@host}
+    end
+
+    test "pending_scope?/1 still refuses a not-yet-connected target" do
+      socket =
+        socket(current_node_id: "target-1", current_node: node(), remote_status: nil)
+
+      assert {:rejected, :remote_not_connected, _socket} =
+               ConfigSave.start(socket, @candidate, @success_msg)
+    end
+
+    test "ONE derivation: scope/1, test_config_scope/1 and target_node/1 agree" do
+      stale = stale_local_socket()
+      assert ConfigSave.scope(stale) == {nil, node()}
+      assert PageState.test_config_scope(stale) == {nil, node()}
+      assert PageState.target_node(stale) == node()
+      assert ConfigSave.node_identity_changed?(stale)
+
+      live = socket()
+      assert ConfigSave.scope(live) == {nil, node()}
+      assert PageState.target_node(live) == node()
+      refute ConfigSave.node_identity_changed?(live)
+
+      # A remote context keeps its recorded BEAM-node alias and never reads as
+      # a stale local identity, however the alias compares to `node()`.
+      remote =
+        socket(
+          current_node_id: "target-1",
+          current_node: :remote@host,
+          remote_status: %{phase: :connected}
+        )
+
+      assert ConfigSave.scope(remote) == {"target-1", :remote@host}
+      assert PageState.target_node(remote) == :remote@host
+      refute ConfigSave.node_identity_changed?(remote)
+    end
+  end
+
   defp start(socket, candidate, opts) do
     assert {:started, socket} = ConfigSave.start(socket, candidate, @success_msg, opts)
     socket
@@ -198,9 +363,21 @@ defmodule EvoDashWeb.SettingsLive.ConfigSaveTest do
     ConfigSave.complete(socket, message)
   end
 
-  defp socket do
+  defp socket(overrides \\ []) do
     %Phoenix.LiveView.Socket{
-      assigns: %{__changed__: nil, flash: %{}, current_node: node(), current_node_id: nil}
+      assigns:
+        Map.merge(
+          %{__changed__: nil, flash: %{}, current_node: node(), current_node_id: nil},
+          Map.new(overrides)
+        )
     }
   end
+
+  # The recorded identity a page mounted before a runtime distribution change
+  # still carries, together with the scope marker minted against it.
+  defp stale_local_socket,
+    do: socket(current_node: @stale_node, config_loaded_scope: {nil, @stale_node})
+
+  defp local_socket(overrides),
+    do: socket(Keyword.put(overrides, :current_node, node()))
 end

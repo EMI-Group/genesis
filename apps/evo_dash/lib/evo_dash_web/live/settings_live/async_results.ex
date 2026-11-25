@@ -44,8 +44,11 @@ defmodule EvoDashWeb.SettingsLive.AsyncResults do
   still pending.
   """
   def node_data_loaded(socket, seq, scope, requested_node, category_param, result) do
+    # The request's node is compared against the LIVE target: a LOCAL context
+    # follows `node()`, so a load that ran against this BEAM after a runtime
+    # distribution change is applied instead of dropped as "another node".
     if seq == socket.assigns.settings_load_seq and scope == ConfigSave.scope(socket) and
-         requested_node == socket.assigns.current_node and
+         requested_node == PageState.target_node(socket) and
          not PageState.pending_remote_target?(socket) do
       {:noreply,
        apply_node_data_results(

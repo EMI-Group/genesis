@@ -107,7 +107,9 @@ defmodule EvoDashWeb.SettingsLive.LlmTestEvents do
       seq = socket.assigns.llm_test_seq
       scope = llm_test_scope(socket)
       config = socket.assigns.file_config
-      target_node = socket.assigns.current_node || node()
+      # The LIVE target: a LOCAL context follows `node()`, so a flipped page
+      # tests against this BEAM (the `target_node == node()` branch below).
+      target_node = PageState.target_node(socket)
       spec = Map.take(selection, [:provider_profile_id, :model])
 
       # Capture the destination and persisted selection now, not from a later

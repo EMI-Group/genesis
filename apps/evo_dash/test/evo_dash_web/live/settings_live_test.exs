@@ -1068,15 +1068,16 @@ defmodule EvoDashWeb.SettingsLiveTest do
             remote_config: flag,
             llm_test_status: :idle,
             file_config: file_config,
+            current_node_id: "missing-settings-test",
             current_node: :"missing_settings_test@127.0.0.1",
-            test_config_scope: {nil, :"missing_settings_test@127.0.0.1"},
+            test_config_scope: {"missing-settings-test", :"missing_settings_test@127.0.0.1"},
             test_profile_id: selected
           }
         }
 
         assert {:noreply, result} = SettingsLive.handle_event("test_llm", %{}, socket)
         assert result.assigns.llm_test_status == :testing
-        scope = {nil, :"missing_settings_test@127.0.0.1", selected}
+        scope = {"missing-settings-test", :"missing_settings_test@127.0.0.1", selected}
 
         assert_receive {{:llm_test_result, 1, ^scope}, {:ok, {:error, _}}},
                        async_wait_budget()
