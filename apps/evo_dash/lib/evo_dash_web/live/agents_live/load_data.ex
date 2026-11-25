@@ -11,7 +11,9 @@ defmodule EvoDashWeb.AgentsLive.LoadData do
   resolved at call time so tests can inject fakes.
   """
 
-  alias EvoDashWeb.AgentsLive.{ContextMeter, ThresholdCache}
+  alias EvoDash.NodeContext
+  alias EvoDashWeb.AgentsLive.{ContextMeter, Scope, ThresholdCache}
+  alias EvoGit.AgentScheduler.RemoteAPI
   alias EvoDashWeb.ModelLabel
 
   @doc """
@@ -31,8 +33,73 @@ defmodule EvoDashWeb.AgentsLive.LoadData do
     {:ok, %{agents: agents, config_status: config_status, threshold_cache: threshold_cache}}
   end
 
+  @doc "Reads one task and only its agent summaries, preserving transport failures."
+  def load_scoped(node, task_id, threshold_cache) do
+    with {:ok, row} <- fetch_scoped_task(node, task_id),
+         {:ok, task} <- project_task(row, task_id),
+         {:ok, summaries} <- scoped_agent_summaries(node, task) do
+      {threshold, cache} =
+        ThresholdCache.fetch(node, threshold_cache, System.monotonic_time(:millisecond))
+
+      {:ok,
+       %{
+         task: task,
+         agents: summaries |> Scope.filter(task_id) |> build_agents(threshold),
+         threshold_cache: cache,
+         config_status: node_config_status(node)
+       }}
+    end
+  end
+
+  defp fetch_scoped_task(node, task_id) do
+    runner = Application.get_env(:evo_dash, :agents_task_runner, &default_scoped_task/2)
+
+    case runner.(node, task_id) do
+      {:error, reason} -> {:error, {:task_load, reason}}
+      {:ok, row} -> {:ok, row}
+      row -> {:ok, row}
+    end
+  end
+
+  # The convenience NodeContext.get_task_lite/list_agents calls collapse a
+  # remote transport failure into nil/[]. A focused view needs the envelope.
+  defp default_scoped_task(node, id),
+    do: NodeContext.call_remote(node, RemoteAPI, :get_task_lite, [id])
+
+  defp scoped_agent_summaries(_node, nil), do: {:ok, []}
+
+  defp scoped_agent_summaries(node, _task) do
+    runner = Application.get_env(:evo_dash, :agents_list_runner, &default_scoped_agents/1)
+
+    case runner.(node) do
+      {:ok, rows} when is_list(rows) -> {:ok, rows}
+      rows when is_list(rows) -> {:ok, rows}
+      {:error, reason} -> {:error, {:agents_load, reason}}
+      _ -> {:error, :invalid_agent_list}
+    end
+  end
+
+  defp default_scoped_agents(node), do: NodeContext.call_remote(node, RemoteAPI, :list_agents, [])
+
+  defp project_task(nil, _task_id), do: {:ok, nil}
+
+  defp project_task(%{id: id} = task, id) do
+    opts = Map.get(task, :opts) || []
+
+    {:ok,
+     %{
+       id: id,
+       objective: opts[:objective] || opts[:prompt] || Map.get(task, :objective),
+       project_path: Map.get(task, :project_path) || opts[:path],
+       status: Map.get(task, :status),
+       type: Map.get(task, :type)
+     }}
+  end
+
+  defp project_task(_row, _task_id), do: {:error, :invalid_task_row}
+
   @doc """
-  Lightweight refresh (poll / broadcast path): agent summaries + a refreshed
+  Lightweight refresh (broadcast path): agent summaries + a refreshed
   threshold cache, no config_status (the layout banner is only loaded by the
   page-load path). Returns `{agents, threshold_cache}` — the task caller wraps
   this in a node-boundary try/rescue (see `AgentsLive.Loader.spawn_refresh/1`).

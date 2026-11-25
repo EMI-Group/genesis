@@ -53,7 +53,7 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
   require Logger
 
   alias EvoDash.{NodeContext, SafeCall, TaskSupervisor}
-  alias EvoDashWeb.AgentsLive.RuntimeStream
+  alias EvoDashWeb.AgentsLive.{RuntimeStream, Scope}
   alias EvoGit.Agent.Stream.Snapshot
 
   @max_pending_batches 128
@@ -402,10 +402,7 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
     end
   end
 
-  defp pending_remote?(socket),
-    do:
-      socket.assigns[:current_node_id] != nil and
-        (socket.assigns[:current_node] || node()) == node()
+  defp pending_remote?(socket), do: not Scope.available?(socket.assigns)
 
   defp start_watch(socket, stream) do
     case ensure_worker(socket) do

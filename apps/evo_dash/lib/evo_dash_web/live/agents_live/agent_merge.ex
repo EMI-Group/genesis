@@ -36,6 +36,7 @@ defmodule EvoDashWeb.AgentsLive.AgentMerge do
     LoadData,
     OptimisticMessages,
     PendingEvents,
+    Scope,
     StreamWatch,
     ThresholdCache,
     TreeView
@@ -59,13 +60,19 @@ defmodule EvoDashWeb.AgentsLive.AgentMerge do
   @spec flush(Phoenix.LiveView.Socket.t()) ::
           {Phoenix.LiveView.Socket.t(), :refresh | :refetch | :none}
   def flush(socket) do
-    events = PendingEvents.drain(socket.assigns.pending_agent_events)
+    events =
+      if is_nil(socket.assigns[:task_scope_id]) or socket.assigns.scoped_task_state == :ready,
+        do: PendingEvents.drain(socket.assigns.pending_agent_events),
+        else: []
+
     refresh? = socket.assigns.pending_agents_refresh
 
     socket =
       assign(socket,
         pending_agent_events: PendingEvents.new(),
+        pending_agent_registration_ids: MapSet.new(),
         agent_flush_scheduled: false,
+        agent_flush_token: nil,
         pending_agents_refresh: false
       )
 
@@ -112,6 +119,29 @@ defmodule EvoDashWeb.AgentsLive.AgentMerge do
     |> maybe_schedule_agent_flush()
   end
 
+  def buffer_node_refresh(socket, node) do
+    if is_nil(socket.assigns[:task_scope_id]) and Scope.event_from_scope?(socket.assigns, node),
+      do: buffer_refresh(socket),
+      else: socket
+  end
+
+  def flush_due?(socket, :manual), do: pending?(socket)
+
+  def flush_due?(socket, token) when is_reference(token),
+    do: socket.assigns[:agent_flush_token] == token
+
+  def flush_due?(_socket, _token), do: false
+
+  def defer_flush(socket),
+    do: assign(socket, agent_flush_scheduled: false, agent_flush_token: nil)
+
+  def resume_flush(socket) do
+    if pending?(socket), do: maybe_schedule_agent_flush(socket), else: socket
+  end
+
+  defp pending?(socket),
+    do: socket.assigns.pending_agent_events != [] or socket.assigns.pending_agents_refresh
+
   @doc """
   Applies a fresh agent list (from the async load or a refresh task): recomputes
   the tracking assigns, carries over still-current histories, records the fresh
@@ -120,7 +150,11 @@ defmodule EvoDashWeb.AgentsLive.AgentMerge do
   """
   @spec apply_result(Phoenix.LiveView.Socket.t(), [map()]) :: Phoenix.LiveView.Socket.t()
   def apply_result(socket, agents) do
-    agents = Enum.map(agents, &Inspector.preserve_terminal(socket, &1))
+    agents =
+      agents
+      |> Scope.filter(socket.assigns[:task_scope_id])
+      |> Enum.map(&Inspector.preserve_terminal(socket, &1))
+
     current_ids = MapSet.new(agents, & &1.id)
     current_statuses = Map.new(agents, fn a -> {a.id, a.status} end)
 
@@ -448,7 +482,17 @@ defmodule EvoDashWeb.AgentsLive.AgentMerge do
         agent
       end
 
-    state = %{state | rows: Map.put(state.rows, agent_id, agent)}
+    # Scoped views ignore the unowned bulk broadcast. A matching startup delta
+    # with repo metadata can enrich the thin registration's missing base/module.
+    hydrate? =
+      not is_nil(state.socket.assigns[:task_scope_id]) and is_nil(agent.base_commit) and
+        (is_binary(changed_map[:repo_root]) or is_binary(changed_map[:worktree]))
+
+    state = %{
+      state
+      | rows: Map.put(state.rows, agent_id, agent),
+        needs_refresh?: state.needs_refresh? or hydrate?
+    }
 
     # Recalculate children if parent_id changed
     state =
@@ -865,17 +909,55 @@ defmodule EvoDashWeb.AgentsLive.AgentMerge do
   # Foreign-node events are dropped BEFORE buffering, so they can never
   # schedule a flush or leak into the currently-viewed node's tree.
   defp buffer_node_event(socket, node, event) do
-    if EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) do
+    if Scope.event_from_scope?(socket.assigns, node) and admit_event?(socket.assigns, event) do
       socket
       |> assign(
         :pending_agent_events,
         PendingEvents.append(socket.assigns.pending_agent_events, event)
       )
+      |> note_registration(event)
       |> maybe_schedule_agent_flush()
     else
       socket
     end
   end
+
+  defp admit_event?(%{task_scope_id: task_id} = assigns, event) when is_binary(task_id) do
+    case event do
+      {:agent_registered, _id, row, _node} ->
+        assigns.scoped_task_state in [:ready, :loading] and Scope.member?(row, task_id)
+
+      {:agent_updated, id, changes, _node} ->
+        case Keyword.fetch(changes, :task_id) do
+          {:ok, id_in_change} -> id_in_change == task_id
+          :error -> known_agent?(assigns, id)
+        end
+
+      {:agent_removed, id, _node} ->
+        known_agent?(assigns, id)
+    end
+  end
+
+  defp admit_event?(_assigns, _event), do: true
+
+  # A delta/removal can follow a matching registration in the same burst, before
+  # that registration reaches the visible rows. Unknown IDs do not trigger a
+  # task-scoped refresh: they may belong to any other task on the node.
+  defp known_agent?(assigns, id) do
+    Map.has_key?(assigns.id_to_display, id) or Map.has_key?(assigns.retained_agents, id) or
+      MapSet.member?(assigns[:pending_agent_registration_ids] || MapSet.new(), id)
+  end
+
+  defp note_registration(socket, {:agent_registered, id, _row, _node}) do
+    if socket.assigns[:task_scope_id] do
+      ids = socket.assigns[:pending_agent_registration_ids] || MapSet.new()
+      assign(socket, :pending_agent_registration_ids, MapSet.put(ids, id))
+    else
+      socket
+    end
+  end
+
+  defp note_registration(socket, _event), do: socket
 
   # Schedules the trailing-edge flush timer ONLY when one is not already
   # pending — the first event of a window arms it, every subsequent event just
@@ -885,13 +967,15 @@ defmodule EvoDashWeb.AgentsLive.AgentMerge do
   # constant-only.
   defp maybe_schedule_agent_flush(socket) do
     if PendingEvents.should_schedule?(socket.assigns.agent_flush_scheduled) do
+      token = make_ref()
+
       Process.send_after(
         self(),
-        :flush_agent_events,
+        {:flush_agent_events, token},
         Application.get_env(:evo_dash, :agents_live_flush_ms, PendingEvents.flush_ms())
       )
 
-      assign(socket, :agent_flush_scheduled, true)
+      assign(socket, agent_flush_scheduled: true, agent_flush_token: token)
     else
       socket
     end
