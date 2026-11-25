@@ -117,7 +117,7 @@ The ONE writer serializes SQLite, so it also owns how much work a queued backlog
 - `Record.encode_messages/1` is `:erlang.term_to_binary(messages, compressed: 6)` (zlib level 6) of the TAIL on `:append` and of the FULL transcript on `:rewrite`.
 - `Record.encode_fields/1` Jason-encodes every JSON column supplied on EVERY checkpoint — `:redispatch` (which carries the objective text), `:usage`, `:pending_inputs`, `:pending_tool_batch` — not only on the first one.
 - One checkpoint = one `BEGIN IMMEDIATE` transaction: `SELECT message_count, chunk_count`, one chunk INSERT, one UPSERT of every supplied scalar column (the dynamic SQL is rebuilt per write).
-- `update_volatile/4` would cost one reused prepared statement and re-encode no identity/run fact, but nothing produces it yet (Known Issues — Query & Write Amplification).
+- `update_volatile/4` costs one reused prepared statement and re-encodes no identity/run fact; it is the producer-side scalar-only path (`Session.Persistence.write_volatile_boundary/6` when the transcript did not move and no new `anchor_ref` was written).
 - WAL + `synchronous: normal` does NOT fsync per commit (SQLite syncs the WAL at an auto-checkpoint, ~1000 pages, and the database file after it), so the occasional slow commit is a checkpoint fsync on slow/network storage and it stalls the WRITER only.
 - A small append is single-digit milliseconds; a multi-MB `:rewrite` (post-compression, first snapshot, or a resync) is tens of milliseconds.
 - The writer is SHARED by every agent in the BEAM, so N concurrent agents serialize their commits there — a backlog delays durability, never a turn.
@@ -170,8 +170,8 @@ A repo-less run (no repository) and a `persistent_state: false` task never ancho
 
 ## Known Issues — Query & Write Amplification
 
-- Every checkpoint supplies the session's whole field projection, so `redispatch`/`objective` are Jason-encoded and every supplied column rewritten each turn although only the volatile half changed (`agent/session/persistence.ex`).
-- `update_volatile/4` has NO producer yet: `EvoGit.Agent.Session.Persistence` still sends one full checkpoint per turn, so the constant-shape per-turn `UPDATE` is shipped but unused. Wiring it is a session-package change and must keep the `pause_commit`/`result` exclusions (their own writes are `put_pause_commit/4` and `mark_done/5`).
+- Per-turn writes are ALREADY the volatile projection (`agent/session/persistence.ex`: `write_checkpoint`/`write_volatile_boundary` send `Map.merge(volatile_fields(state), anchor)`), so `redispatch`/`objective` are Jason-encoded only by `initial_snapshot/1` (row creation) and `resync/1`, never each turn.
+- Each turn boundary still re-encodes `:usage`/`:pending_inputs`/`:pending_tool_batch` JSON and rewrites all nine volatile columns together, because the volatile projection is supplied whole (REPLACE semantics require it).
 - `agent_states_status_completed_at_index` is indexed on a column no query filters, yet every `mark_done` maintains it (migration `000001_create_agent_state.exs`).
 
 ## Notes for Agents
