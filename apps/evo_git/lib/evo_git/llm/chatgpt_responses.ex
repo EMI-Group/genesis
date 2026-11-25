@@ -105,10 +105,22 @@ defmodule EvoGit.LLM.ChatGPTResponses do
            {"authorization", "Bearer " <> token},
            {"content-type", "application/json"},
            {"accept", "text/event-stream"}
-         ] ++ identity_headers(original_provider_opts, cache_key),
+         ] ++
+           identity_headers(original_provider_opts, cache_key) ++ attribution_headers(),
          payload
        )}
     end
+  end
+
+  # SIWC usage-attribution headers required by OpenAI's token-sharing docs: the
+  # `originator` name matches the registration `agent_name_hint`, and the
+  # `user-agent` carries `<app name>/<version>`. ChatGPT's usage surface
+  # attributes requests by these headers.
+  defp attribution_headers do
+    name = ChatGPT.agent_name()
+    version = Application.spec(:evo_git, :vsn) |> to_string()
+
+    [{"originator", name}, {"user-agent", "#{name}/#{version}"}]
   end
 
   # The per-agent-run identity rides BOTH the body `prompt_cache_key` and the

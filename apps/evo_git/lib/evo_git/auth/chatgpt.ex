@@ -13,6 +13,9 @@ defmodule EvoGit.Auth.ChatGPT do
 
   def resource, do: @resource
 
+  @doc "Stable app identity used both for the SIWC registration hint and request attribution."
+  def agent_name, do: "Genesis"
+
   @doc "Shared transport options for SIWC authorization and inference."
   def http_options do
     case System.get_env("GENESIS_SIWC_HTTPS_PROXY") do
@@ -46,7 +49,7 @@ defmodule EvoGit.Auth.ChatGPT do
         registration_params =
           case registration do
             %{"client_id" => client_id} -> [client_id: client_id]
-            nil -> [client_id: @dynamic_client, agent_name_hint: "Genesis"]
+            nil -> [client_id: @dynamic_client, agent_name_hint: agent_name()]
           end
 
         query =
