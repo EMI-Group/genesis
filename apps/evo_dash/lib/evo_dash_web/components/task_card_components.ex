@@ -135,7 +135,8 @@ defmodule EvoDashWeb.TaskCardComponents do
 
   The markup therefore puts NO background, border, shadow or hover utility on
   the wrapper; the status `tint` from `task_card_tint/1` rides along as the
-  flat variant's subtle wash.
+  flat variant's subtle wash (semantic fill + border tint only — never a
+  `shadow-*` token, since the wrapper carries no shadow-size utility).
 
   ## Why the preview helpers stay HERE
 
@@ -1112,19 +1113,30 @@ defmodule EvoDashWeb.TaskCardComponents do
   # Card tint — completed+review_status variants stay distinct (review
   # outcome is a separate semantic dimension); every other task status
   # delegates to the shared semantic tint (LOCKED mapping).
+  # The wrapper carries no shadow-SIZE utility (its elevation belongs to
+  # `surfaces.css`), so the shared tint's `shadow-<semantic>/10` colour token
+  # would be inert markup here: only the fill and the border survive.
   defp task_card_tint(%{status: :completed, review_status: :merged}),
-    do: "bg-success/5 shadow-success/10 border-success/20"
+    do: "bg-success/5 border-success/20"
 
   defp task_card_tint(%{status: :completed, review_status: :rejected}),
-    do: "bg-error/5 shadow-error/10 border-error/20"
+    do: "bg-error/5 border-error/20"
 
   defp task_card_tint(%{status: :completed, review_status: :continued}),
-    do: "bg-secondary/5 shadow-secondary/10 border-secondary/20"
+    do: "bg-secondary/5 border-secondary/20"
 
   defp task_card_tint(%{status: :completed, review_status: :ignored}),
-    do: "bg-base-200/40 shadow-base-300/10 border-base-300/20"
+    do: "bg-base-200/40 border-base-300/20"
 
-  defp task_card_tint(%{status: status}), do: task_status_tint(status)
+  defp task_card_tint(%{status: status}), do: status |> task_status_tint() |> without_shadow()
+
+  # Drops the shared tint's shadow-COLOUR token, keeping every other class.
+  defp without_shadow(classes) do
+    classes
+    |> String.split()
+    |> Enum.reject(&String.starts_with?(&1, "shadow-"))
+    |> Enum.join(" ")
+  end
 
   # ---------------------------------------------------------------------------
   # Private helpers — bounded in-card payload previews

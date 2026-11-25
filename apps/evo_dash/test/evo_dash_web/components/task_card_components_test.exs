@@ -827,7 +827,7 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
 
       # Accent bar + card tint belong to the violet idle-session family.
       assert html =~ "h-1 opacity-80 bg-violet-500"
-      assert html =~ "bg-violet-500/5 shadow-violet-500/10 border-violet-500/30"
+      assert html =~ "bg-violet-500/5 border-violet-500/30"
       assert html =~ "bg-violet-500/10 text-violet-600 dark:text-violet-400 rounded-full"
       refute html =~ "bg-warning"
 
@@ -1199,6 +1199,46 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
             "border-base-300"
           ] do
         refute banned in classes, "did not expect #{banned} on the task-card root"
+      end
+    end
+
+    test "the status tint is a fill + border wash and NEVER a shadow colour" do
+      # The wrapper carries no shadow-SIZE utility (elevation belongs to
+      # `assets/css/surfaces.css`), so a `shadow-<semantic>/10` colour token
+      # would be inert markup. Pin the whole status family — including the
+      # completed + review_status variants — at full strength.
+      expected = [
+        {:failed, nil, "bg-error/5 border-error/20"},
+        {:running, nil, "bg-warning/5 border-warning/20"},
+        {:cancelling, nil, "bg-warning/5 border-warning/20"},
+        {:pausing, nil, "bg-warning/5 border-warning/20"},
+        {:paused, nil, "bg-info/5 border-info/20"},
+        {:awaiting_input, nil, "bg-violet-500/5 border-violet-500/30"},
+        {:pending, nil, "bg-base-200/40 border-base-300/20"},
+        {:cancelled, nil, "bg-base-200/40 border-base-300/20"},
+        {:completed, nil, "bg-success/5 border-success/20"},
+        {:completed, :merged, "bg-success/5 border-success/20"},
+        {:completed, :rejected, "bg-error/5 border-error/20"},
+        {:completed, :continued, "bg-secondary/5 border-secondary/20"},
+        {:completed, :ignored, "bg-base-200/40 border-base-300/20"}
+      ]
+
+      for {status, review_status, tint} <- expected do
+        root =
+          render_action_card(%{id: "t_tint", status: status, review_status: review_status})
+          |> parse()
+          |> Floki.find("div.task-card")
+          |> List.first()
+
+        classes = class_list(root)
+
+        for kept <- String.split(tint) do
+          assert kept in classes,
+                 "expected #{kept} on the #{status}/#{inspect(review_status)} task-card root, got #{inspect(classes)}"
+        end
+
+        assert Enum.filter(classes, &String.starts_with?(&1, "shadow-")) == [],
+               "did not expect a shadow-* class on the #{status}/#{inspect(review_status)} task-card root"
       end
     end
 

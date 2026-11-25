@@ -146,21 +146,20 @@ test("the per-component reduced-motion guard stays alongside the global backstop
   assert.equal(values(guards[0].body).transition, "none");
 });
 
-test("a project entry's child window rows start below its title pill", () => {
-  // The project title row and its FIRST child window row are both
-  // `is-current` accent pills: with no block gap their two tints fuse into one
-  // continuous coloured shape.
-  const containers = leafRules().filter(rule => {
-    const selectors = selectorsOf(rule);
-    return selectors.includes(".workbench-project-open-windows:not(:empty)") &&
-      selectors.includes(".workbench-project-activity");
-  });
-  assert.equal(containers.length, 1, "expected one shared child-row container rule");
+test("a project entry's activity rows start below its title pill", () => {
+  // The project title row and its FIRST activity row are both `is-current`
+  // accent pills: with no block gap their two tints fuse into one continuous
+  // coloured shape.
+  const containers = leafRules().filter(rule =>
+    selectorsOf(rule).includes(".workbench-project-activity")
+  );
+  assert.equal(containers.length, 1, "expected one activity container rule");
+  const container = containers[0];
 
   // The container is JS-filled and HEEx renders it with a whitespace-only body
-  // even when it has no rows, so `:not(:empty)` is always true: a block margin
-  // on the container would reserve dead space under window-less entries.
-  const declared = values(containers[0].body);
+  // even when it has no rows: a block margin on the container would reserve
+  // dead space under row-less entries.
+  const declared = values(container.body);
   assert.equal(
     declared["margin-block-start"],
     undefined,
@@ -173,10 +172,9 @@ test("a project entry's child window rows start below its title pill", () => {
   // row is actually rendered.
   const firstChild = leafRules().filter(rule => {
     const selectors = selectorsOf(rule);
-    return selectors.includes(".workbench-project-open-windows>:first-child") &&
-      selectors.includes(".workbench-project-activity>:first-child");
+    return selectors.includes(".workbench-project-activity>:first-child");
   });
-  assert.equal(firstChild.length, 1, "expected one shared first-child gap rule");
+  assert.equal(firstChild.length, 1, "expected one first-child gap rule");
 
   const gap = values(firstChild[0].body)["margin-block-start"];
   assert.ok(gap, "the first child row must declare margin-block-start");

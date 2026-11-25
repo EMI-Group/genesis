@@ -1351,13 +1351,12 @@
 }
 
 .workbench-project-heading .workbench-project-link { flex: 1; }
-/* A project entry's own child rows (its open windows / its activity) are a
-   LIST under the title pill: the title row and the FIRST child row are both
-   accent-tinted `is-current` pills, so they need a real block gap of their own
-   or the two tints fuse into one continuous coloured shape. The inline indent
-   is the hierarchy, this gap is the separation. */
-.workbench-project-activity,
-.workbench-project-open-windows:not(:empty) {
+/* A project entry's own activity rows are a LIST under the title pill: the
+   title row and the FIRST child row are both accent-tinted `is-current` pills,
+   so they need a real block gap of their own or the two tints fuse into one
+   continuous coloured shape. The inline indent is the hierarchy, this gap is
+   the separation. */
+.workbench-project-activity {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
@@ -1367,34 +1366,11 @@
 /* The gap rides the FIRST row, never the container: the container is filled by
    JS and HEEx renders it with a whitespace-only body even when it holds no
    rows, so a container margin would reserve dead space under every entry
-   without open windows. `> :first-child` only exists when a row does. */
-.workbench-project-activity > :first-child,
-.workbench-project-open-windows > :first-child {
+   without rows. `> :first-child` only exists when a row does. */
+.workbench-project-activity > :first-child {
   margin-block-start: .3rem;
 }
 .workbench-project-activity-link[hidden] { display: none; }
-.workbench-project-window-link {
-  min-width: 0;
-  min-block-size: var(--row-h-sm);
-  padding-block: .2rem;
-  gap: .45rem;
-  color: var(--workbench-text-muted);
-}
-.workbench-project-window-link .truncate { flex: 1; min-width: 0; }
-[data-workbench-project-switching] .workbench-project-entry:not(:has(.workbench-project-window-link.is-current))
-  .workbench-project-link.is-current {
-  background: transparent;
-  color: inherit;
-  font-weight: inherit;
-}
-[data-workbench-project-switching] .workbench-project-entry:has(.workbench-project-window-link.is-current)
-  .workbench-project-link {
-  background: var(--workbench-selected);
-  color: var(--color-primary-standalone);
-}
-@media (pointer: coarse) {
-  .workbench-project-window-link { min-block-size: var(--touch-target); }
-}
 
 .workbench-project-activity-link { gap: .4rem; color: var(--workbench-text-muted); }
 .workbench-project-activity-link:hover { color: var(--color-base-content); }
