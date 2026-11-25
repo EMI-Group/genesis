@@ -521,7 +521,7 @@ defmodule EvoGit.Agent.ProviderSelectionCostTest do
     state =
       struct!(
         AgentState,
-        Map.merge(selection, %{
+        Map.merge(Map.drop(selection, [:provider]), %{
           context_node: %ContextNode{path: "./", repo: "provider-cost-test"},
           max_retries: 1,
           max_depth: 2
