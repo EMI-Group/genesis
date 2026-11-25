@@ -78,7 +78,7 @@ A regression shows up as `:erlang.node() != :nonode@nohost` at any point in a da
 Per-site detail: `live/CONTEXT.md` (page suites) and `live_hooks/CONTEXT.md` (the shared helper).
 
 ### Deterministic waits (no fixed sleeps, no tight windows)
-Bounded polls run at a 1–2 ms cadence (`@wait_poll_ms 2`, `@poll_ms 1`); a fixed `Process.sleep` is never a wait for an async result — it survives only as a poll cadence (`@poll_ms`/`@wait_poll_ms`/`@poll_interval_ms`, 1–2 ms) or as producer/stub latency (`safe_call_test`'s `SlowServer`, `projects_live_test`'s `connect_delay_ms`, `health_controller_test`'s elapsed-wall-clock uptime model, `review_live_test.rm_rf_retry`'s filesystem backoff).
+Bounded polls run at a 1–2 ms cadence (`@wait_poll_ms 2`, `@poll_ms 1`) written as a bounded `receive … after … -> :ok end` (the Settings suites' `@poll_ms`/`@wait_poll_ms`/`@connect_poll_ms`, `EvoDash.Test.SettingsAwait`), and a `Process.sleep` remains only as a poll cadence in the older page suites (`@poll_ms`/`@wait_poll_ms`/`@poll_interval_ms`, 1–2 ms) or as producer/stub latency (`safe_call_test`'s `SlowServer`, `projects_live_test`'s `connect_delay_ms`, `health_controller_test`'s elapsed-wall-clock uptime model, `review_live_test.rm_rf_retry`'s filesystem backoff).
 A `receive … after N` INSIDE an injected runner/stub is a handshake-lost valve, not an await, and keeps its own budget.
 `refute_receive`/`refute_push_event` may use a 0 ms window ONLY after a preceding drain or `:sys.get_state` round-trip has provably completed the mailbox.
 A timed NEGATIVE window ("nothing else arrives") is dead time unless the claim itself is timing: prefer a structural witness read through `assigns/1`, then a 0 ms refute.

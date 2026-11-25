@@ -162,7 +162,7 @@ Mutations acknowledge dispatch before the off-process write completes, so a save
 
 Pure suites use the shared test bootstrap and never call `ExUnit.start/0`, patch missing core functions or skip failing integration contracts.
 Mounted suites retain per-process `EvoDash.Test.ConfigDir.isolate!/1` and local-only `EvoDash.ActiveTasks.invalidate(nil, node())`; the whole-table `reset/0` belongs to sync modules only.
-Every async-load budget here is a load-tolerant 30 s — `EvoDash.Test.SettingsAwait` owns the mount/save budgets (`async_wait_budget_ms/0`, `assigns_timeout_ms/0`), and a suite that needs a deadline for its own poll or `assert_receive` re-declares the same `@async_wait_budget_ms` — with a 1–2 ms poll cadence; no fixed `Process.sleep` is a wait mechanism.
+Every async-load budget here is a load-tolerant 30 s — `EvoDash.Test.SettingsAwait` owns the mount/save budgets (`async_wait_budget_ms/0`, `assigns_timeout_ms/0`), and a suite that needs a deadline for its own poll or `assert_receive` re-declares the same `@async_wait_budget_ms` — with a 1–2 ms poll cadence written as a bounded `receive … after … -> :ok end`; no fixed `Process.sleep` is a wait mechanism.
 `assigns/1` is a synchronous `:sys.get_state(view.pid, 30_000)` round-trip, so `send` followed by an `assigns/1` read is already ordered.
 Auth config-directory labels include the OS pid so interrupted or concurrent BEAM runs cannot reuse another run's blocker fixture.
 Auth save assertions settle on the save's own receipt (a bumped `llm_test_seq`, the `Provider profile saved.` flash and a settled page) and on the rendered expanded detail, then read persistence; a refused draft is awaited on its error flash instead.

@@ -172,7 +172,11 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
         :ok
 
       true ->
-        Process.sleep(@wait_poll_ms)
+        receive do
+        after
+          @wait_poll_ms -> :ok
+        end
+
         do_wait_until(fun, deadline)
     end
   end

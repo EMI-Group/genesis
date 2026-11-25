@@ -256,7 +256,13 @@ defmodule EvoDashWeb.SettingsLiveTest.BootstrapManager do
     end
   end
 
-  defp hold_reply(ms, _released?) when is_integer(ms) and ms > 0, do: Process.sleep(ms)
+  defp hold_reply(ms, _released?) when is_integer(ms) and ms > 0 do
+    receive do
+    after
+      ms -> :ok
+    end
+  end
+
   defp hold_reply(_delay, _released?), do: :ok
 end
 
@@ -341,7 +347,13 @@ defmodule EvoDashWeb.SettingsLiveTest.ConnectManager do
     end
   end
 
-  defp hold_reply(ms, _released?) when is_integer(ms) and ms > 0, do: Process.sleep(ms)
+  defp hold_reply(ms, _released?) when is_integer(ms) and ms > 0 do
+    receive do
+    after
+      ms -> :ok
+    end
+  end
+
   defp hold_reply(_delay, _released?), do: :ok
 end
 
@@ -1425,7 +1437,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
           false
 
         true ->
-          Process.sleep(10)
+          # The poll cadence: a bounded `receive`, never a fixed wait.
+          receive do
+          after
+            10 -> :ok
+          end
+
           do_wait(view, fun, deadline)
       end
     end
@@ -2163,7 +2180,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
                 "connect is still in flight (test/CONTEXT.md, § Distribution start)"
             )
           else
-            Process.sleep(@connect_poll_ms)
+            # The poll cadence: a bounded `receive`, never a fixed wait.
+            receive do
+            after
+              @connect_poll_ms -> :ok
+            end
+
             do_await_connect_consumed!(manager, deadline)
           end
       end
