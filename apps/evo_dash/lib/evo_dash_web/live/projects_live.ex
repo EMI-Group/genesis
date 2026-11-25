@@ -94,13 +94,34 @@ defmodule EvoDashWeb.ProjectsLive do
       </EvoDashWeb.Layouts.app>
     <% else %>
       <% selecting_workbench_project? = get_in(@workbench_reconnect_params, ["wb_home"]) == "1" %>
+      <% remote_gate? = EvoDashWeb.RemoteGateComponents.gate_active?(assigns) %>
+      <% loading_project? = @remote_project_loading != nil and !selecting_workbench_project? %>
+      <% overview? = Overview.visible?(assigns) %>
+      <% workspace_selected? = is_binary(assigns[:overview_workspace_point]) %>
+      <% composing_task? =
+        !remote_gate? and !loading_project? and !overview? and !@workbench_idle? and
+          !workspace_selected? and not is_nil(@active_project) %>
       <% draft_scope = StatePersistence.draft_scope(assigns) %>
+      <% git_project =
+        cond do
+          remote_gate? ->
+            nil
+
+          workspace_selected? ->
+            member =
+              Overview.execution_member(Overview.workspace_scope(assigns), assigns[:overview_member])
+
+            member && member.path
+
+          true ->
+            @active_project_path
+        end %>
       <% workbench_project =
-        if selecting_workbench_project?,
+        if selecting_workbench_project? and not workspace_selected?,
           do:
             (@workbench_project_selection && @workbench_project_selection.path) ||
-              @remote_project_loading || @active_project_path,
-          else: @active_project_path %>
+              @remote_project_loading || git_project,
+          else: git_project %>
       <EvoDashWeb.Layouts.app
         flash={@flash}
         current_page={:dashboard}
@@ -109,7 +130,7 @@ defmodule EvoDashWeb.ProjectsLive do
         remote_targets={assigns[:remote_targets] || []}
         connection_statuses={assigns[:connection_statuses] || %{}}
         workbench_project={workbench_project}
-        workbench_git_project={if workbench_project == @active_project_path, do: @active_project_path}
+        workbench_git_project={if workbench_project == git_project, do: git_project}
         workbench_git_branch={@workbench_reconnect_params["wb_git_branch"]}
         workbench_starting_commit={@workbench_reconnect_params["starting_commit"]}
         github_status={@github_status}
@@ -139,7 +160,7 @@ defmodule EvoDashWeb.ProjectsLive do
         <div
           id="dashboard-root"
           phx-hook={unless @workbench_idle?, do: "StatePersistence"}
-          data-workbench-compose={to_string(!@workbench_idle?)}
+          data-workbench-compose={to_string(composing_task?)}
           data-project={workbench_project}
           data-task-draft-project={@workbench_reconnect_params["project"]}
           data-task-draft-scope={draft_scope}
@@ -207,19 +228,17 @@ defmodule EvoDashWeb.ProjectsLive do
               remote={@remote?}
             />
             <%= cond do %>
-              <% @remote_project_loading != nil and !selecting_workbench_project? and
-                   !EvoDashWeb.RemoteGateComponents.gate_active?(assigns) -> %>
+              <% loading_project? and !remote_gate? -> %>
                 <div id="workbench-project-loading" class="workbench-idle" role="status">
                   {gettext("Loading project…")}
                 </div>
-              <% Overview.visible?(assigns) -> %>
+              <% overview? -> %>
                 <%!-- Project OVERVIEW: a project (or a VCT workspace) is
                      selected and no compose/resume intent is in the URL, so
                      this surface describes the selection and offers the two
                      entry points instead of dropping into the composer. --%>
                 <Overview.overview page={assigns} />
-              <% !EvoDashWeb.RemoteGateComponents.gate_active?(assigns) and
-                   (@workbench_idle? or is_nil(@active_project)) -> %>
+              <% !remote_gate? and !composing_task? -> %>
                 <div id="workbench-idle" class="workbench-idle" role="status">
                   <p data-workbench-idle-projects hidden={!is_nil(workbench_project)}>
                     {gettext("No projects")}
@@ -228,12 +247,18 @@ defmodule EvoDashWeb.ProjectsLive do
                     {gettext("No window selected")}
                   </p>
                 </div>
-              <% is_nil(@current_node_id) or @remote? -> %>
+              <% composing_task? -> %>
                 <div
                   id="workbench-task-composer"
                   phx-hook="WorkbenchSection"
-                  class="flex-1 flex flex-col min-h-0"
+                  class="flex-1 flex flex-col min-h-0 gap-4"
                 >
+                  <header class="min-w-0">
+                    <h1 class="text-xl font-semibold">{gettext("New task")}</h1>
+                    <p class="truncate text-sm text-base-content/70" title={@active_project_path}>
+                      {@active_project.name} · {@current_node_name || gettext("Local")}
+                    </p>
+                  </header>
                   <EvoDashWeb.TaskFormComponents.task_form
                     prompt={@task_prompt}
                     mode={@task_mode}
@@ -303,42 +328,55 @@ defmodule EvoDashWeb.ProjectsLive do
                         <.icon name="hero-code-bracket" class="size-4 shrink-0" />
                         <span class="truncate">{@workbench_reconnect_params["wb_git_branch"]}</span>
                       </span>
-                      <button
-                        type="button"
-                        class="workbench-icon-button shrink-0"
-                        data-workbench-task-settings
-                        aria-haspopup="dialog"
-                        aria-controls="workbench-task-settings"
-                        aria-label={gettext("Configure")}
-                        title={gettext("Configure")}
-                      >
-                        <.icon name="hero-adjustments-horizontal" class="size-4" />
-                      </button>
                     </:controls>
                   </EvoDashWeb.TaskFormComponents.task_form>
-                  <RemoteView.task_configuration
-                    active_project_path={@active_project_path}
-                    tauri_detected={@tauri_detected}
-                    platform={@platform}
-                    task_mode={@task_mode}
-                    task_node_path={@task_node_path}
-                    task_starting_commit={@task_starting_commit}
-                    task_resume_from={@task_resume_from}
-                    task_archive={@task_archive}
-                    persist_agent_state?={@persist_agent_state?}
-                    build_systems={@build_systems}
-                    task_build_system={@task_build_system}
-                    project_config={@project_config}
-                    worktree_script={@worktree_script}
-                    commands={@commands}
-                    foreign_repos={@foreign_repos}
-                    foreign_repo_path_suggestions={@foreign_repo_path_suggestions}
-                    show_add_foreign_repo_form={@show_add_foreign_repo_form}
-                    new_repo_id={@new_repo_id}
-                    new_repo_path={@new_repo_path}
-                    new_repo_description={@new_repo_description}
-                    remote={@remote?}
-                  />
+                  <section aria-labelledby="task-options-title" class="space-y-4">
+                    <h2 id="task-options-title" class="text-lg font-semibold">
+                      {gettext("Task Options")}
+                    </h2>
+                    <EvoDashWeb.TaskFormComponents.task_options_tab
+                      mode={@task_mode}
+                      node_path={@task_node_path}
+                      starting_commit={@task_starting_commit}
+                      resume_from={@task_resume_from}
+                      archive={@task_archive}
+                      persist_agent_state?={@persist_agent_state?}
+                      build_systems={@build_systems}
+                      selected_build_system={@task_build_system}
+                    />
+                  </section>
+                  <details
+                    id="workbench-task-settings"
+                    class="border-t border-base-300"
+                    phx-mounted={JS.ignore_attributes("open")}
+                  >
+                    <summary
+                      id="workbench-task-settings-title"
+                      class="min-h-[var(--row-h)] cursor-pointer content-center text-sm font-semibold"
+                    >
+                      {gettext("Project Settings")}
+                    </summary>
+                    <div class="pb-4">
+                      <EvoDashWeb.ProjectComponents.project_settings_tab
+                        active_project={@active_project_path}
+                        project_config={@project_config}
+                        worktree_script={@worktree_script}
+                        commands={@commands}
+                        foreign_repos={@foreign_repos}
+                        foreign_repo_path_suggestions={@foreign_repo_path_suggestions}
+                        show_add_foreign_repo={@show_add_foreign_repo_form}
+                        new_repo_id={@new_repo_id}
+                        new_repo_path={@new_repo_path}
+                        new_repo_description={@new_repo_description}
+                        new_repo_base_sha={@new_repo_base_sha}
+                        editing_foreign_repo_id={@editing_foreign_repo_id}
+                        foreign_repo_edit_form={@foreign_repo_edit_form}
+                        tauri_detected={@tauri_detected}
+                        platform={@platform}
+                        remote={@remote?}
+                      />
+                    </div>
+                  </details>
                 </div>
               <% phase in [:connecting, :bootstrapping, :disconnecting] -> %>
                 <!-- Pending remote context: connecting chrome only — no
@@ -416,7 +454,6 @@ defmodule EvoDashWeb.ProjectsLive do
       {:ok, push_navigate(socket, to: "/welcome")}
     else
       if connected?(socket) do
-        Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
         Phoenix.PubSub.subscribe(EvoGit.PubSub, "vct")
         # Config changes (a Settings save, a CLI/MCP write, another tab) must
         # refresh the canonical picker bundle — see the `{:config_reloaded, …}`
@@ -435,24 +472,9 @@ defmodule EvoDashWeb.ProjectsLive do
       # (maybe_auto_activate_project/1).
       projects = []
 
-      # Pre-resolve config once and memoize via Process dict so that the
-      # deferred :load_config_status handler can reuse this result instead
-      # of re-reading and re-parsing config.toml.
-      Process.put(:memo_config_resolve, EvoGit.Config.resolve())
-
-      # Defer config_status to handle_info — it reads config.toml +
-      # credentials.toml and is NOT needed for the first paint. The
-      # config warning banner can appear a frame later.
+      # The warning banner can appear after the first paint. The canonical
+      # picker and custom agents are seeded only by AsyncLoad, on the resolved node.
       config_status = nil
-
-      # The canonical picker is loaded by AsyncLoad after node resolution;
-      # never seed a remote page with the local node's model selection.
-
-      # Custom agents + model-selection script state for the task form's
-      # agent select and the model select's "Auto (by rules)" option.
-      # Node-aware (reads the node being viewed), degrading gracefully.
-      {custom_agents, model_selection_enabled} =
-        AsyncLoad.load_custom_agents(socket.assigns[:current_node])
 
       build_systems = EvoGit.Runtime.WorktreeInitScript.build_systems()
 
@@ -507,10 +529,10 @@ defmodule EvoDashWeb.ProjectsLive do
           model_selections: [],
           selected_model_spec: nil,
           pending_model_selection: nil,
-          custom_agents: custom_agents,
+          custom_agents: [],
           selected_agent_id: nil,
           quality_level: "balanced",
-          model_selection_enabled: model_selection_enabled,
+          model_selection_enabled: false,
           build_systems: build_systems,
           tauri_detected: false,
           platform: "linux",
@@ -716,16 +738,16 @@ defmodule EvoDashWeb.ProjectsLive do
     # The project param of the PREVIOUS navigation, captured before the assign
     # below so a project change can reset the overview's workspace-member
     # choice (a member key belongs to ONE workspace).
-    prev_project_param =
-      case socket.assigns[:workbench_reconnect_params] do
-        %{"project" => project} -> project
-        _ -> nil
-      end
+    prev_reconnect_params = socket.assigns[:workbench_reconnect_params] || %{}
+    prev_project_param = prev_reconnect_params["project"]
 
     socket =
       assign(socket,
         workbench_reconnect_params:
-          Map.take(params, ~w(project wb_open wb_home wb_task wb_git_branch starting_commit)),
+          Map.take(
+            params,
+            ~w(project wb_open wb_home wb_task wb_git_branch starting_commit resume_from)
+          ),
         workbench_open_requested: params["wb_open"] == "1",
         workbench_idle?:
           params["wb_home"] == "1" or
@@ -793,10 +815,12 @@ defmodule EvoDashWeb.ProjectsLive do
         # selection made via the palette must survive same-node handle_params
         # runs; the node-switch clear above is what resets it.
         cond do
-          not ModelSelectionScope.pending_remote?(socket.assigns) and
+          connected?(socket) and not ModelSelectionScope.pending_remote?(socket.assigns) and
             not EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) and
             is_binary(project_path) and project_path != "" and
-              project_path != socket.assigns.active_project_path ->
+              (project_path != socket.assigns.active_project_path or
+                 (present_param?(params["resume_from"]) and
+                    params["resume_from"] != prev_reconnect_params["resume_from"])) ->
             case ProjectFlow.normalize_remote_project_path(
                    socket.assigns[:current_node],
                    project_path
@@ -826,6 +850,11 @@ defmodule EvoDashWeb.ProjectsLive do
       else
         if is_binary(project_path) do
           case ProjectFlow.normalize_project_path(project_path) do
+            {:ok, expanded} when expanded == socket.assigns.active_project_path ->
+              # Overview ↔ composer is a URL change, not a new activation.
+              # In particular don't replace edited foreign repos with genesis.toml.
+              socket
+
             {:ok, expanded} ->
               if File.dir?(expanded) do
                 activate_project(socket, expanded)
@@ -866,9 +895,13 @@ defmodule EvoDashWeb.ProjectsLive do
     # dropped as "stale" (and a remote→local switch can never keep a remote
     # node's model profiles/projects after a local project activates).
     socket =
-      if socket.assigns.workbench_project_selection,
-        do: socket,
-        else: AsyncLoad.maybe_spawn(socket, prev_node_id)
+      if is_nil(socket.assigns.workbench_project_selection) and
+           (node_context_changed? or prev_project_param != project_path or
+              is_nil(socket.assigns[:projects_load_seq])) do
+        AsyncLoad.maybe_spawn(socket, prev_node_id)
+      else
+        socket
+      end
 
     # Project overview payload (git snapshot + recent tasks), spawned AFTER the
     # activation/project-resolution blocks above so it captures the settled
@@ -898,10 +931,18 @@ defmodule EvoDashWeb.ProjectsLive do
     socket =
       case params["resume_from"] do
         task_id when is_binary(task_id) and task_id != "" ->
-          socket
-          |> assign(:task_resume_from, task_id)
-          |> assign(:show_advanced, true)
-          |> start_foreign_repos_restore(task_id)
+          socket =
+            socket
+            |> assign(:task_resume_from, task_id)
+            |> assign(:show_advanced, true)
+
+          if connected?(socket) and
+               (node_context_changed? or prev_project_param != project_path or
+                  prev_reconnect_params["resume_from"] != task_id) do
+            start_foreign_repos_restore(socket, task_id)
+          else
+            socket
+          end
 
         _ ->
           socket
@@ -2527,11 +2568,7 @@ defmodule EvoDashWeb.ProjectsLive do
 
   @impl true
   def handle_info(:load_config_status, socket) do
-    # config_status/0 (imported from EvoDashWeb.Helpers) reads config.toml +
-    # credentials.toml and computes the config warning banner data.
-    # This is deferred from mount/3 to avoid blocking first paint.
-    # The Process dict memoization set up in mount/3 primes the OS file
-    # cache so this deferred read is fast.
+    # Read the cached local status after first paint; no TOML parsing on this path.
     {:noreply, assign(socket, :config_status, config_status())}
   end
 
@@ -2798,7 +2835,7 @@ defmodule EvoDashWeb.ProjectsLive do
               |> assign(:task_mode_info, results.task_mode_info)
               |> use_git_task_mode()
               |> assign(:project_config, results.project_config)
-              |> assign(:project_config_mtime, Project.project_config_mtime(path))
+              |> assign(:project_config_mtime, nil)
               |> assign(:worktree_script, results.worktree_script)
               |> assign(:commands, results.commands)
               |> assign(:foreign_repos, results.foreign_repos)
@@ -2809,11 +2846,10 @@ defmodule EvoDashWeb.ProjectsLive do
 
             params = socket.assigns.workbench_reconnect_params
 
-            if (params["wb_home"] == "1" or git_task_draft?(params)) and params["project"] == path do
-              # The project link already updated the URL. Load node data
-              # against the validated project without adding a second entry.
-              # The overview payload follows the freshly activated project too
-              # (this arm does not re-run handle_params).
+            if params["project"] == path do
+              # An absolute project URL already addresses this activation. In
+              # particular don't patch away resume/starting-commit intent or
+              # create a duplicate browser-history entry for the same project.
               {:noreply,
                socket
                |> AsyncLoad.maybe_spawn(socket.assigns.current_node_id)
