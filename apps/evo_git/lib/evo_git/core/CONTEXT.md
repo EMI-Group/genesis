@@ -31,7 +31,7 @@ Struct: `path`, `repo`, `vct_path` (`nil` by default), `repo_id` (defaults to `"
 > The agent loop calls `build_context/2` and `EvoGit.Skills.hierarchical_skill_names/2` separately — there is no combined context+skills load function. `hierarchical_skill_names/2` has live callers in the session setup path — `EvoGit.Agent.Session.Setup.build_initial_state/3` (`agent/session/setup.ex`, skill loading at agent startup) — and `agent/tools/skill/skill_list.ex`.
 
 ### Context-Tree Render Format (what reaches the agent prompt)
-`build_context/2` (`context_node.ex:214-241`) is the ONLY function that turns the context tree into prompt text.
+`build_context/2` (`context_node.ex:245-284`) is the ONLY function that turns the context tree into prompt text.
 Its caller is `EvoGit.Agent.ContextBuilder.build_dynamic_context/1` (`agent/context_builder.ex:45`, reached from `build_context_block/1`), which `EvoGit.Agent.Session.Setup.build_initial_state/3` invokes from the session's `:start` event via `ContextBuilder.build_initial_messages/4` — injecting the string into the agent's first-user `<context>` block.
 Output = `"# Context Tree\n" <> <rendered stages joined by "\n\n"> <> "\n\n" <> <location_info>`, or just `location_info` when NO stage renders (`context_node.ex:231-238`).
 Stages are, in order, the VCT GLOBAL context first (`global_stage/1`) and then the in-repo directory chain (`in_repo_stage/2`).
