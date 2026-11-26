@@ -22,7 +22,7 @@ This node owns the schemas, the model-name/alias spine, the dispatch gate chain 
 | `write` | Write/overwrite file contents | Write | No |
 | `edit` | Exact string replacement | Write | No |
 | `make_dir` | Create directories with placeholder files, auto-commit | Write | No |
-| `read_context` / `write_context` / `edit_context` | CONTEXT.md read/write/edit (reads unrestricted, writes node-scope-checked) | Read/Write | Write only |
+| `read_context` / `write_context` / `edit_context` | CONTEXT.md read/write/edit with optional two-scope support (`read_context` `scope` default `all`, `edit_context` `scope` default `shared` restricted matching; reads unrestricted, writes node-scope-checked) | Read/Write | Write only |
 | `bash` | Shell command in the sandbox — effective shell from `[tools] shell` (platform default bash/powershell, posix-shell overrides on Windows); `run_in_background: true` starts a background job | Read/Write | Yes |
 | `rg` | ripgrep pattern search | Read | Yes |
 | `run_git` | git commands (schema commented out of `schemas/0`) | Read/Write | Yes |
@@ -31,7 +31,7 @@ This node owns the schemas, the model-name/alias spine, the dispatch gate chain 
 | `web_search` | Provider-backed web search — Tavily (default), Perplexity (Sonar), Exa, Bing, Brave, Keenable | Read | No |
 | `web_fetch` | ONE HTTP(S) GET → readable Markdown (HTML via pure `HtmlToMarkdown`; text/JSON/XML/CSV verbatim, other binaries omitted) | Read | No |
 | `lsp` | Language-server code intelligence — `action` ∈ `diagnostics`/`hover`/`definition`, 1-based `line`/`column`, `path` inside the repo; SCHEMA-GATED on `EvoGit.Config.lsp_enabled?/0`, so absent by default while dispatch stays registered | Read | No |
-| `search_context` | Search patterns in CONTEXT.md files | Read | Yes |
+| `search_context` | Search patterns in WHOLE CONTEXT.md files (both Shared and Local scopes, no scope filter) | Read | Yes |
 | `search_history` | Search git commit history | Read | Yes |
 | `elixir_eval` | Assistant-only explicit read/write/sudo Elixir evaluation; read/write use Dune with admitted real APIs or optional facades, write/sudo require exact-code approval | Special | Read/write Dune; sudo NO |
 | `genesis_*` | Assistant-only task controls (`GenesisTools`): the `EvoGit.TaskControl.Tools` catalog (`check`, `list_tasks`, `get_task`, `list_models`, `get_result`, `start_task`, `send_message`, `cancel_task`, `pause_task`, `resume_task`, `reload_config`) plus `genesis_follow_task`; mutations go through the approval broker | Special | No |
@@ -49,7 +49,7 @@ MODEL-FACING names differ from the INTERNAL dispatch keys `execute_tool/5` match
 - `schema/0` everywhere; `WebSearch` also exposes `schema/1` (`schema/0` delegates with `[]`), and `Context` exposes `read_schema/0`, `write_schema/0`, `edit_schema/0`.
 - `EvoGit.Agent.Tools.Context` is a FUNCTION-ONLY module — no `%EvoGit.Agent.Tools.Context{}` struct exists anywhere (`%Context{}` in `agent_scheduler/store.ex` is `ReqLLM.Context`, and `EvoGit.Core.ContextNode` is the spatial tree node).
 - Every call uses the same four fields — `name:`, `description:`, `parameter_schema:`, `callback:` — and no tool uses the optional `strict:`/`provider_options:`; `callback` is always the no-op `fn _ -> {:ok, nil} end` because real execution goes through `execute`.
-- `parameter_schema` is a STRING-keyed JSON-Schema map with `"type" => "object"`, `"properties"` and `"required"`; property vocabulary is `type` (`string`/`integer`/`boolean`/`array`; `object` only as the top-level type), `description`, `default`, `enum` (`make_dir` keep-file options and `lsp` actions — the only two) and `items` (string arrays in `make_dir`, `git`, `ripgrep`, `file_create`); no tool declares `additionalProperties`.
+- `parameter_schema` is a STRING-keyed JSON-Schema map with `"type" => "object"`, `"properties"` and `"required"`; property vocabulary is `type` (`string`/`integer`/`boolean`/`array`; `object` only as the top-level type), `description`, `default`, `enum` (`make_dir` keep-file options, `lsp` actions and the `Context` `scope` params) and `items` (string arrays in `make_dir`, `git`, `ripgrep`, `file_create`); no tool declares `additionalProperties`.
 - Only THREE builders produce config-dependent CONTENT at call time: `shell_tool.ex` (timeout text interpolating `max_timeout/0` + `@default_timeout`, and `generate_description/0`), `job_output.ex` (`BackgroundJobs.wait_default_ms()`/`wait_max_ms()`) and `web_search.ex` `schema/1` (provider-derived `search_depth`/`max_results`/`timeout`). The tool array is part of the LLM prompt PREFIX, so a mid-run `config.toml` or app-env change rewrites schema text and breaks prompt caching; every other `schema/0` interpolates module attributes only.
 
 ## Constraints
@@ -117,7 +117,17 @@ MODEL-FACING names differ from the INTERNAL dispatch keys `execute_tool/5` match
 `bare_args?/1` decides the shape: BARE args (`PATTERN [PATH ...]`) get `--line-number` + `--no-heading` injected and a 250-line cap with a narrowing footer; an EXPLICIT flag set (`-l`, `-c`, `--json`, `-A/-B/-C`, `-e`/`-f`) passes VERBATIM under the legacy `Command executed successfully.\nOutput:\n<raw>` envelope. Errors become prose with advisory tips (`build_hint/1`).
 
 ### String-replace semantics (`edit` / `edit_context`)
-`Shared.perform_string_replace/5` + `apply_string_edit/4`: `new_string` is inserted VERBATIM (whitespace and newline state preserved) and matching is byte-exact after smart-quote normalization (`find_actual_string/2`), so CRLF files never match. Messages: `"Error: Found N matches of old_string in file. Set replace_all=true or provide more context."` and `"Error: old_string not found in file <display_path>"`.
+`new_string` is inserted VERBATIM (whitespace and newline state preserved) and matching is byte-exact after smart-quote normalization (`Shared.find_actual_string/2`), so CRLF files never match. Messages: `"Error: Found N matches of old_string in file. Set replace_all=true or provide more context."` and `"Error: old_string not found in file <display_path>"`.
+`edit` delegates the whole file to `Shared.perform_string_replace/5`, while `edit_context` runs `Shared.find_actual_string/2` + `Shared.count_occurrences/2` + `Shared.apply_string_edit/4` on the SELECTED region only and writes back through `EvoGit.Core.ContextScope.splice/3` (`### Two-scope CONTEXT.md`).
+
+### Two-scope CONTEXT.md (Shared / Local)
+A CONTEXT.md may carry ONE divider line, the literal `<!-- genesis:local -->`; text before it is Shared (this node and all of its descendants) and text after it is Local (read only by agents assigned to that directory).
+`EvoGit.Core.ContextScope` is the SINGLE implementation of the divider/split/splice logic (`marker/0`, `split/1`, `scope_content/2`, `splice/3`, `has_local?/1`, `parse_scope/1`) — the tool layer calls it and never re-implements it; the design record is `docs/context-scopes.md`.
+`read_context` takes an optional `scope` (enum `all`/`shared`/`local`, default `all`): `all` returns the RAW file including the divider line, `shared`/`local` return just that region with the divider line excluded, and `local` on a file without a divider errors with the "has no Local section" remedy.
+`edit_context` takes an optional `scope` (enum `shared`/`local`/`all`, default `shared`): matching, uniqueness counting and `replace_all` are restricted to the selected region, and `ContextScope.splice/3` re-inserts the edited region so the divider line and the untouched region survive byte-for-byte; `all` matches across the whole file.
+`write_context` takes no `scope` — it writes the FULL file, so the caller places the divider line itself when it wants a Local section.
+`search_context` searches WHOLE CONTEXT.md files, so it sees BOTH scopes and has no scope filter.
+Node-subtree enforcement is unchanged and still runs BEFORE any read or write: `edit_context`/`write_context` call `Shared.validate_file_scope/4`, and reads stay unrestricted.
 
 ### Per-Tool Path Handling (scope, sandbox, TMPDIR)
 - Six tools scope-check via `Shared.validate_file_scope/4`: `write`, `edit`, `create_files`, `make_dir`, `write_context`, `edit_context`; the CONTEXT.md writers pass the target DIRECTORY plus `format_context_scope_error/2` and check BEFORE any filesystem change, so an out-of-node call changes nothing.
