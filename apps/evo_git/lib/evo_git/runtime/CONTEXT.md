@@ -125,21 +125,6 @@ There is no conflict path in the phases: real branch merging with conflict repor
 - **Persistent read-view worktrees**: `load_foreign_repos/2` then provisions/resets every WRITABLE non-primary repo's worktree (`AgentScheduler.ForeignWorktree.ensure_all/1`, best-effort, warning-logged) at `<root>/.genesis/foreign_repos/<id>`, so agents can read foreign code for the whole task → `../agent_scheduler/CONTEXT.md`.
 - **Propagation**: `load_foreign_repos/2` has four call sites — Genesis Mode A and Mode B (the implementation phase REUSES the architecture list with no re-validation), `run_mode/7` for simple + custom Evolution, and `SkillExtraction.run/1`. The list becomes the root `AgentSpec.foreign_repos`, `merge_and_report/4`'s 4th argument, `AgentState.foreign_repos`, `Process.put(:foreign_repos, …)` for tool gating, and every subagent spec inherits the ENTIRE task-level list verbatim with its own `repo_id` — the per-agent repo is selected by `repo_id`, never by a filtered list.
 
-### Known Issue — Completion Note & Archive Refs Lag the Reported `commit_sha`
-
-`EvoGit.Agent.Completion.complete/4` writes its `refs/notes/evogit` note and, when `archive` is on, its archive refs (`refs/genesis/archive/T<task>-A<local>-start`/`-final`) at COMPLETE time from the pre-fallback `commit_sha` (`sync_and_get_current_commit/1`).
-For a commit produced ONLY by the agent-exit auto-commit fallback those refs lag the `commit_sha` `merge_and_report/4` reports by one commit; the change itself is still reviewable/mergeable via the `genesis/agent_<hex>` branch.
-Each completing agent writes its OWN `task_agent_archives` row plus those refs; nothing archive-related is combined across agents or carried in `%Result{}`/the report. Detail: `../agent/CONTEXT.md` + `../store/CONTEXT.md`.
-
-### Known Issue — Foreign-Repo Starting-Commit Staleness & Report Last-Writer-Wins
-
-Every foreign-repo spawn resolves its starting commit by: task-level `repo_entry.base_sha` (when non-nil) → the SPAWNING agent's OWN `foreign_repo_commits` map → the foreign HEAD (`SubagentProcessing.resolve_foreign_phylo_commit/4`).
-The map is read from the spawning agent's own SchedMeta row (`AgentScheduler.get_foreign_repo_commits/1`), so it is **per-agent**: another agent (another subtree, or Genesis Mode B's second root) sees `%{}` and falls back to `base_sha`/HEAD, and a non-nil `base_sha` wins UNCONDITIONALLY, so even the same agent's later foreign spawns start from it. Writable foreign spawns are ROOT-ONLY (`parent.depth == 0`) and one-per-batch (`{:error, {:foreign_repo_write_not_root, msg}}`).
-Reachable stale-start paths: (a) Genesis Mode B's two sequential roots (both depth 0, independent maps) — the two maps merge MANAGER-WINS, so the branch carries only the manager's lineage; (b) any task with an explicit `base_sha`; (c) a write-capable Manager spawned INTO the foreign repo and its cross-repo children in a different repo — the parent's own `commit_sha` then OVERWRITES the tracked sha for that repo id (`Subagents.roll_up_foreign_repo_commits/3`). The Manager's own same-repo children DO inherit the parent's `current_commit` and ARE merged into its worktree (`collect_mergeable_results/3`).
-The report takes exactly ONE sha per repo id, so with two foreign commits for one id the LAST writer wins and the earlier lineage survives only as a dangling object (per-agent `evogit-agent-T<task>-A<local>` branches are DELETED on agent exit, primary and foreign).
-**No branch clobber is possible**: `Git.create_branch/3` is non-force (`git branch <name> <sha>`; an existing ref fails with `{:error, {128, ...}}`, never resets) and the task branch name is a fresh random `genesis/agent_<hex>` per call; nothing in the runtime does `update-ref`/`branch -f`/`reset` on such a branch. A branch-creation failure is tolerated silently (`commit_sha` kept, `branch_name: nil` → dashboard merge unavailable: `EvoGit.Review.merge_branch/3` → `{:error, :no_branch}`).
-`PullRequest.try_create/4` has no merge path — it pushes a branch and opens a PR, and the runtime phases never call it (caller: `EvoGit.Review.create_github_pr`).
-
 ### `PullRequest.try_create/4` — Steps
 
 1. `Git.gh_available?/0` (absent → `{nil, nil}`).
@@ -263,6 +248,23 @@ An interactive `:reflect` task — one whose opts carry `session_mode: "interact
 | `EvoGit.Agents.Executor` / `.TaskScheduler` | Code-implementation subagent / lightweight task-scheduling subagent (spawned by Manager) |
 | `EvoGit.Adapters.Git` | All git CLI operations |
 | `ReqLLM` | LLM streaming for PR title generation in `PullRequest` |
+
+<!-- genesis:local -->
+
+### Known Issue — Completion Note & Archive Refs Lag the Reported `commit_sha`
+
+`EvoGit.Agent.Completion.complete/4` writes its `refs/notes/evogit` note and, when `archive` is on, its archive refs (`refs/genesis/archive/T<task>-A<local>-start`/`-final`) at COMPLETE time from the pre-fallback `commit_sha` (`sync_and_get_current_commit/1`).
+For a commit produced ONLY by the agent-exit auto-commit fallback those refs lag the `commit_sha` `merge_and_report/4` reports by one commit; the change itself is still reviewable/mergeable via the `genesis/agent_<hex>` branch.
+Each completing agent writes its OWN `task_agent_archives` row plus those refs; nothing archive-related is combined across agents or carried in `%Result{}`/the report. Detail: `../agent/CONTEXT.md` + `../store/CONTEXT.md`.
+
+### Known Issue — Foreign-Repo Starting-Commit Staleness & Report Last-Writer-Wins
+
+Every foreign-repo spawn resolves its starting commit by: task-level `repo_entry.base_sha` (when non-nil) → the SPAWNING agent's OWN `foreign_repo_commits` map → the foreign HEAD (`SubagentProcessing.resolve_foreign_phylo_commit/4`).
+The map is read from the spawning agent's own SchedMeta row (`AgentScheduler.get_foreign_repo_commits/1`), so it is **per-agent**: another agent (another subtree, or Genesis Mode B's second root) sees `%{}` and falls back to `base_sha`/HEAD, and a non-nil `base_sha` wins UNCONDITIONALLY, so even the same agent's later foreign spawns start from it. Writable foreign spawns are ROOT-ONLY (`parent.depth == 0`) and one-per-batch (`{:error, {:foreign_repo_write_not_root, msg}}`).
+Reachable stale-start paths: (a) Genesis Mode B's two sequential roots (both depth 0, independent maps) — the two maps merge MANAGER-WINS, so the branch carries only the manager's lineage; (b) any task with an explicit `base_sha`; (c) a write-capable Manager spawned INTO the foreign repo and its cross-repo children in a different repo — the parent's own `commit_sha` then OVERWRITES the tracked sha for that repo id (`Subagents.roll_up_foreign_repo_commits/3`). The Manager's own same-repo children DO inherit the parent's `current_commit` and ARE merged into its worktree (`collect_mergeable_results/3`).
+The report takes exactly ONE sha per repo id, so with two foreign commits for one id the LAST writer wins and the earlier lineage survives only as a dangling object (per-agent `evogit-agent-T<task>-A<local>` branches are DELETED on agent exit, primary and foreign).
+**No branch clobber is possible**: `Git.create_branch/3` is non-force (`git branch <name> <sha>`; an existing ref fails with `{:error, {128, ...}}`, never resets) and the task branch name is a fresh random `genesis/agent_<hex>` per call; nothing in the runtime does `update-ref`/`branch -f`/`reset` on such a branch. A branch-creation failure is tolerated silently (`commit_sha` kept, `branch_name: nil` → dashboard merge unavailable: `EvoGit.Review.merge_branch/3` → `{:error, :no_branch}`).
+`PullRequest.try_create/4` has no merge path — it pushes a branch and opens a PR, and the runtime phases never call it (caller: `EvoGit.Review.create_github_pr`).
 
 ## Known Issues — `repo_path` Resolution vs. BEAM cwd (dashboard Windows path bug)
 
