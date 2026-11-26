@@ -16,16 +16,21 @@ defmodule EvoGit.SelfReflectiveSourceTest do
 
   # The BEAM-global knobs this module writes are the `:self_reflective_source_root`
   # / `:self_reflective_source_dir` / `:self_reflective_source_url` app env, the
-  # `GENESIS_SOURCE_ROOT` OS env, and the `:evogit_vct_server` process-dictionary
-  # VCT seam (each test points at its OWN isolated VCT stack, so the app-global
-  # singleton is never relied on). The setup hook restores the env knobs after
-  # every test so nothing leaks into the real data dir or other tests; the
-  # process dictionary dies with each test process.
+  # `:self_reflective_source_mode` / `:self_reflective_running_source_dir` /
+  # `:self_reflective_source_auto_sync` app env, the `GENESIS_SOURCE_ROOT` OS env,
+  # and the `:evogit_vct_server` process-dictionary VCT seam (each test points at
+  # its OWN isolated VCT stack, so the app-global singleton is never relied on).
+  # The setup hook restores the env knobs after every test so nothing leaks into
+  # the real data dir or other tests; the process dictionary dies with each test
+  # process.
   setup do
     original = %{
       source_root: Application.get_env(:evo_git, :self_reflective_source_root),
       source_dir: Application.get_env(:evo_git, :self_reflective_source_dir),
       source_url: Application.get_env(:evo_git, :self_reflective_source_url),
+      source_mode: Application.get_env(:evo_git, :self_reflective_source_mode),
+      running_source_dir: Application.get_env(:evo_git, :self_reflective_running_source_dir),
+      auto_sync: Application.get_env(:evo_git, :self_reflective_source_auto_sync),
       env_var: System.get_env("GENESIS_SOURCE_ROOT")
     }
 
@@ -33,6 +38,9 @@ defmodule EvoGit.SelfReflectiveSourceTest do
       restore_app_env(:self_reflective_source_root, original.source_root)
       restore_app_env(:self_reflective_source_dir, original.source_dir)
       restore_app_env(:self_reflective_source_url, original.source_url)
+      restore_app_env(:self_reflective_source_mode, original.source_mode)
+      restore_app_env(:self_reflective_running_source_dir, original.running_source_dir)
+      restore_app_env(:self_reflective_source_auto_sync, original.auto_sync)
       restore_os_env(original.env_var)
     end)
 
@@ -469,6 +477,276 @@ defmodule EvoGit.SelfReflectiveSourceTest do
     end
   end
 
+  describe "source_root_from_app_dir/1" do
+    test "finds the umbrella root above a dev _build app dir" do
+      root = tmp_path!("src-root")
+      app_dir = Path.join(root, "_build/dev/lib/evo_git")
+      File.rm_rf!(root)
+      File.mkdir_p!(Path.join(root, "apps/evo_git"))
+      File.mkdir_p!(app_dir)
+      File.write!(Path.join(root, "mix.exs"), "# umbrella\n")
+      File.write!(Path.join(root, "VERSION"), "1.2.3\n")
+      File.write!(Path.join(root, "apps/evo_git/mix.exs"), "# app\n")
+      on_exit(fn -> File.rm_rf!(root) end)
+
+      assert SelfReflectiveSource.source_root_from_app_dir(app_dir) == root
+    end
+
+    test "answers nil for a release-shaped app dir" do
+      root = tmp_path!("release-root")
+      app_dir = Path.join(root, "release/lib/evo_git-0.1.0")
+      File.rm_rf!(root)
+      File.mkdir_p!(app_dir)
+      on_exit(fn -> File.rm_rf!(root) end)
+
+      assert SelfReflectiveSource.source_root_from_app_dir(app_dir) == nil
+    end
+
+    test "answers nil for non-binary input" do
+      assert SelfReflectiveSource.source_root_from_app_dir(nil) == nil
+      assert SelfReflectiveSource.source_root_from_app_dir(123) == nil
+    end
+  end
+
+  describe "source_mode/0 and running_from_source?/0" do
+    test "the app-env seam selects :source" do
+      set_app_env(:self_reflective_source_mode, :source)
+
+      assert SelfReflectiveSource.source_mode() == :source
+      assert SelfReflectiveSource.running_from_source?()
+    end
+
+    test "the app-env seam selects :release even with a running source dir" do
+      set_app_env(:self_reflective_running_source_dir, valid_checkout_fixture!("mode-release"))
+      set_app_env(:self_reflective_source_mode, :release)
+
+      assert SelfReflectiveSource.source_mode() == :release
+      refute SelfReflectiveSource.running_from_source?()
+    end
+
+    test "the test env defaults to :release even above a Genesis checkout" do
+      # The module is compiled in :test, so detection alone must NOT flip the
+      # mode: the suite runs from the checkout and must stay hermetic.
+      set_app_env(:self_reflective_running_source_dir, valid_checkout_fixture!("mode-test"))
+      Application.delete_env(:evo_git, :self_reflective_source_mode)
+
+      assert SelfReflectiveSource.source_mode() == :release
+      refute SelfReflectiveSource.running_from_source?()
+    end
+  end
+
+  describe "source_dir/0 by mode" do
+    test "honours the running source dir in :source mode" do
+      dir = valid_checkout_fixture!("srcdir-source")
+      set_app_env(:self_reflective_source_mode, :source)
+      set_app_env(:self_reflective_running_source_dir, dir)
+      Application.delete_env(:evo_git, :self_reflective_source_dir)
+
+      assert SelfReflectiveSource.source_dir() == dir
+    end
+
+    test "the :self_reflective_source_dir seam still wins in :source mode" do
+      seam = tmp_path!("srcdir-seam")
+      set_app_env(:self_reflective_source_mode, :source)
+      set_app_env(:self_reflective_running_source_dir, valid_checkout_fixture!("srcdir-running"))
+      set_app_env(:self_reflective_source_dir, seam)
+
+      assert SelfReflectiveSource.source_dir() == seam
+    end
+
+    test ":release mode uses the managed dir" do
+      set_app_env(:self_reflective_source_mode, :release)
+      set_app_env(:self_reflective_running_source_dir, valid_checkout_fixture!("srcdir-release"))
+      Application.delete_env(:evo_git, :self_reflective_source_dir)
+
+      assert SelfReflectiveSource.source_dir() == SelfReflectiveSource.managed_dir()
+
+      assert SelfReflectiveSource.managed_dir() ==
+               Path.join(EvoGit.Platform.data_dir(), "genesis-source")
+    end
+  end
+
+  describe "source mode: mounts and resolution" do
+    test "system_mounts/0 declares the running checkout in :source mode" do
+      dir = valid_checkout_fixture!("sysmount-source")
+      set_app_env(:self_reflective_source_mode, :source)
+      set_app_env(:self_reflective_running_source_dir, dir)
+      Application.delete_env(:evo_git, :self_reflective_source_dir)
+
+      assert SelfReflectiveSource.system_mounts() == [
+               %{point: "vct:///genesis-source", path: dir, name: "genesis-source"}
+             ]
+    end
+
+    test "reference_path/0 prefers the running checkout over a VCT mount elsewhere" do
+      running = valid_checkout_fixture!("ref-running")
+      elsewhere = valid_checkout_fixture!("ref-elsewhere")
+      start_vct_stack!("ref-running")
+      # A stale reserved mount left by an earlier release run must NOT win over
+      # the checkout this instance was built from.
+      assert {:ok, _} = VCT.ensure_mount(SelfReflectiveSource.point(), elsewhere)
+
+      set_app_env(:self_reflective_source_mode, :source)
+      set_app_env(:self_reflective_running_source_dir, running)
+      Application.delete_env(:evo_git, :self_reflective_source_dir)
+
+      assert SelfReflectiveSource.reference_path() == running
+    end
+
+    test "a .git REGULAR FILE counts as a git repo (worktree checkout)" do
+      dir = tmp_path!("gitfile")
+      File.rm_rf!(dir)
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "CONTEXT.md"), "# Fixture Genesis\n")
+      File.write!(Path.join(dir, ".git"), "gitdir: /somewhere/else\n")
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      set_app_env(:self_reflective_source_mode, :source)
+      set_app_env(:self_reflective_running_source_dir, dir)
+      Application.delete_env(:evo_git, :self_reflective_source_dir)
+
+      status = SelfReflectiveSource.status()
+
+      assert status.dir == dir
+      assert status.is_git_repo
+      assert status.valid
+      assert status.source_mode == :source
+      assert SelfReflectiveSource.reference_path() == dir
+      assert SelfReflectiveSource.available?()
+    end
+  end
+
+  describe "clone/0 and update/0 in :source mode" do
+    test "both refuse with {:error, :running_from_source}" do
+      set_app_env(:self_reflective_source_mode, :source)
+      set_app_env(:self_reflective_running_source_dir, valid_checkout_fixture!("guarded"))
+      Application.delete_env(:evo_git, :self_reflective_source_dir)
+
+      assert {:error, :running_from_source} = SelfReflectiveSource.clone()
+      assert {:error, :running_from_source} = SelfReflectiveSource.update()
+    end
+
+    test "clone_at/2 stays unguarded (the approved-path primitive)" do
+      fixture = genesis_fixture!("clone-at-source-mode")
+      clone_dir = tmp_path!("clone-at-source-mode-dir")
+      File.rm_rf!(clone_dir)
+      set_app_env(:self_reflective_source_mode, :source)
+
+      set_app_env(
+        :self_reflective_running_source_dir,
+        valid_checkout_fixture!("clone-at-running")
+      )
+
+      start_vct_stack!("clone-at")
+      on_exit(fn -> File.rm_rf!(clone_dir) end)
+
+      assert {:ok, _status} = SelfReflectiveSource.clone_at(clone_dir, fixture.origin)
+      assert File.dir?(Path.join(clone_dir, ".git"))
+    end
+  end
+
+  describe "status/0 source fields" do
+    test "reports the source mode, running version and managed dir" do
+      dir = fake_clone_fixture!("status-keys", "0.0.0")
+
+      status = SelfReflectiveSource.status()
+
+      assert status.dir == dir
+      assert status.version == "0.0.0"
+      assert status.source_mode == :release
+      assert status.running_version == SelfReflectiveSource.running_version()
+      assert status.managed_dir == SelfReflectiveSource.managed_dir()
+    end
+  end
+
+  describe "sync_needed?/0" do
+    test "true when the clone VERSION differs from the running version" do
+      fake_clone_fixture!("sync-mismatch", "0.0.0")
+
+      assert SelfReflectiveSource.running_version()
+      assert SelfReflectiveSource.sync_needed?()
+    end
+
+    test "false when the clone VERSION matches the running version" do
+      fake_clone_fixture!("sync-match", SelfReflectiveSource.running_version())
+
+      refute SelfReflectiveSource.sync_needed?()
+    end
+
+    test "false once the auto-sync stamp carries the running version" do
+      dir = fake_clone_fixture!("sync-stamp", "0.0.0")
+      stamp = dir <> ".auto-sync-version"
+      File.write!(stamp, "#{SelfReflectiveSource.running_version()}\n")
+      on_exit(fn -> File.rm_rf!(stamp) end)
+
+      refute SelfReflectiveSource.sync_needed?()
+    end
+
+    test "false in :source mode" do
+      fake_clone_fixture!("sync-source-mode", "0.0.0")
+      set_app_env(:self_reflective_source_mode, :source)
+
+      refute SelfReflectiveSource.sync_needed?()
+    end
+
+    test "false when auto-sync is disabled" do
+      fake_clone_fixture!("sync-disabled", "0.0.0")
+      set_app_env(:self_reflective_source_auto_sync, false)
+
+      refute SelfReflectiveSource.sync_needed?()
+    end
+
+    test "false when the source dir is missing or not a git repo" do
+      set_app_env(:self_reflective_source_dir, tmp_path!("sync-missing"))
+      refute SelfReflectiveSource.sync_needed?()
+
+      dir = tmp_path!("sync-plain")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      set_app_env(:self_reflective_source_dir, dir)
+      File.write!(Path.join(dir, "VERSION"), "0.0.0\n")
+      refute SelfReflectiveSource.sync_needed?()
+    end
+  end
+
+  describe "sync_now/0" do
+    test ":in_sync when no sync is needed" do
+      fake_clone_fixture!("sync-now-noop", SelfReflectiveSource.running_version())
+
+      assert SelfReflectiveSource.sync_now() == :in_sync
+    end
+
+    test "pulls the fixture, reports the new version and writes the stamp" do
+      fixture = genesis_fixture!("sync-now")
+      clone_dir = tmp_path!("sync-now-dir")
+      stamp = clone_dir <> ".auto-sync-version"
+      File.rm_rf!(clone_dir)
+      File.rm_rf!(stamp)
+      set_app_env(:self_reflective_source_dir, clone_dir)
+      set_app_env(:self_reflective_source_url, fixture.origin)
+      start_vct_stack!("sync-now")
+
+      on_exit(fn ->
+        File.rm_rf!(clone_dir)
+        File.rm_rf!(stamp)
+      end)
+
+      assert {:ok, _} = SelfReflectiveSource.clone_at(clone_dir, fixture.origin)
+      refute File.exists?(stamp)
+
+      File.write!(Path.join(fixture.work, "VERSION"), "9.9.9\n")
+      {:ok, _} = Git.add(fixture.work, "VERSION")
+      {:ok, _} = Git.commit(fixture.work, "Bump fixture version")
+      {:ok, _} = Git.push_branch(fixture.work, fixture.branch)
+
+      assert {:ok, status} = SelfReflectiveSource.sync_now()
+      assert status.version == "9.9.9"
+      assert String.trim(File.read!(stamp)) == SelfReflectiveSource.running_version()
+
+      assert SelfReflectiveSource.sync_now() == :in_sync
+    end
+  end
+
   # --- Helpers -------------------------------------------------------------
   defp tmp_path!(label) do
     Path.join(System.tmp_dir!(), "selfref-src-#{label}-#{System.unique_integer([:positive])}")
@@ -535,6 +813,20 @@ defmodule EvoGit.SelfReflectiveSourceTest do
     File.rm_rf!(dir)
     File.mkdir_p!(Path.join(dir, ".git"))
     File.write!(Path.join(dir, "CONTEXT.md"), "# Fixture Genesis\n")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    dir
+  end
+
+  # A minimal managed-clone stand-in for the version/stamp checks: a dir with a
+  # `.git` DIRECTORY (all `sync_needed?/0` requires of a repo) and a given
+  # VERSION. Sets the `:self_reflective_source_dir` seam and removes the dir on
+  # exit.
+  defp fake_clone_fixture!(label, version) do
+    dir = tmp_path!(label)
+    File.rm_rf!(dir)
+    File.mkdir_p!(Path.join(dir, ".git"))
+    File.write!(Path.join(dir, "VERSION"), "#{version}\n")
+    set_app_env(:self_reflective_source_dir, dir)
     on_exit(fn -> File.rm_rf!(dir) end)
     dir
   end
