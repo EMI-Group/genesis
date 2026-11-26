@@ -254,6 +254,8 @@ Pure config-form helpers used by the settings LiveView: `deep_put/3`, `deep_merg
 
 Total (never-raising) shared wrapper around the optionally-present `EvoGit.SelfReflectiveSource` core backend: guards each call with `Code.ensure_loaded?/1` + `function_exported?/3` (arity 0) and dispatches via `apply/3` — a direct call to a possibly-missing module would emit an "undefined function" compile warning — returning `{:unavailable, reason}` (`:module_missing` | `:function_missing` | `:call_failed`) instead of raising, so callers can render a degraded UI.
 Single private `guarded/2` dispatcher keeps the four public wrappers one-liners: `available?/0` → `boolean() | {:unavailable, reason}`; `status/0` → map or `{:unavailable, reason}`; `clone/0`, `update/0` → `{:ok, status} | {:error, reason} | {:unavailable, reason}`. Consumers: `EvoDashWeb.SystemLive.SourceCard` + `EvoDashWeb.HomeLive`.
+The `status/0` map may additionally carry the OPTIONAL keys `source_mode` (`:source` | `:release`), `running_version` (string | `nil`) and `managed_dir` (string).
+Because they are optional, a backend that omits them still yields a renderable map and the card keeps rendering its clone/update buttons (`SourceCard.running_from_source?/1` tolerates absence).
 
 ## Constraints
 
