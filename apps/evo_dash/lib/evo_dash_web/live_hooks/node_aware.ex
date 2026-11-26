@@ -96,8 +96,12 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   is NOT enough. Concretely:
 
     * the sidebar load (`request_tasks_load/1`) runs `fetch_active_tasks/2`
-      inside `EvoDash.SafeCall.run/1` in the spawned task and ALWAYS sends its
-      tagged result (`{:ok, {running, pending}} | {:error, reason}`);
+      inside `EvoDash.SafeCall.run/1` in the spawned task and sends its tagged
+      result (`{:ok, {running, pending}} | {:error, reason}`). Every request
+      settles EXACTLY ONCE: when the spawn itself fails (twice — it is retried
+      once) the caller settles immediately with
+      `{:error, {:spawn_failed, reason}}` and logs one warning, so a supervisor
+      hiccup can never silently drop a sidebar refresh;
     * the node-INDEPENDENT connection bookkeeping (`:remote_targets` from the
       saved-targets TOML, `:connection_statuses` from the local connection
       managers) is NEVER read on the dead render: both assigns seed `[]`/`%{}`
@@ -127,6 +131,8 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
   import Phoenix.Component, only: [assign: 3, assign_new: 3]
   import Phoenix.LiveView, only: [attach_hook: 4]
+
+  require Logger
 
   alias EvoDash.WorkbenchSidebarCache
   alias EvoGit.TaskRegistry
@@ -289,7 +295,9 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   sidebar content stays visible until the fresh result arrives via the
   attached `:handle_info` hook + `handle_tasks_result/2` stale-guard. The
   spawned fetch is `fetch_active_tasks/2` → `partition_active_tasks/1` (see
-  their docs for the node-aware fetch semantics).
+  their docs for the node-aware fetch semantics). Every request settles
+  exactly once: either the child's own tagged result, or — when the spawn fails
+  twice — an immediate `{:error, {:spawn_failed, reason}}` result.
   """
   def load_running_and_pending_tasks(socket), do: request_tasks_load(socket)
 
@@ -532,17 +540,25 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   # `assign_active_tasks/1`, and `reload_tasks/1` (via the former). Captures
   # the view pid, node context, and the next `:tasks_load_seq` BEFORE spawning,
   # bumps the seq assign (so only the latest request's result is ever applied),
-  # then spawns a supervised fetch on `EvoDash.TaskSupervisor` (same pattern as
-  # SettingsLive's LLM test / ReviewLive.MergeCheck's check_merge). Returns the
-  # socket unchanged — the previous sidebar content stays visible until the
+  # then spawns a supervised fetch on the sidebar task supervisor (same pattern
+  # as SettingsLive's LLM test / ReviewLive.MergeCheck's check_merge). Returns
+  # the socket unchanged — the previous sidebar content stays visible until the
   # fresh result arrives via the attached `:handle_info` hook.
   #
   # EXIT-SAFE: the fetch runs inside `EvoDash.SafeCall.run/1`, so a
   # `GenServer.call` timeout / dead store / dead remote node (an EXIT, which a
-  # `rescue` cannot catch) becomes an `{:error, reason}` VALUE and the result
-  # message is ALWAYS sent. If the spawn itself fails (dead supervisor) there
-  # will never be a result message, so the debounce flag is cleared here rather
-  # than left set forever.
+  # `rescue` cannot catch) becomes an `{:error, reason}` VALUE and the child's
+  # result message reports it.
+  #
+  # TOTAL: every request settles EXACTLY ONCE, whatever the spawn does. A
+  # failed spawn is normally a transient hiccup of the SHARED supervisor (a
+  # `:noproc`/call timeout while it restarts), so it is re-attempted ONCE; when
+  # both attempts fail the request still settles with
+  # `{:error, {:spawn_failed, reason}}` — the stale-guarded
+  # `handle_tasks_result/2` then keeps the last-known lists and clears
+  # `:tasks_reload_pending` exactly like any other failed load (a dropped load
+  # would otherwise leave the sidebar stale forever with no result to wait for,
+  # and no log to explain it). No retry timers: the re-attempt is immediate.
   defp request_tasks_load(socket) do
     view_pid = self()
     current_node = socket.assigns[:current_node] || node()
@@ -551,29 +567,68 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
     socket = assign(socket, :tasks_load_seq, seq)
 
-    spawned =
-      EvoDash.SafeCall.run(fn ->
-        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-          result =
-            EvoDash.SafeCall.run(fn -> fetch_active_tasks(current_node, current_node_id) end)
-
-          send(
-            view_pid,
-            {:node_aware_active_tasks, seq, current_node_id, current_node, result}
-          )
-        end)
-      end)
-
-    case spawned do
-      {:ok, {:ok, _pid}} ->
+    case spawn_tasks_load(view_pid, seq, current_node, current_node_id) do
+      {:ok, _pid} ->
         socket
 
-      _spawn_failure ->
-        # No fetch is in flight, so no result will ever arrive — never leave the
-        # debounce flag set (it would suppress every later broadcast's reload).
-        clear_task_reload_pending(socket)
+      {:error, _first_reason} ->
+        # One immediate re-attempt: the shared supervisor may have been
+        # restarting when the first call landed.
+        case spawn_tasks_load(view_pid, seq, current_node, current_node_id) do
+          {:ok, _pid} ->
+            socket
+
+          {:error, reason} ->
+            Logger.warning(
+              "NodeAware: sidebar active-tasks load could not be spawned after 2 attempts " <>
+                "(seq #{seq}, node #{inspect(current_node)}): #{inspect(reason)}"
+            )
+
+            send(
+              view_pid,
+              {:node_aware_active_tasks, seq, current_node_id, current_node,
+               {:error, {:spawn_failed, reason}}}
+            )
+
+            socket
+        end
     end
   end
+
+  # The supervisor the sidebar loads run on — a seam so a test can point ONE
+  # test's process tree at an unknown/dead supervisor name and pin the
+  # spawn-failure settlement above (`EvoDash.Test.Seam.put/2`). Default-inert:
+  # production writes nothing, so this is `EvoDash.TaskSupervisor`.
+  defp task_supervisor,
+    do: EvoDash.Seam.get(:node_aware_task_supervisor, EvoDash.TaskSupervisor)
+
+  # Spawns ONE `fetch_active_tasks/2` child that sends its tagged result to
+  # `view_pid` before exiting. Returns `{:ok, pid}` or `{:error, reason}`; the
+  # spawn call itself is guarded because `Task.Supervisor.start_child/2` is a
+  # `GenServer.call` that EXITS on a dead/unknown supervisor.
+  defp spawn_tasks_load(view_pid, seq, current_node, current_node_id) do
+    view_pid
+    |> start_fetch(seq, current_node, current_node_id)
+    |> normalize_spawn()
+  end
+
+  defp start_fetch(view_pid, seq, current_node, current_node_id) do
+    EvoDash.SafeCall.run(fn ->
+      Task.Supervisor.start_child(task_supervisor(), fn ->
+        result =
+          EvoDash.SafeCall.run(fn -> fetch_active_tasks(current_node, current_node_id) end)
+
+        send(
+          view_pid,
+          {:node_aware_active_tasks, seq, current_node_id, current_node, result}
+        )
+      end)
+    end)
+  end
+
+  defp normalize_spawn({:ok, {:ok, pid}}) when is_pid(pid), do: {:ok, pid}
+  defp normalize_spawn({:ok, other}), do: {:error, other}
+  defp normalize_spawn({:error, reason}), do: {:error, reason}
 
   @doc """
   Stale-guarded application of an async sidebar-load result (PURE socket
