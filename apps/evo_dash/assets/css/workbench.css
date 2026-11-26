@@ -125,6 +125,13 @@
 }
 .workbench-tab-rail {
   --workbench-tab-flare: var(--radius-tab);
+  /* The rail's ONE start-inset line: the canvas frame's corner radius plus the
+     paint room the first tab's outward flare needs. The context title and the
+     tab strip both consume it, so the label and a leading tab start on the same
+     line instead of the label sitting flush at the bar's own gutter. The
+     `coarse`/narrow branches retarget `--workbench-tab-flare` or zero
+     `--workbench-tab-start-inset`, and this token follows both. */
+  --workbench-rail-start-inset: calc(var(--workbench-tab-flare) + var(--workbench-tab-start-inset, var(--radius-box)));
   display: flex;
   align-items: center;
   align-self: stretch;
@@ -136,6 +143,8 @@
   flex: 0 1 auto;
   min-inline-size: 0;
   max-inline-size: min(12rem, 30%);
+  /* Land the label on the rail's start-inset line (the canvas content line). */
+  margin-inline-start: var(--workbench-rail-start-inset);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -152,8 +161,10 @@
   flex: 0 1 auto;
   min-width: 0;
   /* Keep the first flare inside the straight part of the canvas hairline and
-     reserve paint room at both scroll extremes without widening any tab. */
-  padding-inline: calc(var(--workbench-tab-flare) + var(--workbench-tab-start-inset, var(--radius-box))) var(--workbench-tab-flare);
+     reserve paint room at both scroll extremes without widening any tab. The
+     start inset is the shared rail token, and the end flare room is the ONE
+     constant between the last tab and the Create control. */
+  padding-inline: var(--workbench-rail-start-inset) var(--workbench-tab-flare);
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-inline: contain;
@@ -163,6 +174,9 @@
 }
 .workbench-tabs::-webkit-scrollbar { display: none; }
 .workbench-tabs:empty { display: none; }
+/* The context title already carries the start inset, so a strip that follows it
+   needs only its own flare room — no second indent beside the label. */
+.workbench-context-title + .workbench-tabs { padding-inline-start: var(--workbench-tab-flare); }
 
 /* Keep the strip flush against the canvas without painting past the scroller. */
 .workbench-tab {
@@ -172,7 +186,11 @@
   flex: 0 0 auto;
   scroll-margin-inline: var(--workbench-tab-flare);
   block-size: calc(var(--control-h-sm) + 2px);
-  max-inline-size: min(10rem, 55vw, 100%);
+  /* A definite cap only. A percentage here would resolve against this same
+     scroller's content box while that box is still being sized from the tabs'
+     max-content widths, so the strip would settle at the tabs' UNCAPPED width
+     and leave the difference as dead space between the last tab and Create. */
+  max-inline-size: min(10rem, 55vw);
   border: 1px solid transparent;
   border-radius: var(--radius-tab) var(--radius-tab) 0 0;
   font-size: var(--text-xs);
@@ -970,7 +988,10 @@
     box-shadow: var(--elev-2);
   }
   #sidebar[data-sidebar-collapsed="false"] { width: min(18rem, 86vw); }
-  /* Clear the fixed sidebar toggle; the offset also clears the frame corner. */
+  /* Clear the fixed sidebar toggle; the offset also clears the frame corner.
+     Zeroing the token (rather than adding an offset) carries the shift into
+     `--workbench-rail-start-inset`, so the label and the first tab stay on the
+     same line here too — only the flare paint room survives. */
   .workbench-top {
     --workbench-tab-start-inset: 0px;
     padding-inline-start: calc(var(--shell-topbar-h) + .05rem);

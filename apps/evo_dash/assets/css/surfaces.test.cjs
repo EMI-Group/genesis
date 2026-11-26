@@ -257,7 +257,10 @@ test("the compact bottom-aligned rail contains horizontal overflow", () => {
   const [tab] = rulesWith(".workbench-tab", workbench, {exactSelectorText: true});
   assert.equal(values(tab.body).flex, "0 0 auto", "scroll rather than squeeze a tab");
   assert.equal(values(tab.body)["block-size"], "calc(var(--control-h-sm) + 2px)");
-  assert.equal(values(tab.body)["max-inline-size"], "min(10rem, 55vw, 100%)", "a long tab can fit within its rail");
+  const cap = values(tab.body)["max-inline-size"];
+  assert.equal(cap, "min(10rem, 55vw)", "a long tab can fit within its rail");
+  assert.doesNotMatch(cap, /%/,
+    "the cap must stay DEFINITE: a percentage would resolve against this same scroller's content box while that box is still sized from the tabs' max-content widths, so the strip would settle at the tabs' uncapped width and trail dead space before Create");
   const [separator] = rulesWith('.workbench-tab[data-tab-group-start="true"]:not(.is-current)::before', workbench);
   assert.equal(values(separator.body)["pointer-events"], "none");
   assert.equal(values(separator.body)["border-inline-start"], "1px solid var(--border-hairline)");
@@ -288,7 +291,10 @@ test("only committed tabs flare out to the same canvas, within the scrolling rai
 
   const strip = merge(rulesWith(".workbench-tabs", workbench));
   assert.equal(strip.gap, paint["inline-size"], "the adjacent pending tab's edge stays clear");
-  assert.equal(strip["padding-inline"], "calc(var(--workbench-tab-flare) + var(--workbench-tab-start-inset, var(--radius-box))) var(--workbench-tab-flare)");
+  assert.equal(strip["padding-inline"], "var(--workbench-rail-start-inset) var(--workbench-tab-flare)",
+    "the first flare keeps the shared start inset, and the END keeps exactly one constant paint room");
+  assert.equal(strip["padding-inline"].split(/\s+/)[1], "var(--workbench-tab-flare)",
+    "the trailing space before Create is the flare alone — never a second, growing reserve");
   assert.equal(merge(rulesWith(".workbench-tab", workbench))["scroll-margin-inline"], paint["inline-size"]);
   const [wide, narrow] = rulesWith(".workbench-tab-rail", workbench);
   assert.equal(values(wide.body)["--workbench-tab-flare"], "var(--radius-tab)");
@@ -307,6 +313,38 @@ test("the compact context label yields room to tabs and fixed toolbar controls",
   assert.equal(title["white-space"], "nowrap");
   assert.equal(title["text-overflow"], "ellipsis");
   assert.equal(title["font-size"], "var(--text-sm)");
+
+  // The label owns the rail's start-inset line — the SAME token the strip pads
+  // by — so it is never flush against the bar's own gutter.
+  assert.equal(title["margin-inline-start"], "var(--workbench-rail-start-inset)");
+  const [strip] = rulesWith(".workbench-tabs", workbench, {exactSelectorText: true});
+  assert.equal(values(strip.body)["padding-inline"].split(/\s+/)[0], title["margin-inline-start"],
+    "the label and the strip must consume ONE shared start-inset token");
+});
+
+test("ONE rail token carries the start inset for both the label and the strip", () => {
+  const [rail] = rulesWith(".workbench-tab-rail", workbench);
+  assert.equal(values(rail.body)["--workbench-rail-start-inset"],
+    "calc(var(--workbench-tab-flare) + var(--workbench-tab-start-inset, var(--radius-box)))",
+    "the inset is the flare paint room plus the canvas corner radius, derived — never a fresh literal");
+
+  // Narrow rails drop the corner-radius part of the token (the fixed sidebar
+  // toggle shift lives on the bar's padding), and the smallest width halves
+  // the flare; both reach the token because it is derived, not copied.
+  const narrow = workbench.slice(workbench.lastIndexOf("@media (max-width: 1023.98px)"))
+    .split("@media (max-width: 480px)")[0];
+  assert.equal(merge(rulesWith(".workbench-top", narrow))["--workbench-tab-start-inset"], "0px",
+    "the narrow branch must zero the token, not add a second hardcoded offset");
+  assert.deepEqual(values(rulesWith(".workbench-tab-rail", workbench)[1].body), {
+    "--workbench-tab-flare": "calc(var(--radius-tab) / 2)",
+    gap: "calc(var(--card-pad) / 4)"
+  }, "the 480px branch retargets the flare the token derives from");
+});
+
+test("a strip that follows the context label adds no second start indent", () => {
+  const [following] = rulesWith(".workbench-context-title + .workbench-tabs", workbench, {exactSelectorText: true});
+  assert.deepEqual(values(following.body), {"padding-inline-start": "var(--workbench-tab-flare)"},
+    "the label already carries the start inset, so the strip keeps only its flare paint room");
 });
 
 test("the inset canvas retains its frame and meets the committed tab at the hairline", () => {
