@@ -1,372 +1,94 @@
 defmodule EvoGit.DistributionTest do
-  # `async: false` — the `enable_for_remote/1` describe starts REAL distribution
-  # (`:net_kernel.start/1`, so `node()` stops being `:nonode@nohost`) and
-  # rewrites the BEAM-global `:kernel` app env (`:epmd_module`,
-  # `:inet_dist_listen_min` / `_max`) plus the `{:evogit_epmd, :genesis}`
-  # `:persistent_term` registry. The config-dir isolation below no longer needs
-  # a process-wide env var: it resolves per process.
-  use ExUnit.Case, async: false
+  # Only the bare peer changes node identity, kernel env or cookies.
+  use ExUnit.Case, async: true
 
   alias EvoGit.Distribution
   alias EvoGit.TestSupport.ConfigDir
 
-  # Per-process config directory so `Distribution.maybe_enable/0` (which calls
-  # `EvoGit.Config.resolve()`) never reads the real
-  # `~/.config/genesis/config.toml`. Without this isolation, a user config with
-  # node.enabled = true would cause maybe_enable/0 to attempt starting
-  # :net_kernel, which fails with :nodistribution on a non-distributed BEAM.
-  setup do
+  test "maybe_enable/0 is a no-op with the default config" do
     ConfigDir.isolate!("evogit-distribution")
-    :ok
+    before = Distribution.active()
+
+    assert :ok = Distribution.maybe_enable()
+    assert Distribution.active() == before
   end
 
-  describe "distributed?/0" do
-    test "returns a boolean" do
-      assert is_boolean(Distribution.distributed?())
-    end
+  test "enable_runtime/3 rejects invalid inputs before starting distribution" do
+    assert {:error, {:invalid_node_name, "no-at-sign"}} =
+             Distribution.enable_runtime("no-at-sign", "cookie", 9123)
 
-    test "returns false for nonode@nohost" do
-      # In the test environment the node is typically :nonode@nohost.
-      # We can't force a different state without starting distribution,
-      # so we just assert the function matches the raw Node check.
-      assert Distribution.distributed?() == (node() != :nonode@nohost)
-    end
+    assert {:error, {:invalid_node_name, ""}} =
+             Distribution.enable_runtime("", "cookie", 9123)
+
+    assert {:error, {:invalid_dist_port, 0}} =
+             Distribution.enable_runtime("genesis_runtime_test@127.0.0.1", "cookie", 0)
   end
 
-  describe "ensure_epmd_module/0" do
-    test "sets the kernel epmd_module env to EvoGit.EpmdDist (regression: 490958058)" do
-      original = Application.get_env(:kernel, :epmd_module)
-      on_exit(fn -> restore_env(:kernel, :epmd_module, original) end)
-
-      assert :ok = Distribution.ensure_epmd_module()
-      assert Application.get_env(:kernel, :epmd_module) == EvoGit.EpmdDist
-
-      # Idempotent — repeated calls leave the same value and never raise.
-      assert :ok = Distribution.ensure_epmd_module()
-      assert Application.get_env(:kernel, :epmd_module) == EvoGit.EpmdDist
-    end
-  end
-
-  describe "maybe_enable/0" do
-    test "returns :ok when distribution is disabled (default config)" do
-      # By default, node.enabled is false, so maybe_enable should be a no-op.
-      assert :ok = Distribution.maybe_enable()
-    end
-  end
-
-  describe "enable_for_remote/1" do
-    # async: false — starting real distribution changes global BEAM state
-    # (node() becomes non-nonode@nohost) which would break sibling tests
-    # that assume :nonode@nohost.
-    @describetag :enable_for_remote
-
-    test "returns :ok when already distributed" do
-      if Distribution.distributed?() do
-        assert :ok = Distribution.enable_for_remote(%{})
+  test "runtime distribution starts, updates the cookie, and stops in an isolated BEAM" do
+    paths =
+      for app <- [:elixir, :ex_unit, :logger, :evo_git] do
+        app |> Application.app_dir("ebin") |> String.to_charlist()
       end
-    end
 
-    test "already-distributed nodes get EpmdDist epmd_module (regression: 490958058)" do
-      original_epmd = Application.get_env(:kernel, :epmd_module)
-      original_min = Application.get_env(:kernel, :inet_dist_listen_min)
-      original_max = Application.get_env(:kernel, :inet_dist_listen_max)
-      was_distributed = Distribution.distributed?()
+    args = [~c"+S", ~c"1:1", ~c"-start_epmd", ~c"false", ~c"-pa" | paths]
 
-      # The already-distributed branch of enable_for_remote/1 is only reachable
-      # when node() != :nonode@nohost. The test BEAM boots non-distributed and
-      # cannot start distribution with the default erl_epmd (no epmd daemon is
-      # running), so start an EPMD-less distribution exactly like
-      # enable_for_connection/0 does: set the listen range + epmd_module, then
-      # :net_kernel.start. `started` is true only when THIS test actually
-      # started distribution (a node already distributed on entry is not ours
-      # to stop).
-      started =
-        if was_distributed do
-          false
-        else
-          Application.put_env(:kernel, :inet_dist_listen_min, 9100)
-          Application.put_env(:kernel, :inet_dist_listen_max, 9200)
-          Application.put_env(:kernel, :epmd_module, Elixir.EvoGit.EpmdDist)
+    # A stdio control channel survives the peer's node-name changes. Never
+    # start distribution in the suite VM, even in an async: false test: the
+    # umbrella's test-file compiler can still be using its original identity.
+    assert {:ok, peer, :nonode@nohost} =
+             :peer.start_link(%{connection: :standard_io, args: args, wait_boot: 10_000})
 
-          case :net_kernel.start([:"genesis@127.0.0.1", :longnames]) do
-            {:ok, _pid} -> true
-            # Environment cannot run distribution — the already-distributed
-            # branch is unreachable. Mirror the existing "returns :ok when
-            # already distributed" convention of tolerating a non-distributed
-            # test environment; the direct ensure_epmd_module/0 test above
-            # still pins the env flip itself.
-            _other -> false
-          end
-        end
+    smoke =
+      quote do
+        import ExUnit.Assertions
 
-      on_exit(fn ->
-        if started and Distribution.distributed?() do
-          :net_kernel.stop()
-        end
+        assert Distribution.active() == %{enabled: false, node: "nonode@nohost", dist_port: nil}
 
-        # EpmdDist.register_node/3 persists the local name in its
-        # persistent-term registry at net_kernel start; erase the entry this
-        # test created (erase/1 raises on a missing key, hence the guard).
-        if started and :persistent_term.get({:evogit_epmd, :genesis}, :absent) != :absent do
-          :persistent_term.erase({:evogit_epmd, :genesis})
-        end
+        # The API requires a nonzero port; ask the OS for a free one rather
+        # than compete with other suites or services for a fixed port.
+        loopback = {127, 0, 0, 1}
+        Application.put_env(:kernel, :inet_dist_use_interface, loopback)
+        assert {:ok, socket} = :gen_tcp.listen(0, ip: loopback)
+        assert {:ok, port} = :inet.port(socket)
+        assert :ok = :gen_tcp.close(socket)
 
-        restore_env(:kernel, :epmd_module, original_epmd)
-        restore_env(:kernel, :inet_dist_listen_min, original_min)
-        restore_env(:kernel, :inet_dist_listen_max, original_max)
-      end)
+        name = "genesis_runtime_test@127.0.0.1"
 
-      if Distribution.distributed?() do
-        # Deliberately reset the env first so the assertion proves
-        # enable_for_remote/1 — not our setup above — performed the flip.
-        Application.delete_env(:kernel, :epmd_module)
+        assert {:ok, %{node: ^name, dist_port: ^port}} =
+                 Distribution.enable_runtime(name, "runtime_test_cookie", port)
 
+        assert node() == :"genesis_runtime_test@127.0.0.1"
+        assert Distribution.active() == %{enabled: true, node: name, dist_port: port}
+        assert Application.get_env(:kernel, :inet_dist_listen_max) == port
+        assert Node.get_cookie() == :runtime_test_cookie
+
+        assert :ok = Distribution.set_cookie(%{})
+        assert Node.get_cookie() == :runtime_test_cookie
+        assert :ok = Distribution.set_cookie(%{cookie: "custom_test_cookie"})
+        assert Node.get_cookie() == :custom_test_cookie
+
+        assert {:ok, %{node: ^name, dist_port: ^port}} =
+                 Distribution.enable_runtime(name, "runtime_test_cookie", port)
+
+        assert Node.get_cookie() == :runtime_test_cookie
+
+        # The already-distributed remote connect must switch the EPMD
+        # module even when it does not need to start distribution (490958058).
+        Application.put_env(:kernel, :epmd_module, :erl_epmd)
         assert :ok = Distribution.enable_for_remote(%{})
         assert Application.get_env(:kernel, :epmd_module) == EvoGit.EpmdDist
-      end
-    end
 
-    test "accepts a target map with dist_port and nil cookie" do
-      result = Distribution.enable_for_remote(%{dist_port: 9000, cookie: nil})
-      assert result == :ok or match?({:error, _}, result)
-
-      if node() != :nonode@nohost and result == :ok do
-        :net_kernel.stop()
-      end
-    end
-
-    test "accepts a target map with dist_port and cookie" do
-      # Just verify the function doesn't crash on a valid target map.
-      # In test env, distribution is likely not started; if it starts, great.
-      result = Distribution.enable_for_remote(%{dist_port: 9000, cookie: "test_cookie"})
-      assert result == :ok or match?({:error, _}, result)
-
-      # If this test actually started distribution, stop it so it doesn't
-      # leak into sibling tests.
-      if node() != :nonode@nohost and result == :ok do
-        :net_kernel.stop()
-      end
-    end
-  end
-
-  describe "active/0" do
-    test "reports enabled/node/dist_port consistently with node()" do
-      state = Distribution.active()
-
-      assert is_boolean(state.enabled)
-      assert is_binary(state.node)
-      assert state.node == to_string(node())
-      assert state.enabled == Distribution.distributed?()
-      assert is_nil(state.dist_port) or is_integer(state.dist_port)
-    end
-  end
-
-  describe "disable_runtime/0" do
-    test "returns :ok on a non-distributed node and is idempotent" do
-      unless Distribution.distributed?() do
         assert :ok = Distribution.disable_runtime()
         assert :ok = Distribution.disable_runtime()
-        refute Distribution.active().enabled
+        assert Distribution.active() == %{enabled: false, node: "nonode@nohost", dist_port: port}
+        :ok
       end
+
+    try do
+      assert {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:ex_unit], 10_000)
+      assert {:ok, _} = :peer.call(peer, Code, :eval_quoted, [smoke], 10_000)
+    after
+      :peer.stop(peer)
     end
   end
-
-  describe "enable_runtime/3" do
-    # async: false comes from the module — starting real distribution rewrites
-    # BEAM-global state (:kernel env, node(), EpmdDist's persistent-term
-    # registry). Mirrors the tolerant convention of the enable_for_remote/1
-    # tests: an environment that cannot run distribution yields {:error, _}.
-    test "enables distribution on the requested node, then restores the environment" do
-      original_epmd = Application.get_env(:kernel, :epmd_module)
-      original_min = Application.get_env(:kernel, :inet_dist_listen_min)
-      original_max = Application.get_env(:kernel, :inet_dist_listen_max)
-
-      on_exit(fn ->
-        Distribution.disable_runtime()
-
-        # EpmdDist.register_node/3 records the local name (the part before @)
-        # in its :persistent_term registry when distribution starts; erase the
-        # entry this test created (erase/1 raises on a missing key).
-        if :persistent_term.get({:evogit_epmd, :genesis_runtime_test}, :absent) != :absent do
-          :persistent_term.erase({:evogit_epmd, :genesis_runtime_test})
-        end
-
-        restore_env(:kernel, :epmd_module, original_epmd)
-        restore_env(:kernel, :inet_dist_listen_min, original_min)
-        restore_env(:kernel, :inet_dist_listen_max, original_max)
-      end)
-
-      result =
-        Distribution.enable_runtime(
-          "genesis_runtime_test@127.0.0.1",
-          "runtime_test_cookie",
-          9123
-        )
-
-      case result do
-        {:ok, %{node: actual, dist_port: 9123}} ->
-          assert actual == to_string(node())
-          assert Distribution.active().enabled
-          # The single listen port is pinned unconditionally.
-          assert Distribution.active().dist_port == 9123
-          assert Node.get_cookie() == :runtime_test_cookie
-
-          # Idempotent: the same identity again is a successful no-op that
-          # re-applies the cookie.
-          assert {:ok, %{node: ^actual, dist_port: 9123}} =
-                   Distribution.enable_runtime(
-                     "genesis_runtime_test@127.0.0.1",
-                     "runtime_test_cookie",
-                     9123
-                   )
-
-        {:error, _reason} ->
-          # Environment cannot run distribution (e.g. the listen port cannot be
-          # bound). The tolerant path keeps the suite green on such hosts.
-          :ok
-      end
-    end
-
-    test "rejects an invalid node name without raising" do
-      assert {:error, {:invalid_node_name, "no-at-sign"}} =
-               Distribution.enable_runtime("no-at-sign", "cookie", 9123)
-
-      assert {:error, {:invalid_node_name, ""}} =
-               Distribution.enable_runtime("", "cookie", 9123)
-
-      assert {:error, {:invalid_dist_port, 0}} =
-               Distribution.enable_runtime("genesis_runtime_test@127.0.0.1", "cookie", 0)
-    end
-  end
-
-  describe "start_epmd_if_configured/1" do
-    test "defaults to false — does not start EPMD when :start_epmd is not set" do
-      # With the new default of false, EPMD should NOT be started when
-      # :start_epmd is missing from node_config.
-      assert :ok = Distribution.start_epmd_if_configured(%{})
-    end
-
-    test "starts EPMD when :start_epmd is explicitly true" do
-      # When the user explicitly opts in, EPMD should still be startable.
-      # We can't verify the side-effect in a unit test, but we can verify
-      # the function doesn't crash.
-      assert :ok = Distribution.start_epmd_if_configured(%{start_epmd: true})
-    end
-  end
-
-  describe "set_cookie/1" do
-    @tag :distributed_only
-    test "does not set cookie when config has no cookie key (nil)" do
-      if Distribution.distributed?() do
-        # Save current cookie to restore after
-        original = Node.get_cookie()
-        # Set a known cookie first so we can detect no-change
-        Node.set_cookie(:known_before_test)
-
-        # Call with empty config — should skip Node.set_cookie
-        Distribution.set_cookie(%{})
-        # Cookie should still be :known_before_test (unchanged)
-        assert Node.get_cookie() == :known_before_test
-
-        # Restore
-        Node.set_cookie(original)
-      end
-    end
-
-    @tag :distributed_only
-    test "uses the provided cookie when specified in config" do
-      if Distribution.distributed?() do
-        original = Node.get_cookie()
-        Distribution.set_cookie(%{cookie: "custom_test_cookie"})
-        assert Node.get_cookie() == :custom_test_cookie
-        Node.set_cookie(original)
-      end
-    end
-  end
-
-  describe "nil cookie handling in set_cookie/1" do
-    test "Map.get with no default returns nil when key is missing" do
-      # Verify that Map.get/2 returns nil when the key is missing.
-      # Use a dynamic map to prevent the type checker from narrowing to empty_map().
-      map = Map.new([{:other_key, "value"}])
-      assert is_nil(Map.get(map, :cookie))
-    end
-
-    test "Map.get returns the cookie value when present" do
-      assert Map.get(%{cookie: "custom"}, :cookie) == "custom"
-    end
-  end
-
-  describe "enable_distribution kernel params" do
-    test "uses dist_port 9000 by default from node_config" do
-      # Verify that Map.get/3 with an explicit :dist_port key returns the
-      # provided value. The node_config map's :dist_port key defaults to 9000
-      # in enable_distribution/1.
-      assert Map.get(%{dist_port: 7777}, :dist_port, 9000) == 7777
-    end
-
-    test "sets inet_dist_listen_min/max from dist_port when not already configured" do
-      # Clear any existing kernel config so we can verify the defaults.
-      original_min = Application.get_env(:kernel, :inet_dist_listen_min)
-      original_max = Application.get_env(:kernel, :inet_dist_listen_max)
-
-      Application.delete_env(:kernel, :inet_dist_listen_min)
-      Application.delete_env(:kernel, :inet_dist_listen_max)
-
-      # Simulate what enable_distribution does before :net_kernel.start:
-      dist_port = 9000
-      assert nil == Application.get_env(:kernel, :inet_dist_listen_min)
-      assert nil == Application.get_env(:kernel, :inet_dist_listen_max)
-
-      Application.put_env(:kernel, :inet_dist_listen_min, dist_port)
-      Application.put_env(:kernel, :inet_dist_listen_max, dist_port)
-
-      assert Application.get_env(:kernel, :inet_dist_listen_min) == 9000
-      assert Application.get_env(:kernel, :inet_dist_listen_max) == 9000
-
-      # Restore original values
-      restore_env(:kernel, :inet_dist_listen_min, original_min)
-      restore_env(:kernel, :inet_dist_listen_max, original_max)
-    end
-
-    test "respects custom dist_port from config" do
-      original_min = Application.get_env(:kernel, :inet_dist_listen_min)
-      original_max = Application.get_env(:kernel, :inet_dist_listen_max)
-
-      Application.delete_env(:kernel, :inet_dist_listen_min)
-      Application.delete_env(:kernel, :inet_dist_listen_max)
-
-      # Custom port
-      dist_port = 9876
-      Application.put_env(:kernel, :inet_dist_listen_min, dist_port)
-      Application.put_env(:kernel, :inet_dist_listen_max, dist_port)
-
-      assert Application.get_env(:kernel, :inet_dist_listen_min) == 9876
-      assert Application.get_env(:kernel, :inet_dist_listen_max) == 9876
-
-      restore_env(:kernel, :inet_dist_listen_min, original_min)
-      restore_env(:kernel, :inet_dist_listen_max, original_max)
-    end
-
-    test "does not override inet_dist_listen_min/max if already configured" do
-      original_min = Application.get_env(:kernel, :inet_dist_listen_min)
-      original_max = Application.get_env(:kernel, :inet_dist_listen_max)
-
-      # Simulate pre-configured values (e.g. from vm.args)
-      Application.put_env(:kernel, :inet_dist_listen_min, 1234)
-      Application.put_env(:kernel, :inet_dist_listen_max, 5678)
-
-      # The guard in enable_distribution checks if nil before setting.
-      # Verify that the guard works correctly:
-      refute nil == Application.get_env(:kernel, :inet_dist_listen_min)
-      refute nil == Application.get_env(:kernel, :inet_dist_listen_max)
-
-      # Restore
-      restore_env(:kernel, :inet_dist_listen_min, original_min)
-      restore_env(:kernel, :inet_dist_listen_max, original_max)
-    end
-  end
-
-  defp restore_env(app, key, nil), do: Application.delete_env(app, key)
-  defp restore_env(app, key, value), do: Application.put_env(app, key, value)
 end
