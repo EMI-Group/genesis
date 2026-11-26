@@ -1,151 +1,17 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {readFileSync} = require('node:fs');
-const vm = require('node:vm');
-
-// Run the shipped modules with the small DOM/history seams used by this hook;
-// neither a fake store nor a reimplementation of the activation logic.
-function load(file, exports, globals = {}) {
-  const text = readFileSync(`${__dirname}/${file}.js`, 'utf8')
-    .replace(/^import [\s\S]*? from "[^"\n]+"\n/gm, '')
-    .replace(/^export \{[^}]+\}\n/gm, '')
-    .replace(/^export default \w+\n/gm, '')
-    .replace(/^export (?=const |function )/gm, '');
-  return vm.runInNewContext(`${text}\n;(${exports});`, {URL, URLSearchParams, ...globals});
-}
-
-const store = load('workbench_tabs', '{TAB_BASE_URL, safeHref, sameScope, tabKey, tabGroup, restore, openTab, tabsForProject, alwaysPinned, pinTab, closeTab, cycleTab}');
-const helpers = load('workbench_navigation', '{routeTab, exactHref, historyKey, defaultDraftHref, navigationState, sameTabClick}', store);
-const url = path => new URL(path, 'https://example.test');
-const taskKey = (id, node = '') => store.tabKey(node, '', 'task', id);
-const DRAFT = '/assistant?wb_project=%2Frepo&wb_draft=1234567890abcdef12345678';
-const OVERVIEW = '/projects?project=%2Frepo';
-const TASKS = '/tasks?node=remote&status=running&task=task-1';
-const AGENTS = '/agents?node=remote&task=task-1&agent=agent-3#tree';
-const COMMIT = '/review/task-1/commit/abcd?node=remote#file-2';
-
-function timers() {
-  let next = 0;
-  const jobs = new Map();
-  return {
-    setTimeout(fn) { jobs.set(++next, fn); return next; },
-    clearTimeout(key) { jobs.delete(key); },
-    expire() { for (const fn of [...jobs.values()]) fn(); },
-  };
-}
-
-test('task aliases preserve the actual URL and share the same node/task identity', () => {
-  const data = {workbenchNode: 'remote', workbenchTask: 'task-1', workbenchPage: 'tasks'};
-  assert.equal(helpers.routeTab(url(TASKS), data, false).href, TASKS);
-  assert.equal(helpers.routeTab(url(COMMIT), data, false), undefined, 'a stale task patch does not confirm a review');
-  data.workbenchPage = 'review';
-  assert.equal(helpers.routeTab(url(COMMIT), data, false).href, COMMIT);
-  assert.equal(helpers.routeTab(url('/review/task-1'), data, false), undefined, 'node identity is not inferred');
-  assert.equal(helpers.historyKey('remote', {workbenchItem: 'task', itemId: 'task-1'}), taskKey('task-1', 'remote'));
-  assert.equal(helpers.historyKey('local', {workbenchItem: 'task', itemId: 'task-1'}), taskKey('task-1'));
-  assert.equal(helpers.routeTab(url('/review/%E0'), {...data, workbenchNode: ''}, false), undefined);
-});
-
-test('focused Agents requires matching page, node and decoded task; global Agents stays outside the task rail', () => {
-  const data = {workbenchNode: 'remote', workbenchPage: 'agents', workbenchTask: 'task-1', workbenchTitle: 'My task'};
-  const view = helpers.routeTab(url(AGENTS), data, false);
-  assert.equal(view.kind, 'task');
-  assert.equal(view.id, 'task-1');
-  assert.equal(view.href, AGENTS);
-  assert.equal(view.title, 'My task');
-  for (const overrides of [{workbenchNode: 'other'}, {workbenchPage: 'tasks'}, {workbenchTask: 'task-2'}, {workbenchTask: ''}]) {
-    assert.equal(helpers.routeTab(url(AGENTS), {...data, ...overrides}, false), undefined);
-  }
-  const local = {...data, workbenchNode: '', workbenchTask: 'one+two'};
-  assert.equal(helpers.routeTab(url('/agents?node=local&task=one%2Btwo'), local, false).id, 'one+two');
-  assert.equal(helpers.routeTab(url('/agents?node=remote&agent=agent-3'), data, false), undefined);
-  assert.equal(helpers.routeTab(url('/agents?node=remote&agent=agent-3'), {...data, workbenchTask: ''}, false), null);
-});
-
-test('the only default is the exact server-supplied scoped draft on an empty ready overview', () => {
-  const data = {workbenchPage: 'dashboard', workbenchProject: '/repo', workbenchDefaultDraft: DRAFT};
-  assert.equal(helpers.defaultDraftHref(url(OVERVIEW), data, false), DRAFT);
-  assert.equal(helpers.defaultDraftHref(url(OVERVIEW), data, true), null);
-  for (const suffix of ['&wb_home=1', '&wb_task=1', '&resume_from=a', '&starting_commit=abc', '&node=remote']) {
-    assert.equal(helpers.defaultDraftHref(url(OVERVIEW + suffix), data), null);
-  }
-  for (const path of ['/tasks?task=task-1', '/review/task-1', '/assistant?session=s1', DRAFT, '/projects?project=/other']) {
-    assert.equal(helpers.defaultDraftHref(url(path), data), null, path);
-  }
-  for (const href of [null, '//evil.test' + DRAFT, '/assistant?session=s1', DRAFT + '&node=remote', DRAFT + '&wb_project=/other']) {
-    assert.equal(helpers.defaultDraftHref(url(OVERVIEW), {...data, workbenchDefaultDraft: href}), null);
-  }
-  const workspace = 'vct:///workspaces/pair';
-  const href = DRAFT.replace('%2Frepo', encodeURIComponent(workspace)) + '&node=remote';
-  const ready = {...data, workbenchNode: 'remote', workbenchProject: '', workbenchDefaultDraft: href};
-  assert.equal(helpers.defaultDraftHref(url(`/projects?project=${encodeURIComponent(workspace)}&node=remote`), ready), href);
-});
-
-test('activation survives ignored events, rejects stale route updates and expires without focus', () => {
-  const clock = timers();
-  const state = helpers.navigationState({setTimer: clock.setTimeout, clearTimer: clock.clearTimeout});
-  let paints = 0;
-  const repaint = () => paints++;
-  state.request(TASKS, 'task', 'focus', repaint);
-  assert.equal(state.confirm(TASKS, 'task'), null, 'URL and key alone cannot confirm in-flight navigation');
-  state.request(COMMIT, 'task', 'focus', repaint);
-  state.start(TASKS, repaint); // queued loading-start from the superseded request
-  state.commit(TASKS); // stale patch or redirect
-  assert.equal(state.pending.href, COMMIT);
-  assert.equal(state.confirm(TASKS, 'task'), null);
-  state.commit(COMMIT);
-  assert.equal(state.confirm(COMMIT, 'other'), null);
-  assert.equal(state.confirm(COMMIT, 'task').focus, 'focus');
-  assert.equal(state.confirm(COMMIT, 'task'), null);
-  state.request(TASKS, 'task', 'focus', repaint);
-  clock.expire();
-  assert.equal(state.pending, null);
-  assert.equal(paints, 1);
-});
-
-test('a later announced navigation or traversal can reopen a closed exact route', () => {
-  const clock = timers();
-  const state = helpers.navigationState({setTimer: clock.setTimeout, clearTimer: clock.clearTimeout});
-  const key = taskKey('task-1', 'remote');
-  const repaint = () => {};
-  for (const reopen of [() => state.start(COMMIT, repaint, true), () => state.traverse(COMMIT)]) {
-    state.request(COMMIT, key, null, repaint);
-    state.cancelPending(key);
-    state.start(COMMIT, repaint);
-    state.commit(COMMIT);
-    assert.equal(state.isClosed(COMMIT, key), true);
-    assert.equal(state.isClosed(TASKS, key), false);
-    reopen();
-    assert.equal(state.isClosed(COMMIT, key), false);
-  }
-});
-
-test('Back cancels activation and suppresses default drafts; failed defaults are one-shot per entry', () => {
-  const clock = timers();
-  const state = helpers.navigationState({setTimer: clock.setTimeout, clearTimer: clock.clearTimeout});
-  assert.equal(state.claimDefault(OVERVIEW, '/repo'), true);
-  assert.equal(state.claimDefault(OVERVIEW, '/repo'), false);
-  state.request(DRAFT, 'draft', null, () => {});
-  state.traverse(OVERVIEW);
-  state.start(DRAFT, () => {}); // delayed loading start from before Back
-  assert.equal(state.moving, null);
-  assert.equal(state.confirm(DRAFT, 'draft'), null);
-  assert.equal(state.claimDefault(OVERVIEW, '/repo'), false);
-  const canonical = '/projects?node=local&project=/repo';
-  state.commit(canonical); // server-only URL normalization is still a Back landing
-  assert.equal(state.claimDefault(canonical, '/repo'), false);
-  state.commit('/tasks');
-  state.commit(OVERVIEW);
-  assert.equal(state.claimDefault(OVERVIEW, '/repo'), true);
-});
+const {load, store, helpers, url, taskKey, DRAFT, OVERVIEW, timers} = require('./workbench_test_support.cjs');
 
 function fixture({initial = OVERVIEW, defaultDraft, tabs = [], widths, historyOpen = false} = {}) {
   let actual = url(initial);
   const widthKey = 'genesis-workbench.sidebar-widths';
   const local = new Map(widths && [[widthKey, JSON.stringify(widths)]]);
-  const session = new Map([['genesis-workbench.history', JSON.stringify(historyOpen)]]);
+  const historyKey = 'genesis-workbench.history', gitKey = 'genesis-workbench.git';
+  const session = new Map([[historyKey, JSON.stringify(historyOpen)]]);
   const storage = map => ({getItem: key => map.get(key), setItem: (key, value) => map.set(key, value)});
-  const media = {matches: true, addEventListener() {}, removeEventListener() {}};
+  const mediaListeners = new Set();
+  const media = {matches: true, addEventListener(_, fn) { mediaListeners.add(fn); },
+    removeEventListener(_, fn) { mediaListeners.delete(fn); }};
   const trace = [];
   const getWidths = layout => ['left', 'right'].map(side => layout.style.getPropertyValue(`--workbench-${side}-width`));
   let activeLayout;
@@ -307,8 +173,25 @@ function fixture({initial = OVERVIEW, defaultDraft, tabs = [], widths, historyOp
     nodes.set('#workbench-history-content', historyContent);
     const fallback = element('button');
     nodes.set('#workbench-create-toggle', fallback);
-    const toggle = element('button');
+    const panelButton = (name, data = {}) => Object.assign(element('button'), {
+      id: name, dataset: data, closest(selector) { return selector === 'button, a' ? this : null; },
+    });
+    const toggle = panelButton('workbench-history-toggle');
+    const historyClose = panelButton('', {workbenchCloseHistory: ''});
+    panel.append(historyClose);
     nodes.set('#workbench-history-toggle', toggle);
+    nodes.set('[data-workbench-close-history]', historyClose);
+    const gitUI = {};
+    if (options.git) {
+      const git = Object.assign(element('aside'), {hidden: true});
+      const gitToggle = panelButton('workbench-git-toggle');
+      const gitClose = panelButton('', {workbenchCloseGit: ''});
+      git.append(gitClose);
+      nodes.set('#workbench-git', git);
+      nodes.set('#workbench-git-toggle', gitToggle);
+      nodes.set('[data-workbench-close-git]', gitClose);
+      Object.assign(gitUI, {git, gitToggle, gitClose});
+    }
     function putRows({top = 0, max = 1000, loading = false, more = false,
       filter = '/repo', status = '', query = '', kind = 'tasks'} = {}) {
       const form = Object.assign(element('form'), {elements: {
@@ -341,7 +224,8 @@ function fixture({initial = OVERVIEW, defaultDraft, tabs = [], widths, historyOp
     const live = Object.assign(Object.create(api.Workbench), {el: layout});
     live.mounted();
     return {live, layout, rail, control, left, right, panel, center, inline, addOverflow, addHandle, addRail,
-      historyContent, toggle, fallback, putRows, clearRows, ...entries, captured,
+      historyContent, toggle, historyClose, fallback, overlay: nodes.get('#workbench-history-overlay'),
+      putRows, clearRows, ...entries, ...gitUI, captured,
       event(type, target, fields) { captured.get(type)?.({type, target, ...fields}); }};
   }
 
@@ -350,6 +234,12 @@ function fixture({initial = OVERVIEW, defaultDraft, tabs = [], widths, historyOp
     flush() { while (microtasks.length) microtasks.shift()(); },
     mount, trace, observed, measure: () => measure?.(), getWidths,
     viewport(width, wide = media.matches) { window.innerWidth = width; media.matches = wide; },
+    changeBreakpoint(width, wide) {
+      this.viewport(width, wide);
+      emit('resize');
+      for (const fn of mediaListeners) fn({matches: wide});
+    },
+    storedDocks: () => [session.get(historyKey), session.get(gitKey)],
     storedWidths: () => JSON.parse(local.get(widthKey)),
   };
 }
@@ -807,6 +697,84 @@ test('drag and viewport changes keep width geometry current without persisting a
   live.setHistory(true);
   assert.equal(center.inert, true);
   assert.equal(right.hidden, true, 'resize handle remains hidden in drawer mode');
+});
+
+function assertNoDrawer(shell) {
+  assert.equal(shell.git.hidden, true);
+  assert.equal(shell.git.inert, true);
+  assert.equal(shell.panel.hidden, true);
+  assert.equal(shell.overlay.hidden, true);
+  assert.equal(shell.right.hidden, true);
+  assert.equal(shell.center.inert, false);
+  assert.equal(shell.layout.hasAttribute('data-workbench-history-drawer-open'), false);
+  for (const trigger of [shell.gitToggle, shell.toggle]) assert.equal(trigger.getAttribute('aria-expanded'), 'false');
+}
+
+function dismissWithEscape(live, target) {
+  let handled = false;
+  live.onKey({key: 'Escape', target, preventDefault() { handled = true; }});
+  assert.equal(handled, true);
+}
+
+test('crossing from 1840px to 1279px dismisses Git and restores only lost dock focus', () => {
+  for (const focus of ['gitClose', 'right', 'center']) {
+    const f = fixture({historyOpen: true});
+    f.viewport(1840);
+    const shell = f.mount('dashboard', {git: true});
+    shell.live.click({target: shell.gitToggle});
+    assert.equal(shell.git.hidden, false);
+    assert.equal(shell.panel.hidden, true, 'Git is in front of the remembered History dock');
+    assert.equal(shell.right.hidden, false);
+    shell[focus].focus();
+    f.changeBreakpoint(1279, false);
+    assertNoDrawer(shell);
+    assert.equal(f.document.activeElement, focus === 'center' ? shell.center : shell.gitToggle, focus);
+    assert.deepEqual(f.storedDocks(), ['true', 'true'], 'automatic dismissal does not change desktop choices');
+  }
+});
+
+test('same-project Review remount at 1279px ignores both desktop flags but allows explicit drawers', () => {
+  const review = '/review/task-1';
+  const f = fixture({initial: '/tasks?task=task-1', historyOpen: true});
+  f.viewport(1840);
+  const from = f.mount('tasks', {git: true});
+  from.live.click({target: from.gitToggle});
+  f.changeBreakpoint(1279, false);
+  f.emit('phx:page-loading-start', {kind: 'redirect', to: review});
+  from.live.destroyed();
+  f.at(review);
+  const to = f.mount('review', {git: true});
+  f.emit('phx:navigate', {href: review});
+  assert.equal(to.live.tabs[0].href, review);
+  assertNoDrawer(to);
+
+  for (const [toggle, close, panel] of [[to.gitToggle, to.gitClose, to.git], [to.toggle, to.historyClose, to.panel]]) {
+    to.live.click({target: toggle});
+    assert.equal(panel.hidden, false);
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+    assert.equal(to.center.inert, true);
+    assert.equal(f.document.activeElement, close);
+    dismissWithEscape(to.live, close);
+    assertNoDrawer(to);
+    assert.equal(f.document.activeElement, toggle);
+    assert.deepEqual(f.storedDocks(), ['true', 'true'], 'narrow gestures do not change desktop choices');
+  }
+
+  to.live.click({target: to.gitToggle});
+  Object.assign(to.layout.dataset, pendingHistory);
+  to.live.updated();
+  assertNoDrawer(to);
+  assert.equal(f.document.activeElement, to.fallback, 'unverified scope uses the shell fallback');
+  settleHistory(to);
+  assertNoDrawer(to);
+
+  to.live.destroyed();
+  f.viewport(1840, true);
+  const desktop = f.mount('review', {git: true});
+  assert.equal(desktop.git.hidden, false, 'a desktop mount still restores the explicit dock choice');
+  desktop.live.click({target: desktop.gitClose});
+  assert.equal(desktop.panel.hidden, false, 'closing desktop Git reveals the remembered History dock');
+  assert.deepEqual(f.storedDocks(), ['true', 'false']);
 });
 
 const pendingHistory = {workbenchProject: '', workbenchHistoryScopePending: 'true'};

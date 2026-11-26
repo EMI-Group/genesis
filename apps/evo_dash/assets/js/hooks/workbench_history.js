@@ -128,18 +128,25 @@ export const historyMethods = {
     const pending = scopePending(this.el)
     const wide = this.media.matches
     const git = this.el.querySelector("#workbench-git")
-    const gitOpen = Boolean(git && this.gitOpen && this.project && !pending)
-    if (pending && !wide) this.historyOpen = false // do not open an unrequested overlay when scope arrives
+    // A drawer dismissed while scope is unknown must not return on settlement.
+    if (pending && !wide) this.historyOpen = this.gitOpen = false
     const reserved = pending && wide && this.historyDockNode === node
     const available = !pending && Boolean(this.project)
+    const gitOpen = Boolean(git && this.gitOpen && available)
     const open = this.historyOpen && !gitOpen && (available || reserved)
     this.historyDockNode = open && wide ? node : null
 
     const toggle = this.el.querySelector("#workbench-history-toggle")
+    const gitToggle = this.el.querySelector("#workbench-git-toggle")
     const resizer = this.el.querySelector("#workbench-right-resize")
+    const drawerOpen = (open || gitOpen) && !wide
+    const hideResizer = drawerOpen || !(open || gitOpen)
+    // Capture focus and the separator's owner before making either panel inert.
     const active = document.activeElement
-    const moveFocus = (!open || pending) && (panel.contains(active) ||
-      (resizer && active === resizer && !gitOpen) || (pending && toggle && active === toggle))
+    const gitFocusLost = !gitOpen && git?.contains(active)
+    const resizeFocusLost = resizer && active === resizer && (hideResizer || pending)
+    const historyFocusLost = (!open || pending) && (panel.contains(active) || (pending && toggle && active === toggle))
+    const returnToggle = gitFocusLost || (resizeFocusLost && git?.dataset.panelState === "open") ? gitToggle : toggle
 
     // Reuse the regular open geometry (including the separator) but never
     // keep outgoing History content visible or interactive under an unknown scope.
@@ -148,17 +155,18 @@ export const historyMethods = {
     if (content && content.style.visibility !== visibility) content.style.visibility = visibility
     panel.inert = !open || pending || Boolean(this.previewTab)
     this.panelHost.apply(panel, open, animate)
-    if (git) this.panelHost.apply(git, gitOpen, animate)
-    const drawerOpen = (open || gitOpen) && !wide
+    if (git) {
+      git.inert = !gitOpen || Boolean(this.previewTab)
+      this.panelHost.apply(git, gitOpen, animate)
+    }
     if (resizer) {
-      resizer.hidden = drawerOpen || !(open || gitOpen)
+      resizer.hidden = hideResizer
       resizer.inert = pending
     }
     const overlay = this.el.querySelector("#workbench-history-overlay")
     if (overlay) overlay.hidden = !drawerOpen
     const center = this.el.querySelector(".workbench-center")
     if (center) center.inert = drawerOpen || Boolean(this.previewTab)
-    if (git) git.inert = pending || Boolean(this.previewTab)
     const attribute = "data-workbench-history-drawer-open"
     if (drawerOpen !== this.el.hasAttribute(attribute)) {
       this.el.toggleAttribute(attribute, drawerOpen)
@@ -168,9 +176,9 @@ export const historyMethods = {
       toggle.inert = pending
       toggle.setAttribute("aria-expanded", String(open && available))
     }
-    this.el.querySelector("#workbench-git-toggle")?.setAttribute("aria-expanded", String(gitOpen))
-    if (moveFocus && !center?.inert) {
-      const fallback = (available && toggle) || this.el.querySelector("#workbench-create-toggle")
+    gitToggle?.setAttribute("aria-expanded", String(gitOpen))
+    if ((gitFocusLost || historyFocusLost || resizeFocusLost) && !center?.inert) {
+      const fallback = (available && returnToggle) || this.el.querySelector("#workbench-create-toggle")
       fallback?.focus({preventScroll: true})
     }
     this.syncHistoryScroll()

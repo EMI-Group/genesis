@@ -184,9 +184,11 @@ const Workbench = {
     this.reduceMotion = matchMedia("(prefers-reduced-motion: reduce)")
     this.panelHost = createPanelHost(() => Boolean(this.reduceMotion?.matches))
     this.panelReady = false
-    // Only an explicit choice in THIS tab re-opens the panel; a fresh tab is closed.
-    this.historyOpen = initialPanelState(read(sessionStorage, HISTORY_KEY, null)) === PANEL_OPEN
-    this.gitOpen = initialPanelState(read(sessionStorage, GIT_KEY, null)) === PANEL_OPEN
+    // Saved dock choices belong to desktop; a new overlay always starts closed.
+    const restoreDock = key => this.media.matches &&
+      initialPanelState(read(sessionStorage, key, null)) === PANEL_OPEN
+    this.historyOpen = restoreDock(HISTORY_KEY)
+    this.gitOpen = restoreDock(GIT_KEY)
     this.gitLoadedScope = null
     this.sidebarWidths = read(localStorage, SIDEBAR_WIDTHS_KEY, {})
     // The shell fills the viewport; no descendant or shell layout read is
@@ -589,7 +591,7 @@ const Workbench = {
 
   setHistory(open, focus = false) {
     this.historyOpen = open
-    write(sessionStorage, HISTORY_KEY, open)
+    if (this.media.matches) write(sessionStorage, HISTORY_KEY, open)
     this.syncHistoryPanel()
     if (focus) this.el.querySelector(open ? "[data-workbench-close-history]" : "#workbench-history-toggle")?.focus()
   },
@@ -615,7 +617,7 @@ const Workbench = {
   setGit(open, focus = false) {
     this.gitOpen = open
     if (open && !this.gitDiff) this.gitLoadedScope = null
-    write(sessionStorage, GIT_KEY, open)
+    if (this.media.matches) write(sessionStorage, GIT_KEY, open)
     this.syncHistoryPanel()
     this.syncGitStatus()
     if (focus) this.el.querySelector(open ? "[data-workbench-close-git]" : "#workbench-git-toggle")?.focus()
