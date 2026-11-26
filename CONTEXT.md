@@ -414,3 +414,7 @@ EGL is resolved from the flake's own `mesa` (`__EGL_VENDOR_LIBRARY_DIRS`), never
 **Status: plain-text, `.docx` and `.pdf` are IMPLEMENTED** as a FRONTEND feature in `EvoDash.AttachedFile` (`ex_pdf` a plain Hex dep of `:evo_dash`; password-protected → `{:invalid, …}`, image-only → `{:empty, …}`, no OCR), and the core `:evo_git` has NO prompt-file reader: conversion happens only on the LOCAL node, so the objective stays a `String.t()` end-to-end.
 ReqLLM-native `:file` attachments are deliberately NOT used (uneven provider matrix); the optional `pdftotext` upgrade path remains future.
 Details: `apps/evo_dash/lib/evo_dash/attached_file.ex` + `apps/evo_dash/CONTEXT.md`.
+
+## Known Issues
+
+- This file's Local half exceeds the 64 KB per-stage limit (`[:truncation, :context_max_bytes]`), so an agent assigned to `./` (root agents and repo-less Assistant sessions) sees it truncated inside `### Runtime Data Directory (tasks.sqlite)`; the later sections are reachable only by reading this file with `read_context` `scope: "local"`.
