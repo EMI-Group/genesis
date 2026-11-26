@@ -5378,9 +5378,22 @@ defmodule EvoDashWeb.HomeLiveTest do
       local_node = node()
 
       install_session_seam(:home_session_start_runner, fn node, opts ->
-        send(test_pid, {:session_start_called, node, opts})
-        {:ok, 4242}
+        send(test_pid, {:session_start_called, self(), node, opts})
+
+        receive do
+          :finish_start -> {:ok, 4242}
+        after
+          @async_wait_budget_ms -> {:error, :timeout}
+        end
       end)
+
+      install_session_seam(:home_session_list_runner, fn _node ->
+        {[], []}
+      end)
+
+      # An older conversation can legitimately share the opening message.
+      cached_id = 1_000_004_242
+      seed_cached_chat(cached_id, [%{id: "u1", role: :user, text: text, streaming: false}])
 
       install_snapshot_fixture(4242, attach_history("re-attached transcript"), :running)
 
@@ -5389,11 +5402,27 @@ defmodule EvoDashWeb.HomeLiveTest do
         running_attach(4242, attach_history("re-attached transcript"))
       )
 
+      conn = put_connect_params(conn, %{"guide_client_id" => "interactive-session-sidebar"})
       {:ok, view, _html} = live(conn, "/assistant")
+      temporary_id = assigns(view).chat_id
+      render_change(view, "chat_input", %{"message" => text})
       html = render_submit(view, "send_message", %{"message" => text})
 
-      assert_receive {:session_start_called, start_node, opts}
+      assert_receive {:session_start_called, start_pid, start_node, opts}
       assert start_node == node()
+
+      try do
+        render_change(view, "chat_input", %{"message" => ""})
+        assert EvoDash.ChatHistory.get_state(temporary_id) == nil
+
+        assert %{chat_draft: ^text} =
+                 EvoDash.ChatHistory.get_draft(
+                   {:assistant, "interactive-session-sidebar", {nil, node()}}
+                 )
+      after
+        send(start_pid, :finish_start)
+      end
+
       # The Assistant session spec: repo-less, interactive, and the RAW typed
       # text as the objective (the one-shot transcript preamble is NOT built
       # for a session — it owns the whole conversation).
@@ -5432,6 +5461,9 @@ defmodule EvoDashWeb.HomeLiveTest do
       settled = assigns(view)
       assert settled.session_id == 4242
       assert settled.chat_status == :running
+      wait_until(fn -> has_element?(view, "#chat-session-4242") end)
+      assert has_element?(view, "#chat-session-#{cached_id}")
+      refute has_element?(view, "#chat-session-#{temporary_id}")
 
       assert Enum.any?(
                settled.transcript,
@@ -5447,7 +5479,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       html2 = render_submit(view, "send_message", %{"message" => "second message"})
       assert_receive {:session_send_called, ^local_node, 4242, "second message", :queue}
-      refute_receive {:session_start_called, _node, _opts}, 0
+      refute_receive {:session_start_called, _pid, _node, _opts}, 0
       assert html2 =~ "second message"
       # Mid-run sends are QUEUED, so the echo line renders (the message is not
       # lost, just deferred to the next turn boundary).
