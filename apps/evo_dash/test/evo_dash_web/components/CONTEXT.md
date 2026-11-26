@@ -34,7 +34,6 @@ There is **no `live(...)` call anywhere in this directory**: every component is 
 | `settings_components_chatgpt_sign_in_test.exs` | `EvoDashWeb.SettingsComponentsChatGPTSignInTest` | 1 / 4 — `category_section/1` threads the TOTAL `chatgpt_sign_in`/`chatgpt_sign_in_manual` attrs down to the ONE expanded account's detail panel |
 | `provider_profiles/detail_chatgpt_test.exs` | `EvoDashWeb.SettingsComponents.ProviderProfiles.DetailChatGPTSignInTest` | 1 / 6 — the expanded ChatGPT account form renders the shared sign-in panel INSIDE `#provider-profile-detail-<slug>` (non-submitting controls, `{:detail, id}` filtering, manual hint, rewritten `siwc_account` help) |
 | `provider_wizard_test.exs` | `EvoDashWeb.ProviderWizardTest` | 20 / 81 — shared LLM-setup step bodies, the wizard shell/footer, plus the `ChatGPTAuth.chatgpt_auth/1` account control delegating its sign-in section to the shared panel |
-
 ## Coverage Boundary — shared LLM selection
 `llm_selection_components_test.exs` pins `LLMSelectionComponents.llm_selection/1` and `resolve_reasoning_effort/3` against string-keyed provider profiles/model specs and atom-keyed model-selection projections.
 Shared-picker coverage includes first/middle/last integer and string indices, invalid-index rejection, singleton disabled effort stops, empty inventories, default/first-effort fallback, exact provider-profile scoping for duplicate model names, unavailable selections, event overrides and unique accessibility ids.
@@ -53,6 +52,17 @@ Component suites own isolated markup, event payload attributes and pure helper c
 
 - Component-level coverage of `EvoDashWeb.ReviewComponents` lives in `diff_viewer_test.exs` (`diff_viewer/1`, `file_tree_sidebar/1`, `tree_node/1`, `split_diff_layout/1`, `commit_diff_layout/1`, `commit_detail_header/1`, `parse_hunk_header/1`, `build_split_pairs/1`, plus the rendered-line / rendered-entry caps), `archive_tree_test.exs` (`archive_review_section/1`, `ArchiveComponents.archive_tree/1` + `archive_details/1`) and `blob_caps_test.exs` (`agent_summary/1`, `objective_section/1`, `archive_review_section/1` preview caps).
 - The remaining `ReviewComponents` surface — `Actions.task_actions/1` + `extract_skills_modal/1` + `conflict_files_summary/1`, `RepoCards.repo_cards/1` + `repo_has_changes?/1`, `page_header/1` + `short_title/1` + `task_summary/1`, `page_tabs/1`, `diff_stats_bar/1` + `commits_list/1` — has NO dedicated component-test file; it is exercised only through `test/evo_dash_web/live/review_live_test.exs` (hand-built LiveView assigns) or not at all.
+
+## Coverage Boundary — Sign in with ChatGPT surfaces
+`chatgpt_sign_in_panel_test.exs` owns the ONE shared panel: idle/string-keyed/unknown-phase inputs, the waiting block with and without a url, friendly error text (never a raw reason atom), the manual CLI hint with an optional account-specific command, `type="button"` on every control and the `phx-value-surface`/`phx-value-profile_id` payloads.
+The same file pins `surface_state/2` — the ONE isolation rule: matching `:wizard` / `{:detail, id}` / `{:status, id}`, ids compared as strings, and `%{}` for a nil/non-map state, a nil/absent/unknown/different surface or a blank id.
+The three page surfaces that render it are pinned separately: `provider_wizard_test.exs` (`ChatGPTAuth.chatgpt_auth/1` keeps the account select, "ChatGPT connected" line, refresh action and ids while delegating the sign-in section), `provider_profile_fields_test.exs` (`provider_auth_status/1` renders `#provider-status-<slug>-chatgpt-*` only for a ChatGPT profile with `details: true` and `state != :ok`, replacing the CLI prose) and `provider_profiles/detail_chatgpt_test.exs` (the panel lives INSIDE `#provider-profile-detail-<slug>`, so its controls must never submit that form).
+`settings_components_chatgpt_sign_in_test.exs` closes the threading loop at `category_section/1`: both attrs are total (`%{}`/`false`), and one page-level `{:detail, id}` flow reaches that account's detail panel while a sibling collapsed row stays compact.
+The isolation happens at the CALLER (`surface_state/2` projection): `ChatGPTAuth.chatgpt_auth/1` renders whatever `sign_in` map it is handed, so the wizard's own surface filtering is asserted through that projection rather than inside the control.
+Floki's mochiweb parser leaves textarea RCDATA entities encoded, so each file's `textarea_value/1` decodes that escaped text once via `parse_fragment!` before asserting exact draft text or decoded JSON.
+These tests validate render and form-serialization contracts only; event handling, persistence, asynchronous connection tests and node-loading behavior remain in the LiveView/helper suites.
+
+<!-- genesis:local -->
 
 ## `project_components_test.exs` (10 describes / 32 tests)
 
@@ -216,15 +226,6 @@ Aliases, unknown/default-less inventories, another provider/Codex route, reasoni
 The positive dated Anthropic fixture and the overlapping Opus inventories intentionally assert concrete catalog effort order; a dependency catalog update may require reviewing those fixtures without weakening the exact-identity contract.
 The field suite also pins unsupported default visibility/invalid state, numeric bounds, editable invalid JSON, sparse numeric schedule indices, overnight windows and blank day-list sentinels.
 OAuth field tests distinguish all four credential verdicts, atom/string-keyed status maps, configured-path fallback, neutral malformed status and summary-versus-detail guidance.
-## Coverage Boundary — Sign in with ChatGPT surfaces
-`chatgpt_sign_in_panel_test.exs` owns the ONE shared panel: idle/string-keyed/unknown-phase inputs, the waiting block with and without a url, friendly error text (never a raw reason atom), the manual CLI hint with an optional account-specific command, `type="button"` on every control and the `phx-value-surface`/`phx-value-profile_id` payloads.
-The same file pins `surface_state/2` — the ONE isolation rule: matching `:wizard` / `{:detail, id}` / `{:status, id}`, ids compared as strings, and `%{}` for a nil/non-map state, a nil/absent/unknown/different surface or a blank id.
-The three page surfaces that render it are pinned separately: `provider_wizard_test.exs` (`ChatGPTAuth.chatgpt_auth/1` keeps the account select, "ChatGPT connected" line, refresh action and ids while delegating the sign-in section), `provider_profile_fields_test.exs` (`provider_auth_status/1` renders `#provider-status-<slug>-chatgpt-*` only for a ChatGPT profile with `details: true` and `state != :ok`, replacing the CLI prose) and `provider_profiles/detail_chatgpt_test.exs` (the panel lives INSIDE `#provider-profile-detail-<slug>`, so its controls must never submit that form).
-`settings_components_chatgpt_sign_in_test.exs` closes the threading loop at `category_section/1`: both attrs are total (`%{}`/`false`), and one page-level `{:detail, id}` flow reaches that account's detail panel while a sibling collapsed row stays compact.
-The isolation happens at the CALLER (`surface_state/2` projection): `ChatGPTAuth.chatgpt_auth/1` renders whatever `sign_in` map it is handed, so the wizard's own surface filtering is asserted through that projection rather than inside the control.
-Floki's mochiweb parser leaves textarea RCDATA entities encoded, so each file's `textarea_value/1` decodes that escaped text once via `parse_fragment!` before asserting exact draft text or decoded JSON.
-These tests validate render and form-serialization contracts only; event handling, persistence, asynchronous connection tests and node-loading behavior remain in the LiveView/helper suites.
-
 ## `category_metadata_test.exs` (2 describes / 4 tests)
 
 Pure units for `SettingsComponents.CategoryMetadata`: `category_display_name/1`, `category_icon/1`, `category_description/1`, `sort_categories/1` (pinned on the `:data` category).

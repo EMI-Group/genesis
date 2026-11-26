@@ -5,6 +5,10 @@
 This directory contains ProjectsLive support-module unit tests and focused mounted workbench tests.
 The broader mounted ProjectsLive integration suite lives in the parent directory's `projects_live_test.exs`.
 
+## Routing Table
+
+This directory has no child subdirectories.
+
 ## API Surface
 
 - `project_test.exs` covers legacy `Project.load_model_profiles/0,1` and the injected-config seam `Project.load_model_profiles_from_config/2`.
@@ -37,6 +41,8 @@ The partial-persistence positive fixture uses a distinct remote BEAM node and ma
 The same test pins explicit remote Auto and no-op persistence for a pending remote target, absent bundle, missing or stale target/node scope, false readiness, load error, nil selection and pending canonical/legacy restores.
 Missing ownership/readiness fields remain compatible only for valid unstamped local bundles; adding a blanket false-readiness default to the socket helper changes the existing loaded-local restore fixtures' meaning.
 
+<!-- genesis:local -->
+
 ## Coverage Boundaries
 
 The mounted tests drive server-rendered events but do not execute the browser's native `<details>` opening or browser storage hooks.
@@ -61,9 +67,6 @@ The picker's LOADING render state is pinned (`#model-selection-loading` + "Loadi
 A mounted test writes the isolated per-test `config.toml` and raises the core's own `{:config_reloaded, node, dir, generation}` broadcast (via `EvoGit.Config.Cache.reload/0`), proving a provider-profile add becomes picker-visible with NO remount; a REAL `EvoGit.Config.save_user_config/1` save path and the reload generation guards are driven through `handle_info/2` on a hand-built socket, not through a mounted Settings save.
 The task-form picker never renders an `:openai_codex` (Sign in with ChatGPT) profile in any test; `openai_codex`/`auth_mode` fixtures exist only in the Settings, Welcome and components suites (`chatgpt_stream_test.exs` covers streaming), so provider-model availability is never asserted to be credential-independent in the picker.
 
-## Routing Table
-
-This directory has no child subdirectories.
 ## Mounted Page Contracts (owned by `../projects_live_test.exs`)
 Normal submissions and GitHub issue fixes share canonical `model_spec` selection plus `model_id_locked: true`, and explicit Auto omits all three override keys rather than locking the configured default.
 `assert_task_model_selection/2` pins the exact canonical task opts, the explicit lock and the absence of legacy option keys, without assuming the derived persisted `task.model_id` is nil for an explicit selection.

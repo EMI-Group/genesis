@@ -174,15 +174,6 @@ The Export JSON link renders only after a `:loaded`, non-empty archive (`export_
 The archived tree is capped at 300 records per render and records whose `parent_id` is on an unloaded page are promoted to top-level nodes (never dropped).
 There is no polling and no automatic retry on this path.
 
-## Payload audit (consumed vs transferred)
-
-- `get_task_lite/2`: consumed = `opts[:path]`/`opts[:prompt] || opts[:objective]`/`opts[:foreign_repos]`, the result's `commit_sha`/`branch_name`/`result`/`pr_url`/`pr_title` plus the top-level `repos` map (both key shapes), `review_status`, `status`, `base_sha`, `commit_sha`, `usage`, `agent_count`, `model_id`, `started_at`, `finished_at`. `logs` is transferred but never read; NO archive is transferred.
-- `list_task_archives/3` (Archive tab only): pages of `%{entries: [STRING-keyed map], total: non_neg_integer}` with `include_results: false`; `get_agent_archive/3` transfers ONE full entry (including `result`) only for an explicit "Show result".
-- `load_review_metadata*` (8-key map): consumed = `base_sha`, `changed_files_count`, `total_additions`, `total_deletions` and per-file `path`/`status`/`additions`/`deletions`/`language`/`diff`. Transferred-but-never-read: top-level `commit_sha`, `diff_stat`, `diff` (nil).
-- `list_commits*` (6-field `%CommitInfo{}`): consumed = `sha`, `short_sha`, `message`, `author_name`, `date`; `author_email` unused.
-- Action RPCs run inside the spawned task, ONE call per repo acted on (`merge_all` fans out one per unresolved change-bearing repo), and only ok/error tags and flash-relevant values are consumed.
-- **Gotcha**: `default_merge_target/2` returns `{:ok, name}`; `LoadData` matches that shape.
-
 ## Auto merge-conflict resolution
 
 Each per-repo card renders a merge-status block driven by that repo's `merge_status`; `MergeCheck` owns the logic and the page's clauses are thin wrappers sharing `repo_available?/2`.
@@ -215,12 +206,6 @@ The matrix and its wording (every row is the page a history row lands on):
 
 The `resume` EVENT name is historical and unchanged: its button label is "Prepare follow-up task" because the action seeds a NEW task from this task's result and starting commit ([它是以旧结果为基础创建新任务，不是恢复原执行]) — only the `/tasks` Paused-task action resumes the SAME task id. `phx-click="resume"` → review_status `:continued` → `/projects?resume_from=…&starting_commit=…&project=…[&node=…]`.
 
-## Test strategy
-
-Tests must flush the async load before asserting content: the file-local `flush_review_load/2` drains the mount-time async messages and then delegates to the shared `EvoDashWeb.TestHelpers.flush_loading/4`, polling the `Loading review data...` marker (`render_async/2` does NOT work — the load runs in a plain `Task.Supervisor` child); `settle_debounced_task_reload/1` covers the 300ms reload and `wait_until/2` post-send synchronization.
-Direct `send(view.pid, {:review_data_loaded, task_id, node(), generation, {:ok, assigns}})` injects results (stale-guard cases use a wrong task/node/generation). Merge-check assertions inject the 6-tuple (or let the load land first, since `maybe_start/1` runs only after it).
-Multi-repo coverage: repo-list construction, per-repo merge/reject through the runner seams (the stubbed runner messages the test with its call args), `merge_all` batch folding (one runner call per unresolved change-bearing repo + one summary flash), 6-tuple merge-check injection, and foreign-repo carry for auto-resolve/resume.
-
 ## Constraints
 
 - Nothing in the LiveView process touches the store / registry / git / `EvoDash.NodeContext` — loads and actions go through `EvoDash.TaskSupervisor` children wrapped in `EvoDash.SafeCall.run/1`; add no synchronous RPC to `handle_params/3` or an event handler.
@@ -237,3 +222,20 @@ Multi-repo coverage: repo-list construction, per-repo merge/reject through the r
 The review page carries NO cancel / force-kill gates, so the non-terminal `:awaiting_input` status needs no extra admission here: its violet badge and label come from the shared `Helpers.task_status_badge/1`.
 An idle interactive session holds no reviewable `genesis/agent_*` branch until it closes, so it never satisfies the `:completed` review candidacy and no review action is offered while it waits.
 Closing a session from its task card (TasksLive) finalizes the task into its normal terminal status, after which the ordinary review flow applies.
+
+<!-- genesis:local -->
+
+## Payload audit (consumed vs transferred)
+
+- `get_task_lite/2`: consumed = `opts[:path]`/`opts[:prompt] || opts[:objective]`/`opts[:foreign_repos]`, the result's `commit_sha`/`branch_name`/`result`/`pr_url`/`pr_title` plus the top-level `repos` map (both key shapes), `review_status`, `status`, `base_sha`, `commit_sha`, `usage`, `agent_count`, `model_id`, `started_at`, `finished_at`. `logs` is transferred but never read; NO archive is transferred.
+- `list_task_archives/3` (Archive tab only): pages of `%{entries: [STRING-keyed map], total: non_neg_integer}` with `include_results: false`; `get_agent_archive/3` transfers ONE full entry (including `result`) only for an explicit "Show result".
+- `load_review_metadata*` (8-key map): consumed = `base_sha`, `changed_files_count`, `total_additions`, `total_deletions` and per-file `path`/`status`/`additions`/`deletions`/`language`/`diff`. Transferred-but-never-read: top-level `commit_sha`, `diff_stat`, `diff` (nil).
+- `list_commits*` (6-field `%CommitInfo{}`): consumed = `sha`, `short_sha`, `message`, `author_name`, `date`; `author_email` unused.
+- Action RPCs run inside the spawned task, ONE call per repo acted on (`merge_all` fans out one per unresolved change-bearing repo), and only ok/error tags and flash-relevant values are consumed.
+- **Gotcha**: `default_merge_target/2` returns `{:ok, name}`; `LoadData` matches that shape.
+
+## Test strategy
+
+Tests must flush the async load before asserting content: the file-local `flush_review_load/2` drains the mount-time async messages and then delegates to the shared `EvoDashWeb.TestHelpers.flush_loading/4`, polling the `Loading review data...` marker (`render_async/2` does NOT work — the load runs in a plain `Task.Supervisor` child); `settle_debounced_task_reload/1` covers the 300ms reload and `wait_until/2` post-send synchronization.
+Direct `send(view.pid, {:review_data_loaded, task_id, node(), generation, {:ok, assigns}})` injects results (stale-guard cases use a wrong task/node/generation). Merge-check assertions inject the 6-tuple (or let the load land first, since `maybe_start/1` runs only after it).
+Multi-repo coverage: repo-list construction, per-repo merge/reject through the runner seams (the stubbed runner messages the test with its call args), `merge_all` batch folding (one runner call per unresolved change-bearing repo + one summary flash), 6-tuple merge-check injection, and foreign-repo carry for auto-resolve/resume.

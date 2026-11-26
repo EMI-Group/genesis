@@ -128,6 +128,21 @@ Hermetic per-test stand-in for `EvoDash.ChatGPTLogin`, installed through `EvoDas
 Every call notifies the test pid (`{:chatgpt_stub, :begin, account}` / `:status` / `:cancel`) and a cancelled flow always answers `:pending`, so no loopback listener, network or BEAM-global state is involved.
 Used by `live/settings_live/provider_wizard_test.exs` (wizard surface) and the generalized-sign-in suites `chatgpt_sign_in_state_test.exs` / `chatgpt_sign_in_surfaces_test.exs` (detail + status surfaces).
 
+
+## Constraints
+
+- Keep support modules free of test logic and assertions.
+- `config_dir_test.exs` / `fs_cleanup_test.exs` are TEST files placed here because each proves one support module: only `*.ex` files are compiled through `elixirc_paths(:test)`, so a `_test.exs` is loaded by ExUnit as an ordinary test file (and carries the assertions).
+- Keep the isolation helper's shutdown ORDER (registry → read-worker drain → store → supervisor) and the unlink; both are load-bearing for zero stray console output.
+- **Two concurrent runs of the same suite under one `TMPDIR` collide**: isolated roots are `<tmp>/evogit_test_<prefix>_<unique_integer>`, and `System.unique_integer/1` is unique only WITHIN one BEAM.
+  Symptoms look unrelated — `isolated_task_store_test.exs`'s `assert [^root] = isolated_root_dirs()` failing, a `File.CopyError` while seeding, then a cascade of `EvoGit.Store`/`EvoGit.TaskRegistry` "no process" failures (a failed `isolate!/1` leaves the production children terminated for the rest of that run).
+  Genesis worker tasks share one per-task `TMPDIR`, which is exactly that condition; give one run a private `export TMPDIR=$(mktemp -d)` (or re-run standalone) before suspecting a real regression.
+  Within ONE run the contract above is untouched: isolated roots are unique.
+- Test-support modules must not be called from `lib/`.
+- Every `:sys.get_state/1` read of a process that can be starved passes an explicit 30 s budget (`@assigns_timeout_ms` for LiveView assigns, `@wait_budget_ms` for store/registry state), because the 5 s default exits the caller on a loaded host: `config_dir_test.exs`'s `assigns/1` and all three state reads in `isolated_task_store.ex` (`assert_production!/0`, `verify_restored!/0`).
+
+<!-- genesis:local -->
+
 ### Migrated-sqlite template
 
 `EvoGit.Store` always runs the Ecto migrations at boot (`EvoGit.Store.Boot.start_dynamic/2` → `Ecto.Migrator.run(…, all: true)`), which on a brand-new file means the whole baseline-adoption DDL (~10 ms of the ~11 ms fresh boot, the dominant term); the same boot against an already-migrated file is ~0.9 ms.
@@ -143,15 +158,3 @@ What a caller may assume: `store_template_path/0` answers either `nil` (no templ
 Pinned by `test/evo_dash/isolated_task_store_test.exs`: a deleted template is rebuilt rather than handed out dead, and a forced failed build leaves no cached entry (the next call produces a working, fully migrated template).
 No template is built when the `:evo_git, :data_dir` app env is absent — deliberately no fallback to `EvoGit.Platform.data_dir/0`, which is the developer's real data dir on macOS.
 Measured per-call breakdown: ~0.9 ms already-migrated boot + ~0.07 ms copy + ~1.7 ms production-pair restart, on top of the ≈4–5 ms log-capture window described above.
-
-## Constraints
-
-- Keep support modules free of test logic and assertions.
-- `config_dir_test.exs` / `fs_cleanup_test.exs` are TEST files placed here because each proves one support module: only `*.ex` files are compiled through `elixirc_paths(:test)`, so a `_test.exs` is loaded by ExUnit as an ordinary test file (and carries the assertions).
-- Keep the isolation helper's shutdown ORDER (registry → read-worker drain → store → supervisor) and the unlink; both are load-bearing for zero stray console output.
-- **Two concurrent runs of the same suite under one `TMPDIR` collide**: isolated roots are `<tmp>/evogit_test_<prefix>_<unique_integer>`, and `System.unique_integer/1` is unique only WITHIN one BEAM.
-  Symptoms look unrelated — `isolated_task_store_test.exs`'s `assert [^root] = isolated_root_dirs()` failing, a `File.CopyError` while seeding, then a cascade of `EvoGit.Store`/`EvoGit.TaskRegistry` "no process" failures (a failed `isolate!/1` leaves the production children terminated for the rest of that run).
-  Genesis worker tasks share one per-task `TMPDIR`, which is exactly that condition; give one run a private `export TMPDIR=$(mktemp -d)` (or re-run standalone) before suspecting a real regression.
-  Within ONE run the contract above is untouched: isolated roots are unique.
-- Test-support modules must not be called from `lib/`.
-- Every `:sys.get_state/1` read of a process that can be starved passes an explicit 30 s budget (`@assigns_timeout_ms` for LiveView assigns, `@wait_budget_ms` for store/registry state), because the 5 s default exits the caller on a loaded host: `config_dir_test.exs`'s `assigns/1` and all three state reads in `isolated_task_store.ex` (`assert_production!/0`, `verify_restored!/0`).

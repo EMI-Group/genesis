@@ -8,6 +8,10 @@ Pure helpers neither mount pages nor start shared services.
 Config-directory isolation is per process (`EvoDash.Test.ConfigDir.isolate!/1` through the `:config_dir_fun` seam), never a BEAM-global `XDG_CONFIG_HOME` write.
 A "what got persisted" pin reads through `EvoDash.Test.PersistedConfig.user_config/0` (one forced `EvoGit.Config.Cache.reload/0` of the test's own directory) instead of the bare `EvoGit.Config.user_config/0` term, because that map is a BEAM-global `:persistent_term` entry per config directory whose content depends on which refresh stored last.
 
+## Routing Table
+
+This directory has no child directories.
+
 ## API Surface
 
 - `provider_profiles_contract_test.exs` — 51, `async: true` (`EvoDashWeb.SettingsLive.ProviderProfilesContractTest`): pure `ProviderProfiles` / `ConfigIO` / `AuthStatus` / detached `ModelProfileEvents` editor boundary (identity, checkbox submissions, default-only model-name helper, `off_peak_holidays` round trip).
@@ -24,6 +28,21 @@ A "what got persisted" pin reads through `EvoDash.Test.PersistedConfig.user_conf
 - `chatgpt_sign_in_state_test.exs` — 46, `async: true` (`EvoDashWeb.SettingsLive.ChatGPTSignInStateTest`): the PURE page-level state machine (surface ownership, flow-id stale guard, paste/manual transitions, poll lifecycle, sign-in side effects) driven through the per-process ChatGPT login stub; it mounts no page.
 - `chatgpt_sign_in_surfaces_test.exs` — 21, `async: true` (`EvoDashWeb.SettingsLive.ChatGPTSignInSurfacesTest`): the mounted sign-in surfaces on an EXPANDED account detail and its auth-status row, every phase claim awaited on the APPLIED page state through `await_page_sign_in/3` / `await_start_failure/2`.
 - `NavigationLiveTest` is the only sync module in this directory: it drives platform/nix gating through the BEAM-global app-env seams `:platform_os_override` and `:nix_available_override`, which the `async: true` `EvoDashWeb.PlatformInfoTest` / `system_live_test` also read (and `SettingsLiveGlobalStateTest` mutates).
+
+## Constraints
+
+Pure suites use the shared test bootstrap and never call `ExUnit.start/0`, patch missing core functions or skip failing integration contracts.
+Mounted suites retain per-process `EvoDash.Test.ConfigDir.isolate!/1` and local-only `EvoDash.ActiveTasks.invalidate(nil, node())`; the whole-table `reset/0` belongs to sync modules only.
+Every async-load budget here is a load-tolerant 30 s — `EvoDash.Test.SettingsAwait` owns the mount/save budgets (`async_wait_budget_ms/0`, `assigns_timeout_ms/0`), and a suite that needs a deadline for its own poll or `assert_receive` re-declares the same `@async_wait_budget_ms` — with a 1–2 ms poll cadence written as a bounded `receive … after … -> :ok end`; no fixed `Process.sleep` is a wait mechanism.
+`assigns/1` is a synchronous `:sys.get_state(view.pid, 30_000)` round-trip, so `send` followed by an `assigns/1` read is already ordered.
+Auth config-directory labels include the OS pid so interrupted or concurrent BEAM runs cannot reuse another run's blocker fixture.
+Auth save assertions settle on the save's own receipt (a bumped `llm_test_seq`, the `Provider profile saved.` flash and a settled page) and on the rendered expanded detail, then read persistence; a refused draft is awaited on its error flash instead.
+Every login verdict, managed-file path and writable-path remedy stays asserted; supplied vendor instructions normalize only HTML whitespace, not their wording.
+No test may make a real LLM request or rely on shared credentials, scheduler mutation or global ChatHistory.
+Multi-model coverage here is pure parsing/draft round trips and sparse inheritance; a mounted multi-model Save → remount cycle is `provider_panel_live_test.exs`'s `two distinct models survive save, reload and remount, including the id new`.
+Production source and core modules are read-only from this node.
+
+<!-- genesis:local -->
 
 ## Provider account identity (pure)
 
@@ -158,19 +177,6 @@ Mounted Projects, Assistant and Welcome canonical contracts live in their own pa
 `settings_live_test.exs`, `provider_panel_live_test.exs` and `provider_wizard_test.exs` SEED canonical provider fixtures straight into this test's `config.toml` (string keys, one nested model row, optional explicit default) instead of driving the add/save UI for setup; the mounted suites drive the actual rendered controls for Add/Save/Cancel/CRUD/model-row flows.
 Mutations acknowledge dispatch before the off-process write completes, so a save assertion reads its RECEIPT (the success flash that clears the owning request) and never the dispatch render.
 
-## Constraints
-
-Pure suites use the shared test bootstrap and never call `ExUnit.start/0`, patch missing core functions or skip failing integration contracts.
-Mounted suites retain per-process `EvoDash.Test.ConfigDir.isolate!/1` and local-only `EvoDash.ActiveTasks.invalidate(nil, node())`; the whole-table `reset/0` belongs to sync modules only.
-Every async-load budget here is a load-tolerant 30 s — `EvoDash.Test.SettingsAwait` owns the mount/save budgets (`async_wait_budget_ms/0`, `assigns_timeout_ms/0`), and a suite that needs a deadline for its own poll or `assert_receive` re-declares the same `@async_wait_budget_ms` — with a 1–2 ms poll cadence written as a bounded `receive … after … -> :ok end`; no fixed `Process.sleep` is a wait mechanism.
-`assigns/1` is a synchronous `:sys.get_state(view.pid, 30_000)` round-trip, so `send` followed by an `assigns/1` read is already ordered.
-Auth config-directory labels include the OS pid so interrupted or concurrent BEAM runs cannot reuse another run's blocker fixture.
-Auth save assertions settle on the save's own receipt (a bumped `llm_test_seq`, the `Provider profile saved.` flash and a settled page) and on the rendered expanded detail, then read persistence; a refused draft is awaited on its error flash instead.
-Every login verdict, managed-file path and writable-path remedy stays asserted; supplied vendor instructions normalize only HTML whitespace, not their wording.
-No test may make a real LLM request or rely on shared credentials, scheduler mutation or global ChatHistory.
-Multi-model coverage here is pure parsing/draft round trips and sparse inheritance; a mounted multi-model Save → remount cycle is `provider_panel_live_test.exs`'s `two distinct models survive save, reload and remount, including the id new`.
-Production source and core modules are read-only from this node.
-
 ## Validation and integration boundary
 
 Pure canonical parser contracts accept default-only profiles with absent or empty `models` and omit the stored `models` key; helper-level configured rows are overrides rather than an allowlist restricting `default_model`.
@@ -198,7 +204,3 @@ The source failure belongs to the core scheduler owner, outside this leaf test n
 The pure helper slice is `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/config_io_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/model_profile_helpers_test.exs --seed 1` (97 tests).
 Useful describe filters are `--only 'describe:credential status render (injected result)'`, `--only 'describe:profile save round-trip (auth_mode / oauth_file persistence)'`, `--only 'describe:wizard auth step (provider capability)'` and `--only 'describe:the removed Quick Setup shortcut'`.
 Leaf-subtree or pure-slice success does not establish collective LiveView-directory or broader dashboard-suite success.
-
-## Routing Table
-
-This directory has no child directories.

@@ -113,6 +113,8 @@ Full details: `src-tauri/CONTEXT.md` → "Quit Flow (Web Confirmation)" + "Backe
 
 **Verification status:** `cargo check` passes (in `nix develop`, zero errors). Runtime single-instance behavior (second launch focuses existing window + exits without second backend) requires manual per-platform verification on Linux/macOS/Windows — not covered by CI.
 
+<!-- genesis:local -->
+
 ## Regenerating Icons
 
 The Tauri icon set (`src-tauri/icons/`: `icon.png`, `32x32.png`, `128x128.png`, `icon.icns`, `icon.ico`) is generated from the EVOX brand logo. Source SVGs (sibling app, read-only): `apps/evo_dash/priv/static/images/logo.svg` (dark gray `#373435` + red `#C8383C`, light variant — the one used) and `logo-alt.svg` (white + red, dark variant — reserved for a possible dark-tray icon). Transparent background.

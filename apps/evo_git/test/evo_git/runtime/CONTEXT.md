@@ -40,6 +40,8 @@ Genuinely `async: true` (verified to mutate no BEAM-global state):
   polluted by them.
 - **`worktree_init_script_test.exs`** — pure data/script-string assertions.
 
+<!-- genesis:local -->
+
 ## Notes for Agents
 
 - **No test-side seam for the agent LLM path** (see `../../CONTEXT.md` → "No fake-LLM harness"): the custom-evolve and self-reflective `run/2` tests deliberately empty `model_profiles` to exercise scheduler errors rather than successful agent execution.

@@ -14,29 +14,6 @@ Tests call the public `EvoGit.Config.Schema` entry points and schema/metadata he
 There are no child directories.
 The parent `../CONTEXT.md` and `../../CONTEXT.md` own the cross-cutting async-safety policy.
 
-## Files
-
-| File | Module suffix | async | Scope |
-|------|---------------|-------|-------|
-| `schema_test.exs` | `SchemaTest` | `true` | Existing end-to-end schema contract, exact 112 descriptors and per-category counts (14 LLM, 45 tools), defaults, validation and legacy LLM helpers |
-| `settings_test.exs` | `SettingsTest` | `true` | Public operator API: ordered `list_settings/0` descriptors, snapshot-backed `show/0,1` paths/errors/no atom creation, partial persisted `update/1`, recursive map merges/list replacement, canonical inventories, collision rejection, full-candidate validation and serialization/filesystem failures |
-| `provider_profiles_test.exs` | `ProviderProfilesTest` | `true` | Public `Schema.provider_profiles/1` and `model_selections/1`: canonical-over-legacy precedence, recursive string-key normalization, ordered account/model/effort inventories, same-provider account isolation, legacy string/map/tuple/flat adapters, malformed-input degradation, context inheritance and pure OAuth runtime projections |
-| `provider_profile_resolution_test.exs` | `ProviderProfileResolutionTest` | `true` | Public `Schema.resolve_model_spec/2`: account/model/effort default precedence and explicit overrides, atom/string inputs, exact errors, generation/context inheritance, shared scheduling/auth/endpoint authority, ReqLLM-ready string/map model specs, account credentials and OAuth options |
-| `provider_profile_validation_test.exs` | `ProviderProfileValidationTest` | `true` | Canonical schema descriptors and raw provider/model validation: indexed error paths, type/range failures, duplicate account/model/effort identities and default membership, shared settings, nested context/generation overrides |
-| `config_status_test.exs` | `ConfigStatusTest` | `true` | Public config health: usable canonical account with invalid default, exact selector error with no missing keys, successful nested-resolve snapshot preservation, and healthy subsequent/fresh invocations |
-| `context_window_test.exs` | `ContextWindowTest` | `true` | `Schema.LLM` default 200000 context window, atom/string profile keys, invalid fallback and id lookup |
-| `tmp_schema_test.exs` | `TmpSchemaTest` | `true` | `[tmp]` schema metadata, defaults, enum validation and string-to-atom normalization |
-| `ecto_validation_test.exs` | `EctoValidationTest` | `true` | Strict scalar casting, nil/absent semantics, error ordering/shapes, unknown keys, indexed profile recursion and crash resilience |
-| `llm_catalog_test.exs` | `LLMCatalogTest` | `true` | Static catalog providers/models, credential keys, auth modes, endpoints and variants |
-| `llm_generation_params_test.exs` | `LLMGenerationParamsTest` | `false` | Provider-aware generation/OAuth options, constraints and metadata seam |
-| `version_state_test.exs` | `VersionStateTest` | `true` | Version-state TOML, path-aware cache, upgrade and onboarding detection |
-| `cache_test.exs` | `CacheTest` | `true` | RAM snapshot contract: one snapshot per config dir, disk-free reads, generation bumps only on a content change, save-path refresh, per-dir isolation, `invalidate/1` rebuilds and the `"config"` broadcast filtered on the test's own dir |
-| `watcher_test.exs` | `WatcherTest` | `true` | Real directory watch: a `config.toml` edit refreshes the snapshot with no explicit reload, an unrelated file write is ignored, and an `agents.toml` write leaves the watcher alive (`@moduletag skip:` when the `file_system` backend is unavailable) |
-| `schema/llm_cache_identity_test.exs` | `Schema.LLMCacheIdentityTest` | `true` | `Schema.LLM.with_cache_identity/3` provider-gated prompt-cache/routing identity: `prompt_cache_key` always, plus `session_id` for `:openai_codex`, and an explicit account `provider_options` value always winning |
-| `reload_event_test.exs` | `ReloadEventTest` | `true` | Config-refresh event with NO answering watcher: an absent, unregistered, dead or unresponsive target falls back to the SAME guarded snapshot reload synchronously, exactly one generation bump per content change, bounded by the call timeout |
-| `reload_event_test.exs` | `ReloadEventWatchTest` | `true` | Config-refresh event through a LIVE watcher: a save raises ONE event whose own file write is a debounce no-op, an explicit `notify_change/2` refreshes synchronously, and a watcher on another dir still refreshes the explicitly requested dir (`@moduletag skip:` when the `file_system` backend is unavailable) |
-| `timezone_pre_boot_validation_test.exs` | `TimezonePreBootValidationTest` | `false` | Pre-boot snapshot validation with the ambient database forced to `Calendar.UTCOnlyTimeZoneDatabase`: an IANA provider `timezone` (`"UTC"`, `"Asia/Shanghai"`) validates through the bundled `Tz.TimeZoneDatabase` with an empty `validation_errors` list, while an unknown name still yields exactly one `rule: :timezone` error at `[:llm, :providers, 0, :timezone]` |
-
 ## Constraints
 Only `llm_generation_params_test.exs` is synchronous because it mutates the BEAM-global `:llm_model_metadata_fun` and `:auth_home_fun` app-env seams.
 `timezone_pre_boot_validation_test.exs` is synchronous because `Calendar.put_time_zone_database/1` writes the process-wide `:persistent_term` time zone database that every concurrently running module observes.
@@ -82,6 +59,31 @@ Config freshness has ONE reload implementation: the watcher's debounced file eve
 `watcher_test.exs` awaits a refresh with a 10 ms poll of the `:persistent_term` snapshot and re-writes the same bytes every 200 ms (at most six times) to recover the port-arming race; the retry spacing must stay ABOVE the watcher's ~150 ms debounce, otherwise each re-write restarts the coalesced reload timer and it never fires.
 Negative windows there and in `reload_event_test.exs` are 250 ms — the floor that still comfortably exceeds that debounce — while the negative "no second broadcast" checks keep their own bounded `refute_receive` window.
 The `[tmp]` enum is `[:system, :custom, :per_repo]`, with rejected values reported at `[:tmp, :mode]` under the corresponding `{:in, ...}` rule.
+
+<!-- genesis:local -->
+
+## Files
+
+| File | Module suffix | async | Scope |
+|------|---------------|-------|-------|
+| `schema_test.exs` | `SchemaTest` | `true` | Existing end-to-end schema contract, exact 112 descriptors and per-category counts (14 LLM, 45 tools), defaults, validation and legacy LLM helpers |
+| `settings_test.exs` | `SettingsTest` | `true` | Public operator API: ordered `list_settings/0` descriptors, snapshot-backed `show/0,1` paths/errors/no atom creation, partial persisted `update/1`, recursive map merges/list replacement, canonical inventories, collision rejection, full-candidate validation and serialization/filesystem failures |
+| `provider_profiles_test.exs` | `ProviderProfilesTest` | `true` | Public `Schema.provider_profiles/1` and `model_selections/1`: canonical-over-legacy precedence, recursive string-key normalization, ordered account/model/effort inventories, same-provider account isolation, legacy string/map/tuple/flat adapters, malformed-input degradation, context inheritance and pure OAuth runtime projections |
+| `provider_profile_resolution_test.exs` | `ProviderProfileResolutionTest` | `true` | Public `Schema.resolve_model_spec/2`: account/model/effort default precedence and explicit overrides, atom/string inputs, exact errors, generation/context inheritance, shared scheduling/auth/endpoint authority, ReqLLM-ready string/map model specs, account credentials and OAuth options |
+| `provider_profile_validation_test.exs` | `ProviderProfileValidationTest` | `true` | Canonical schema descriptors and raw provider/model validation: indexed error paths, type/range failures, duplicate account/model/effort identities and default membership, shared settings, nested context/generation overrides |
+| `config_status_test.exs` | `ConfigStatusTest` | `true` | Public config health: usable canonical account with invalid default, exact selector error with no missing keys, successful nested-resolve snapshot preservation, and healthy subsequent/fresh invocations |
+| `context_window_test.exs` | `ContextWindowTest` | `true` | `Schema.LLM` default 200000 context window, atom/string profile keys, invalid fallback and id lookup |
+| `tmp_schema_test.exs` | `TmpSchemaTest` | `true` | `[tmp]` schema metadata, defaults, enum validation and string-to-atom normalization |
+| `ecto_validation_test.exs` | `EctoValidationTest` | `true` | Strict scalar casting, nil/absent semantics, error ordering/shapes, unknown keys, indexed profile recursion and crash resilience |
+| `llm_catalog_test.exs` | `LLMCatalogTest` | `true` | Static catalog providers/models, credential keys, auth modes, endpoints and variants |
+| `llm_generation_params_test.exs` | `LLMGenerationParamsTest` | `false` | Provider-aware generation/OAuth options, constraints and metadata seam |
+| `version_state_test.exs` | `VersionStateTest` | `true` | Version-state TOML, path-aware cache, upgrade and onboarding detection |
+| `cache_test.exs` | `CacheTest` | `true` | RAM snapshot contract: one snapshot per config dir, disk-free reads, generation bumps only on a content change, save-path refresh, per-dir isolation, `invalidate/1` rebuilds and the `"config"` broadcast filtered on the test's own dir |
+| `watcher_test.exs` | `WatcherTest` | `true` | Real directory watch: a `config.toml` edit refreshes the snapshot with no explicit reload, an unrelated file write is ignored, and an `agents.toml` write leaves the watcher alive (`@moduletag skip:` when the `file_system` backend is unavailable) |
+| `schema/llm_cache_identity_test.exs` | `Schema.LLMCacheIdentityTest` | `true` | `Schema.LLM.with_cache_identity/3` provider-gated prompt-cache/routing identity: `prompt_cache_key` always, plus `session_id` for `:openai_codex`, and an explicit account `provider_options` value always winning |
+| `reload_event_test.exs` | `ReloadEventTest` | `true` | Config-refresh event with NO answering watcher: an absent, unregistered, dead or unresponsive target falls back to the SAME guarded snapshot reload synchronously, exactly one generation bump per content change, bounded by the call timeout |
+| `reload_event_test.exs` | `ReloadEventWatchTest` | `true` | Config-refresh event through a LIVE watcher: a save raises ONE event whose own file write is a debounce no-op, an explicit `notify_change/2` refreshes synchronously, and a watcher on another dir still refreshes the explicitly requested dir (`@moduletag skip:` when the `file_system` backend is unavailable) |
+| `timezone_pre_boot_validation_test.exs` | `TimezonePreBootValidationTest` | `false` | Pre-boot snapshot validation with the ambient database forced to `Calendar.UTCOnlyTimeZoneDatabase`: an IANA provider `timezone` (`"UTC"`, `"Asia/Shanghai"`) validates through the bundled `Tz.TimeZoneDatabase` with an empty `validation_errors` list, while an unknown name still yields exactly one `rule: :timezone` error at `[:llm, :providers, 0, :timezone]` |
 
 ## Test Inventory
 This node contains 420 tests across seventeen modules.
