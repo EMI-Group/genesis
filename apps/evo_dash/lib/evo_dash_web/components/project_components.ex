@@ -897,7 +897,9 @@ defmodule EvoDashWeb.ProjectComponents do
           phx-click="toggle_project_settings"
           phx-value-project={@active_project}
         >
-          <.icon name="hero-cog-6-tooth" class="size-4 text-base-content/60" />
+          <%!-- Same disclosure chevron as Task Options' Advanced options; the
+               panel only renders while open, so it keeps the open rotation. --%>
+          <.icon name="hero-chevron-right" class="size-4 shrink-0 rotate-90" />
           <span class="text-base font-semibold flex-1">{gettext("Project Settings")}</span>
           <!-- Config status indicator -->
           <%= if @project_config do %>
@@ -909,7 +911,6 @@ defmodule EvoDashWeb.ProjectComponents do
               <.icon name="hero-document-text" class="size-3" /> {gettext("Defaults")}
             </span>
           <% end %>
-          <.icon name="hero-chevron-up" class="size-4 text-base-content/40" />
         </div>
 
         <div class="p-4 pt-2 space-y-4 border-t border-base-200">
