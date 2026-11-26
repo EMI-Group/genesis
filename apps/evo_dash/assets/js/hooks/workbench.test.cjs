@@ -3,9 +3,9 @@
 // Exercises the PURE patch-sync probe behind `Workbench.updated()` — "does the
 // O(the whole shell) sweep have to re-run after this LiveView patch?" — without
 // a browser bundle. The sweep itself (the tab rail, every history row's current
-// marker, the panel states, the sidebar widths, the Git label, the create menu)
-// carries no decision of its own; it only executes the plan this probe returns,
-// which is why the DOM half needs no seam here.
+// marker, panel states, Git label and create menu) is gated by this probe.
+// Width repair is independent of the sweep and covered through the lifecycle
+// seams in workbench_navigation.test.cjs.
 //
 // Matching the sidebar_collapse.test.cjs convention, the block between the
 // source's markers is sliced out and run through node:vm, so the real shipped

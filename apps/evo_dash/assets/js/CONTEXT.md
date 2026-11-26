@@ -79,8 +79,10 @@ The DOM half of that hook (rAF coalescing, observers, listeners) carries no deci
 ## Workbench Patch-Sync Probe
 
 `Workbench` mounts on `#app-layout`, so EVERY patch anywhere in the shell reaches its `updated()` — including a streamed assistant delta, an Active Tasks refresh or one history row's label.
-`sync()` is therefore no longer run per patch: `updated()` builds a plain probe state (property reads only — the layout dataset, the Git pane's dataset, the sidebar loading/empty flags, the JS-written re-render markers, and `childElementCount` + head/tail identities of the project list and the paged history item list) and `workbenchSyncNeeded(state, appliedSyncState)` in the DOM-free block at the top of the file decides.
+On mount and after a LiveView patch, `sync()` restores the saved left and right width variables and resize-handle ARIA values before any geometry read, writing only values that differ.
+`updated()` gates the full shell sweep on `workbenchSyncNeeded(state, appliedSyncState)`; the probe reads the layout and Git datasets, sidebar loading/empty flags, re-render markers, and count/head/tail identities of the project and history lists, but does not measure layout.
 `sync()` records its probe state as the LAST step, so a first mount (remembered state undefined) is always dirty and every marker it writes is in the baseline.
+The rail's `ResizeObserver` recomputes overflow as sidebar or dock transitions change the available width, and is disconnected on teardown.
 The list-shape signal (count + head + tail) suffices because the project sidebar is recency-ordered (head insert) and the history list is paged (tail append), so a mid-list-only change that keeps all three cannot occur.
 `destroyed()` releases the preview snapshot cache through `projectPreview.release()` — but ONLY when `document.body` does not carry `data-workbench-project-switching`, because `release()` clears a pending handoff and the overlay host deliberately lives outside `#app-layout` so a project-switch navigation keeps painting the old window while the new one mounts; a later mount re-creates the host.
 Focused regressions: `hooks/workbench.test.cjs`.

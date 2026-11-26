@@ -139,12 +139,30 @@ test('Back cancels activation and suppresses default drafts; failed defaults are
   assert.equal(state.claimDefault(OVERVIEW, '/repo'), true);
 });
 
-function fixture({initial = OVERVIEW, defaultDraft, tabs = []} = {}) {
+function fixture({initial = OVERVIEW, defaultDraft, tabs = [], widths, historyOpen = false} = {}) {
   let actual = url(initial);
+  const widthKey = 'genesis-workbench.sidebar-widths';
+  const local = new Map(widths && [[widthKey, JSON.stringify(widths)]]);
+  const session = new Map([['genesis-workbench.history', JSON.stringify(historyOpen)]]);
+  const storage = map => ({getItem: key => map.get(key), setItem: (key, value) => map.set(key, value)});
+  const media = {matches: true, addEventListener() {}, removeEventListener() {}};
+  const trace = [];
+  const getWidths = layout => ['left', 'right'].map(side => layout.style.getPropertyValue(`--workbench-${side}-width`));
+  let activeLayout;
+  const geometry = part => trace.push(['geometry', part, ...getWidths(activeLayout)]);
+  const observed = new Set();
+  let measure;
+  class ResizeObserver {
+    constructor(callback) { measure = callback; }
+    observe(el) { observed.add(el); }
+    unobserve(el) { observed.delete(el); }
+    disconnect() { observed.clear(); measure = undefined; }
+  }
   const location = new Proxy({}, {get(_, key) { return actual[key]; }});
-  const clock = timers();
-  const microtasks = [], frames = [], navigated = [], listeners = new Map();
-  const document = {createElement: tag => element(tag)};
+  const clock = timers(), microtasks = [], frames = [], navigated = [], listeners = new Map();
+  const window = {innerWidth: 1600, addEventListener: (name, fn) => listeners.set(name, fn),
+    removeEventListener: name => listeners.delete(name)};
+  const document = {createElement: tag => element(tag), addEventListener() {}, removeEventListener() {}};
   document.body = document.activeElement = element('body');
   function element(tag) {
     const el = {
@@ -154,10 +172,17 @@ function fixture({initial = OVERVIEW, defaultDraft, tabs = []} = {}) {
       removeAttribute(name) { delete this.attrs[name]; },
       getAttribute(name) { return this.attrs[name] ?? this[name]; },
       hasAttribute(name) { return Object.hasOwn(this.attrs, name); },
+      toggleAttribute(name, show) { if (show) this.attrs[name] = ''; else delete this.attrs[name]; },
+      addEventListener() {}, removeEventListener() {}, dispatchEvent() {},
+      scrollIntoView() { if (activeLayout) geometry('current tab scroll'); },
       contains(node) { return this.children.some(child => child === node || child.contains(node)); },
       append(...children) { this.children.push(...children); },
       replaceChildren(...children) { this.children = children; },
-      querySelector(selector) { return selector === 'a.workbench-tab-link' ? this.children.find(child => child.tag === 'a') : null; },
+      querySelector(selector) {
+        if (selector === 'a.workbench-tab-link') return this.children.find(child => child.tag === 'a');
+        if (selector === '.is-current') return this.children.find(child => child['is-current']);
+        return null;
+      },
       focus() { document.activeElement = this; },
       matches(selector) { return `${tag}.${this.className}` === selector; },
       click() { navigated.push(this.href); emit('phx:page-loading-start', {kind: 'redirect', to: this.href}); },
@@ -169,12 +194,22 @@ function fixture({initial = OVERVIEW, defaultDraft, tabs = []} = {}) {
   const rail = load('workbench_rail', '{railMethods, link, TAB_KEY}', {...store, ...helpers, ...globals});
   const api = load('workbench', '{Workbench, navigation, attach: hook => { mountedWorkbench = hook; bindNavigation() }}', {
     ...rail, ...helpers, ...globals, safeHrefBase: store.safeHref, sameScope: store.sameScope,
-    projectPreview: {forget() {}, remember() {}, show() {}, sync() {}},
-    closeTabIn: store.closeTab, sessionStorage: {setItem() {}},
+    projectPreview: {forget() {}, remember() {}, show() {}, release() {},
+      sync() { if (activeLayout) geometry('preview'); },
+      reposition() { geometry('preview reposition'); }},
+    createPanelHost: () => ({apply(panel, open, animate) {
+      geometry(animate ? 'panel sync' : 'panel seed');
+      panel.hidden = !open;
+    }, destroy() {}}),
+    matchMedia: query => query.includes('1280px') ? media : {matches: false},
+    initialPanelState: open => open, PANEL_OPEN: true,
+    localStorage: storage(local), sessionStorage: storage(session), ResizeObserver, Event,
+    getComputedStyle: () => ({direction: 'ltr'}),
+    closeTabIn: store.closeTab, restoreTabs: store.restore,
     navigationState: () => helpers.navigationState({setTimer: clock.setTimeout, clearTimer: clock.clearTimeout}),
     requestAnimationFrame: fn => frames.push(fn),
     performance: {getEntriesByType: () => []},
-    window: {addEventListener(name, fn) { listeners.set(name, fn); }},
+    window,
   });
   function emit(name, detail) { listeners.get(name)?.({detail}); }
   const tabRail = element('div');
@@ -207,6 +242,7 @@ function fixture({initial = OVERVIEW, defaultDraft, tabs = []} = {}) {
     },
     node: '', project: '/repo', tabs: store.restore(tabs), navigation: api.navigation,
     rows: historyRows,
+    syncSidebarWidths() {}, // The route-only fixture does not mount width state.
     syncState() {},
     focusTab(key) { this.focused = key; },
     onNavigation() {
@@ -214,9 +250,63 @@ function fixture({initial = OVERVIEW, defaultDraft, tabs = []} = {}) {
     },
   });
   api.attach(hook);
+
+  function mount(page) {
+    const layout = element('div'), panel = element('aside'), center = element('div');
+    Object.assign(layout.dataset, {workbenchProject: '/repo', workbenchPage: page, workbenchTask: 'task-1',
+      workbenchAccentDefault: 'blue'});
+    panel.hidden = true;
+    const inline = new Map();
+    layout.style = {
+      getPropertyValue: name => inline.get(name) ?? '',
+      setProperty(name, value) { trace.push(['style', name, value]); inline.set(name, value); },
+    };
+    Object.defineProperty(layout, 'clientWidth', {get() {
+      assert.fail('width restoration must not force layout on the shell');
+    }});
+    const nodes = new Map([['#workbench-history', panel], ['.workbench-center', center],
+      ['#workbench-history-overlay', element('button')]]);
+    const addHandle = side => {
+      const handle = element('div');
+      handle.dataset.workbenchResize = side;
+      handle.closest = () => handle;
+      handle.setPointerCapture = () => {};
+      handle.setAttribute = (name, value) => { trace.push(['attr', side, name, value]); handle.attrs[name] = value; };
+      nodes.set(`#workbench-${side}-resize`, handle);
+      return handle;
+    };
+    const addOverflow = () => {
+      const control = Object.assign(element('details'), {hidden: true, open: false});
+      nodes.set('#workbench-tabs-overflow', control);
+      return control;
+    };
+    const addRail = () => {
+      const rail = Object.assign(element('div'), {extent: 800});
+      Object.defineProperties(rail, {
+        scrollWidth: {get() { geometry('overflow'); return rail.extent; }},
+        clientWidth: {get() {
+          const [left, right] = getWidths(layout).map(parseFloat);
+          return window.innerWidth - left - (media.matches && !panel.hidden ? right : 0);
+        }},
+      });
+      nodes.set('#workbench-tabs', rail);
+      return rail;
+    };
+    layout.querySelector = selector => nodes.get(selector);
+    layout.querySelectorAll = () => [];
+    const rail = addRail(), control = addOverflow(), left = addHandle('left'), right = addHandle('right');
+    activeLayout = layout;
+    const live = Object.assign(Object.create(api.Workbench), {el: layout});
+    live.mounted();
+    return {live, layout, rail, control, left, right, panel, center, inline, addOverflow, addHandle, addRail};
+  }
+
   return {hook, document, tabRail, list, history, addHistory, navigated, frames, emit, expire: clock.expire,
     at(path) { actual = url(path); },
     flush() { while (microtasks.length) microtasks.shift()(); },
+    mount, trace, observed, measure: () => measure?.(), getWidths,
+    viewport(width, wide = media.matches) { window.innerWidth = width; media.matches = wide; },
+    storedWidths: () => JSON.parse(local.get(widthKey)),
   };
 }
 
@@ -557,4 +647,120 @@ test('blank default goes through navigation once after restoration, without any 
   back.emit('popstate');
   back.flush();
   assert.deepEqual(back.navigated, []);
+});
+
+const widthPreference = {left: 410, right: 520};
+const widthPixels = ['410px', '520px'];
+const resizerAria = (min, max, now) => ({'aria-valuemin': min, 'aria-valuemax': max, 'aria-valuenow': now});
+
+test('mount and replace-root navigation restore widths before preview, dock, tab scroll and overflow', () => {
+  const tasks = '/tasks?task=task-1';
+  const review = '/review/task-1/commit/abcd';
+  const f = fixture({initial: tasks, widths: widthPreference, historyOpen: true});
+  for (const [path, page, back] of [[tasks, 'tasks'], [review, 'review'], [tasks, 'tasks', true]]) {
+    f.trace.length = 0;
+    f.at(path);
+    if (back) f.emit('popstate');
+    const {live, rail, panel, control, left, right} = f.mount(page);
+    assert.deepEqual(left.attrs, resizerAria('192', '480', '410'));
+    assert.deepEqual(right.attrs, resizerAria('264', '640', '520'));
+    assert.equal(live.tabs[0].href, path);
+    assert.equal(panel.hidden, false, 'the persisted dock still opens without an entrance');
+    assert.equal(control.hidden, false, 'the rail is measured with both saved widths and the dock open');
+    assert.deepEqual(f.trace.filter(([kind]) => kind === 'geometry'),
+      ['preview', 'panel seed', 'current tab scroll', 'overflow'].map(part => ['geometry', part, ...widthPixels]));
+    assert.ok(f.observed.has(rail));
+    live.destroyed();
+    assert.equal(f.observed.size, 0);
+  }
+});
+
+test('a same-route morph repairs missing and reset widths and ARIA without sweeping an unchanged shell', () => {
+  const f = fixture({initial: '/tasks?task=task-1', widths: widthPreference, historyOpen: true});
+  const {live, layout, inline, left, addHandle} = f.mount('tasks');
+  f.trace.length = 0;
+  inline.delete('--workbench-left-width');
+  inline.set('--workbench-right-width', '336px');
+  delete left.attrs['aria-valuemin'];
+  left.attrs['aria-valuenow'] = '256';
+  const right = addHandle('right');
+  const syncState = live.syncState;
+  live.syncState = function () {
+    assert.deepEqual(f.getWidths(layout), widthPixels, 'repair before the sweep decision');
+    assert.deepEqual(left.attrs, resizerAria('192', '480', '410'));
+    assert.deepEqual(right.attrs, resizerAria('264', '640', '520'));
+    return syncState.call(this);
+  };
+  live.updated();
+  assert.deepEqual(f.trace, [
+    ['style', '--workbench-left-width', '410px'], ['attr', 'left', 'aria-valuemin', '192'],
+    ['attr', 'left', 'aria-valuenow', '410'], ['style', '--workbench-right-width', '520px'],
+    ...Object.entries(right.attrs).map(([name, value]) => ['attr', 'right', name, value]),
+    ['geometry', 'overflow', ...widthPixels],
+  ]);
+  f.trace.length = 0;
+  live.updated();
+  assert.deepEqual(f.trace, [], 'a stable patch neither writes widths/ARIA nor measures layout');
+  delete right.attrs['aria-valuenow'];
+  live.updated();
+  assert.deepEqual(f.trace, [['attr', 'right', 'aria-valuenow', '520']], 'ARIA-only repair needs no layout');
+
+  f.trace.length = 0;
+  inline.delete('--workbench-right-width');
+  layout.dataset.workbenchTitle = 'Updated task';
+  live.updated();
+  assert.ok(f.trace.some(([, part]) => part === 'panel sync'), 'a dirty patch still sweeps');
+  assert.ok(f.trace.filter(([kind]) => kind === 'geometry').every((entry) =>
+    entry[2] === widthPixels[0] && entry[3] === widthPixels[1]), 'sweep geometry sees the repaired widths');
+});
+
+test('the overflow check follows a replaced rail or control and subsequent geometry changes', () => {
+  const f = fixture({initial: '/tasks?task=task-1', widths: widthPreference, historyOpen: true});
+  const {live, rail, control, addRail, addOverflow} = f.mount('tasks');
+  const replacement = addRail();
+  replacement.dataset.signature = rail.dataset.signature;
+  replacement.children = [...rail.children];
+  replacement.extent = 600;
+  f.trace.length = 0;
+  live.updated();
+  assert.deepEqual(f.trace, [['geometry', 'overflow', ...widthPixels]]);
+  assert.equal(control.hidden, true);
+  assert.deepEqual([...f.observed], [replacement]);
+  replacement.extent = 800;
+  f.measure(); // A size observation (e.g. a dock or collapse transition) needs no LiveView patch.
+  assert.equal(control.hidden, false);
+  const newControl = addOverflow();
+  live.updated();
+  assert.equal(newControl.hidden, false);
+});
+
+test('drag and viewport changes keep width geometry current without persisting a clamp', () => {
+  const f = fixture({initial: '/tasks?task=task-1', widths: widthPreference, historyOpen: true});
+  const {live, layout, left, right, panel, center, inline} = f.mount('tasks');
+  live.onPointerDown({target: left, button: 0, pointerId: 1, clientX: 410, preventDefault() {}});
+  live.onPointerMove({pointerId: 1, clientX: 455});
+  assert.deepEqual(f.getWidths(layout), ['455px', '520px']);
+  assert.deepEqual(f.storedWidths(), widthPreference);
+  delete layout.dataset.workbenchResizing;
+  inline.clear();
+  live.updated();
+  assert.equal(layout.dataset.workbenchResizing, 'left');
+  assert.deepEqual(f.getWidths(layout), ['455px', '520px'], 'a mid-drag morph must not restore the old preference');
+  live.onPointerEnd({pointerId: 1});
+  assert.equal(layout.dataset.workbenchResizing, undefined);
+  assert.deepEqual(f.storedWidths(), {left: 455, right: 520});
+  f.viewport(1280);
+  f.trace.length = 0;
+  f.emit('resize');
+  assert.deepEqual(f.trace.filter(([kind]) => kind === 'geometry'),
+    [['geometry', 'preview reposition', '455px', '345px'], ['geometry', 'overflow', '455px', '345px']]);
+  assert.deepEqual(right.attrs, resizerAria('264', '345', '345'));
+  assert.deepEqual(f.storedWidths(), {left: 455, right: 520});
+  f.viewport(1200, false);
+  live.onResize();
+  assert.equal(panel.hidden, true, 'crossing into overlay mode still dismisses the dock');
+  assert.deepEqual(f.getWidths(layout), ['455px', '520px']);
+  live.setHistory(true);
+  assert.equal(center.inert, true);
+  assert.equal(right.hidden, true, 'resize handle remains hidden in drawer mode');
 });
