@@ -53,8 +53,11 @@ Review node changes and reconnects retain the current route (including commit SH
 ### Workbench navigation and History continuity
 `Layouts.app/1` renders inside each routed LiveView, so a live navigate replaces the shell and its LiveComponents even if the destination uses the same module or DOM/component ids; a live patch retains the root and can cross actions within the same module and live session (as Review's commit links do).
 History task links always navigate to focused `/tasks?task=<id>` for live/nonterminal tasks or `/review/<id>` for terminal tasks, and client-generated rail links always navigate too; the task tab key shared by Tasks, Review and Agents does not make them one LiveView.
-`TasksLive.handle_params/3` publishes the focused id immediately but clears the workbench project/title on every params pass and restores them from the matching async task row; `ReviewLive` withholds the workbench project/title until the current task scope is ready but retains readiness on same-task scope changes such as show ↔ commit.
-The History component requires both a project and a serving target to render `#workbench-history-rows`, and resetting its `{target_id, beam_node, project_path}` scope drops its filters and pages; a temporary missing path can therefore remove the History scroller even during a live patch.
+Tasks, Review and Agents publish the explicit task identity immediately, but derive the project path and title from data verified for the current task, target and serving node.
+Tasks preserves confirmed metadata on same-scope refreshes, and Review retains it across same-scope refreshes and show ↔ commit patches.
+These three views pass `workbench_history_scope_pending?` to `Layouts.app/1` only while an owned connected async request is resolving an unknown project path.
+Static renders, unscoped routes, unavailable targets, settled errors and refreshes with a known project never set this signal, and stale replies cannot change a newer request's signal.
+A resolved History scope uses `{target_id, beam_node, project_path}` and the task id is not a substitute for the project path.
 The sidebar Active Tasks uses the node-scoped `EvoDash.ActiveTasks` hub, and recent projects and remote connection bookkeeping seed from `EvoDash.WorkbenchSidebarCache` on the same transport, but History rows, filters, offset and sidebar Conversations rows do not seed from that cache.
 ### AgentsLive task scope and selected-agent streaming
 An explicit nonblank `?task=<id>` owns the scope `{target_id, beam_node, task_id}`; `?agent_id=` still works independently and selects only a matching live agent when a task is present.

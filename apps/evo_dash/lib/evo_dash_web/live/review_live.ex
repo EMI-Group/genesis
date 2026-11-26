@@ -11,9 +11,8 @@ defmodule EvoDashWeb.ReviewLive do
   # per-repo projection, repo-resolution recording and the directory tree.
   alias EvoDashWeb.ReviewLive.State
 
-  # The async action plumbing: every review action and lazy diff load runs
-  # in a supervised task, never in this process (see Runner).
-  alias EvoDashWeb.ReviewLive.Runner
+  # Review loads, actions and lazy diffs run in supervised tasks.
+  alias EvoDashWeb.ReviewLive.{LoadRequest, Runner}
 
   @impl true
   def render(assigns), do: EvoDashWeb.ReviewLive.Page.render(assigns)
@@ -127,6 +126,8 @@ defmodule EvoDashWeb.ReviewLive do
         # refresh strip instead of blanking the page.
         page_ready?: false,
         load_generation: 0,
+        history_scope_request: nil,
+        workbench_loaded_scope: nil,
         # Async ACTION plumbing (see Runner.spawn/4 +
         # handle_info({:review_action_result, ...})): `action_seq` is the
         # monotonic ref counter, `review_action` the in-progress marker (nil |
@@ -182,7 +183,7 @@ defmodule EvoDashWeb.ReviewLive do
         socket
       end
 
-    scope = review_scope(socket.assigns)
+    scope = LoadRequest.scope(socket.assigns)
     repo_id = params["repo"] || previous_review_repo(socket.assigns, scope) || "primary"
     context = {scope, socket.assigns.live_action, params["commit_sha"], repo_id}
     previous_context = socket.assigns[:tasks_loaded_for]
@@ -210,7 +211,7 @@ defmodule EvoDashWeb.ReviewLive do
           tree_expanded_dirs: %{},
           file_filter: ""
         )
-        |> start_async_load(params["commit_sha"])
+        |> LoadRequest.start(params["commit_sha"])
         |> assign(:tasks_loaded_for, context)
       end
 
@@ -221,12 +222,9 @@ defmodule EvoDashWeb.ReviewLive do
   def handle_event(event, params, socket),
     do: EvoDashWeb.ReviewLive.Events.dispatch(event, params, socket)
 
-  # Retries the async review-data load from the error panel (the load is
-  # exit-safe, so an error is a value the user can recover from without a page
-  # refresh). Routed here from `EvoDashWeb.ReviewLive.Events` because the
-  # spawner (`start_async_load/2`) lives in this module and is not duplicated.
+  # Retries the same scoped request from the error panel.
   def retry_load(socket, _params) do
-    {:noreply, start_async_load(socket, Map.get(socket.assigns, :inspect_commit_sha))}
+    {:noreply, LoadRequest.start(socket, socket.assigns.inspect_commit_sha)}
   end
 
   @impl true
@@ -239,7 +237,7 @@ defmodule EvoDashWeb.ReviewLive do
     # re-checks materiality when it fires, so a status the page already shows
     # never re-fetches the full task row.
     socket =
-      if task_id == socket.assigns.task_id and not review_load_blocked?(socket.assigns) and
+      if task_id == socket.assigns.task_id and not LoadRequest.blocked?(socket.assigns) and
            EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) do
         socket
         |> assign(:review_broadcast_status, status)
@@ -274,7 +272,7 @@ defmodule EvoDashWeb.ReviewLive do
     socket = assign(socket, :review_broadcast_status, :none)
 
     if review_reload_material?(status, socket.assigns.task_status) do
-      {:noreply, start_async_load(socket, Map.get(socket.assigns, :inspect_commit_sha))}
+      {:noreply, LoadRequest.start(socket, socket.assigns.inspect_commit_sha)}
     else
       {:noreply, socket}
     end
@@ -310,6 +308,8 @@ defmodule EvoDashWeb.ReviewLive do
     if stale? do
       {:noreply, socket}
     else
+      socket = LoadRequest.settle(socket, result)
+
       case result do
         {:ok, assigns_map} ->
           socket =
@@ -446,72 +446,6 @@ defmodule EvoDashWeb.ReviewLive do
 
   # --- Private Helpers ---
 
-  # Spawns the async review-data load in a supervised Task (same pattern as
-  # `MergeCheck.start/5` and SettingsLive's LLM connection test) and marks the
-  # page as loading. The result arrives later as a
-  # `{:review_data_loaded, task_id, node, generation, result}` message;
-  # `load_generation` is monotonic (incremented per start), so stale results
-  # from superseded loads are dropped by the handle_info stale-guard.
-  #
-  # The load runs behind `EvoDash.SafeCall.run/1`: the store/registry/Git calls
-  # inside it can exit (a `GenServer.call` timeout EXITS the caller, which a
-  # rescue cannot catch). Guarding there means the spawned closure never dies
-  # before sending its result — a dead spawned task would wedge the page on the
-  # spinner forever — and the outcome is normalized to the two shapes the
-  # handle_info consumes.
-  defp start_async_load(socket, inspect_commit_sha) do
-    gen = socket.assigns.load_generation + 1
-
-    if review_load_blocked?(socket.assigns) do
-      # A requested target may resolve to the local BEAM while it connects.
-      # Do not read review data or reconcile a lazy archive against it.
-      assign(socket,
-        loading: false,
-        error: gettext("Task not found: the requested node is unavailable."),
-        load_generation: gen
-      )
-    else
-      spawn_review_load(socket, inspect_commit_sha, gen)
-    end
-  end
-
-  defp spawn_review_load(socket, inspect_commit_sha, gen) do
-    socket = EvoDashWeb.ReviewLive.ArchiveLoad.sync_context(socket)
-    parent = self()
-    node = socket.assigns.current_node
-    task_id = socket.assigns.task_id
-    live_action = socket.assigns.live_action
-    repo_id = socket.assigns.inspect_repo_id
-
-    socket = assign(socket, loading: true, error: nil, load_generation: gen)
-
-    # A disconnected render has no LiveView process to receive the result.
-    if connected?(socket) do
-      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-        result =
-          case EvoDash.SafeCall.run(fn ->
-                 EvoDashWeb.ReviewLive.LoadData.load(node, task_id,
-                   live_action: live_action,
-                   inspect_commit_sha: inspect_commit_sha,
-                   repo_id: repo_id
-                 )
-               end) do
-            # LoadData's own outcome: an assigns map, or an already
-            # gettext-wrapped error string.
-            {:ok, {:ok, assigns_map}} -> {:ok, assigns_map}
-            {:ok, {:error, reason}} -> {:error, reason}
-            # Exit/exception/throw around the call, or an unexpected shape: the
-            # page stays retry-able instead of hanging.
-            _ -> {:error, gettext("Failed to load review data.")}
-          end
-
-        send(parent, {:review_data_loaded, task_id, node, gen, result})
-      end)
-    end
-
-    socket
-  end
-
   # A review-data reload is material only when the broadcast can imply changed
   # loaded data: `:none` (no reviewed-task broadcast since the last evaluation)
   # is never material, a nil status (a review-status-only mutation) always is,
@@ -520,16 +454,6 @@ defmodule EvoDashWeb.ReviewLive do
   defp review_reload_material?(:none, _loaded_status), do: false
   defp review_reload_material?(nil, _loaded_status), do: true
   defp review_reload_material?(status, loaded_status), do: status != loaded_status
-
-  defp review_scope(assigns) do
-    {assigns.task_id, assigns.current_node_id, assigns.current_node,
-     review_load_blocked?(assigns)}
-  end
-
-  defp review_load_blocked?(assigns) do
-    EvoDashWeb.RemoteGateComponents.gate_active?(assigns) or
-      (assigns.workbench_remote_requested and assigns.current_node == node())
-  end
 
   defp reset_page_readiness(socket, {scope, _, _, _}, scope), do: socket
 
