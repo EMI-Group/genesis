@@ -657,7 +657,10 @@ defmodule EvoGit.Agent.Tools.Shared do
     AMENDED instead of a new commit being created, but only when
     `amendable_context_head/3` proves HEAD is this tool's own auto CONTEXT.md
     commit (see `@context_commit_subject_prefix`), EVERY path it changed is a
-    CONTEXT.md path, and it is PRIVATE to the current branch.
+    CONTEXT.md path, and NO shared/published ref contains it — another
+    `refs/heads/*`, a `refs/remotes/*`, a `refs/tags/*` or any other
+    non-`refs/genesis/` ref blocks the amend, while Genesis's own
+    `refs/genesis/*` bookkeeping refs do not.
     Any failed check falls back to the plain commit, and MORE than one path in
     `files` always stays a plain commit (one call = one plain commit).
   * `amend_message_fun: (paths -> message)` — invoked ONLY on the successful
@@ -803,6 +806,10 @@ defmodule EvoGit.Agent.Tools.Shared do
   # commit that happens to touch a CONTEXT.md is never amended.
   @context_commit_subject_prefix "Update CONTEXT.md for "
 
+  # Genesis's own bookkeeping refs (`agent-state/*` checkpoint anchors,
+  # `salvage/*`, `archive/*`) — written by the same run, never shared/published.
+  @genesis_internal_ref_prefix "refs/genesis/"
+
   defp amend_requested?(opts), do: Keyword.get(opts, :amend, false) == true
 
   # `{:ok, repo_relative_path, head_changed_paths}` when HEAD may be amended for
@@ -814,12 +821,15 @@ defmodule EvoGit.Agent.Tools.Shared do
   #      path — so several CONTEXT.md edits squash into one commit while an
   #      unrelated file is never folded in.
   #   3. HEAD's subject is this tool's own auto context commit for the dir.
-  #   4. HEAD is PRIVATE to the current branch — a subagent worktree branches off
-  #      its parent's HEAD, so amending a commit still contained in the parent's
-  #      branch (or `main`/a remote-tracking ref) would rewrite the base the
-  #      ContextMerge octopus merge and the review flow depend on. A fresh
-  #      worktree's HEAD sits at that base and is contained in ≥2 refs → no
-  #      amend; only the agent's own later private commit qualifies.
+  #   4. NO shared/published ref contains HEAD — see `sharing_refs/2`: another
+  #      `refs/heads/*`, a `refs/remotes/*`, a `refs/tags/*` or any other
+  #      non-`refs/genesis/` ref blocks the amend, while Genesis's internal
+  #      bookkeeping refs do not. A subagent worktree branches off its parent's
+  #      HEAD, so amending a commit still contained in the parent's branch (or
+  #      `main`/a remote-tracking ref/tag) would rewrite the base the ContextMerge
+  #      octopus merge and the review flow depend on. A fresh worktree's HEAD sits
+  #      at that base and is contained in the parent's branch too → no amend; only
+  #      the agent's own later private commit qualifies.
   #
   # Every git failure, non-zero exit or unparsable output is a plain `:error`:
   # a failed check must never surface an error for what is only an optimization.
@@ -847,12 +857,33 @@ defmodule EvoGit.Agent.Tools.Shared do
              "--format=%(refname)"
            ]),
          {:ok, head_ref} <- git_output(repo_path, repo_root, ["symbolic-ref", "HEAD"]),
-         {:ok, true} <- {:ok, refs == [head_ref]} do
+         {:ok, true} <- {:ok, sharing_refs(refs, head_ref) == []} do
       {:ok, relative_path, changed}
     else
       _ -> :error
     end
   end
+
+  # Refs containing HEAD that make it SHARED rather than this agent's own private
+  # work: the current branch itself and Genesis's internal bookkeeping are
+  # excluded, everything else blocks the amend.
+  #
+  # `refs/genesis/*` is bookkeeping, not sharing: those refs are written by the
+  # SAME run and re-pointed at each commit-advancing checkpoint, and the old
+  # commit object is never deleted, so rewriting HEAD cannot orphan anything a
+  # review or a resume depends on.
+  #
+  # Total by construction: odd entries count as sharing, so a failed check always
+  # degrades to a plain commit instead of an error.
+  defp sharing_refs(refs, head_ref) when is_list(refs) and is_binary(head_ref),
+    do: Enum.filter(refs, &shared_ref?(&1, head_ref))
+
+  defp sharing_refs(_refs, _head_ref), do: [:unparsable]
+
+  defp shared_ref?(ref, head_ref) when is_binary(ref),
+    do: ref != head_ref and not String.starts_with?(ref, @genesis_internal_ref_prefix)
+
+  defp shared_ref?(_ref, _head_ref), do: true
 
   # A non-empty changed-path list whose every entry is a CONTEXT.md file.
   defp context_paths?([_ | _] = paths), do: Enum.all?(paths, &context_path?/1)
