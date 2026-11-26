@@ -2,24 +2,33 @@
 
 ## Intent
 
-ExUnit suites for the `:evo_git` core domain: `EvoGit.Core.ContextNode` (spatial),
-`EvoGit.Core.PhyloGraphNode` (temporal), and `EvoGit.Core.ForeignRepo` (multi-repo
-descriptor). Per-file detail lives one level up in `../CONTEXT.md`.
+ExUnit suites for the `:evo_git` core domain: `EvoGit.Core.ContextNode` (spatial), `EvoGit.Core.ContextScope` (Shared/Local `CONTEXT.md` divider), `EvoGit.Core.PhyloGraphNode` (temporal), and `EvoGit.Core.ForeignRepo` (multi-repo descriptor).
+Per-file detail lives one level up in `../CONTEXT.md`.
 
 ## Async-Safety Map
 
-All three modules are `async: true` (verified to mutate no BEAM-global observable
-state):
+All four modules are `async: true` (verified to mutate no BEAM-global observable state):
 
-- **`context_node_test.exs`** — pure helpers (`normalize_relpath/1`, `load/2,3`,
-  `hierarchy_nodes/2,3`) + `@moduletag :tmp_dir` fixtures. No git, no app env.
-- **`phylo_graph_node_test.exs`** — real `git` in a per-test `@moduletag :tmp_dir`
-  repo through `EvoGit.Adapters.Git`. Its only caching is the deterministic
-  `:persistent_term` identity memoization in `EvoGit.GitEnv` (keyed by the unique
-  repo path) and `EvoGit.Config`'s mtime/size-validated file cache — both reflect
-  immutable external state, so no reader ever observes a differing value.
-- **`foreign_repo_test.exs`** — in-memory data only (constructors/normalizers/
-  resolvers); no filesystem, git, env, or `:persistent_term` writes.
+- **`context_node_test.exs`** — pure helpers (`normalize_relpath/1`, `load/2,3`, `hierarchy_nodes/2,3`) plus `@moduletag :tmp_dir` fixtures and the `build_context/2` render assertions (stage order, labels, skipping, sharing AND the two-scope Shared/Local rules). No git, no app env; every `build_context/2` case starts its OWN uniquely-named `EvoGit.VCT` (`start_vct/2`, isolated `:store` + `data_dir: tmp_dir`) and points the calling process at it through the `:evogit_vct_server` pdict seam, so the app-global VCT is never read or mutated.
+- **`context_scope_test.exs`** — PURE: every case drives `split/1`, `scope_content/2`, `splice/3`, `has_local?/1`, `marker/0` and `parse_scope/1` on in-memory binaries. No filesystem, git, env, `:persistent_term` or app-env write.
+- **`phylo_graph_node_test.exs`** — real `git` in a per-test `@moduletag :tmp_dir` repo through `EvoGit.Adapters.Git`. Its only caching is the deterministic `:persistent_term` identity memoization in `EvoGit.GitEnv` (keyed by the unique repo path) and `EvoGit.Config`'s mtime/size-validated file cache — both reflect immutable external state, so no reader ever observes a differing value.
+- **`foreign_repo_test.exs`** — in-memory data only (constructors/normalizers/resolvers); no filesystem, git, env, or `:persistent_term` writes.
+
+## Coverage Map — Two-scope `CONTEXT.md` (`context_scope_test.exs` + `context_node_test.exs`)
+
+The divider primitive (`EvoGit.Core.ContextScope`) is pinned by `EvoGit.Core.ContextScopeTest` (24 tests): `marker/0` returns the literal `<!-- genesis:local -->`; a divider-less file is `%{shared: content, local: ""}` with `has_local?/1 == false`; a divider as the FIRST line leaves Shared empty; leading/trailing spaces and tabs are tolerated; a CRLF file keeps `\r\n` in both scopes and `:all` drops ONLY the divider line (byte-exact); a divider as the FINAL line with no trailing newline yields an empty Local; the FIRST occurrence wins (a second marker line stays ordinary Local text); a marker line inside a fenced code block STILL splits (deliberate no-fence-awareness, commented in-file); `:all == shared <> local` and is the input with only the divider line removed.
+`splice/3` pins: editing `:shared` preserves the divider line + Local byte-for-byte, editing `:local` preserves Shared + divider, a CRLF divider is re-emitted with its exact ending, a final divider with no ending stays ending-less, `:all` replaces the whole body, and a divider-less file makes `:shared`/`:all` replace everything while `:local` is an identity no-op.
+`parse_scope/1` accepts `"shared"`/`"local"`/`"all"` and the matching atoms and answers `{:error, message}` (never raising) for anything else, the message naming all three values.
+
+`build_context/2` rendering rules are pinned in `context_node_test.exs`'s `"build_context/2 scopes (Shared vs Local)"` describe (8 tests):
+- a divider-less chain renders BYTE-IDENTICALLY to the pre-scope renderer (whole-output `==` literal, the backward-compatibility invariant);
+- an ANCESTOR renders its Shared scope only (its Local text absent, the divider literal never rendered);
+- the ASSIGNED node renders BOTH scopes;
+- the VCT global stage renders Shared only;
+- an ancestor blank after scope selection is skipped entirely (no stage, no extra fence block);
+- an all-Local ASSIGNED node still renders exactly ONE stage;
+- `build_context("./", repo)` renders the root's FULL file (both scopes, because the root IS the assigned node);
+- front matter belongs to the Shared part (scope selection runs on RAW content first) and is stripped from it.
 
 ## Coverage Map — `foreign_repo_test.exs` (53 tests, `async: true`)
 
@@ -43,7 +52,7 @@ state):
 
 ## Notes for Agents
 
-- Keep these `async: true` unless a future change makes one touch shared app
-  singletons (`EvoGit.AgentScheduler`, `EvoGit.Store`/`TaskRegistry`,
-  `EvoGit.SystemSampler`), global ETS, or `System`/`Application` env — then revert
-  that file to `async: false` and name the forcing global in its `@moduledoc`.
+- Keep these `async: true` unless a future change makes one touch shared app singletons (`EvoGit.AgentScheduler`, `EvoGit.Store`/`TaskRegistry`, `EvoGit.SystemSampler`), global ETS, or `System`/`Application` env — then revert that file to `async: false` and name the forcing global in its `@moduledoc`.
+- A new `build_context/2` case MUST call `start_vct/2` first and use the per-test `build_repo!/2` tree: without an isolated VCT instance the render reads the APP-GLOBAL `EvoGit.VCT` (and the developer's real global context), and a shared fixture repo would be rewritten by a concurrent case.
+- The divider literal in a test is spelled through a module attribute (`@local_marker` / `@marker`) so a suite-wide grep for `<!-- genesis:local -->` finds the production literal and every pin together.
+- `strip_front_matter/1` TRIMS its parsed body, which is why the byte-identical render pin expects the body text followed by exactly one newline before the closing fence, never a doubled one.

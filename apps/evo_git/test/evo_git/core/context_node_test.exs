@@ -394,4 +394,164 @@ defmodule EvoGit.Core.ContextNodeTest do
       assert fence_count(output) == 4
     end
   end
+
+  # Two-scope (`Shared` / `Local`) rendering: the VCT global stage and every
+  # ANCESTOR stage render `:shared` only, the ASSIGNED node (the LAST node of the
+  # hierarchy) renders `:all`. Reuses the private builders defined in the
+  # `"build_context/2 stages"` describe above (they are module-level functions).
+  describe "build_context/2 scopes (Shared vs Local)" do
+    @local_marker "<!-- genesis:local -->"
+
+    # HARD backward-compatibility pin: a chain with NO divider renders
+    # BYTE-IDENTICALLY to the pre-scope renderer (every existing prompt stays
+    # stable). The literal below is the WHOLE expected output, not a fragment.
+    test "a divider-less chain renders byte-identically to the pre-scope output", %{
+      tmp_dir: tmp_dir
+    } do
+      start_vct(tmp_dir)
+
+      repo =
+        build_repo!(tmp_dir, [
+          {"CONTEXT.md", "# Root\nroot body\n"},
+          {"lib/CONTEXT.md", "# Lib\nlib body\n"}
+        ])
+
+      assert {:ok, output} = ContextNode.build_context("./lib", repo)
+
+      assert output ==
+               "# Context Tree\nFile: ./CONTEXT.md\n```\n# Root\nroot body\n```\n\n" <>
+                 "File: ./lib/CONTEXT.md\n```\n# Lib\nlib body\n```\n\n" <>
+                 "Current Repository (worktree): '#{repo}'. The current working directory (cwd) is also set to the repository path.\n" <>
+                 "Current Assigned Node: './lib'. You should be focusing on the context and files under this node.\n" <>
+                 "IMPORTANT: The worktree path is fixed for this agent's lifetime and the cwd is set to it. Always use relative paths when referring to files in this repository.\n" <>
+                 "IMPORTANT: Subagents you spawn each get their OWN isolated worktree with cwd automatically set correctly. Never include worktree paths or `cd` commands in subagent objectives — just tell them what to do (e.g., \"run `mix test`\")."
+    end
+
+    test "an ANCESTOR renders its Shared scope only", %{tmp_dir: tmp_dir} do
+      start_vct(tmp_dir)
+
+      repo =
+        build_repo!(tmp_dir, [
+          {"CONTEXT.md", "# Root\nshared rules\n" <> @local_marker <> "\nroot ops only\n"},
+          {"lib/CONTEXT.md", "# Lib\nlib body\n"}
+        ])
+
+      assert {:ok, output} = ContextNode.build_context("./lib", repo)
+
+      assert output =~ "shared rules"
+      refute output =~ "root ops only"
+      # The divider line itself is never content and never rendered.
+      refute output =~ @local_marker
+    end
+
+    test "the ASSIGNED node renders BOTH scopes", %{tmp_dir: tmp_dir} do
+      start_vct(tmp_dir)
+
+      repo =
+        build_repo!(tmp_dir, [
+          {"CONTEXT.md", "# Root\nroot body\n"},
+          {"lib/CONTEXT.md", "# Lib\nshared lib\n" <> @local_marker <> "\nlib ops\n"}
+        ])
+
+      assert {:ok, output} = ContextNode.build_context("./lib", repo)
+
+      assert output =~ "shared lib"
+      assert output =~ "lib ops"
+      refute output =~ @local_marker
+    end
+
+    test "the VCT global stage renders its Shared scope only", %{tmp_dir: tmp_dir} do
+      vct = start_vct(tmp_dir)
+
+      write_global_context!(
+        vct,
+        "# Global\nshared global rules\n" <> @local_marker <> "\nglobal ops only\n"
+      )
+
+      repo = build_repo!(tmp_dir, [{"CONTEXT.md", "# Root\nroot body\n"}])
+
+      assert {:ok, output} = ContextNode.build_context("./", repo)
+
+      assert output =~ "File: global/CONTEXT.md"
+      assert output =~ "shared global rules"
+      refute output =~ "global ops only"
+      refute output =~ @local_marker
+    end
+
+    test "an ancestor that is BLANK after scope selection is skipped", %{tmp_dir: tmp_dir} do
+      start_vct(tmp_dir)
+
+      # An all-Local ancestor: its Shared scope is empty, so it contributes NO
+      # stage and NO empty fenced block.
+      repo =
+        build_repo!(tmp_dir, [
+          {"CONTEXT.md", @local_marker <> "\nroot ops only\n"},
+          {"lib/CONTEXT.md", "# Lib\nlib body\n"}
+        ])
+
+      assert {:ok, output} = ContextNode.build_context("./lib", repo)
+
+      refute output =~ "File: ./CONTEXT.md"
+      refute output =~ "root ops only"
+      assert output =~ "File: ./lib/CONTEXT.md"
+      # One stage only -> one opening + one closing fence.
+      assert fence_count(output) == 2
+    end
+
+    test "an all-Local ASSIGNED node still renders exactly ONE stage", %{tmp_dir: tmp_dir} do
+      start_vct(tmp_dir)
+
+      repo =
+        build_repo!(tmp_dir, [
+          {"CONTEXT.md", "# Root\nroot body\n"},
+          {"lib/CONTEXT.md", @local_marker <> "\nlib ops only\n"}
+        ])
+
+      assert {:ok, output} = ContextNode.build_context("./lib", repo)
+
+      assert output =~ "File: ./lib/CONTEXT.md"
+      assert output =~ "lib ops only"
+      assert length(:binary.matches(output, "File: ./lib/CONTEXT.md")) == 1
+      assert fence_count(output) == 4
+    end
+
+    test "build_context(\"./\", repo) renders the root's FULL file (both scopes)", %{
+      tmp_dir: tmp_dir
+    } do
+      start_vct(tmp_dir)
+
+      repo =
+        build_repo!(tmp_dir, [
+          {"CONTEXT.md", "# Root\nshared root\n" <> @local_marker <> "\nroot ops\n"}
+        ])
+
+      assert {:ok, output} = ContextNode.build_context("./", repo)
+
+      # The root IS the assigned node here, so its Local scope renders too.
+      assert output =~ "File: ./CONTEXT.md"
+      assert output =~ "shared root"
+      assert output =~ "root ops"
+      refute output =~ @local_marker
+    end
+
+    test "front matter belongs to the Shared part and is stripped from it", %{tmp_dir: tmp_dir} do
+      start_vct(tmp_dir)
+
+      # Scope selection runs on the RAW content FIRST, so the front matter stays
+      # in the Shared scope and `strip_front_matter/1` then removes it.
+      repo =
+        build_repo!(tmp_dir, [
+          {"CONTEXT.md",
+           "---\nskill: [ui-density]\n---\n# Root\nshared body\n" <>
+             @local_marker <> "\nroot ops\n"},
+          {"lib/CONTEXT.md", "# Lib\nlib body\n"}
+        ])
+
+      assert {:ok, output} = ContextNode.build_context("./lib", repo)
+
+      assert output =~ "# Root\nshared body"
+      refute output =~ "ui-density"
+      refute output =~ "root ops"
+    end
+  end
 end
