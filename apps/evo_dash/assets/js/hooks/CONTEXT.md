@@ -4,7 +4,7 @@
 
 Phoenix LiveView JavaScript hooks for the EvoDash dashboard: plain JS objects with `mounted`/`updated`/`destroyed` lifecycles, registered with the `LiveSocket` and attached by page markup through `phx-hook="<Name>"`.
 Every HOOK module here is imported and registered by NAME in `../app.js`'s `hooks:` map (`SidebarCollapse`, `AdaptiveInput`, `LegendTooltip`, `DiffViewer`, `CommitGraph`, `CapsulePanel`, `DisclosureMotion`, `MotionPanel`, `DirectoryPicker`, `FilePicker`, `StatePersistence`, `AgentHistoryAutoScroll`, `DesktopQuit`, `DesktopQuitConfirm`, `UpdateStatus`, `Guide`, `ListEnter`, `InspectorMessages`, `AssistantComposer`, `Workbench`, `WorkbenchSection`, `WorkbenchWindow`, `BrowserNotifications`, `DialogModal`), so a page only mounts the attribute and supplies the DOM contract below.
-The workbench helpers `workbench_tabs.js` (pure tab store), `workbench_navigation.js` (route confirmation and pending intent), `workbench_rail.js` (rail, overflow and history DOM), `workbench_panel.js`, `workbench_panel_dom.js` and `workbench_project_preview.js` are imported by `Workbench`, not registered as separate hooks.
+The workbench helpers `workbench_tabs.js` (pure tab store), `workbench_navigation.js` (route confirmation and pending intent), `workbench_rail.js` (rail, overflow and history DOM), `workbench_history.js` (right dock and History handoff), `workbench_panel.js`, `workbench_panel_dom.js` and `workbench_project_preview.js` are imported by `Workbench`, not registered as separate hooks.
 `../app.js` is a thin entry: the `LiveSocket` + `hooks:` map, `longestCommonPrefix`, the hooks declared inline (`TauriDetect`, `PathAutocomplete`, `ClipboardCopy`, `AutoClearFlash`, `PlatformDetect`, `FocusInput`, `PaletteList`), the `guide_client_id` connect param from `./guide.js`, and the topbar/live-reload tail.
 
 ## API Surface
@@ -158,7 +158,8 @@ Dismissal: `_dismiss()` pushes `dialog_closed` synchronously and keeps the `_clo
 
 `#workbench-history` and `#workbench-git` are `aside.workbench-history` siblings the server renders with `hidden` **and** `data-panel-state="closed"`; the DOM half (`./workbench_panel_dom.js`) owns the attribute from then on.
 Exactly three states — `closed` (the aside carries `hidden`), `open`, `closing` (exit running, `hidden` already absent).
-The pure decisions stay in `./workbench_panel.js` (`initialPanelState/1`, `planPanelRequest/2`, `completePanelClose/1`, `isPanelCloseTransition/2`, `panelCloseWaitsForTransition/2`, `panelOpenNeedsStartFrame/2`); the DOM half is `createPanelHost(reducedMotion)` → `{apply(panel, wantOpen, animate), destroy()}`, owning the per-panel state map, the forced start frame and the armed close, and `workbench.js` only calls `panelHost.apply/3` from `syncHistoryPanel/1` plus `panelHost.destroy()` on teardown.
+The pure decisions stay in `./workbench_panel.js` (`initialPanelState/1`, `planPanelRequest/2`, `completePanelClose/1`, `isPanelCloseTransition/2`, `panelCloseWaitsForTransition/2`, `panelOpenNeedsStartFrame/2`); the DOM half is `createPanelHost(reducedMotion)` → `{apply(panel, wantOpen, animate), destroy()}`, owning the per-panel state map, the forced start frame and the armed close.
+`workbench_history.js` calls `panelHost.apply/3` from `syncHistoryPanel/1`, and `workbench.js` calls `panelHost.destroy()` on teardown.
 A fresh tab starts CLOSED on every breakpoint: `genesis-workbench.history` / `genesis-workbench.git` in `sessionStorage` only remember an explicit user choice (`true` opens, anything else including `null` is closed) — no desktop default-open and no `/assistant` special case.
 Opening removes `hidden`, re-asserts `data-panel-state="closed"` and forces ONE synchronous style+layout pass at that collapsed geometry (`settleDisplayedLayout` = `void panel.offsetWidth`) before flipping to `"open"` in the SAME task: the aside arrives `display: none`, so a state change applied together with the un-hide would be its first style ever and CSS starts no transition from no previous style. The flush is ONE mechanism, never flush + frame schedule.
 Re-opening during `closing` continues from the live interpolated style with NO flush and cancels the pending hidden-marking; a mount seed (`animate` false), a resize or the overlay drawer switch apply in-task without animating, and `prefers-reduced-motion: reduce` has no transition to start so it opens and closes in the same task.
@@ -167,6 +168,18 @@ During a shell sweep, `syncHistoryPanel/1` re-applies each panel's intended stat
 Invariants: `aria-expanded` on `#workbench-history-toggle` / `#workbench-git-toggle`, `#workbench-history-overlay` + `#workbench-right-resize`, the drawer-vs-docked split (`<1280 px` overlay drawer with `data-workbench-history-drawer-open`), the center column's `inert` while the drawer or a project preview is up, and the `workbench:history-drawer` event.
 The query, project filter, status filter and kind control are ordinary server-rendered live-component controls: the hook never filters rows by title/kind, writes `#workbench-history-project`, toggles `[data-workbench-more]` or juggles `[data-workbench-empty]`, and `renderHistory/0` only marks the row whose window is open (`data-workbench-open` → `is-current`).
 The decisions are pinned by `./workbench_panel.test.cjs` and its DOM half by `./workbench_panel_dom.test.cjs`; `Workbench`'s own patch-sync probe (`workbenchSyncNeeded`) → `../CONTEXT.md` § Workbench Patch-Sync Probe.
+
+### History continuity across workbench shells
+
+While `#app-layout[data-workbench-history-scope-pending="true"]` waits for a verified task project, an already-open History dock on the same node keeps its desktop width through the existing panel host, even when there is no project yet.
+The reservation is not a drawer: History content is invisible, the aside and History controls are inert, and a still-focused dock control yields to an available shell control rather than reclaiming focus when the scope arrives.
+The reservation ends if the node or breakpoint changes, History closes, or the marker clears without a project; a fresh pending shell never reserves space from the saved open preference alone.
+On a matching scoped result the panel stays open without a close/reopen cycle; the hook never supplies a project or History rows.
+`workbench_history.js` passes one in-memory scroll offset between adjacent Workbench shells (including Back/Forward) or across same-shell pending patches, keyed to the confirmed node, project, History kind, project filter, status and query.
+The handoff stores neither rows nor filters to replay and writes no browser storage or history state; a different confirmed scope/view or unavailable scroller discards the offset.
+`#workbench-history-rows` restores only once visible and settled, waits for ordinary server-owned paging if more rows can make the offset reachable, and clamps only when there are no more pages.
+User scroll intent or filter edits cancel a waiting restore; explicit Load more remains the server's action and does not itself cancel restoration.
+`workbench_navigation.test.cjs` covers shell replacement and late teardown, loading and pagination, mismatched scope and filters, Back/Forward, pending focus and drawer boundaries.
 
 ### Workbench sidebar widths and navigation lifecycle
 

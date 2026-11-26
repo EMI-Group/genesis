@@ -46,6 +46,7 @@ function cleanState(overrides = {}) {
       workbenchDefaultDraft: '/assistant?wb_project=/tmp/project&wb_draft=1234567890abcdef12345678',
       workbenchGitBranch: 'main',
       workbenchStartingCommit: 'abc123',
+      workbenchHistoryScopePending: 'true',
     },
     git: {diff: undefined, head: 'main', scope: '/?project=%2Ftmp%2Fproject', target: 'ssh'},
     projectsLoading: undefined,
@@ -81,6 +82,7 @@ test('identical inputs decide identically — repeated patches cost no sweep', (
   // Key order is not part of the signature.
   const reordered = cleanState();
   reordered.dataset = {
+    workbenchHistoryScopePending: 'true',
     workbenchStartingCommit: 'abc123',
     workbenchGitBranch: 'main',
     workbenchPage: 'dashboard',
