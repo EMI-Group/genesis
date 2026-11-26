@@ -71,10 +71,6 @@ Phoenix 1.8 umbrella child app (`:evo_dash`) depending on sibling `:evo_git`.
 | `EvoDashWeb.TaskExportController` | Streamed node-aware JSON archive export (mechanics in §Task archive). |
 | `EvoGit.Store` / `EvoGit.TaskRegistry` | evo_git-owned persistence (SQLite store + lease/heartbeat registry) — the dashboard consumes, owns none. → `apps/evo_git/CONTEXT.md` |
 
-### Mix Tasks
-
-- `mix translate` — (release-time only) AI POT translation via `deepseek-v4-flash`; `mix translate <pot_file> <lang1|all> [lang2] ... [--force] [--prefix <prefix>]`.
-
 ### Routes
 
 | Route | Handler | Purpose |
@@ -265,6 +261,23 @@ The backend is a **standalone web server** with no desktop-shell dependency (no 
 
 - **Directory picking is server-side** via `EvoDash.DirectoryPicker` (native tools, `:wx` fallback) — NOT Tauri, NOT the browser File System Access API: the `DirectoryPicker` hook pushes `directory_pick` → `ProjectsLive` (local node only; remote/headless → `unavailable`) → picker GenServer → `picker_result:<picker_id>`; remote nodes hide Browse; disable via `config :evo_dash, :directory_picker, enabled: false`. No `:desktop`/`Desktop.Window`/`is_desktop`/`?client=desktop` plumbing exists: `EVOGIT_DESKTOP` is referenced by `UpdateStatus.desktop?/0` and `DesktopLifetime`'s gating, and `:wx` ONLY by `DirectoryPicker` + its `Wx` seam (loaded via `wx: :load` in the root `mix.exs`; `genesis_server` stays wx-free).
 - **Tray quit confirm**: tray "Quit Genesis" → Rust emits `quit-requested` → the `DesktopQuit` hook pushes `desktop_quit_requested` → `LiveHooks.DesktopQuit` shows a confirm dialog on ANY page → confirm runs graceful `System.stop(0)` through the `:desktop_quit_stop_fun` seam (150 ms-delayed, NO force quit, no timeout) → `live_hooks/CONTEXT.md` + `desktop/CONTEXT.md`.
+
+## Internationalization (i18n)
+
+EvoDash uses **Gettext** (`EvoDashWeb.Gettext`, `use Gettext, otp_app: :evo_dash`, imported via `html_helpers/0`); all user-facing strings are `gettext`-wrapped while the `:evo_git` core stays English-only. The backend declares `split_module_by: [:locale, :domain]` — keep that option; dynamic locale comes from `root.html.heex`'s `Gettext.get_locale(EvoDashWeb.Gettext)`; detail: `lib/evo_dash_web/CONTEXT.md` → "i18n / Gettext Backend".
+
+**Development policy** — root `./CONTEXT.md` → "Internationalization (i18n) Development Policy": never run `mix gettext.extract`/`merge`/`translate` during feature work (POT/PO and translations are maintained centrally, once per release), just write `gettext`-wrapped strings, and add a **Chinese comment** beside a `gettext` call when a meaning needs anchoring for the release-time AI translator — the ONLY i18n work expected during development.
+
+<!-- genesis:local -->
+
+## Local: release-time, packaging & research detail
+
+### Mix Tasks
+
+- `mix translate` — (release-time only) AI POT translation via `deepseek-v4-flash`; `mix translate <pot_file> <lang1|all> [lang2] ... [--force] [--prefix <prefix>]`.
+
+### Static assets & release configuration
+
 - **Static assets** (`priv/static/`): `favicon.ico` + `images/favicon.svg` are DERIVED from `images/logo.svg` (source of truth; dark gray `#373435` + red `#C8383C`, aspect ≈ 1.2334); `images/logo-alt.svg` is the dark-theme variant; regeneration recipe: `assets/CONTEXT.md` → "Static Assets".
 - **Release configuration** (owned by the ROOT `mix.exs` — this app has no `rel/`): releases `genesis` (both apps, dev), `genesis_desktop` (bakes `evo_dash: [desktop_release: true]`, bundled as a Tauri resource) and `genesis_server` (the only headless distribution: dashboard server AND SSH remote daemon, wx-free, `include_erts`); `config/runtime.exs` handles `PHX_SERVER=true` and server mode; production needs `SECRET_KEY_BASE` + `PHX_HOST`.
 
@@ -276,11 +289,7 @@ The Tauri readiness probe measures the ENTIRE umbrella boot — the port accepts
 - **Boot observability is thin**: neither app logs a boot line, and `backend.log` exists only via the root `config/runtime.exs` (`type: :file`, APPENDED, 10 MB × 5 files); the markers are Ecto's `Migrations already up` and `Running EvoDashWeb.Endpoint with Bandit <vsn> at <address>:<port> (http)` per successful bind at `:info`, plus `… failed, port <port> already in use`. `PORT`/`PHX_IP` are read ONCE per BEAM; a BOOT bind failure aborts `start/2` while a RUNTIME restart retries to the endpoint supervisor's intensity (3/5 s) then `EvoDash.Supervisor`'s (10/60 s); no OS pid is logged, so `backend.log` cannot distinguish repeated boots, sidecar respawns and `System.restart/0`.
 - `DesktopLifetime` is the ONLY self-exit (5 connect attempts × 200 ms, 1 s timeout, then a warning + `System.stop(0)`; exit 0 is INTENTIONAL to the Tauri watchdog → silent quit, not the error page — `lib/evo_dash/CONTEXT.md`), and the shell error page is NOT the first-run `push_navigate(to: "/welcome")`: that 302 on `GET /` is real, but the load latch matches host+port only and post-upgrade launches never take it, because `VersionState.onboarding_needed?/0` keys on the version-state FILE existing.
 
-## Internationalization (i18n)
-
-EvoDash uses **Gettext** (`EvoDashWeb.Gettext`, `use Gettext, otp_app: :evo_dash`, imported via `html_helpers/0`); all user-facing strings are `gettext`-wrapped while the `:evo_git` core stays English-only. The backend declares `split_module_by: [:locale, :domain]` — keep that option; dynamic locale comes from `root.html.heex`'s `Gettext.get_locale(EvoDashWeb.Gettext)`; detail: `lib/evo_dash_web/CONTEXT.md` → "i18n / Gettext Backend".
-
-**Development policy** — root `./CONTEXT.md` → "Internationalization (i18n) Development Policy": never run `mix gettext.extract`/`merge`/`translate` during feature work (POT/PO and translations are maintained centrally, once per release), just write `gettext`-wrapped strings, and add a **Chinese comment** beside a `gettext` call when a meaning needs anchoring for the release-time AI translator — the ONLY i18n work expected during development.
+### Internationalization — release-time detail
 
 **Product-name convention**: "EvoX Genesis" renders localized in CJK locales — zh_CN 天演 · 启元 / zh_HK 天演 · 啟元 / ja 啓元 (EvoX stays Latin in ja); the ja rendering lives in the `mix translate` ja glossary (`lib/mix/tasks/translate.ex`, `"Genesis" => "啓元"` / `"EvoX Genesis" => "EvoX 啓元"`) and in `priv/gettext/ja/LC_MESSAGES/default.po` msgstrs (the `Co-authored-by: Genesis <noreply@evogit.ai>` trailer literal inside one config-description msgstr stays ASCII and must NOT be renamed).
 

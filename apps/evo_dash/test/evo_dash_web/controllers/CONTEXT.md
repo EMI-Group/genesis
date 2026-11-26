@@ -23,6 +23,8 @@ Leaf node — all seven suites live directly here, none of them calls `live/3` (
 | `health_controller_test.exs` | `EvoDashWeb.HealthControllerTest` | 60 | 5 | `async: true` |
 | `server_status_controller_test.exs` | `EvoDashWeb.ServerStatusControllerTest` | 305 | 9 | `async: true` (its only global is the `:server_status_task_runner` seam, restored in `on_exit`) |
 
+<!-- genesis:local -->
+
 ## `task_export_controller_test.exs`
 
 Two describes: `GET /tasks/:task_id/export` (8 tests) and `... with ?node= param` (3 tests).

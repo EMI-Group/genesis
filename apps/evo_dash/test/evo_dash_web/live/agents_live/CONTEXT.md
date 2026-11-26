@@ -39,6 +39,9 @@ Most stateful AgentsLive page integration tests live in `../agents_live_test.exs
 - `commit_graph_test.exs` is ~2000 lines — a legitimately long suite (one
   `describe` per model rule group plus an explicit totality matrix); don't split
   casually.
+
+<!-- genesis:local -->
+
 ## Inspector Stream Coverage Boundaries
 
 The tests execute production reducers and transport helpers, never a copied reducer or replacement implementation.

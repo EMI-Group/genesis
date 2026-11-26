@@ -124,14 +124,6 @@ Each half is its own `SafeCall.run/1` boundary (a missing git repository never h
 The lookup is deliberately the LOCAL `TaskRegistry.get_task_lite/1` (same struct as `get_task/1` minus the archive); the node-aware restore for a remote activation lives in `ProjectFlow.task_foreign_repos_for_resume/2`, inside the supervised remote-activation task.
 Remote activation also resolves `:remote_project_load_runner` at call time INSIDE that task through `EvoDash.Seam.get/2` (arity 2, `(node, path)`, same `{:ok, results_map}`/error contract), and for a nonempty resume task id `:remote_resume_task_runner` (arity 2, `(node, task_id)`, the lite task or nil). Both seams are inert unless configured, are CHAIN-SCOPED (a test's override reaches only its own page and supervised task) and preserve pending-target admission, result messages/stale guards and task-repos-win precedence.
 
-## RPC / I/O audit
-
-- `projects_live.ex` — besides the §The Rule split, only pure `TaskSubmit`/`LaunchOptions` building runs in the LiveView, and `attach_file.ex` reads the LOCAL filesystem OFF-PROCESS (the node dropdown never proxies it), so a 15 MiB image or a large PDF never decodes in the LiveView.
-- `github.ex` — all `gh` work runs through the `:github_runner`/`:github_issues_runner`/`:github_issue_markdown_runner` seams (resolved at spawn time through `EvoDash.Seam.get/2`) in supervised tasks, and dispatch requires a usable target, so a pending/gated remote target never falls back to local RPC or task launch. Message tuples keep their arity but carry an opaque request-scoped envelope (target identity + request token), so handlers ignore unscoped results and validate target, BEAM node, path and request identity; closing/reopening the modal, changing filters or superseding a fix (repeated same-issue requests included) invalidates earlier replies, accepted results are consumed once, and `SafeCall` turns a runner exit into a reported result.
-- `project.ex` / `project_flow.ex` — local TOML/FS reads: `project_config_mtime/1` is the ONE cheap `File.stat/1` the task-broadcast debounce runs; backslashes normalize to `/` before suggestions and `dir?` checks, the EXPANDED path is what gets validated (`NodeContext.dir?/2` remotely, `File.dir?/1` locally), stored in the URL and registered in the VCT; the local click does an exit-safe mount but uses its returned row rather than re-reading the list, and `mount_point_for/2` is pure (suggestion matching: `../CONTEXT.md` §SSH Remote UX).
-- `AsyncLoad` does not read outgoing remote project settings while a new remote activation is in flight; an ordinary remote extras load never uses a local filesystem mtime to represent remote config freshness.
-- Everything else (`async_load.ex`, `notifications.ex`, `remote_view.ex`, `assigns.ex`, `state_persistence.ex`) does its I/O in a spawned task or not at all, and `handle_result/5` is pure assignment plus the `:resume_foreign_repos_guard` drop for `:foreign_repos`.
-
 ## Project-config freshness (`genesis.toml` mtime gate)
 
 For local projects the page keeps the parsed `genesis.toml` (`project_config`, `worktree_script`, `commands`) beside the `:project_config_mtime` captured through `Project.project_config_mtime/1`; `AsyncLoad.remote_extras/3` assigns nil for the mtime because the remote config has no local freshness stamp.
@@ -191,10 +183,6 @@ The page owns the `:persist_agent_state?` assign, defaulted `true` by `Assigns.a
 `StatePersistence.maybe_persist_state/1` pushes `persist_agent_state?` and `restore_state` restores it through `maybe_restore_persist_agent_state/2`, which accepts `true`/`false` and their string forms and leaves the assign untouched otherwise, so the ON default survives a payload without the key (unlike `maybe_restore_task_archive/2`).
 `LaunchOptions.apply/2` ALWAYS puts the `:persistent_state` opt explicitly — the boolean assign verbatim, any non-boolean/nil assign (GitHub fix, restored payload, older browser state) as `true` — so the opt is self-describing and covers both `TaskSubmit.build_opts/6` and the GitHub fix path; `review_live/actions.ex` (resume / extract-skills / auto-resolve) and the Assistant/`HomeLive` session path deliberately omit it and inherit the core default (`true`).
 
-## Memory
-
-The page keeps summary maps only: `projects` (`%EvoGit.VCT.Mount{}` rows, display-only), `notified_task_ids` (a `MapSet` of ids), plus the sidebar lists owned by `NodeAware`. No full `%TaskInfo{}` row is retained; notification titles are computed in the spawned scan and discarded after `push_event`.
-
 ## Open-project / selection state persistence (where the "current project" lives)
 
 There is exactly ONE active project per page (`active_project` + `active_project_path`), a display-only `%{path:, name:, point:}` map where `name` is the visible identity with `path` secondary and the point is kept only as the registry/search/forget identity; the palette's VCT workspaces are grouping mounts that can never become the active project.
@@ -222,6 +210,28 @@ The batch loader sends `{:workspaces_loaded, seq, node, result}` from the SAME t
 Workspace events: `palette_mode` (`phx-value-mode="new_workspace"` enters the form and clears the member list), `toggle_workspace` (`phx-value-point`, pure expand/collapse), `toggle_workspace_member` (`phx-value-point`, APPENDS on add so click order is the member order) and `create_workspace` (`name` plus an optional `description`).
 Palette keyboard arithmetic is `Palette.item_count/3` (filtered rows + 3 actions locally, 2 remotely) and `Palette.new_workspace_index/2`; the action exists on remote nodes (unlike "Create New Project"), and the form's ordered refs, description and refusal copy come from `Workspace.member_refs/2`, `description_param/1` and `error_message/1`. A node switch resets `workspaces`, `expanded_workspaces` and `new_workspace_members`, so a remote view never shows another node's workspaces.
 
+## Constraints
+
+- Keep `projects_live.ex` from growing: new loaders go into `async_load.ex` / `notifications.ex`, pure payload building into `task_submit.ex` / `launch_options.ex`, palette arithmetic into `palette.ex`, workspace form helpers into `workspace.ex`, foreign-repo helpers into `foreign_repos.ex`, shell execution into `commands.ex`, and anything else into a new small support module — not the main file (3 072 lines and the page's event surface).
+- Every new async message needs: a unique tag, a monotonic seq assign when more than one can be in flight, and a node (+ context, e.g. path/task id) stale guard. Never apply a result keyed only by "latest".
+- No polling. All PubSub handling stays node-filtered through `NodeAware.event_from_current_node?/2`; the 300 ms debounce is the only coalescing mechanism.
+- No `try/rescue` around store/RPC calls — use `EvoDash.SafeCall`. No `String.to_atom/1`/`to_existing_atom` on client input (whitelist maps only).
+- User-facing strings are `gettext`-wrapped; never run gettext extract/merge during feature work.
+
+<!-- genesis:local -->
+
+## RPC / I/O audit
+
+- `projects_live.ex` — besides the §The Rule split, only pure `TaskSubmit`/`LaunchOptions` building runs in the LiveView, and `attach_file.ex` reads the LOCAL filesystem OFF-PROCESS (the node dropdown never proxies it), so a 15 MiB image or a large PDF never decodes in the LiveView.
+- `github.ex` — all `gh` work runs through the `:github_runner`/`:github_issues_runner`/`:github_issue_markdown_runner` seams (resolved at spawn time through `EvoDash.Seam.get/2`) in supervised tasks, and dispatch requires a usable target, so a pending/gated remote target never falls back to local RPC or task launch. Message tuples keep their arity but carry an opaque request-scoped envelope (target identity + request token), so handlers ignore unscoped results and validate target, BEAM node, path and request identity; closing/reopening the modal, changing filters or superseding a fix (repeated same-issue requests included) invalidates earlier replies, accepted results are consumed once, and `SafeCall` turns a runner exit into a reported result.
+- `project.ex` / `project_flow.ex` — local TOML/FS reads: `project_config_mtime/1` is the ONE cheap `File.stat/1` the task-broadcast debounce runs; backslashes normalize to `/` before suggestions and `dir?` checks, the EXPANDED path is what gets validated (`NodeContext.dir?/2` remotely, `File.dir?/1` locally), stored in the URL and registered in the VCT; the local click does an exit-safe mount but uses its returned row rather than re-reading the list, and `mount_point_for/2` is pure (suggestion matching: `../CONTEXT.md` §SSH Remote UX).
+- `AsyncLoad` does not read outgoing remote project settings while a new remote activation is in flight; an ordinary remote extras load never uses a local filesystem mtime to represent remote config freshness.
+- Everything else (`async_load.ex`, `notifications.ex`, `remote_view.ex`, `assigns.ex`, `state_persistence.ex`) does its I/O in a spawned task or not at all, and `handle_result/5` is pure assignment plus the `:resume_foreign_repos_guard` drop for `:foreign_repos`.
+
+## Memory
+
+The page keeps summary maps only: `projects` (`%EvoGit.VCT.Mount{}` rows, display-only), `notified_task_ids` (a `MapSet` of ids), plus the sidebar lists owned by `NodeAware`. No full `%TaskInfo{}` row is retained; notification titles are computed in the spawned scan and discarded after `push_event`.
+
 ## Test strategy (load-bearing pins only)
 
 Cadences, fixtures and seams: `test/evo_dash_web/live/CONTEXT.md` + `test/evo_dash_web/live/projects_live/CONTEXT.md`. Contracts a change must not break:
@@ -233,11 +243,3 @@ Cadences, fixtures and seams: `test/evo_dash_web/live/CONTEXT.md` + `test/evo_da
 - `change_model_selection/2` must obtain its bundle through `ModelSelectionScope.bundle/1`; checking only `is_map(model_selection)` bypasses the ownership/readiness boundary used by launch and persistence. Unreachable remote tests assert an unavailable bundle, false readiness and a load error, not a successful empty Auto selection (an earlier explicit or pending selection stays preserved on failure).
 - Canonical-lock page assertions are not evidence that `resolved.model_spec` belongs in task opts: the shared helper already reconstructs canonical picker maps, core admission preserves them, and the Store codec preserves nested string keys.
 - Node-switch behaviour (state clearing, `&node=` push_patch, gate states, stale-node restore skip) lives in the same file; `<node>` tests register a fake ConnectionManager in the real `EvoGit.RemoteConnection.Registry`.
-
-## Constraints
-
-- Keep `projects_live.ex` from growing: new loaders go into `async_load.ex` / `notifications.ex`, pure payload building into `task_submit.ex` / `launch_options.ex`, palette arithmetic into `palette.ex`, workspace form helpers into `workspace.ex`, foreign-repo helpers into `foreign_repos.ex`, shell execution into `commands.ex`, and anything else into a new small support module — not the main file (3 072 lines and the page's event surface).
-- Every new async message needs: a unique tag, a monotonic seq assign when more than one can be in flight, and a node (+ context, e.g. path/task id) stale guard. Never apply a result keyed only by "latest".
-- No polling. All PubSub handling stays node-filtered through `NodeAware.event_from_current_node?/2`; the 300 ms debounce is the only coalescing mechanism.
-- No `try/rescue` around store/RPC calls — use `EvoDash.SafeCall`. No `String.to_atom/1`/`to_existing_atom` on client input (whitelist maps only).
-- User-facing strings are `gettext`-wrapped; never run gettext extract/merge during feature work.
