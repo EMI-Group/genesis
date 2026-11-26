@@ -305,17 +305,15 @@ defmodule EvoDashWeb.LayoutsTest do
   end
 
   describe "app/1 — workbench tab rail" do
-    # The tab rail is the ONE open-view list: `#workbench-tabs` (server-empty,
-    # filled by the `Workbench` hook) followed by the rail's two `<details>`
-    # menus, the last of which is the overflow shell the hook reveals only when
-    # the rail overflows. `#app-layout` carries the labels that shell consumes.
-    test "the rail-end overflow shell starts hidden and comes after the create menu" do
-      tree = render_app(current_page: :dashboard) |> parse()
+    # The contextual heading sits beside the ONE open-view list. The server
+    # renders that list empty and the Workbench hook owns its contents.
+    test "the unscoped Agents heading precedes the tab list, create menu and hidden overflow" do
+      tree = render_app(current_page: :agents) |> parse()
 
-      # One rail, and one tab list inside it that states the keyboard cycle
-      # contract; the list itself renders EMPTY on the server.
       assert [rail] = Floki.find(tree, ".workbench-tab-rail")
+      heading = assert_context_title(tree, "Agents")
       assert [tabs] = Floki.find(rail, "#workbench-tabs")
+      assert [create] = Floki.find(rail, "#workbench-create")
 
       assert Floki.attribute(tabs, "role") == ["navigation"]
       assert Floki.attribute(tabs, "phx-update") == ["ignore"]
@@ -343,14 +341,55 @@ defmodule EvoDashWeb.LayoutsTest do
       assert_classes(list, ["workbench-create-menu"])
       assert element_children(list) == []
 
-      # Rail order: tab list → create menu → overflow shell (the shell is the
-      # rail-END menu, after `#workbench-create`).
-      rail_ids =
-        rail
-        |> element_children()
-        |> Enum.map(fn child -> child |> Floki.attribute("id") |> List.first() end)
+      assert element_children(rail) == [heading, tabs, create, overflow]
+    end
 
-      assert rail_ids == ["workbench-tabs", "workbench-create", "workbench-tabs-overflow"]
+    test "a scoped project uses its display name and falls back to the path basename" do
+      for {name, expected} <- [
+            {"Project display name", "Project display name"},
+            {nil, "repo"},
+            {"  ", "repo"}
+          ] do
+        render_app(
+          current_page: :dashboard,
+          workbench_project: "/repos/repo",
+          workbench_context_name: name
+        )
+        |> parse()
+        |> assert_context_title(expected)
+      end
+    end
+
+    test "a supplied workspace name takes precedence over its execution member path" do
+      render_app(
+        current_page: :dashboard,
+        workbench_project: "/repos/execution-member",
+        workbench_context_name: "Workspace display name"
+      )
+      |> parse()
+      |> assert_context_title("Workspace display name")
+    end
+
+    test "a pending remote target cannot supply a scope heading" do
+      render_app(
+        current_page: :dashboard,
+        current_node_id: "pending-node",
+        connection_statuses: %{"pending-node" => %{phase: :connecting}},
+        workbench_project: "/repos/pending",
+        workbench_context_name: "Unconfirmed project"
+      )
+      |> parse()
+      |> assert_context_title("Projects")
+    end
+
+    test "Agents ignores a project name when there is no focused task" do
+      render_app(
+        current_page: :agents,
+        workbench_project: "/repos/repo",
+        workbench_context_name: "Unfocused project"
+      )
+      |> parse()
+      |> assert_context_title("Agents")
     end
 
     test "the create menu offers project actions without an executable scope" do
@@ -625,6 +664,13 @@ defmodule EvoDashWeb.LayoutsTest do
   defp config_warning(tree), do: Floki.find(tree, "div.fixed:has(a[href^='/settings'])")
 
   # --- workbench chrome helpers ---
+
+  defp assert_context_title(tree, expected) do
+    assert [heading] = Floki.find(tree, ".workbench-tab-rail .workbench-context-title")
+    assert String.trim(Floki.text(heading)) == expected
+    assert Floki.attribute(heading, "title") == [expected]
+    heading
+  end
 
   # Renders the sidebar project-shortcut component itself with the assigns
   # `Layouts.app/1` passes it plus the `result` map its async registry read
