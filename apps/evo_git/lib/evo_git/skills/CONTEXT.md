@@ -83,6 +83,31 @@ Fields: `name`, `description`, `parameters` (list of `{name, type, description, 
 - **`substitute_params/3` legacy warning**: raw `String.replace` inlines values verbatim into the script text — LLM-controlled values containing shell metacharacters would execute. NOT safe for execution, not used by the runtime path; retained as-is for API/test compatibility (pinned by `skills_test.exs`); its `@doc` carries an explicit warning.
 - **Security tests** (`apps/evo_git/test/evo_git/skills/executor_security_test.exs`, `async: true`): pinned raw `substitute_params/3` behavior, `build_positional_script/3` refs/values/fallbacks, and end-to-end injection resistance through the FULL `Executor.execute/4` path (real bash; payloads `; rm -rf <sentinel>; #`, backtick `touch <marker>`, `$(touch <marker>)` — sentinel must survive, marker must not be created, literal payload appears in output).
 
+## Constraints
+
+- Skill names use `^[a-z][a-z0-9_-]*$` (case-insensitive) and files are `{name}.md` — but that regex is enforced ONLY by `validate_skill_text/1` on `add_skill`/`edit_skill`; `load_skills/1` accepts any `.md` file and its `name` (falling back to `CRUD.filename_to_name/1`, which replaces non-`[a-zA-Z0-9_-]` chars with `-`), so a hand-written file with an invalid name still becomes a tool whose name is sent to the provider.
+- **No skill is enabled by default**: `filter_skills/2` returns `[]` for an empty name list (`context_integration.ex:108-115`) — availability requires a `skill:` entry in a `CONTEXT.md` along the node's ancestor chain (root `./` included), read from the worktree.
+- The `skill:` frontmatter list is metadata ONLY — `ContextNode.build_context/2` strips all frontmatter via `EvoGit.Skills.strip_front_matter/1` (`core/context_node.ex:188-189`), so agents never see enablement state as text; availability is expressed purely by the injected tool schemas.
+- Skills reload on every `load_skills/1` call (no caching); case-insensitive fallback lookup
+- YAML frontmatter parsed with `yaml_elixir`; bash scripts run in repo root
+- YAML parse failures surface as human-readable strings (`"Invalid YAML frontmatter (line L, column C): <message>"`, or the line/column-less `"Invalid YAML frontmatter: <message>"`); `parse_yaml_simple/1` normalizes every parser error term (including `YamlElixir.FileNotFoundError` and `"malformed yaml"`) and never leaks a `YamlElixir` exception struct, so callers may interpolate the reason safely.
+- Skill tool calls are dispatched dynamically: `EvoGit.Agent.Tools.execute_tool/5` has a catch-all clause that reloads skills via `load_skills/1` and calls `execute/4` when the tool name matches a skill. The statically-named `skill_*` management tools (skill_add, skill_edit, etc.) are dispatched by name first.
+- Skill management tools live in `./lib/evo_git/agent/tools/skill/` (SkillAdd, SkillEdit, SkillRemove, SkillRead, SkillList, SkillEnable, SkillDisable, SkillWhere)
+
+## Skill File Format
+
+YAML frontmatter delimited by `---`, containing `name` (required), `description`, and `parameters` list. Body is free-form markdown; the first ```bash fenced block is the executable script. `{{param_name}}` placeholders are substituted with argument values at runtime.
+
+## Execution Model
+
+1. **Find** the skill by name in the loaded list
+2. **Extract** the first ```bash code block from the body
+3. **Substitute** `{{param_name}}` with positional references (`"$N"`), passing the values as bash argv — values never enter the script text (see Security Design)
+4. **Execute** via `EvoGit.sandbox_run/4` (Unix; systemd-run on Linux, sandbox-exec on macOS) or direct `System.cmd` argv (Windows) in the repo directory
+5. **Return** stdout/stderr; if no bash block found, return body text as-is
+
+<!-- genesis:local -->
+
 ## Path Resolution & Commit Ownership
 
 - **Every root/path argument in this API is a repo checkout root (worktree)** — the `repo_root`/`repo_path` parameter of `add_skill/4`, `edit_skill/3`, `remove_skill/2`, `list_skills/1`, `read_skill/2`, `load_skills/1`, `enable_skill/3`, `disable_skill/3`, `hierarchical_skill_names/2`, `where_enabled/2` and `remove_skill_from_all_contexts/2`. The skill tools pass the agent's WORKTREE root (`Process.get(:repo_path)` = `<repo_root>/.genesis/workers/worker_T*`), so skill files and enablement edits land inside the worktree and are covered by the agent's commit / auto-commit fallback / review diff / branch merge like any other worktree file.
@@ -106,26 +131,3 @@ Fields: `name`, `description`, `parameters` (list of `{name, type, description, 
 - **Parameter `type` is passed through unvalidated**: `Skills.to_tool_schemas/1` copies the frontmatter `type` string straight into the JSON schema (`skills.ex:143-176`); a bogus type reaches the provider.
 - **A skill whose name collides with a built-in tool is unreachable**: the built-in `execute_tool/5` name clauses match FIRST (`tools.ex:451-492`); the dynamic-skill lookup runs only in the catch-all (`tools.ex:494-529`), and a loaded custom tool of the same name also wins. Skill lookup itself is case-SENSITIVE (`find_skill/2`).
 - **Tool schemas are snapshotted once per agent run** (`agent/session/setup.ex` `Session.Setup.build_initial_state/3` → `state.skill_schemas`), while dispatch reloads `load_skills/1` at CALL time (`tools.ex:519`) — a skill added mid-run is callable if the model guesses its name but is never advertised, and `skill_enable` only affects agents spawned afterwards.
-
-## Constraints
-
-- Skill names use `^[a-z][a-z0-9_-]*$` (case-insensitive) and files are `{name}.md` — but that regex is enforced ONLY by `validate_skill_text/1` on `add_skill`/`edit_skill`; `load_skills/1` accepts any `.md` file and its `name` (falling back to `CRUD.filename_to_name/1`, which replaces non-`[a-zA-Z0-9_-]` chars with `-`), so a hand-written file with an invalid name still becomes a tool whose name is sent to the provider.
-- **No skill is enabled by default**: `filter_skills/2` returns `[]` for an empty name list (`context_integration.ex:108-115`) — availability requires a `skill:` entry in a `CONTEXT.md` along the node's ancestor chain (root `./` included), read from the worktree.
-- The `skill:` frontmatter list is metadata ONLY — `ContextNode.build_context/2` strips all frontmatter via `EvoGit.Skills.strip_front_matter/1` (`core/context_node.ex:188-189`), so agents never see enablement state as text; availability is expressed purely by the injected tool schemas.
-- Skills reload on every `load_skills/1` call (no caching); case-insensitive fallback lookup
-- YAML frontmatter parsed with `yaml_elixir`; bash scripts run in repo root
-- YAML parse failures surface as human-readable strings (`"Invalid YAML frontmatter (line L, column C): <message>"`, or the line/column-less `"Invalid YAML frontmatter: <message>"`); `parse_yaml_simple/1` normalizes every parser error term (including `YamlElixir.FileNotFoundError` and `"malformed yaml"`) and never leaks a `YamlElixir` exception struct, so callers may interpolate the reason safely.
-- Skill tool calls are dispatched dynamically: `EvoGit.Agent.Tools.execute_tool/5` has a catch-all clause that reloads skills via `load_skills/1` and calls `execute/4` when the tool name matches a skill. The statically-named `skill_*` management tools (skill_add, skill_edit, etc.) are dispatched by name first.
-- Skill management tools live in `./lib/evo_git/agent/tools/skill/` (SkillAdd, SkillEdit, SkillRemove, SkillRead, SkillList, SkillEnable, SkillDisable, SkillWhere)
-
-## Skill File Format
-
-YAML frontmatter delimited by `---`, containing `name` (required), `description`, and `parameters` list. Body is free-form markdown; the first ```bash fenced block is the executable script. `{{param_name}}` placeholders are substituted with argument values at runtime.
-
-## Execution Model
-
-1. **Find** the skill by name in the loaded list
-2. **Extract** the first ```bash code block from the body
-3. **Substitute** `{{param_name}}` with positional references (`"$N"`), passing the values as bash argv — values never enter the script text (see Security Design)
-4. **Execute** via `EvoGit.sandbox_run/4` (Unix; systemd-run on Linux, sandbox-exec on macOS) or direct `System.cmd` argv (Windows) in the repo directory
-5. **Return** stdout/stderr; if no bash block found, return body text as-is

@@ -16,12 +16,7 @@ Supported file kinds are `.ex`, `.exs` and `.beam` — every candidate file in t
 - `execute/3` (name, args, ctx) → `{:ok, output :: String.t()} | {:error, reason :: String.t()} | :unknown`.
 - `status/0` → EXACTLY `%{ok: [%{name: String.t(), file: String.t(), module: module(), read_only?: boolean()}], errors: [%{file: String.t(), reason: String.t()}]}`; never raises, `%{ok: [], errors: []}` when nothing is configured.
 - `reload/0` → `:ok` — erases the custom-tools cache so the next call re-reads the directory; safe when nothing is cached.
-### `EvoGit.CustomTools.Loader`
-- `tools_dir/0` → `<config_dir>/tools`.
-- `load/0,1` (dir defaults to `tools_dir/0`) → `%{tool_name => entry}`; missing or empty directory → `%{}` with NO warning.
-- `load_with_errors/1` (dir) → `{entries, errors}`.
-- `errors/0,1` (dir) → `[%{file: String.t(), reason: String.t()}]`.
-- `invalidate/0,1` (dir) → `:ok` — `:persistent_term.erase` of the cache key.
+
 ### `EvoGit.CustomTools.Tool` (behaviour)
 - `schema/0` → `ReqLLM.Tool.t()`; the tool NAME exposed to the LLM is `schema().name` (must be a non-empty binary).
 - `execute/2` (args :: map(), ctx :: map()) → MUST return a `String.t()` (success text or an `"Error: ..."` string) and should never crash the agent loop.
@@ -37,12 +32,7 @@ Load COLLISION RULE (a): a custom tool name equal to a BUILT-IN tool name is REJ
 Load COLLISION RULE (b): a duplicate name among custom tools is REJECTED with FIRST WINS (deterministic basename sort) — the later definition is warned + recorded as an error.
 Built-in names = the model-facing names of `EvoGit.Agent.Tools.schemas/0` ++ `EvoGit.Agent.Tools.read_only_schemas/0` (extracted via `EvoGit.Agent.tool_name/1`) ++ their INTERNAL dispatch keys (via `EvoGit.Agent.ToolNames.normalize/1`) ++ every accepted alias spelling (`Map.keys(EvoGit.Agent.ToolNames.table/0)`) ++ the literal non-schema built-in `["run_command"]` (`@non_schema_builtins`), all DOWN-CASED, computed at RUNTIME (never a module attribute) to avoid a compile-time cycle with `EvoGit.Agent.Tools`; enumeration failure degrades to the self-contained non-schema built-in set.
 A file with no qualifying module, a compile/load failure, or a `schema/0` that raises or does not return a non-empty-named `%ReqLLM.Tool{}` is skipped with a `Logger.warning` + a `%{file, reason}` error record — never a crash.
-## Caching
-The cache lives in `:persistent_term` keyed `{EvoGit.CustomTools, :cache, dir}` storing `{fingerprint, entries, errors}`.
-`fingerprint` is the sorted list of `{basename, mtime, size}` for every candidate file, recomputed on every `load/1` call (`File.ls` + `File.stat` — cheap).
-The cached entries are reused only when the fingerprint is unchanged; a changed file set/content (including missing↔present directory transitions) triggers a full recompile.
-Loading is LAZY (first `load/0`/`schemas/0`/`execute/3`/`status/0` call) — nothing loads at application boot, so a broken custom tool can never block startup.
-`reload/0` (and `EvoGit.CustomAgents.reload/0`) invalidates the cache; the next call re-reads and recompiles.
+
 ## Write-Gate Classification
 `read_only?/0` maps to the dispatch write gate via `EvoGit.CustomTools.write_tool?/1`.
 The default for a tool that omits `read_only?/0` (or whose `read_only?/0` raises) is `false` → classified as a WRITE tool (conservative/safe default).
@@ -65,3 +55,19 @@ Every such boundary LOGS a `Logger.warning` AND surfaces an explicit error (a `%
 - `status/0`'s exact shape is a stable contract consumed by the `:evo_dash` settings UI follow-up — do not change it without updating consumers.
 - `EvoGit.CustomTools.Tool` documents the full user-facing contract the settings UI and docs should surface.
 - Compile-time consumers must go through the facade; the loader is an implementation detail.
+
+<!-- genesis:local -->
+
+### `EvoGit.CustomTools.Loader`
+- `tools_dir/0` → `<config_dir>/tools`.
+- `load/0,1` (dir defaults to `tools_dir/0`) → `%{tool_name => entry}`; missing or empty directory → `%{}` with NO warning.
+- `load_with_errors/1` (dir) → `{entries, errors}`.
+- `errors/0,1` (dir) → `[%{file: String.t(), reason: String.t()}]`.
+- `invalidate/0,1` (dir) → `:ok` — `:persistent_term.erase` of the cache key.
+
+## Caching
+The cache lives in `:persistent_term` keyed `{EvoGit.CustomTools, :cache, dir}` storing `{fingerprint, entries, errors}`.
+`fingerprint` is the sorted list of `{basename, mtime, size}` for every candidate file, recomputed on every `load/1` call (`File.ls` + `File.stat` — cheap).
+The cached entries are reused only when the fingerprint is unchanged; a changed file set/content (including missing↔present directory transitions) triggers a full recompile.
+Loading is LAZY (first `load/0`/`schemas/0`/`execute/3`/`status/0` call) — nothing loads at application boot, so a broken custom tool can never block startup.
+`reload/0` (and `EvoGit.CustomAgents.reload/0`) invalidates the cache; the next call re-reads and recompiles.

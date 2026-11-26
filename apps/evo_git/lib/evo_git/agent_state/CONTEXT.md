@@ -109,19 +109,6 @@ The ONE writer serializes SQLite, so it also owns how much work a queued backlog
 - **Degraded writer** — `repo: nil` drops checkpoints and volatile updates with `:ok` and NO per-checkpoint log (the boot warning already told the operator).
 - Both caps are per-instance start options with the app env as their default, so tests exercise them without mutating a BEAM-global.
 
-## Cost Profile — what one checkpoint costs, and in WHICH process
-
-- The CALLER (the session `gen_statem`, the process an exchange worker awaits) does no encoding: it compares its adopted and new message lists, then `GenServer.cast`s the entry.
-- The cast COPIES the term into the writer's heap — the tail on `:append` (a tool-output turn can carry ~100 KB–1 MB), the WHOLE transcript on `:rewrite`; that copy is the only per-checkpoint cost the turn loop pays.
-- The WRITER (`Server`) runs `Entry.normalize/1` + `:erlang.external_size/1` (the payload cap: an uncompressed traversal) + `Entry.fold/1`, then ONE `Store.checkpoint_batch/4`.
-- `Record.encode_messages/1` is `:erlang.term_to_binary(messages, compressed: 6)` (zlib level 6) of the TAIL on `:append` and of the FULL transcript on `:rewrite`.
-- `Record.encode_fields/1` Jason-encodes every JSON column supplied on EVERY checkpoint — `:redispatch` (which carries the objective text), `:usage`, `:pending_inputs`, `:pending_tool_batch` — not only on the first one.
-- One checkpoint = one `BEGIN IMMEDIATE` transaction: `SELECT message_count, chunk_count`, one chunk INSERT, one UPSERT of every supplied scalar column (the dynamic SQL is rebuilt per write).
-- `update_volatile/4` costs one reused prepared statement and re-encodes no identity/run fact; it is the producer-side scalar-only path (`Session.Persistence.write_volatile_boundary/6` when the transcript did not move and no new `anchor_ref` was written).
-- WAL + `synchronous: normal` does NOT fsync per commit (SQLite syncs the WAL at an auto-checkpoint, ~1000 pages, and the database file after it), so the occasional slow commit is a checkpoint fsync on slow/network storage and it stalls the WRITER only.
-- A small append is single-digit milliseconds; a multi-MB `:rewrite` (post-compression, first snapshot, or a resync) is tens of milliseconds.
-- The writer is SHARED by every agent in the BEAM, so N concurrent agents serialize their commits there — a backlog delays durability, never a turn.
-
 ## Status, Row Lifecycle & Roster Queries
 
 `agent_states.status` is `TEXT NOT NULL DEFAULT 'running'` and has exactly two values, `running` and `done`; it surfaces as `Record.fields[:status]` / `Record.status/1`.
@@ -163,6 +150,46 @@ A repo-less run (no repository) and a `persistent_state: false` task never ancho
 - Coalescing, the backlog cap and the payload cap are documented above ("Writer Coalescing & Bounds") and must stay per-instance options, never app-env-only.
 - The task flag is `:persistent_state` (admitted by `RuntimeOpts.admit_persistent_state/1`, threaded through task opts → `AgentSpec.opts`).
 
+## Notes for Agents
+
+- Never add a second writer: the server's single process is what guarantees strict checkpoint ordering (a later `:append` must see the earlier `message_count`).
+- `checkpoint/4` is asynchronous; a caller or test that reads immediately after it must first call `flush/1` (e.g. `EvoGit.AgentState.flush(store: server)`) — a plain `load/3` does not queue behind the writer by design.
+- `AgentState.prune/1` surfaces a FAILED sweep as `{:error, reason}`; `{:ok, 0}` means there was nothing to prune (an absent/degraded store), never "the sweep failed". Tests that pin the earlier flatten are listed in the test package's own notes.
+- The PAUSE path calls `flush/1` immediately before it delivers a paused outcome: `flush/1` is a synchronous writer round-trip, so an `:ok` reply means the paused run's whole conversation AND its `pause_commit` marker are durable. `EvoGit.Agent.Session.Pause` claims `durable: true` ONLY for that `:ok`; a `{:error, :timeout}` still pauses but reports `durable: false` (and `Pause.info/3`, the belt-and-braces shape that never flushes, always does). Passing an agent id is the shape that path holds (the writer is shared, so it is the same barrier).
+- `repo/1` deliberately uses `:persistent_term` instead of a `GenServer.call` — a call would queue behind pending cast checkpoints and defeat the off-write-path read design. The writer publishes `{EvoGit.AgentState, :repo, server_pid}` at every successful (re)boot and `{EvoGit.AgentState, :server_for, supervisor_pid}` at init, erasing both on terminate; a repo `:EXIT`/`:DOWN` erases the repo entry, logs ONE warning and schedules the backoff reboot (the server survives, never a live server on a dead repo).
+- A binary SQLite parameter is stored as TEXT when its bytes are valid UTF-8 and as BLOB otherwise; both round-trip unchanged, so `term_to_binary` payloads can be bound directly (verified end-to-end).
+- The server is started by `EvoGit.Application` immediately after `{EvoGit.Store, …}` and before `EvoGit.TaskRegistry`.
+- `EvoGit.TaskRegistry` is the production caller of the delete casts: the `delete_task/1` cast and `clear_finished_tasks/0` cascade to them after a successful task-row delete (best-effort, logged at `:warning` on failure; retention pruning is the backstop). `delete_tasks/2` is the ONE-message bulk shape for callers clearing many tasks.
+
+## Naming & Vocabulary
+
+- "checkpoint" names TWO different facts: the conversation checkpoint (`AgentState.checkpoint/4`, `Store.checkpoint/4`, `Entry`) and a GIT worktree checkpoint commit (the sha in `EvoGit.Agent.Session.Pause.info`'s `checkpoint:` key, `WorktreeManager.checkpoint_for_pause/1`).
+- That same pause sha carries THREE names across its flow: `checkpoint` (`Pause.info/3,4`), `pause_commit` (column, `put_pause_commit/3,4`, `pause_commit/2,3`, `spec.opts[:pause_commit]`) and `worktree_resume_from` (`EvoGit.AgentScheduler.ResumePlan.plan/5`).
+- The durability adjective is "durable" everywhere; `:not_persistent_state_disabled` exists for a re-enabled task flag and is emitted by nothing today (`persistent_state: false` is fully inert).
+- `opts[:store]` means the agent-state SERVER (or its supervisor) pid — never `EvoGit.AgentState.Store` and never a table; `EvoGit.TaskRegistry.AgentStateRead.resolve_store/1` re-implements that resolution (`Keyword.fetch/2` where the facade uses `Keyword.get/3`).
+- The single serialized process is module `EvoGit.AgentState.Server` but every doc and log line calls it "the writer" (the task store's analogue is actually named `EvoGit.Store.Writer`).
+- Sync/async is invisible in the names: `checkpoint/4`, `update_volatile/4`, `mark_done/5`, `delete/3`, `delete_task/2`, `delete_tasks/2`, `delete_done_children/4` are casts; `flush/1`, `put_pause_commit/3,4`, `prune/1` and every read are calls.
+- `EvoGit.Agent.State` (in-memory session struct) and `EvoGit.AgentState` (this SQLite subsystem) differ by one dot; `EvoGit.Agent.Session.Persistence` aliases BOTH.
+- `Anchor.ref/2` builds a ref NAME string (`refs/genesis/agent-state/<task>/<agent>`), it is not a BEAM reference; the pause path writes a SECOND durability ref namespace, `refs/genesis/salvage/<branch>`.
+- `max_agent_id/1` is the maximum across ALL tasks of this store (the scheduler counter is node-global), not a per-task maximum.
+- Reads disagree on error signalling: `load/3` returns `{:ok, record} | {:error, reason}`, `prune/1` returns `{:ok, count} | {:error, reason}`, while `roster/2`, `roster_many/2`, `pause_commit/2,3` and `max_agent_id/1` return a bare value (their documented empty shape).
+- "redispatch" (column/module) and "rebuild" (`RosterBatch`, `SubagentRebuild`) name the same purpose: reconstructing an agent from durable facts.
+
+<!-- genesis:local -->
+
+## Cost Profile — what one checkpoint costs, and in WHICH process
+
+- The CALLER (the session `gen_statem`, the process an exchange worker awaits) does no encoding: it compares its adopted and new message lists, then `GenServer.cast`s the entry.
+- The cast COPIES the term into the writer's heap — the tail on `:append` (a tool-output turn can carry ~100 KB–1 MB), the WHOLE transcript on `:rewrite`; that copy is the only per-checkpoint cost the turn loop pays.
+- The WRITER (`Server`) runs `Entry.normalize/1` + `:erlang.external_size/1` (the payload cap: an uncompressed traversal) + `Entry.fold/1`, then ONE `Store.checkpoint_batch/4`.
+- `Record.encode_messages/1` is `:erlang.term_to_binary(messages, compressed: 6)` (zlib level 6) of the TAIL on `:append` and of the FULL transcript on `:rewrite`.
+- `Record.encode_fields/1` Jason-encodes every JSON column supplied on EVERY checkpoint — `:redispatch` (which carries the objective text), `:usage`, `:pending_inputs`, `:pending_tool_batch` — not only on the first one.
+- One checkpoint = one `BEGIN IMMEDIATE` transaction: `SELECT message_count, chunk_count`, one chunk INSERT, one UPSERT of every supplied scalar column (the dynamic SQL is rebuilt per write).
+- `update_volatile/4` costs one reused prepared statement and re-encodes no identity/run fact; it is the producer-side scalar-only path (`Session.Persistence.write_volatile_boundary/6` when the transcript did not move and no new `anchor_ref` was written).
+- WAL + `synchronous: normal` does NOT fsync per commit (SQLite syncs the WAL at an auto-checkpoint, ~1000 pages, and the database file after it), so the occasional slow commit is a checkpoint fsync on slow/network storage and it stalls the WRITER only.
+- A small append is single-digit milliseconds; a multi-MB `:rewrite` (post-compression, first snapshot, or a resync) is tens of milliseconds.
+- The writer is SHARED by every agent in the BEAM, so N concurrent agents serialize their commits there — a backlog delays durability, never a turn.
+
 ## Known Issues — Global Serialization
 - The server runs EVERY write INLINE in its own process (`Store.checkpoint_batch` → `EvoGit.Repo.transaction`), the exact pattern `EvoGit.Store.Writer` was introduced to remove for the task store, so one slow or lock-blocked write blocks the mailbox for every agent (a queued backlog for one run is at least folded into ONE transaction, not one per checkpoint).
 - All runs share that ONE writer. Checkpoints and the `mark_done`/`delete`/`delete_task`/`delete_tasks`/`delete_done_children`/`update_volatile` bookkeeping are CASTS (never a synchronous barrier for the caller), but `put_pause_commit/3,4`, `prune/1` and `flush/1` remain calls by design.
@@ -174,17 +201,6 @@ A repo-less run (no repository) and a `persistent_state: false` task never ancho
 - Per-turn writes are ALREADY the volatile projection (`agent/session/persistence.ex`: `write_checkpoint`/`write_volatile_boundary` send `Map.merge(volatile_fields(state), anchor)`), so `redispatch`/`objective` are Jason-encoded only by `initial_snapshot/1` (row creation) and `resync/1`, never each turn.
 - Each turn boundary still re-encodes `:usage`/`:pending_inputs`/`:pending_tool_batch` JSON and rewrites all nine volatile columns together, because the volatile projection is supplied whole (REPLACE semantics require it).
 - `agent_states_status_completed_at_index` is indexed on a column no query filters, yet every `mark_done` maintains it (migration `000001_create_agent_state.exs`).
-
-## Notes for Agents
-
-- Never add a second writer: the server's single process is what guarantees strict checkpoint ordering (a later `:append` must see the earlier `message_count`).
-- `checkpoint/4` is asynchronous; a caller or test that reads immediately after it must first call `flush/1` (e.g. `EvoGit.AgentState.flush(store: server)`) — a plain `load/3` does not queue behind the writer by design.
-- `AgentState.prune/1` surfaces a FAILED sweep as `{:error, reason}`; `{:ok, 0}` means there was nothing to prune (an absent/degraded store), never "the sweep failed". Tests that pin the earlier flatten are listed in the test package's own notes.
-- The PAUSE path calls `flush/1` immediately before it delivers a paused outcome: `flush/1` is a synchronous writer round-trip, so an `:ok` reply means the paused run's whole conversation AND its `pause_commit` marker are durable. `EvoGit.Agent.Session.Pause` claims `durable: true` ONLY for that `:ok`; a `{:error, :timeout}` still pauses but reports `durable: false` (and `Pause.info/3`, the belt-and-braces shape that never flushes, always does). Passing an agent id is the shape that path holds (the writer is shared, so it is the same barrier).
-- `repo/1` deliberately uses `:persistent_term` instead of a `GenServer.call` — a call would queue behind pending cast checkpoints and defeat the off-write-path read design. The writer publishes `{EvoGit.AgentState, :repo, server_pid}` at every successful (re)boot and `{EvoGit.AgentState, :server_for, supervisor_pid}` at init, erasing both on terminate; a repo `:EXIT`/`:DOWN` erases the repo entry, logs ONE warning and schedules the backoff reboot (the server survives, never a live server on a dead repo).
-- A binary SQLite parameter is stored as TEXT when its bytes are valid UTF-8 and as BLOB otherwise; both round-trip unchanged, so `term_to_binary` payloads can be bound directly (verified end-to-end).
-- The server is started by `EvoGit.Application` immediately after `{EvoGit.Store, …}` and before `EvoGit.TaskRegistry`.
-- `EvoGit.TaskRegistry` is the production caller of the delete casts: the `delete_task/1` cast and `clear_finished_tasks/0` cascade to them after a successful task-row delete (best-effort, logged at `:warning` on failure; retention pruning is the backstop). `delete_tasks/2` is the ONE-message bulk shape for callers clearing many tasks.
 
 ## Test Strategy
 
@@ -213,20 +229,6 @@ Every module is `async: true` (isolation is the per-test supervisor + `store:` p
 19. Run-facts migration (`test/evo_git/agent_state/agent_state_run_facts_migration_test.exs`): a database stamped at version 3 and carrying a legacy `status = 'completed'` row is migrated to version 4 in place — the seven run-fact columns appear nullable/non-key with the pre-existing data intact, the legacy status normalizes to `'done'`, the new `(task_id, parent_id)` index exists beside the two untouched retention indexes, and a re-run of `up/0`/`down/0` is idempotent in both directions.
 20. Anchoring (`test/evo_git/agent_state/anchor_test.exs`, real git on a `:tmp_dir` repo): `ref/2` names `refs/genesis/agent-state/<task_id>/<agent_id>` and is total for any identifier; `anchor/4` creates the ref for a real commit (fire-and-forget, observable through `Git.rev_parse` once the supervised task lands), dedupes a repeated sha from the same caller, writes no ref for a blank/non-binary repo path or sha, and survives a branch delete/worktree reclaim because the ref lives outside `refs/heads`.
 21. Re-dispatch blob (`test/evo_git/agent_state/redispatch_test.exs`, pure): `build/2` emits EXACTLY the documented key list, carries no pid/fun/credential/request option, and round-trips meaning-preserving through `Jason.encode!/1` + `Jason.decode/1`; `to_spec_opts/1` reconstructs the option list (foreign repos as `%ForeignRepo{}`, role atoms back to atoms, `false` preserved, `nil`s dropped) and is total for a non-map.
-
-## Naming & Vocabulary
-
-- "checkpoint" names TWO different facts: the conversation checkpoint (`AgentState.checkpoint/4`, `Store.checkpoint/4`, `Entry`) and a GIT worktree checkpoint commit (the sha in `EvoGit.Agent.Session.Pause.info`'s `checkpoint:` key, `WorktreeManager.checkpoint_for_pause/1`).
-- That same pause sha carries THREE names across its flow: `checkpoint` (`Pause.info/3,4`), `pause_commit` (column, `put_pause_commit/3,4`, `pause_commit/2,3`, `spec.opts[:pause_commit]`) and `worktree_resume_from` (`EvoGit.AgentScheduler.ResumePlan.plan/5`).
-- The durability adjective is "durable" everywhere; `:not_persistent_state_disabled` exists for a re-enabled task flag and is emitted by nothing today (`persistent_state: false` is fully inert).
-- `opts[:store]` means the agent-state SERVER (or its supervisor) pid — never `EvoGit.AgentState.Store` and never a table; `EvoGit.TaskRegistry.AgentStateRead.resolve_store/1` re-implements that resolution (`Keyword.fetch/2` where the facade uses `Keyword.get/3`).
-- The single serialized process is module `EvoGit.AgentState.Server` but every doc and log line calls it "the writer" (the task store's analogue is actually named `EvoGit.Store.Writer`).
-- Sync/async is invisible in the names: `checkpoint/4`, `update_volatile/4`, `mark_done/5`, `delete/3`, `delete_task/2`, `delete_tasks/2`, `delete_done_children/4` are casts; `flush/1`, `put_pause_commit/3,4`, `prune/1` and every read are calls.
-- `EvoGit.Agent.State` (in-memory session struct) and `EvoGit.AgentState` (this SQLite subsystem) differ by one dot; `EvoGit.Agent.Session.Persistence` aliases BOTH.
-- `Anchor.ref/2` builds a ref NAME string (`refs/genesis/agent-state/<task>/<agent>`), it is not a BEAM reference; the pause path writes a SECOND durability ref namespace, `refs/genesis/salvage/<branch>`.
-- `max_agent_id/1` is the maximum across ALL tasks of this store (the scheduler counter is node-global), not a per-task maximum.
-- Reads disagree on error signalling: `load/3` returns `{:ok, record} | {:error, reason}`, `prune/1` returns `{:ok, count} | {:error, reason}`, while `roster/2`, `roster_many/2`, `pause_commit/2,3` and `max_agent_id/1` return a bare value (their documented empty shape).
-- "redispatch" (column/module) and "rebuild" (`RosterBatch`, `SubagentRebuild`) name the same purpose: reconstructing an agent from durable facts.
 
 ## Known Issues — Contracts & Duplication
 
