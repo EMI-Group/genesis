@@ -1079,7 +1079,10 @@ defmodule EvoDashWeb.NodeAwareTest do
   # could only fail with an empty mailbox instead of the real diagnosis.
   defp assert_remote_context_loaded do
     await_sidebar_result()
-    assert_receive {:node_aware_remote_context, 1, _node_id, _node, result}, @sidebar_await_budget_ms
+
+    assert_receive {:node_aware_remote_context, 1, _node_id, _node, result},
+                   @sidebar_await_budget_ms
+
     result
   end
 
