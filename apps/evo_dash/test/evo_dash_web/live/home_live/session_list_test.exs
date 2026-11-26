@@ -3,17 +3,16 @@ defmodule EvoDashWeb.HomeLive.SessionListTest do
   Pure unit tests for `EvoDashWeb.HomeLive.SessionList` — the conversation-list
   SECTION BODY rendered inside the shared app-layout sidebar.
 
-  Three surfaces are covered without mounting a page and without mutating
-  global state:
+  These surfaces are covered without mounting a page:
 
     * `build_rows/3` / `row_title/2` — the PURE, TOTAL row builder (ordering,
       live-over-cached precedence, titles, defensive degradation);
     * `load/1` — the `SessionActions.list/1` boundary, including its
       `{:error, reason}` and non-pair answers (the list runner is a CALL-TIME
       app-env seam, injected and restored in `on_exit`);
-    * `session_list/1` HEEx + the `spawn_load/2` / `applied/4` async contract —
-      rendered in isolation with `render_component/2` and driven on a
-      hand-built `%Phoenix.LiveView.Socket{}`.
+    * `session_list/1` HEEx and async scope/load handling — rendered in isolation
+      with `render_component/2` and driven on hand-built LiveView sockets,
+      including same-transport sidebar cache reuse.
   """
 
   use ExUnit.Case, async: true
@@ -406,6 +405,56 @@ defmodule EvoDashWeb.HomeLive.SessionListTest do
   end
 
   describe "async load contract" do
+    test "a fresh socket reuses cached conversations only on the same transport and verified scope" do
+      # Valid destinations still refresh, but an undistributed VM cannot connect
+      # to these fake remote nodes. No global runner override is needed.
+      refute Node.alive?()
+      beam = :conversations_cache@host
+      other_beam = :other_conversations_cache@host
+      transport = self()
+      other_transport = start_supervised!({Agent, fn -> nil end})
+      rows = [%{id: unique_id(), title: "Warm conversation", marker: :running}]
+
+      scope = %{
+        current_node_id: "cache-target",
+        current_node: beam,
+        remote_status: %{phase: :connected, node: Atom.to_string(beam)}
+      }
+
+      source = %{socket(scope) | transport_pid: transport}
+      assert SessionList.applied(source, 0, beam, {:ok, {:ok, rows}}).assigns.session_list == rows
+
+      for {label, transport_pid, overrides, expected_rows, loading?} <- [
+            {"exact scope", transport, %{}, rows, true},
+            {"different target", transport, %{current_node_id: "other-target"}, [], true},
+            {"different BEAM", transport,
+             %{
+               current_node: other_beam,
+               remote_status: %{scope.remote_status | node: Atom.to_string(other_beam)}
+             }, [], true},
+            {"advertised mismatch", transport,
+             %{remote_status: %{scope.remote_status | node: Atom.to_string(other_beam)}}, [],
+             false},
+            {"pending connection", transport, %{remote_status: %{phase: :connecting, node: nil}},
+             [], false},
+            {"different transport", other_transport, %{}, [], true}
+          ] do
+        destination = %{socket(Map.merge(scope, overrides)) | transport_pid: transport_pid}
+        assigns = SessionList.sync_context(destination).assigns
+
+        assert assigns.session_list == expected_rows, label
+        assert assigns.session_list_loading == loading?, label
+
+        if loading? do
+          %{current_node: target, session_list_seq: seq} = assigns
+
+          assert_receive {{:session_list_loaded, ^seq, ^target},
+                          {:ok, {:error, {:error, {:erpc, :noconnection}}}}},
+                         @assert_timeout
+        end
+      end
+    end
+
     test "spawn_load/2 increments the seq, sets loading and sends the NESTED tag" do
       target = :list_target@host
       id = unique_id()
