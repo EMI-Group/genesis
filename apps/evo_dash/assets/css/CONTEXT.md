@@ -156,7 +156,7 @@ The markup renders `div.task-card[data-variant="flat"|"raised"][data-selected]`,
 `.task-card` is `position: relative` with a `1px solid var(--border-hairline)` border and a `.75rem` radius.
 `[data-variant="flat"]` — the default list row — is `var(--surface-canvas)`, `box-shadow: none`, small radius, accent bar `display: none`, no tint.
 `[data-variant="raised"]` is `var(--surface-raised)` + `var(--elev-1)` with the accent bar visible.
-`.task-card-panel` is RECESSED: `var(--surface-shell)`, hairline border, `.5rem` radius, no shadow.
+`.task-card-panel` is RECESSED with `var(--surface-rail)` in both themes (the shell tone lifts in dark, the rail never does), hairline border, `.5rem` radius, no shadow.
 `.task-card-status` is a compact pill (`border-radius: 9999px`, inline padding only) and declares no size, because `surfaces.css` stays size-free — a size belongs to the markup ladder.
 HOVER / SELECTED / FOCUS are three visibly different treatments, and the accent marks ONLY the current object: hover = `var(--surface-hover)` + `var(--border-strong)`; selected (`[data-selected="true"]`, also honouring `[aria-current]`) = `var(--surface-selected)` + an accent hairline border + a 2px accent `::before` inline-start bar (never a full accent flood); `:focus-visible` = a 2px `--color-primary-standalone` outline with offset and no fill change.
 
