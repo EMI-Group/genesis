@@ -7,7 +7,7 @@ It records ONE `Execution` per tool call (builtin or OS-backed) and per detached
 It records and observes; starting processes stays with `EvoGit.BackgroundJobs`, `EvoGit.Sandbox.*` and the tool-dispatch layer, which register into it.
 The public facade (`EvoGit.ProcessManager`) is a FROZEN contract consumed by `EvoGit.BackgroundJobs`, `EvoGit.Sandbox.*`, `EvoGit.ToolRuntime` and the dashboard.
 The registry is completely NODE-LOCAL and in-memory: records are never written to the task store, never archived with a task and never aggregated across nodes, and a remote caller reaches them only by RPC to the node that owns them.
-Retention makes the roster a recent-actions list, not a full history: terminal records age out and are capped, live ones are never pruned, and a LIVE owner's terminal `:background_job` records are bounded per owner instead of by age (see Retention).
+Retention makes the roster a recent-actions list, not a full history: terminal records age out and are capped, live ones are never pruned, and a LIVE owner's terminal `:background_job` records are bounded per owner instead of by age (see this file's Local section, §Retention).
 
 ## Origin vs Backend (`Execution`)
 
