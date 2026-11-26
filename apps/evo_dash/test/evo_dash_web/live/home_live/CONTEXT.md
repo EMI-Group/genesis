@@ -7,6 +7,10 @@ All suites use `async: true` and avoid mounting HomeLive; the approval runner su
 ModelSelect config-loading tests use the existing per-process ConfigDir seam and unique files, never process-global environment changes.
 Fixtures resolve the concrete paths through `EvoGit.Config.config_dir/0` and `config_path/0`, because the isolation helper returns the override root rather than the final application directory.
 
+## Routing Table
+
+This node has no child directories.
+
 ## API Surface
 
 `assistant_message_test.exs` renders `AssistantMessage.assistant_message/1` and tests `AgentStream.extract_failed_message/1` directly.
@@ -26,6 +30,8 @@ The raw toggle binds `toggle_assistant_raw` and the correct entry id, with mode-
 Action buttons retain touch-sized mobile targets, smaller desktop targets, button semantics and visible keyboard-focus styling.
 These component tests pin rendered bindings and classes, not browser clipboard execution or LiveView event-handler behavior, which belong outside this node.
 No production files or translation catalogs are maintained here.
+
+<!-- genesis:local -->
 
 ## Provider-Profile Selection Coverage
 
@@ -67,9 +73,6 @@ All waits are bounded mailbox handshakes with no sleeps, and blocked runners are
 The sibling `home_live_test.exs` responder writer is synchronous and runs only after this async cohort; any future async seam writer must coordinate ownership rather than assume per-socket isolation.
 Approval recovery counters, pending cards, response tokens and errors are runtime-only, and the suite asserts they remain absent from `ChatState.build/1` output.
 
-## Routing Table
-
-This node has no child directories.
 ## Mounted Page Suite (owned by `../home_live_test.exs`)
 The mounted `/assistant` suite is `async: false` and owns the process-global `EvoDash.ChatHistory`, `EvoDash.ActiveTasks`, the isolated `EvoGit.Store`/`TaskRegistry` pair and the per-test `:home_session_*` / `:approval_responder` / `:approval_pending_runner` / `:source_*` app-env seams, plus the mounted approval strip + modal-dialog flow; a new mounted `/assistant` test belongs there, never in an async module.
 Page-alive/name assertions use `page_heading/1` to pin the `h1` to "Genesis Assistant", not a loose name match that an assistant entry or composer label could satisfy.

@@ -23,6 +23,30 @@ Counts below are statically declared `test` blocks.
 | `settings_utils_test.exs` | `EvoDash.SettingsUtilsTest` | 8 | true |
 | `update_status_test.exs` | `EvoDash.UpdateStatusTest` | 19 | true |
 
+Per-suite assertion inventories and the per-file sync inventory live in this file's Local scope.
+
+## Notes for Agents — console-noise capture
+
+ExUnit's suite-wide `capture_log: true` is WINDOW-based, so a line emitted by a process at the test boundary prints; two suites here capture explicitly (never by raising the global Logger level).
+`desktop_lifetime_test.exs`: the watcher logs `[desktop] …` warnings from its own process, so each stop-driving action is wrapped in `ExUnit.CaptureLog` (`capture_log/1`, or `with_log/2` when the return value is also needed) AND the expected line is asserted as a log contract ("lifetime connection closed", "lifetime connection could not be established", "lifetime recv kept failing").
+`node_context_test.exs`: the real remote-node RPC calls reach real distribution/net-kernel code that can log from global processes at the boundary, so they are wrapped in `with_log/2` — not `capture_log/2`, because the assertions are on the wrapped call's return value.
+
+## Notes for Agents — deterministic waits
+
+Negative assertions are zero-window mailbox scans (`refute_receive …, 0`) backed by a fence proving the unwanted message cannot exist or is already in the mailbox; never (re)introduce a tight numeric window.
+`desktop_lifetime_test.exs` fences: the blocking-handshake `:recv_fun` seam (a preceding `assert_receive :recv_called`), `assert_disabled/1`, `assert_no_further_stop/1`, `await_recv_blocked/1`.
+`directory_picker_test.exs` fences: `await_pick_idle/1` after an accepted pick, and the synchronous `{:error, :unavailable}` reply itself.
+Preference order: drive the collaborator through its seams with a blocking handshake, then observe a real condition (process state, `Process.info/2`) with a bounded 1–2 ms poll; race a sleep-driven timer only when no condition is observable.
+Positive assertions stay generous (`:gen_tcp.accept(…, 5000)`, `assert_receive …, 2000`) so real breakage fails loudly.
+
+## Constraints
+
+Mirror `lib/evo_dash/` under `test/evo_dash/`, one `*_test.exs` per module.
+Snapshots/restores every app-env seam and env var the suite touches (`on_exit`), and restore rather than delete so a boot-seeded value survives.
+A suite that needs the real store pair uses `EvoDash.Test.IsolatedTaskStore.isolate!/1` (or `assert_production!/0` when it deliberately runs production) — never a private ad-hoc store.
+
+<!-- genesis:local -->
+
 ## API Surface
 
 `active_tasks_test.exs` — the ETS-backed `EvoDash.ActiveTasks` pure-module API (named public table `:evo_dash_active_tasks`, created idempotently in `EvoDash.Application.start/2` and owned by the long-lived application process, so there is NO process to start): `get/2`+`put/4` round-trip and same-context overwrite, per-context isolation (`{nil, node()}` vs `{node_id, remote_node}`), `{[], []}` snapshot semantics (`{:ok, {[], []}}` ≠ `:empty`), `invalidate/2` per-context delete, `reset/0` (idempotent, clears every context).
@@ -60,20 +84,6 @@ An unknown/dead supervisor EXITS via `Task.Supervisor.start_child/2` rather than
 It is `async: true` because no other async module WRITES the hub or the seams it mutates; the sync `live_hooks/update_status_test` owns `:update_notify_only_override` and `:desktop_quit_stop_fun` for the same reason (both keys have an async writer).
 Setup pins `:update_notify_only_override` to `false` (so the download flow is testable on any host) and `reset/0`s the shared hub, snapshot-restoring every seam in `on_exit`.
 
-## Notes for Agents — console-noise capture
-
-ExUnit's suite-wide `capture_log: true` is WINDOW-based, so a line emitted by a process at the test boundary prints; two suites here capture explicitly (never by raising the global Logger level).
-`desktop_lifetime_test.exs`: the watcher logs `[desktop] …` warnings from its own process, so each stop-driving action is wrapped in `ExUnit.CaptureLog` (`capture_log/1`, or `with_log/2` when the return value is also needed) AND the expected line is asserted as a log contract ("lifetime connection closed", "lifetime connection could not be established", "lifetime recv kept failing").
-`node_context_test.exs`: the real remote-node RPC calls reach real distribution/net-kernel code that can log from global processes at the boundary, so they are wrapped in `with_log/2` — not `capture_log/2`, because the assertions are on the wrapped call's return value.
-
-## Notes for Agents — deterministic waits
-
-Negative assertions are zero-window mailbox scans (`refute_receive …, 0`) backed by a fence proving the unwanted message cannot exist or is already in the mailbox; never (re)introduce a tight numeric window.
-`desktop_lifetime_test.exs` fences: the blocking-handshake `:recv_fun` seam (a preceding `assert_receive :recv_called`), `assert_disabled/1`, `assert_no_further_stop/1`, `await_recv_blocked/1`.
-`directory_picker_test.exs` fences: `await_pick_idle/1` after an accepted pick, and the synchronous `{:error, :unavailable}` reply itself.
-Preference order: drive the collaborator through its seams with a blocking handshake, then observe a real condition (process state, `Process.info/2`) with a bounded 1–2 ms poll; race a sleep-driven timer only when no condition is observable.
-Positive assertions stay generous (`:gen_tcp.accept(…, 5000)`, `assert_receive …, 2000`) so real breakage fails loudly.
-
 ## Known Issues / Test Gaps
 
 No `NodeContext.start_task/3` test exists here; `:path`, `:foreign_repos`, `:mode`, `:agent` and `:model_id` threading has only LiveView-level coverage (`projects_live_test`, `home_live_test`).
@@ -100,9 +110,3 @@ Async-safety facts for the async suites:
 `desktop_lifetime_test.exs` — snapshots/restores `EVOGIT_LIFETIME_PORT` and `:parent_stop_fun`; no other async module reads them.
 `directory_picker_test.exs` — overrides `:directory_picker` + `:directory_picker_wx` and uses the app-started picker's global busy flag; the only other suite that touches the REAL picker GenServer is `projects_live_test.exs`'s sync `ProjectsLiveSyncTest` module (its `:directory_picker` disabled-path test), while the async page module routes every pick through `:directory_picker_module` → `EvoDash.DirectoryPicker.Fake`.
 `attached_file_test.exs`, `markdown_render_test.exs`, `settings_utils_test.exs`, `connection_diagnostics_test.exs` — pure functions plus, for the last one, an idempotent telemetry handler attach.
-
-## Constraints
-
-Mirror `lib/evo_dash/` under `test/evo_dash/`, one `*_test.exs` per module.
-Snapshots/restores every app-env seam and env var the suite touches (`on_exit`), and restore rather than delete so a boot-seeded value survives.
-A suite that needs the real store pair uses `EvoDash.Test.IsolatedTaskStore.isolate!/1` (or `assert_production!/0` when it deliberately runs production) — never a private ad-hoc store.
