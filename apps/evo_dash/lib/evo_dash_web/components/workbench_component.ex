@@ -53,6 +53,7 @@ defmodule EvoDashWeb.WorkbenchComponent do
        error: false,
        older_rows: [],
        history_scope: nil,
+       scope_pending?: false,
        history_kind: "task",
        history_query: "",
        history_status: "",
@@ -70,7 +71,7 @@ defmodule EvoDashWeb.WorkbenchComponent do
     refresh_assigns =
       case socket.assigns.mode do
         :history ->
-          Map.take(socket.assigns, [:mode, :node_id, :target, :project])
+          Map.take(socket.assigns, [:mode, :node_id, :target, :project, :scope_pending?])
 
         _projects ->
           Map.take(socket.assigns, [:mode, :targets, :statuses, :patch_links, :project, :node_id])
@@ -95,9 +96,13 @@ defmodule EvoDashWeb.WorkbenchComponent do
     node_id = Map.get(assigns, :node_id)
     target = Map.get(assigns, :target)
     project = Map.get(assigns, :project)
-    scope = {node_id, target, project}
+    pending? = Map.get(assigns, :scope_pending?, false)
+    scope = {node_id, target, project, pending?}
 
-    socket = assign(socket, Map.take(assigns, [:id, :mode, :node_id, :target, :project]))
+    socket =
+      socket
+      |> assign(Map.take(assigns, [:id, :mode, :node_id, :target, :project]))
+      |> assign(:scope_pending?, pending?)
 
     socket =
       if scope != socket.assigns.history_scope do
@@ -125,7 +130,7 @@ defmodule EvoDashWeb.WorkbenchComponent do
       end
 
     socket =
-      if is_binary(project) and not is_nil(target) do
+      if history_ready?(socket.assigns) do
         socket
         |> load_project_options({node_id, target})
         |> ensure_history_read()
@@ -193,6 +198,11 @@ defmodule EvoDashWeb.WorkbenchComponent do
     {:noreply, socket}
   end
 
+  def handle_event(event, _params, %{assigns: %{mode: :history, scope_pending?: true}} = socket)
+      when event in ["history_filters", "history_kind", "more_history"] do
+    {:noreply, socket}
+  end
+
   # The search box and both selects live in ONE form, so a change (or an Enter
   # submit in the search box) answers with a partial param map — a missing key
   # keeps the assign it already had, and an unchanged filter state is a no-op
@@ -239,6 +249,11 @@ defmodule EvoDashWeb.WorkbenchComponent do
   end
 
   @impl true
+  def handle_async(key, _result, %{assigns: %{mode: :history, scope_pending?: true}} = socket)
+      when key in [:history_projects, :history_load] do
+    {:noreply, socket}
+  end
+
   def handle_async(:history_projects, {:ok, {scope, options}}, socket) do
     if socket.assigns.project_options_scope == scope do
       {:noreply, assign(socket, :project_options, options)}
@@ -389,15 +404,16 @@ defmodule EvoDashWeb.WorkbenchComponent do
   def render(%{mode: :history} = assigns) do
     rows = Enum.uniq_by((assigns.result || []) ++ assigns.older_rows, &{&1.kind, &1.id})
     options = effective_project_options(assigns.project_options, assigns.project)
+    ready? = history_ready?(assigns)
 
     assigns =
       assign(assigns,
         rows: rows,
         filter_options: options,
         status_options: @history_statuses,
-        empty?: assigns.result != nil and rows == [] and !assigns.error,
-        first_load?:
-          assigns.project && assigns.target && is_nil(assigns.result) && assigns.loading
+        ready?: ready?,
+        empty?: ready? and assigns.result != nil and rows == [] and !assigns.error,
+        first_load?: ready? and is_nil(assigns.result) and assigns.loading
       )
 
     ~H"""
@@ -408,14 +424,17 @@ defmodule EvoDashWeb.WorkbenchComponent do
       aria-label={gettext("Project history")}
       data-workbench-history-empty={if @empty?, do: "true"}
     >
-      <p :if={@project && !@target} class="workbench-hint">
+      <p :if={@scope_pending?} class="workbench-hint" role="status">
+        {gettext("Resolving project…")}
+      </p>
+      <p :if={!@scope_pending? && @project && !@target} class="workbench-hint">
         {gettext("Connect to see this project's history.")}
       </p>
       <%!-- The three filters are ONE request: the form serializes
       `query`/`project`/`status` on both change and submit, so the search
       input never performs a native form submit on Enter. --%>
       <form
-        :if={@project && @target}
+        :if={@ready?}
         id="workbench-history-filters"
         class="workbench-history-controls"
         phx-change="history_filters"
@@ -504,17 +523,17 @@ defmodule EvoDashWeb.WorkbenchComponent do
         </div>
       </form>
       <p :if={@first_load?} class="workbench-hint" role="status">{gettext("Loading…")}</p>
-      <p :if={@project && @target && @error} class="workbench-hint">
+      <p :if={@ready? && @error} class="workbench-hint">
         {gettext("Could not load history")}
       </p>
       <p
-        :if={@project && @target && @history_kind == "chat" && @empty? && !@loading}
+        :if={@ready? && @history_kind == "chat" && @empty? && !@loading}
         class="workbench-hint"
       >
         {gettext("No conversations found.")}
       </p>
       <div
-        :if={@project && @target}
+        :if={@ready?}
         id="workbench-history-rows"
         data-loading={to_string(!!@first_load?)}
       >
@@ -566,6 +585,10 @@ defmodule EvoDashWeb.WorkbenchComponent do
 
   # -- history requests -----------------------------------------------------
 
+  defp history_ready?(%{scope_pending?: pending?, project: project, target: target}) do
+    not pending? and is_binary(project) and not is_nil(target)
+  end
+
   # A filter change (or a kind switch) is a NEW request, so the paging window
   # and every accumulated page are dropped before the read is re-issued.
   defp reload_history(socket) do
@@ -590,15 +613,15 @@ defmodule EvoDashWeb.WorkbenchComponent do
   # parent re-render (every broadcast calls `update/2`) from re-issuing the
   # same read; a load-more stores the signature of its OWN offset.
   defp ensure_history_read(socket) do
-    %{project: project, target: target, loading_more: loading_more?} = socket.assigns
+    %{loading_more: loading_more?} = socket.assigns
 
-    if connected?(socket) and is_binary(project) and not is_nil(target) do
+    if connected?(socket) and history_ready?(socket.assigns) do
       request = history_signature(socket.assigns)
 
       if socket.assigns.request == request do
         socket
       else
-        %{node_id: node_id, history_offset: offset} = socket.assigns
+        %{node_id: node_id, target: target, history_offset: offset} = socket.assigns
         sig = (socket.assigns.history_sig || 0) + 1
         read_offset = if loading_more?, do: offset, else: 0
 

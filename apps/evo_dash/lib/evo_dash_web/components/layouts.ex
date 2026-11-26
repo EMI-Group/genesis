@@ -41,6 +41,7 @@ defmodule EvoDashWeb.Layouts do
 
   attr(:workbench_window, :boolean, default: false)
   attr(:workbench_project, :string, default: nil)
+  attr(:workbench_history_scope_pending?, :boolean, default: false)
 
   attr(:workbench_context_name, :string,
     default: nil,
@@ -162,6 +163,7 @@ defmodule EvoDashWeb.Layouts do
       data-workbench-node={@current_node_id || ""}
       data-workbench-node-name={if @current_node_id, do: @current_node_name, else: gettext("Local")}
       data-workbench-project={@workbench_project || ""}
+      data-workbench-history-scope-pending={if @workbench_history_scope_pending?, do: "true"}
       data-workbench-title={@workbench_title}
       data-workbench-page={@current_page}
       data-workbench-task={@workbench_task}
@@ -475,7 +477,7 @@ defmodule EvoDashWeb.Layouts do
               <.icon name="hero-chevron-down" class="size-3 shrink-0" />
             </button>
             <button
-              :if={@workbench_project}
+              :if={@workbench_project || @workbench_history_scope_pending?}
               id="workbench-history-toggle"
               type="button"
               class="workbench-icon-button"
@@ -573,6 +575,7 @@ defmodule EvoDashWeb.Layouts do
             node_id={@current_node_id}
             target={@workbench_target}
             project={@workbench_project}
+            scope_pending?={@workbench_history_scope_pending?}
           />
         </aside>
         <aside
