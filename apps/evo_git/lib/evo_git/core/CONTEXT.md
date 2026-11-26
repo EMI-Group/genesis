@@ -66,6 +66,23 @@ Task admission of a ROOT node path is stricter than `load/2,3`: `EvoGit.Runtime.
 No virtual/synthetic/file/skill node types exist: skills are per-DIRECTORY frontmatter on the same directory nodes (`EvoGit.Skills.ContextIntegration.hierarchical_skill_names/2` walks the same hierarchy and keeps existing dirs only; `find_skill_node/3` returns a plain relative node path).
 `is_ignored?/1` returns `true` when the path or ANY parent is gitignored, and `false` (not an error) when `git check-ignore` fails.
 
+### `EvoGit.Core.ContextScope` (`context_scope.ex`)
+
+The ONE source of truth for the two-scope divider: PURE (no file/system I/O, no config reads), so it is safe anywhere and cheap to test.
+It operates on RAW content — callers apply scope selection BEFORE front-matter stripping and truncation — and slicing is exact byte work (`Regex.run/@divider … return: :index` + `binary_part/3`), never a `split("\n")`/re-join, so CRLF files round-trip.
+
+| Function | Description |
+|---|---|
+| `marker/0` | The divider literal `"<!-- genesis:local -->"` |
+| `split/1` | `%{shared: String.t(), local: String.t()}` — text before/after the divider LINE, the line excluded from both; no divider → `%{shared: content, local: ""}` |
+| `scope_content/2` | Selected text for `:shared \| :local \| :all` (divider excluded; `:all` = `shared <> local`, byte-identical to the input when divider-less; `:local` is `""` there) |
+| `splice/3` | FULL content with the selected region replaced by `new_region`, the divider line (with its exact ending) and the OTHER region preserved byte-for-byte; no divider → `:all`/`:shared` yield `new_region`, `:local` returns the content unchanged (guard with `has_local?/1`) |
+| `has_local?/1` | `true` iff a divider line is present |
+| `parse_scope/1` | `{:ok, :shared \| :local \| :all} \| {:error, message}` for untrusted tool args (`"shared"/"local"/"all"` or the atoms); total, NEVER raises, the message names all three values |
+
+Matching rules: ONE line-anchored pattern `~r/^[ \t]*<!-- genesis:local -->[ \t]*\r?\n?/m`, leading/trailing whitespace on that line tolerated, the FIRST occurrence wins (a later one is ordinary Local text), and there is NO Markdown fence awareness — a divider line inside a ``` block still splits.
+Headings stay free-form: the divider is the only structural requirement.
+
 ### `EvoGit.Core.PhyloGraphNode` (`phylo_graph_node.ex`)
 
 Struct: `repo`, `base_commit`, `current_commit`.
