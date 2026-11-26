@@ -251,6 +251,8 @@ Draft and conversation scope identity is the VCT token (`DraftScope.project/1`-o
 The connected page resolves the URL's project off-process against the selected node's current mounts rather than trusting the draft's cached workspace, and never resolves a pending remote target on the local node.
 A raw project path keeps its spelling and can adopt the resolved project's point-keyed draft after a successful load; a workspace point never aliases its first member's path.
 `draft_project/1` reports the execution path (what workbench.js compares with the active project), and `draft_scope/1` reports the storage token.
+`Workspace.context_name/1` is a display-only projection of a settled selection's name, scoped by both target id and BEAM node and, for an open draft, by its path/point identity.
+A loading, pending or unscoped selection supplies no name override, so the shell owns the existing raw-path and route fallbacks; scoped cached or attached selections need no additional lookup.
 `TaskTracking` owns followed task links and action reconciliation, `TaskCard.card/1` renders them, and `TaskPicker` loads searchable paginated summaries on menu open with manual ID entry secondary; node/conversation/sequence guards reject stale responses, pending remote targets never use local data, and linked active/pausing summaries refresh every 3 s and stop at resting/terminal states.
 The shared task catalog is `EvoGit.TaskControl.Tools`; Assistant actions use real structured approvals while MCP keeps its own transport authorization.
 A failed model snapshot stays an error, never a silent Auto; pending remote targets never load local models or launch locally.

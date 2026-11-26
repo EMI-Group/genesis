@@ -47,6 +47,7 @@ Assistant uses `ComposerComponents.composer/1` with `kind="assistant"` around a 
 The toolbar Send submits `#chat-form` via `form="chat-form"`; attachment and workspace controls keep their own forms and hook ids.
 `wb_project` plus `wb_draft` restore/select a draft on the viewed node and do not start a session until send.
 Assistant passes the draft id and its raw execution path to `Layouts.app/1`; the VCT token remains a draft-storage identity and never substitutes for an execution path.
+Projects and Assistant pass a display-only `workbench_context_name` to the shell for a settled, matching selection, using the workspace point rather than its member path to identify a workspace and leaving the shell fallback intact otherwise.
 Review passes the route's task id and the currently loaded task's objective and raw primary repo path to `Layouts.app/1` independently of the selected diff repo; unresolved remote targets cannot load or advertise local review data.
 Review node changes and reconnects retain the current route (including commit SHA) and `tab`/`repo` query state; review-load results are scoped by the target id as well as the serving BEAM node.
 ### Workbench navigation and History continuity
