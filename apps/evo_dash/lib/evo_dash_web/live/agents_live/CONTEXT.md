@@ -222,6 +222,8 @@ Buffer, token and pending-refresh flag clear on scope changes; an incomplete reg
 - `{:agent_updated, id, changed_fields, node}` — `changed_fields` NEVER contains `:context`; merged in-memory for BOTH nodes. `context_node` → `context_path`, `phylo_node` → `current_commit`, nil `usage` → zero, `compression_pct` recomputed on `total_tokens` OR `compression_threshold` (a nil/non-positive threshold keeps the previous denominator), `context_window` is NOT a delta key (omitted keeps the row's value — never reset to 200_000), `:pending_user_messages` re-anchors the queue (an absent key leaves it untouched); children, `repo_trees`, status tracking and `id_to_display` refresh as usual, and a missing row sets the refresh flag.
 - `{:agent_removed, id, node}` — the row is dropped in-memory (children orphaned to `parent_id: nil`, parent's children and `repo_trees` refreshed) and captured into `@retained_agents`, for BOTH nodes; foreign → ignored.
 
+<!-- genesis:local -->
+
 ## Notes for Agents — coalesced flush (one index, one pass)
 
 `AgentMerge.flush/1` answers `{socket, after_flush}` and never spawns a task or touches the commit graph — the LiveView performs that ONE follow-up.
