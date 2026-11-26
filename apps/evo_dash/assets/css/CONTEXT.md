@@ -140,9 +140,10 @@ The close control reserves its box and appears on hover/focus and for a current 
 `.workbench-tab-overflow` / `#workbench-tabs-overflow` is the rail-end details menu on the shared raised-menu surface.
 
 ### Right dock (`#workbench-history`, `#workbench-git`)
-History uses the same `--surface-rail` fill as the left sidebar in both themes, without an inline-start divider.
-Only Source Control uses `--surface-dock`, a restrained secondary wash over neutral chrome with an inline-start hairline that collapses with its docked width.
+History and Source Control BOTH use the `var(--surface-rail)` fill in both themes, without an inline-start divider on History.
+Only Source Control keeps the one inline-start hairline, which collapses with its docked width.
 The two panels share scroll containment and motion without elevation.
+The Git summary card and the selected segmented segment use `var(--surface-raised)` (lifted content off the chrome panel), the segmented track and the sticky branch-search backdrop use the panel's own `var(--surface-rail)` tone.
 The composer placeholders, History search placeholder and unselected History kind use the shared opaque `--surface-text-muted` so contrast does not depend on browser placeholder alpha or the current accent; selection retains the full content foreground.
 The `closed | open | closing` machine uses `data-panel-state` + `[hidden]` through `../js/hooks/workbench_panel*.js`.
 History follows the DOM order (project and status before search), with only `#workbench-history-rows` scrolling and two-line rows separated by spacing rather than rules.
