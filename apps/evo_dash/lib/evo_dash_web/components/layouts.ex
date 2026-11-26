@@ -8,6 +8,8 @@ defmodule EvoDashWeb.Layouts do
 
   use EvoDashWeb, :html
 
+  alias EvoDashWeb.WorkbenchContextTitle
+
   # Embed all files in layouts/* within this module.
   # The default root.html.heex file contains the HTML
   # skeleton of your application, namely HTML headers
@@ -39,6 +41,12 @@ defmodule EvoDashWeb.Layouts do
 
   attr(:workbench_window, :boolean, default: false)
   attr(:workbench_project, :string, default: nil)
+
+  attr(:workbench_context_name, :string,
+    default: nil,
+    doc: "display name of the current project or workspace"
+  )
+
   attr(:workbench_title, :string, default: nil)
   attr(:workbench_task, :string, default: nil)
   attr(:workbench_draft, :string, default: nil)
@@ -140,6 +148,7 @@ defmodule EvoDashWeb.Layouts do
     assigns =
       assign(assigns,
         workbench_target: target,
+        workbench_context_title: WorkbenchContextTitle.label(assigns, target),
         workbench_git_available?: is_binary(assigns.workbench_git_project) and not is_nil(target)
       )
 
@@ -259,7 +268,7 @@ defmodule EvoDashWeb.Layouts do
             navigate={with_node_param(~p"/assistant", @current_node_id)}
             current={@current_page == :assistant}
             icon="hero-sparkles"
-          >{gettext("Assistant")}</.sidebar_nav_link>
+          >{WorkbenchContextTitle.page_label(:assistant)}</.sidebar_nav_link>
           <.live_component
             module={EvoDashWeb.WorkbenchComponent}
             id="workbench-projects"
@@ -279,25 +288,24 @@ defmodule EvoDashWeb.Layouts do
               navigate={with_node_param(~p"/agents", @current_node_id)}
               current={@current_page == :agents}
               icon="hero-server"
-            >{gettext("Agents")}</.sidebar_nav_link>
+            >{WorkbenchContextTitle.page_label(:agents)}</.sidebar_nav_link>
             <.sidebar_nav_link
               navigate={with_node_param(~p"/tasks", @current_node_id)}
               current={@current_page == :tasks}
               icon="hero-clipboard-document-list"
-            >{gettext("Tasks")}</.sidebar_nav_link>
-            <%!-- zh_CN: "进程" — 指 Genesis 跟踪的操作系统进程（智能体工具调用与后台任务），不是 Erlang 进程 --%>
+            >{WorkbenchContextTitle.page_label(:tasks)}</.sidebar_nav_link>
             <.sidebar_nav_link
               navigate={with_node_param(current_page(:processes), @current_node_id)}
               current={@current_page == :processes}
               icon="hero-cpu-chip"
               data_nav="processes"
-            ><span class="sidebar-label">{gettext("Processes")}</span></.sidebar_nav_link>
+            ><span class="sidebar-label">{WorkbenchContextTitle.page_label(:processes)}</span></.sidebar_nav_link>
             <.sidebar_nav_link
               navigate={with_node_param(~p"/system", @current_node_id)}
               current={@current_page == :system}
               icon="hero-server-stack"
               notification={update_status_notification(@update_status)}
-            >{gettext("System")}</.sidebar_nav_link>
+            >{WorkbenchContextTitle.page_label(:system)}</.sidebar_nav_link>
             <%!-- `motion-disclosure` + the DisclosureMotion hook smooth BOTH
                directions: a native <details> snaps open and shut, and the hook
                only defers the `open` removal so motion.css can play the exit.
@@ -374,6 +382,11 @@ defmodule EvoDashWeb.Layouts do
         <div class="workbench-center">
           <header :if={!@simple_nav} class="workbench-top">
             <div class="workbench-tab-rail">
+              <span
+                :if={@workbench_context_title}
+                class="workbench-context-title min-w-0 max-w-1/3 truncate text-sm font-semibold"
+                title={@workbench_context_title}
+              >{@workbench_context_title}</span>
               <div
                 id="workbench-tabs"
                 class="workbench-tabs"
