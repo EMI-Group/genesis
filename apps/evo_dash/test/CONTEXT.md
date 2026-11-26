@@ -268,13 +268,13 @@ No dash test covers a paused task's agent roster or archive.
 ## Provider-profile redesign regression coverage
 
 Per-suite contract detail is owned by the child docs (components, Projects, Assistant, Welcome, Settings) routed from the table above.
-Root-only rules: a mounted Settings save decides success by the AUTHORITATIVE READ, never by the writer's acknowledgement alone (`live/settings_live/CONTEXT.md` → "Save receipts").
+Root-only rules: a mounted Settings save decides success by the AUTHORITATIVE READ, never by the writer's acknowledgement alone (`live/settings_live/CONTEXT.md` → "Save receipts" in that file's Local section).
 Canonical provider fixtures need a NONEMPTY nested `models` list containing the configured default, and the UI-only `default_model_name` never persists.
 Positive remote URL/resume mounts use the source-owned, default-inert arity-2 `:remote_project_load_runner` (`node, path`) and `:remote_resume_task_runner` (`node, task_id`) via `install_remote_activation_fixture!/2`; a non-nil target with the local BEAM identity is intentionally pending and that guard is never bypassed.
 
 ## Lifecycle and asynchronous test contracts
 
-Mounted Assistant recovery (vanished sessions, retryable Watch failures, exactly-once silent-finish reconciliation through an authoritative final Watch snapshot, never an unscoped history result) → `live/CONTEXT.md` → "Mounted Assistant lifecycle and recovery"; those tests stay sync because of the mounted suite's shared ChatHistory and runner seams.
+Mounted Assistant recovery (vanished sessions, retryable Watch failures, exactly-once silent-finish reconciliation through an authoritative final Watch snapshot, never an unscoped history result) → `live/CONTEXT.md` → "Mounted Assistant lifecycle and recovery" (in that file's Local section); those tests stay sync because of the mounted suite's shared ChatHistory and runner seams.
 Terminal handoff (`{:agent_stream_closed, agent_id, snapshot, seq}`) is consumed at the pure watch, mounted inspector, mounted Assistant and real Session boundaries, pinning authoritative final messages/thinking/activity/status plus stale ownership/sequence rejection; neither the synthetic nor the real-stream suite establishes production scheduler removal.
 `agents_live_test.exs` — its 40 ms negative `tasks_reload_pending` sample is a GLOBAL-quiet claim and lives in the sync `agents_live_task_broadcast_test.exs`; that window IS the detection mechanism, so never widen it to hide a re-arm.
 `agents_live_test.exs` — `send_agent_message` resolves the call-time `:agents_send_message_runner` seam (default `&EvoDash.NodeContext.send_user_message/3`); exactly ONE test drives the real delegate through `submit_until_pending_hint/3` and `drain_agents_bulk_signal/1`, the rest pinning optimistic bookkeeping.

@@ -51,7 +51,7 @@ Phoenix 1.8 umbrella child app (`:evo_dash`) depending on sibling `:evo_git`.
 - OAuth / subscription auth belongs to provider profiles; `SettingsLive.AuthStatus` loads credential status off-process with node + seq stale guards; in-app ChatGPT sign-in is LOCAL-node only → `live/settings_live/CONTEXT.md` + `components/settings_components/CONTEXT.md`
 - Paged task archive (bounded, opt-in, gated paging) → §Task archive below + `live/review_live/CONTEXT.md`, `live/tasks_live/CONTEXT.md`, `components/review_components/CONTEXT.md`, `components/task_card_components/CONTEXT.md`, `controllers/CONTEXT.md`, `lib/evo_dash/CONTEXT.md` ("Lightweight task reads")
 - `./lib/evo_dash_web/controllers/` → `task_export_controller.ex`, `health_controller.ex`, `server_status_controller.ex`, `redirect_controller.ex` (legacy `/help` → `/assistant`), error handlers — `controllers/CONTEXT.md`
-- LiveView data-load & exit-safety contract — no blocking task-store/registry/cross-node RPC call, no wedging loading flag (`:exit`/timeout → retry-able error), no unbounded blob render; all through `EvoDash.SafeCall` (`run/1,2`, `start/3,4`), async via `TaskSupervisor` + self-message with monotonic-seq + node stale-guards, caps in `Helpers.blob_preview/2`/`list_preview/2` + `ArchiveHelpers.build_tree_capped/2` → `live/CONTEXT.md` ("async data-load & exit-safety contract", "Test seams"), `components/CONTEXT.md`, `lib/evo_dash/CONTEXT.md`
+- LiveView data-load & exit-safety contract — no blocking task-store/registry/cross-node RPC call, no wedging loading flag (`:exit`/timeout → retry-able error), no unbounded blob render; all through `EvoDash.SafeCall` (`run/1,2`, `start/3,4`), async via `TaskSupervisor` + self-message with monotonic-seq + node stale-guards, caps in `Helpers.blob_preview/2`/`list_preview/2` + `ArchiveHelpers.build_tree_capped/2` → `live/CONTEXT.md` ("async data-load & exit-safety contract", "Test seams" in that file's Local section), `components/CONTEXT.md`, `lib/evo_dash/CONTEXT.md`
 - `./test/` → ExUnit test suite — `test/CONTEXT.md`
 
 ## API Surface
@@ -278,7 +278,7 @@ EvoDash uses **Gettext** (`EvoDashWeb.Gettext`, `use Gettext, otp_app: :evo_dash
 
 ### Static assets & release configuration
 
-- **Static assets** (`priv/static/`): `favicon.ico` + `images/favicon.svg` are DERIVED from `images/logo.svg` (source of truth; dark gray `#373435` + red `#C8383C`, aspect ≈ 1.2334); `images/logo-alt.svg` is the dark-theme variant; regeneration recipe: `assets/CONTEXT.md` → "Static Assets".
+- **Static assets** (`priv/static/`): `favicon.ico` + `images/favicon.svg` are DERIVED from `images/logo.svg` (source of truth; dark gray `#373435` + red `#C8383C`, aspect ≈ 1.2334); `images/logo-alt.svg` is the dark-theme variant; regeneration recipe: `assets/CONTEXT.md` → "Static assets" (that file's Local section).
 - **Release configuration** (owned by the ROOT `mix.exs` — this app has no `rel/`): releases `genesis` (both apps, dev), `genesis_desktop` (bakes `evo_dash: [desktop_release: true]`, bundled as a Tauri resource) and `genesis_server` (the only headless distribution: dashboard server AND SSH remote daemon, wx-free, `include_erts`); `config/runtime.exs` handles `PHX_SERVER=true` and server mode; production needs `SECRET_KEY_BASE` + `PHX_HOST`.
 
 ### Backend Boot Order (HTTP listener is bound LAST)
