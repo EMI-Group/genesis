@@ -50,14 +50,8 @@ defmodule EvoDashWeb.SystemLive do
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
         <div class="space-y-6">
-          <%!-- ONE page title for /system (density ladder: text-xl font-semibold). --%>
-          <header class="space-y-1">
-            <h1 class="text-xl font-semibold text-base-content">{gettext("System")}</h1>
-            <p class="text-sm text-base-content/60">
-              {gettext("Runtime health, scheduler activity and system controls.")}
-            </p>
-          </header>
-
+          <%!-- The workbench tab rail carries the page name, so this page
+               renders no in-canvas title. --%>
           <%= if @update_card_visible do %>
             <!-- Software Update card (desktop shell only; hidden on remote nodes) -->
             <div

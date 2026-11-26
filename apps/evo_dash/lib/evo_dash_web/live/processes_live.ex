@@ -474,15 +474,8 @@ defmodule EvoDashWeb.ProcessesLive do
       guide={@guide}
       accent_color={@accent_color}
     >
-      <header class="mb-5">
-        <h1 class="text-xl font-semibold text-base-content">{gettext("Processes")}</h1>
-        <p
-          :if={!EvoDashWeb.RemoteGateComponents.gate_active?(assigns)}
-          class="mt-1 text-sm text-base-content/70"
-        >
-          {gettext("Monitor tool calls and background jobs on this node.")}
-        </p>
-      </header>
+      <%!-- The workbench tab rail carries the page name, so this page renders
+           no in-canvas title; the filter bar is the first row. --%>
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
