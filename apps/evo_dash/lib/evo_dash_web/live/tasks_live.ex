@@ -72,6 +72,7 @@ defmodule EvoDashWeb.TasksLive do
       remote_targets={assigns[:remote_targets] || []}
       connection_statuses={assigns[:connection_statuses] || %{}}
       workbench_project={@workbench_project}
+      workbench_history_scope_pending?={@workbench_history_scope_pending?}
       workbench_git_project={
         if @current_node_id || !@workbench_remote_requested, do: @workbench_project
       }
@@ -874,6 +875,7 @@ defmodule EvoDashWeb.TasksLive do
       |> assign_new(:workbench_project, fn -> nil end)
       |> assign_new(:workbench_title, fn -> nil end)
       |> assign_new(:workbench_remote_requested, fn -> false end)
+      |> assign_new(:workbench_history_scope_pending?, fn -> false end)
 
     {:ok, socket}
   end
@@ -897,10 +899,9 @@ defmodule EvoDashWeb.TasksLive do
       |> assign(workbench_reconnect_params: Map.take(params, ["task"]))
       |> assign(
         focused_task_id: focused_task_id(params["task"]),
-        workbench_remote_requested: params["node"] not in [nil, "local"],
-        workbench_project: nil,
-        workbench_title: nil
+        workbench_remote_requested: params["node"] not in [nil, "local"]
       )
+      |> PageLoad.sync_scope()
       # URL IS STATE: the ONE place the filter assigns are seeded from the query
       # string, so a deep link, browser back/forward and every filter event's
       # `push_patch` converge on this single load (below) instead of an
@@ -977,18 +978,6 @@ defmodule EvoDashWeb.TasksLive do
   defp focused_task_id(id) when is_binary(id) and byte_size(id) in 1..128, do: id
   defp focused_task_id(_), do: nil
 
-  defp assign_focused_task(%{assigns: %{focused_task_id: id}} = socket, [%{id: id} = task])
-       when is_binary(id) do
-    opts = task[:opts] || []
-
-    assign(socket,
-      workbench_project: task[:project_path],
-      workbench_title: opts[:objective] || opts[:prompt]
-    )
-  end
-
-  defp assign_focused_task(socket, _), do: socket
-
   @impl true
   def handle_info({:node_selected, node_id}, socket) do
     EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, node_id)
@@ -996,7 +985,8 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_info({:remote_connection_status, _, _} = msg, socket) do
-    EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
+    {:noreply, socket} = EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
+    {:noreply, PageLoad.sync_scope(socket)}
   end
 
   @impl true
@@ -1058,65 +1048,56 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_info({:tasks_page_loaded, seq, node, result}, socket) do
-    # The thin "Refreshing tasks…" line is cleared on EVERY outcome — stale,
-    # successful and failed alike — so a non-blanking refresh can never stick.
-    socket = assign(socket, :tasks_refreshing, false)
+    case PageLoad.settle(socket, seq, node, result) do
+      :stale ->
+        {:noreply, socket}
 
-    if seq < socket.assigns.page_load_seq or node != socket.assigns.current_node do
-      # Stale page-load result — a newer page load was started after this one
-      # was spawned (or the user switched nodes). Drop it: the newest
-      # in-flight load will apply its own result (and clear the loading
-      # state). :page_load_seq is bumped ONLY by PageLoad.start/3 —
-      # NodeAware's sidebar fetch keeps its own :tasks_load_seq counter, so
-      # the two loads a debounced reload spawns never invalidate each other.
-      {:noreply, socket}
-    else
-      socket = assign(socket, :tasks_loading, false)
+      {:ok, socket} ->
+        socket = assign(socket, tasks_loading: false, tasks_refreshing: false)
 
-      case result do
-        {:ok, m} ->
-          # The ONE post-load choke point: :reflect tasks are excluded
-          # client-side (the SQL WHERE builder cannot express "exclude type"),
-          # and the third argument keeps the `needs_review` exactness guard
-          # live (it drops any landed row whose review decision already
-          # exists — no server predicate can be narrowed further from here).
-          visible =
-            PageLoad.visible_tasks(
-              m.tasks,
-              socket.assigns.show_reflect_tasks or not is_nil(socket.assigns.focused_task_id),
-              socket.assigns.status_filter
-            )
+        case result do
+          {:ok, m} ->
+            # The ONE post-load choke point: :reflect tasks are excluded
+            # client-side (the SQL WHERE builder cannot express "exclude type"),
+            # and the third argument keeps the `needs_review` exactness guard
+            # live (it drops any landed row whose review decision already
+            # exists — no server predicate can be narrowed further from here).
+            visible =
+              PageLoad.visible_tasks(
+                m.tasks,
+                socket.assigns.show_reflect_tasks or not is_nil(socket.assigns.focused_task_id),
+                socket.assigns.status_filter
+              )
 
-          socket =
-            socket
-            |> assign_focused_task(visible)
-            |> assign(:tasks, visible)
-            |> assign(:current_page, m.current_page)
-            |> assign(:total_count, m.total_count)
-            |> assign(:total_pages, m.total_pages)
-            |> assign(:project_paths, m.project_paths)
-            |> assign(:filtered_tasks, visible)
-            # DEFENSIVE: an injected/older page-load result may predate this
-            # key — a missing entry means "no idle sessions", never a crash.
-            |> assign(:awaiting_sessions, Map.get(m, :awaiting_sessions, %{}))
-            |> assign(:tasks_error, nil)
-            # Rows are summary maps now (no result/usage/logs/archive): bound
-            # the per-card detail cache to THIS page, then refetch the detail
-            # of every card that is still expanded so an open card survives a
-            # background refresh / pagination round-trip.
-            |> TaskDetail.prune(visible)
-            |> TaskDetail.ensure_expanded(visible)
-            |> put_tasks_stream(visible)
+            socket =
+              socket
+              |> assign(:tasks, visible)
+              |> assign(:current_page, m.current_page)
+              |> assign(:total_count, m.total_count)
+              |> assign(:total_pages, m.total_pages)
+              |> assign(:project_paths, m.project_paths)
+              |> assign(:filtered_tasks, visible)
+              # DEFENSIVE: an injected/older page-load result may predate this
+              # key — a missing entry means "no idle sessions", never a crash.
+              |> assign(:awaiting_sessions, Map.get(m, :awaiting_sessions, %{}))
+              |> assign(:tasks_error, nil)
+              # Rows are summary maps now (no result/usage/logs/archive): bound
+              # the per-card detail cache to THIS page, then refetch the detail
+              # of every card that is still expanded so an open card survives a
+              # background refresh / pagination round-trip.
+              |> TaskDetail.prune(visible)
+              |> TaskDetail.ensure_expanded(visible)
+              |> put_tasks_stream(visible)
 
-          {:noreply, socket}
+            {:noreply, socket}
 
-        {:error, reason} ->
-          # Never clear already-loaded rows on a failed load: a background
-          # refresh failure must not blank the page. The reason is a value
-          # (SafeCall captured any exit), rendered as a retry-able error state
-          # — deliberately not interpolated into the DOM.
-          {:noreply, assign(socket, :tasks_error, reason)}
-      end
+          {:error, reason} ->
+            # Never clear already-loaded rows on a failed load: a background
+            # refresh failure must not blank the page. The reason is a value
+            # (SafeCall captured any exit), rendered as a retry-able error state
+            # — deliberately not interpolated into the DOM.
+            {:noreply, assign(socket, :tasks_error, reason)}
+        end
     end
   end
 
