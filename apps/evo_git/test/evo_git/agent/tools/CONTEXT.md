@@ -11,6 +11,12 @@ Isolation rule: a tool test whose fixture is a SUBPROCESS cwd (anything passed a
 
 - Parent: `../` → the agent test tree (Runner, context building, tool dispatch).
 
+## Async-Safety Rationale
+
+Every module carries an `@moduledoc` naming why it is `async: true` / `async: false` — keep it accurate when the forcing state changes.
+
+<!-- genesis:local -->
+
 ## Contents
 
 | File | Module under test |
@@ -51,10 +57,6 @@ Isolation rule: a tool test whose fixture is a SUBPROCESS cwd (anything passed a
 | `elixir_eval_wrapper_test.exs` | Actual public wrapper exact-code read/write/sudo approval, no-effect denial/timeout, lifecycle revalidation and argument validation |
 | `elixir_eval_allowlist_boot_test.exs` | Release-boot safety of the allowlist wrappers and the resolvable deny surface: a THROWAWAY-VM probe pins that a wrapper `@on_load` loads only itself (never a generated Base spec), that `ensure_initialized/0` loads both Base specs at the parse chokepoint, and that the cold read-first chokepoint then interns every `Surface` atom so denied calls parse placeholder-free and classify as `:restricted` |
 | `elixir_eval_live_session_authorization_test.exs` | The REAL `/assistant` shape: a genuine `EvoGit.AgentScheduler.start_session/1` interactive root driven through the `:agent_exchange_llm_call` seam proves a read-tier `elixir_eval` call from the session → exchange worker → tool task chain is admitted (the model receives `Result: 42`, never the denial text) and pins the registered `SchedMeta`: minted 16-hex `task_id` with NO `tasks` row, `mode: :interactive`, and `spec.opts` `repo_less: true` + `session_mode: :interactive` with no `:task_id` |
-
-## Async-Safety Rationale
-
-Every module carries an `@moduledoc` naming why it is `async: true` / `async: false` — keep it accurate when the forcing state changes.
 
 - `async: false` — `web_search_test.exs` (mutates the `:web_search_http_runner` app-env seam and the shared `:req_llm` API-key store).
 - `async: false` — `web_fetch_test.exs` (mutates the app-env `:web_fetch_allow_private_hosts` key AND runs against one fixed repo path, `/tmp/web-fetch-test-repo`; the FLIP BLOCKER is that fixed path — it needs a per-test `@moduletag :tmp_dir` dir before this module can ever be `async: true`).
