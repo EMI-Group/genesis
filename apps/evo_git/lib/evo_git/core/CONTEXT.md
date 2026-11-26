@@ -33,8 +33,8 @@ Struct: `path`, `repo`, `vct_path` (`nil` by default), `repo_id` (defaults to `"
 ### Context-Tree Render Format (what reaches the agent prompt)
 `build_context/2` (`context_node.ex:245-284`) is the ONLY function that turns the context tree into prompt text.
 Its caller is `EvoGit.Agent.ContextBuilder.build_dynamic_context/1` (`agent/context_builder.ex:45`, reached from `build_context_block/1`), which `EvoGit.Agent.Session.Setup.build_initial_state/3` invokes from the session's `:start` event via `ContextBuilder.build_initial_messages/4` — injecting the string into the agent's first-user `<context>` block.
-Output = `"# Context Tree\n" <> <rendered stages joined by "\n\n"> <> "\n\n" <> <location_info>`, or just `location_info` when NO stage renders (`context_node.ex:231-238`).
-Stages are, in order, the VCT GLOBAL context first (`global_stage/1`) and then the in-repo directory chain (`in_repo_stage/2`).
+Output = `"# Context Tree\n" <> <rendered stages joined by "\n\n"> <> "\n\n" <> <location_info>`, or just `location_info` when NO stage renders (`context_node.ex:275-281`).
+Stages are, in order, the VCT GLOBAL context first (`global_stage/1`) and then the in-repo directory chain (`in_repo_stage/3`).
 The global stage is read from `EvoGit.VCT.global_context()` (`<data_dir>/vct/CONTEXT.md`, `""` when absent or when the VCT server is unreachable) and is ALWAYS labelled with the literal `File: global/CONTEXT.md` — never an OS path, never `"/"`, never the file's `vct:///` URL.
 In-repo stages use RELATIVE paths ONLY: header is the literal `File: ./CONTEXT.md` for the root node, else `File: #{Path.join(node.path, "CONTEXT.md")}` (e.g. `File: ./lib/CONTEXT.md`); `node.repo` and `node.vct_path` are NEVER rendered here — no absolute OS path and no `vct:///` URL ever appears as a CONTEXT.md file label.
 A stage whose CONTEXT.md is absent, blank after `EvoGit.Skills.strip_front_matter/1`, or front-matter-only is SKIPPED (`render_stage/3` → `nil`, `List.wrap(nil)` → `[]`), so no empty fenced code block is ever emitted.
