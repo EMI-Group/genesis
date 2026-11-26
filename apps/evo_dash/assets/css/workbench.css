@@ -124,6 +124,7 @@
   background: var(--surface-shell);
 }
 .workbench-tab-rail {
+  --workbench-tab-flare: var(--radius-tab);
   display: flex;
   align-items: center;
   align-self: stretch;
@@ -131,14 +132,28 @@
   flex: 1;
   min-width: 0;
 }
+.workbench-context-title {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  max-inline-size: min(12rem, 30%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--surface-text-muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: var(--text-sm--line-height);
+}
 .workbench-tabs {
   display: flex;
   align-items: end;
   align-self: stretch;
-  gap: .125rem;
+  gap: var(--workbench-tab-flare);
   flex: 0 1 auto;
   min-width: 0;
-  padding-inline-start: var(--radius-tab);
+  /* Keep the first flare inside the straight part of the canvas hairline and
+     reserve paint room at both scroll extremes without widening any tab. */
+  padding-inline: calc(var(--workbench-tab-flare) + var(--workbench-tab-start-inset, var(--radius-box))) var(--workbench-tab-flare);
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-inline: contain;
@@ -155,8 +170,9 @@
   display: flex;
   align-items: center;
   flex: 0 0 auto;
+  scroll-margin-inline: var(--workbench-tab-flare);
   block-size: calc(var(--control-h-sm) + 2px);
-  max-inline-size: min(10rem, 55vw);
+  max-inline-size: min(10rem, 55vw, 100%);
   border: 1px solid transparent;
   border-radius: var(--radius-tab) var(--radius-tab) 0 0;
   font-size: var(--text-xs);
@@ -164,7 +180,7 @@
   color: var(--workbench-text-muted);
 }
 .workbench-tab[data-tab-group-start="true"] { margin-inline-start: .375rem; }
-.workbench-tab[data-tab-group-start="true"]::before {
+.workbench-tab[data-tab-group-start="true"]:not(.is-current)::before {
   content: "";
   position: absolute;
   inset-block: 25%;
@@ -182,6 +198,27 @@
   border-block-end-color: transparent;
   color: var(--color-base-content);
 }
+
+/* Outward corners meet the canvas hairline within the rail's clipping box.
+   The one-pixel overlap covers the tab's side border as the curve turns. */
+.workbench-tab.is-current::before,
+.workbench-tab.is-current::after {
+  content: "";
+  position: absolute;
+  inset-block-end: -1px;
+  inline-size: var(--workbench-tab-flare);
+  block-size: var(--workbench-tab-flare);
+  pointer-events: none;
+  background: radial-gradient(circle var(--workbench-tab-flare) at var(--workbench-corner-edge) top,
+    transparent calc(100% - 1.5px), var(--border-hairline) calc(100% - 1px),
+    var(--border-hairline) calc(100% - .5px), var(--workbench-canvas, var(--surface-canvas)) 100%);
+}
+.workbench-tab.is-current::before { inset-inline-end: 100%; }
+.workbench-tab.is-current::after { inset-inline-start: 100%; }
+.workbench-tab.is-current:dir(ltr)::before,
+.workbench-tab.is-current:dir(rtl)::after { --workbench-corner-edge: left; }
+.workbench-tab.is-current:dir(ltr)::after,
+.workbench-tab.is-current:dir(rtl)::before { --workbench-corner-edge: right; }
 
 /* A pending destination may share the confirmed tab's key. Keep the join
    and aria-current on that tab; its static dot still signals the navigation. */
@@ -437,11 +474,8 @@
      id rules right below), so the heading, project label, search and filters
      stay pinned while rows scroll under them. */
   overflow: hidden;
-  /* The dock has a quiet secondary wash, distinct from the navigation rail.
-     Resolve the selection tint here so it follows the shell's scoped accent. */
+  /* Resolve the selection tint here so it follows the shell's scoped accent. */
   --workbench-selected: color-mix(in srgb, var(--color-primary) 10%, var(--surface-canvas));
-  background: var(--surface-dock);
-  border-inline-start: 1px solid var(--border-hairline);
   padding: calc(var(--card-pad) / 2);
   /* Right-panel entrance/exit driven by the shared motion vocabulary: every
      listed property uses var(--motion-slow) + var(--motion-ease-out), never a
@@ -466,6 +500,12 @@
     flex-basis var(--motion-slow) var(--motion-ease-out),
     padding var(--motion-slow) var(--motion-ease-out),
     border-inline-start-width var(--motion-slow) var(--motion-ease-out);
+}
+/* Keep specificity below the docked collapse states so the Git divider can
+   still animate to zero. History instead shares the sidebar's unlined fill. */
+.workbench-history:where(#workbench-git) {
+  background: var(--surface-dock);
+  border-inline-start: 1px solid var(--border-hairline);
 }
 /* Closed AND closing share ONE collapsed geometry: "closed" is the resolved
    start value an entrance is laid out at while displayed before it becomes
@@ -915,12 +955,11 @@
   outline-offset: 2px;
 }
 
-/* The rails and the docked right panel consume the shared layer-0 tones
-   (`surfaces.css`), so a rail is never a second, independent surface definition. */
+/* The left sidebar and History use exactly the same tone in either theme. */
+#app-layout #sidebar, #workbench-history { background: var(--surface-rail); }
 #app-layout #sidebar {
   flex-shrink: 0;
   border-right: 0;
-  background: var(--surface-rail);
 }
 #sidebar[data-sidebar-collapsed="false"] { width: var(--workbench-left-width, 16rem); }
 #sidebar-mobile-close { display: none; }
@@ -930,14 +969,23 @@
     box-shadow: var(--elev-2);
   }
   #sidebar[data-sidebar-collapsed="false"] { width: min(18rem, 86vw); }
-  /* Clear the fixed sidebar toggle and keep the canvas gutter narrow. */
-  .workbench-top { padding-inline-start: calc(var(--shell-topbar-h) + .05rem); gap: .4rem; }
+  /* Clear the fixed sidebar toggle; the offset also clears the frame corner. */
+  .workbench-top {
+    --workbench-tab-start-inset: 0px;
+    padding-inline-start: calc(var(--shell-topbar-h) + .05rem);
+    gap: .4rem;
+  }
   .workbench-top + .workbench-content-stack {
     margin-inline: calc(var(--page-gutter) / 4);
     margin-block-end: calc(var(--page-gutter) / 4);
   }
 }
 @media (max-width: 480px) {
+  .workbench-tab-rail {
+    --workbench-tab-flare: calc(var(--radius-tab) / 2);
+    gap: calc(var(--card-pad) / 4);
+  }
+  .workbench-context-title { max-inline-size: 16%; }
   #workbench-git-toggle { inline-size: var(--touch-target); padding-inline: 0; }
   #workbench-git-toggle :is(#workbench-git-toggle-label, .hero-chevron-down) { display: none; }
 }
@@ -1284,7 +1332,10 @@
   .workbench-git-file, .workbench-git-branch { min-block-size: var(--touch-target); }
 }
 @media (pointer: coarse) {
-  .workbench-tabs > .workbench-tab { block-size: calc(var(--touch-target) + 2px); }
+  .workbench-tabs > .workbench-tab {
+    block-size: calc(var(--touch-target) + 2px);
+    min-inline-size: calc(var(--touch-target) * 2 + 2px);
+  }
   .workbench-tab .workbench-tab-link { min-inline-size: var(--touch-target); }
   .workbench-tab .workbench-tab-close,
   .workbench-tab[data-preview="true"] .workbench-tab-close,

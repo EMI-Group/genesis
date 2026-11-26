@@ -255,8 +255,8 @@ test("the compact bottom-aligned rail contains horizontal overflow", () => {
   const [tab] = rulesWith(".workbench-tab", workbench, {exactSelectorText: true});
   assert.equal(values(tab.body).flex, "0 0 auto", "scroll rather than squeeze a tab");
   assert.equal(values(tab.body)["block-size"], "calc(var(--control-h-sm) + 2px)");
-  assert.equal(values(tab.body)["max-inline-size"], "min(10rem, 55vw)", "long labels leave more space for neighboring tabs");
-  const [separator] = rulesWith('.workbench-tab[data-tab-group-start="true"]::before', workbench);
+  assert.equal(values(tab.body)["max-inline-size"], "min(10rem, 55vw, 100%)", "a long tab can fit within its rail");
+  const [separator] = rulesWith('.workbench-tab[data-tab-group-start="true"]:not(.is-current)::before', workbench);
   assert.equal(values(separator.body)["pointer-events"], "none");
   assert.equal(values(separator.body)["border-inline-start"], "1px solid var(--border-hairline)");
 
@@ -264,6 +264,47 @@ test("the compact bottom-aligned rail contains horizontal overflow", () => {
   assert.equal(values(rail.body)["min-width"], "0", "the rail must shrink with the shell");
   const [empty] = rulesWith(".workbench-tabs:empty", workbench);
   assert.equal(values(empty.body).display, "none", "an empty strip adds no space beside Create");
+});
+
+test("only committed tabs flare out to the same canvas, within the scrolling rail", () => {
+  const before = ".workbench-tab.is-current::before";
+  const after = ".workbench-tab.is-current::after";
+  const corners = leafRules(workbench).find(rule => rule.selectors.includes(before) && rule.selectors.includes(after));
+  const paint = values(corners.body);
+  assert.deepEqual(corners.selectors, [before, after], "pending-only tabs never get a join");
+  assert.equal(paint.position, "absolute", "confirmation never changes the tab footprint");
+  assert.equal(paint["inset-block-end"], "-1px", "meet the same frame hairline as the tab");
+  assert.equal(paint["pointer-events"], "none");
+  assert.equal(paint["inline-size"], "var(--workbench-tab-flare)");
+  assert.equal(paint["block-size"], paint["inline-size"]);
+  assert.match(paint.background, /^radial-gradient\(/);
+  assert.ok(paint.background.includes(canvasFill), "New Task and fallback canvas colors reach the flares too");
+  assert.equal(merge(rulesWith(before, workbench))["inset-inline-end"], "100%");
+  assert.equal(merge(rulesWith(after, workbench))["inset-inline-start"], "100%");
+  assert.equal(merge(rulesWith(".workbench-tab.is-current:dir(rtl)::before", workbench))["--workbench-corner-edge"], "right");
+  assert.equal(merge(rulesWith(".workbench-tab.is-current:dir(rtl)::after", workbench))["--workbench-corner-edge"], "left");
+
+  const strip = merge(rulesWith(".workbench-tabs", workbench));
+  assert.equal(strip.gap, paint["inline-size"], "the adjacent pending tab's edge stays clear");
+  assert.equal(strip["padding-inline"], "calc(var(--workbench-tab-flare) + var(--workbench-tab-start-inset, var(--radius-box))) var(--workbench-tab-flare)");
+  assert.equal(merge(rulesWith(".workbench-tab", workbench))["scroll-margin-inline"], paint["inline-size"]);
+  const [wide, narrow] = rulesWith(".workbench-tab-rail", workbench);
+  assert.equal(values(wide.body)["--workbench-tab-flare"], "var(--radius-tab)");
+  assert.equal(values(narrow.body)["--workbench-tab-flare"], "calc(var(--radius-tab) / 2)",
+    "reduce decoration, not touch targets, on narrow rails");
+});
+
+test("the compact context label yields room to tabs and fixed toolbar controls", () => {
+  const [desktop, narrow] = rulesWith(".workbench-context-title", workbench);
+  const title = values(desktop.body);
+  assert.equal(title.flex, "0 1 auto");
+  assert.equal(title["min-inline-size"], "0");
+  assert.equal(title["max-inline-size"], "min(12rem, 30%)");
+  assert.deepEqual(values(narrow.body), {"max-inline-size": "16%"});
+  assert.equal(title.overflow, "hidden");
+  assert.equal(title["white-space"], "nowrap");
+  assert.equal(title["text-overflow"], "ellipsis");
+  assert.equal(title["font-size"], "var(--text-sm)");
 });
 
 test("the inset canvas retains its frame and meets the committed tab at the hairline", () => {
@@ -302,6 +343,7 @@ test("the close button reveals on hover/focus and is always visible when current
   const coarse = workbench.split("@media (pointer: coarse)")[1];
   const [tabFloor] = rulesWith(".workbench-tabs > .workbench-tab", coarse);
   assert.equal(values(tabFloor.body)["block-size"], "calc(var(--touch-target) + 2px)");
+  assert.equal(values(tabFloor.body)["min-inline-size"], "calc(var(--touch-target) * 2 + 2px)");
   const [touchLink] = rulesWith(".workbench-tab .workbench-tab-link", coarse);
   assert.equal(values(touchLink.body)["min-inline-size"], "var(--touch-target)");
   const [touchClose] = rulesWith(".workbench-tab .workbench-tab-close", coarse);
@@ -357,23 +399,28 @@ test("the published tab hooks are styled", () => {
 
 // --- docked right panel ----------------------------------------------------
 
-test("the right dock is a shell-layer panel with ONE hairline", () => {
-  const [history] = rulesWith(".workbench-history", workbench, {exactSelectorText: true});
-  const declared = values(history.body);
-  assert.equal(declared.background, "var(--surface-dock)");
-  const [sidebar] = rulesWith("#app-layout #sidebar", workbench);
-  assert.equal(values(sidebar.body).background, "var(--surface-rail)");
+test("History shares the sidebar fill without a divider; only Git keeps the tinted dock and hairline", () => {
+  const declared = merge(rulesWith(".workbench-history", workbench, {exactSelectorText: true}));
+  const history = merge(rulesWith("#workbench-history", workbench));
+  const sidebar = merge(rulesWith("#app-layout #sidebar", workbench));
+  const git = merge(rulesWith(".workbench-history:where(#workbench-git)", workbench));
+  assert.equal(history.background, "var(--surface-rail)");
+  assert.equal(history.background, sidebar.background);
+  assert.equal(git.background, "var(--surface-dock)");
+  assert.equal(git["border-inline-start"], "1px solid var(--border-hairline)");
+  assert.equal(({...declared, ...history})["border-inline-start"], undefined);
   for (const theme of [":root", '[data-theme="dark"]']) {
     const palette = values(rulesWith(theme)[0].body);
     assert.notEqual(palette["--surface-dock"], palette["--surface-rail"]);
     assert.match(palette["--surface-dock"], /var\(--color-secondary\) [1-9]%/,
-      "the dock has a restrained secondary wash in either theme");
+      "Git has a restrained secondary wash in either theme");
     assert.match(palette["--surface-dock"], /var\(--color-base-200\)/,
       "start with neutral chrome, not the near-white canvas");
   }
   assert.match(declared["--workbench-selected"], /var\(--color-primary\) 10%/, "accents tint local choices, not the whole dock");
-  assert.equal(declared["border-inline-start"], "1px solid var(--border-hairline)");
-  assert.equal(declared["box-shadow"], undefined, "the dock never floats");
+  for (const surface of [declared, history, git]) {
+    assert.equal(surface["box-shadow"], undefined, "neither dock floats");
+  }
   assert.equal(declared.padding, "calc(var(--card-pad) / 2)", "the panel frame uses the shared density scale");
 });
 

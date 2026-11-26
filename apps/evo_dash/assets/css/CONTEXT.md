@@ -102,8 +102,8 @@ THREE layers, every value derived with `color-mix()` from the existing base/neut
 | Token | Layer | Role |
 |---|---|---|
 | `--surface-shell` | 0 | workbench top bar + window chrome |
-| `--surface-rail` | 0 | navigation rail tones |
-| `--surface-dock` | 0 | right-dock tone with a restrained secondary wash |
+| `--surface-rail` | 0 | left sidebar, Settings navigation and History dock |
+| `--surface-dock` | 0 | Source Control dock with a restrained secondary wash |
 | `--surface-canvas` | 1 | center content canvas (`#main-content`/`#main-scroll`), flat, never shadowed |
 | `--surface-text-muted` | — | opaque neutral foreground for the composer placeholders and History controls |
 | `--surface-raised` | 2 | palettes, menus, dialogs, notifications |
@@ -127,16 +127,21 @@ The resting composer has its own `--composer-surface` so it remains distinct fro
 `.workbench-top + .workbench-content-stack` is the inset canvas frame shared by the page and Git-diff portal: density-derived gutters, a hairline and `--radius-box`, no elevation shadow and no new scroll or containing block for fixed overlays.
 The sidebar uses the muted `--surface-shell` backdrop, with space and subtle hover/selected fills separating destinations rather than repeated dividers.
 `.workbench-top` keeps the only `flex: 0 0 var(--shell-topbar-h)` and holds a bottom-aligned tab strip beside the create, history and Git controls.
+`.workbench-context-title` precedes the strip, with a capped, shrinkable inline box that ellipsizes long scope names so the rail controls retain their targets.
 `.workbench-tabs` uses intrinsic width up to the available rail space; it scrolls horizontally without squeezing the controls or inserting a scrollbar between the tabs and canvas.
 The client owns `div.workbench-tab[data-tab-key]` > `a.workbench-tab-link` + `button.workbench-tab-close`; `.is-current` and `aria-current="page"` belong to the committed navigation.
-Tabs retain compact, shared geometry with subtle group separators; the committed tab fills with the same color as the canvas and covers its top hairline.
+The committed tab fills with the same color as the canvas and covers its top hairline, with two decorative inverse corners inside the rail's clipping box and mirrored for RTL.
+The strip reserves corner room at both scroll extremes and between tabs, and the tab scroll margin lets `scrollIntoView` reveal the flares where space allows.
+At 480px and below the title cap, rail gaps and flares tighten while coarse-pointer links and close controls retain their separate touch targets.
 `[data-tab-pending="true"]` adds a static indicator, and only an uncommitted pending tab gets an accent edge, without changing geometry or accessibility state.
 Optional `[data-kind]` colors the draft, assistant and diff glyphs without supplying the tab's label.
 The close control reserves its box and appears on hover/focus and for a current non-preview tab; `[data-preview="true"]` dims and italicizes the label, with the close affordance available on coarse/touch pointers too.
 `.workbench-tab-overflow` / `#workbench-tabs-overflow` is the rail-end details menu on the shared raised-menu surface.
 
 ### Right dock (`#workbench-history`, `#workbench-git`)
-Both panels use `--surface-dock`, a layer-0 secondary wash distinct from the sidebar and canvas, with one hairline and no shadow; the light tone mixes neutral chrome and border roles before the slight secondary tint.
+History uses the same `--surface-rail` fill as the left sidebar in both themes, without an inline-start divider.
+Only Source Control uses `--surface-dock`, a restrained secondary wash over neutral chrome with an inline-start hairline that collapses with its docked width.
+The two panels share scroll containment and motion without elevation.
 The composer placeholders, History search placeholder and unselected History kind use the shared opaque `--surface-text-muted` so contrast does not depend on browser placeholder alpha or the current accent; selection retains the full content foreground.
 The `closed | open | closing` machine uses `data-panel-state` + `[hidden]` through `../js/hooks/workbench_panel*.js`.
 History follows the DOM order (project and status before search), with only `#workbench-history-rows` scrolling and two-line rows separated by spacing rather than rules.
