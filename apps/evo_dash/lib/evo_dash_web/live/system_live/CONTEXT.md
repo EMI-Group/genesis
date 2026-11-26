@@ -32,6 +32,7 @@ None — leaf directory (six module files: `status.ex`, `charts.ex`, `charts_com
 
 The System page (`EvoDashWeb.SystemLive`, inline `render/1` in `system_live.ex`) renders, in order:
 
+The workbench tab rail owns the page name, so the page renders no in-canvas title or subtitle; the sections below start at the `<div class="space-y-6">` wrapper.
 1. **Software Update card** — `id="software-update-card"`, first section, gated `@update_card_visible` (desktop+local only).
 2. **System Self-Check** — `id="system-self-check"`: merged health banner + responsive check grid (Configuration / Required Tools / Sandbox gated / Nix gated / LLM Connection cells) with the **Genesis Source card** (`SourceCard.source_section/1`, `id="genesis-source-card"`) as a PEER grid cell when `@source_card_visible` (local only). The whole grid area collapses to a spinner during a re-check (`system_checks_status == :checking`), so the source card hides then too.
 3. **Scheduler status charts** — `EvoDashWeb.SystemLive.ChartsComponent` (`<.live_component … id="system-charts">`, a stateful render boundary; SVG, zero JS) rendering `Charts.charts_section/1`.

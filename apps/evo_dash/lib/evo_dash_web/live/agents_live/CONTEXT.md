@@ -34,6 +34,7 @@
 ## Template Composition
 
 `agents_live.html.heex` holds only the shell (`Layouts.app`, the `RemoteGateComponents.gate_active?/1` branch, `div.agents-page-layout`, the three component calls).
+The workbench tab rail owns the page name, so the template renders no in-canvas `h1`/subtitle: without a task scope the grid is the single `xl:grid-rows-[minmax(0,1fr)]` panel row, and a task-scoped view adds only the non-scrolling `#agents-task-scope` strip (`Task: <id>` + objective) with the All agents link in an `auto` row.
 `TreePanel` renders `div.agents-left-col`, `DetailPanel` `div.agents-detail-col`, `Modals` the modals as SIBLINGS of `.agents-page-layout`; function components add no wrapper, so the DOM is byte-for-byte the pre-split markup (`.agents-page-layout` keeps exactly its two column children).
 Partials `use EvoDashWeb, :html`, hold no state/event/async work, and take whole assigns with shell-side fallbacks (`assigns[:commit_graph] || []` etc.); `agents_live.ex` carries no template helper and no partial aliases.
 

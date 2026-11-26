@@ -101,9 +101,8 @@ THREE layers, every value derived with `color-mix()` from the existing base/neut
 
 | Token | Layer | Role |
 |---|---|---|
-| `--surface-shell` | 0 | workbench top bar + window chrome |
-| `--surface-rail` | 0 | left sidebar, Settings navigation and History dock |
-| `--surface-dock` | 0 | Source Control dock with a restrained secondary wash |
+| `--surface-shell` | 0 | workbench top bar + frame gutter (the ONE chrome tone that lifts in the dark theme) |
+| `--surface-rail` | 0 | the recessed tone: left sidebar, Settings navigation, BOTH docked right panels (History + Source Control) and a nested task-card panel |
 | `--surface-canvas` | 1 | center content canvas (`#main-content`/`#main-scroll`), flat, never shadowed |
 | `--surface-text-muted` | — | opaque neutral foreground for the composer placeholders and History controls |
 | `--surface-raised` | 2 | palettes, menus, dialogs, notifications |
@@ -117,6 +116,8 @@ THREE layers, every value derived with `color-mix()` from the existing base/neut
 | `--radius-tab` | — | bottom-anchored tab rounding (geometry) |
 
 Light values are near-invisible (a light UI separates by border and tone, not shadow); the `[data-theme="dark"]` block re-declares every TONE with a stronger alpha and achromatic black elevations, because a dark surface separates by depth — `--radius-tab` is geometry and is NOT re-declared for dark.
+The rail is ONE restrained step BENEATH the content canvas in both themes, so the sidebar and the canvas read as one continuous surface; only the shell (top bar) wears the chrome step.
+In the dark theme the rail anchors on `var(--color-base-100)` because `base-200` is LIGHTER than `base-100` there, so a `base-200` mix would lift the sidebar above the canvas; the dark token block therefore never lifts the rail.
 `:root` + `[data-theme="dark"]` is the only pair, because the Settings popup's iframe document has no `#app-layout` and still needs the tokens from its own `<html data-theme=…>`.
 RULE: content surfaces never carry a real shadow — only overlays consume `var(--elev-2)`/`var(--elev-3)`; a `box-shadow` on a content rule is either `none` or a `0 0 0 …` focus/glow ring (rings are not elevation).
 `workbench.css`/`assistant.css` therefore consume these tokens instead of defining a second tone pair: `--workbench-surface`/`--workbench-rail` are gone, and `--workbench-hover`/`--workbench-selected` are thin aliases of `--surface-hover`/`--surface-selected`, declared on BOTH `#app-layout` and `#workbench-window-content`.
@@ -125,23 +126,27 @@ The resting composer has its own `--composer-surface` so it remains distinct fro
 
 ### Workbench chrome and tab strip
 `.workbench-top + .workbench-content-stack` is the inset canvas frame shared by the page and Git-diff portal: density-derived gutters, a hairline and `--radius-box`, no elevation shadow and no new scroll or containing block for fixed overlays.
-The sidebar uses the muted `--surface-shell` backdrop, with space and subtle hover/selected fills separating destinations rather than repeated dividers.
+The sidebar uses the recessed `--surface-rail` fill, merging with the canvas as one surface while space and subtle hover/selected fills separate destinations rather than repeated dividers.
 `.workbench-top` keeps the only `flex: 0 0 var(--shell-topbar-h)` and holds a bottom-aligned tab strip beside the create, history and Git controls.
-`.workbench-context-title` precedes the strip, with a capped, shrinkable inline box that ellipsizes long scope names so the rail controls retain their targets.
-`.workbench-tabs` uses intrinsic width up to the available rail space; it scrolls horizontally without squeezing the controls or inserting a scrollbar between the tabs and canvas.
+`.workbench-tab-rail` declares the ONE start-inset token, `--workbench-rail-start-inset: calc(var(--workbench-tab-flare) + var(--workbench-tab-start-inset, var(--radius-box)))`, consumed as `.workbench-context-title`'s `margin-inline-start` and as `.workbench-tabs`' `padding-inline` start, so the page-name label and a leading tab (whose outward corner flare paints in the flare part of the inset) start on one line instead of the label sitting flush at `.workbench-top`'s own gutter.
+A strip that follows the label (`.workbench-context-title + .workbench-tabs`) keeps only `padding-inline-start: var(--workbench-tab-flare)`, because the label already carries the start inset and no second indent belongs beside it.
+The token is DERIVED, so both responsive branches reach it without a second offset: `@media (max-width: 1023.98px)` zeroes `--workbench-tab-start-inset` on `.workbench-top` (the fixed sidebar-toggle clearance lives in that bar's `padding-inline-start`, so the inset drops to the flare paint room alone), and `@media (max-width: 480px)` halves `--workbench-tab-flare` to `calc(var(--radius-tab) / 2)` beside a tighter rail gap.
+`.workbench-context-title` is a capped, shrinkable inline box (`max-inline-size: min(12rem, 30%)`, `16%` at 480px and below) that ellipsizes long scope names so the rail controls retain their targets.
+`.workbench-tabs` uses intrinsic width up to the available rail space and scrolls horizontally without squeezing the controls or inserting a scrollbar between the tabs and canvas; `:empty` is `display: none`, so an empty strip adds no space beside Create.
+`.workbench-tab` carries a DEFINITE cap, `max-inline-size: min(10rem, 55vw)`, deliberately with no percentage — a percentage would resolve against the strip's own content box while that box is still being sized from the tabs' max-content widths and leave the difference as dead space between the last tab and the Create ("+") control — so the strip's used width equals its painted content and the last-tab → Create distance is the constant 13.6 px (`padding-inline-end: var(--workbench-tab-flare)`, 8 px at the default density and also the current tab's end-flare paint room, plus the `.35rem` rail gap) at 1, 5 and 20 tabs and at either scroll end.
+The inter-tab `gap`, that end paint room and `scroll-margin-inline` all take `var(--workbench-tab-flare)`, so the strip reserves corner room at both scroll extremes and `scrollIntoView` can reveal the flares where space allows.
 The client owns `div.workbench-tab[data-tab-key]` > `a.workbench-tab-link` + `button.workbench-tab-close`; `.is-current` and `aria-current="page"` belong to the committed navigation.
 The committed tab fills with the same color as the canvas and covers its top hairline, with two decorative inverse corners inside the rail's clipping box and mirrored for RTL.
-The strip reserves corner room at both scroll extremes and between tabs, and the tab scroll margin lets `scrollIntoView` reveal the flares where space allows.
-At 480px and below the title cap, rail gaps and flares tighten while coarse-pointer links and close controls retain their separate touch targets.
 `[data-tab-pending="true"]` adds a static indicator, and only an uncommitted pending tab gets an accent edge, without changing geometry or accessibility state.
 Optional `[data-kind]` colors the draft, assistant and diff glyphs without supplying the tab's label.
 The close control reserves its box and appears on hover/focus and for a current non-preview tab; `[data-preview="true"]` dims and italicizes the label, with the close affordance available on coarse/touch pointers too.
 `.workbench-tab-overflow` / `#workbench-tabs-overflow` is the rail-end details menu on the shared raised-menu surface.
 
 ### Right dock (`#workbench-history`, `#workbench-git`)
-History uses the same `--surface-rail` fill as the left sidebar in both themes, without an inline-start divider.
-Only Source Control uses `--surface-dock`, a restrained secondary wash over neutral chrome with an inline-start hairline that collapses with its docked width.
+History and Source Control BOTH use the `var(--surface-rail)` fill in both themes, without an inline-start divider on History.
+Only Source Control keeps the one inline-start hairline, which collapses with its docked width.
 The two panels share scroll containment and motion without elevation.
+The Git summary card and the selected segmented segment use `var(--surface-raised)` (lifted content off the chrome panel), the segmented track and the sticky branch-search backdrop use the panel's own `var(--surface-rail)` tone.
 The composer placeholders, History search placeholder and unselected History kind use the shared opaque `--surface-text-muted` so contrast does not depend on browser placeholder alpha or the current accent; selection retains the full content foreground.
 The `closed | open | closing` machine uses `data-panel-state` + `[hidden]` through `../js/hooks/workbench_panel*.js`.
 History follows the DOM order (project and status before search), with only `#workbench-history-rows` scrolling and two-line rows separated by spacing rather than rules.
@@ -154,7 +159,7 @@ The markup renders `div.task-card[data-variant="flat"|"raised"][data-selected]`,
 `.task-card` is `position: relative` with a `1px solid var(--border-hairline)` border and a `.75rem` radius.
 `[data-variant="flat"]` — the default list row — is `var(--surface-canvas)`, `box-shadow: none`, small radius, accent bar `display: none`, no tint.
 `[data-variant="raised"]` is `var(--surface-raised)` + `var(--elev-1)` with the accent bar visible.
-`.task-card-panel` is RECESSED: `var(--surface-shell)`, hairline border, `.5rem` radius, no shadow.
+`.task-card-panel` is RECESSED with `var(--surface-rail)` in both themes (the shell tone lifts in dark, the rail never does), hairline border, `.5rem` radius, no shadow.
 `.task-card-status` is a compact pill (`border-radius: 9999px`, inline padding only) and declares no size, because `surfaces.css` stays size-free — a size belongs to the markup ladder.
 HOVER / SELECTED / FOCUS are three visibly different treatments, and the accent marks ONLY the current object: hover = `var(--surface-hover)` + `var(--border-strong)`; selected (`[data-selected="true"]`, also honouring `[aria-current]`) = `var(--surface-selected)` + an accent hairline border + a 2px accent `::before` inline-start bar (never a full accent flood); `:focus-visible` = a 2px `--color-primary-standalone` outline with offset and no fill change.
 
@@ -228,8 +233,8 @@ Paused-family card styling lives in the markup / `task_card_components` utilitie
 ## Validation
 Run `node --test apps/evo_dash/assets/css/assistant_motion.test.cjs` from the repository root for focused source contracts covering opacity-only motion, visible reduced-motion fallbacks, native-dialog transition guards, history exclusions, instant-scroll invariants, the `motion.css` tokens/keyframes/state rules, the absence of the dead `data-palette-state` / `palette-fade-out` palette-exit vocabulary (the exit is the opacity-only `phx-remove` on `#project-omnibox`), the last-block reduced-motion backstop and the absence of `transition: all` in `app.css`.
 Run `node --test apps/evo_dash/assets/css/motion.test.cjs` for the hook-driven surface contracts: the native modal animates `.modal-box` in BOTH directions (opening slide + closing fade, backdrop fade only, never the `<dialog>` itself, exactly one rule per direction) with shared tokens and no literals, the Layer-2 submenu entry AND exit rules use the shared tokens and sit inside the per-component reduced-motion guard, the file-picker entry keyframe declares opacity/transform only (no width/height tween) beside its exit rule, and the legend tooltip fade uses the shared tokens.
-Run `node --test apps/evo_dash/assets/css/density.test.cjs` for density, the single-scroller paths in both docks, and shared composer focus/touch contracts.
-Run `node --test apps/evo_dash/assets/css/surfaces.test.cjs` for surface tokens and layer boundaries, the inset canvas frame, compact tab geometry and separate committed/pending states, the dock hairline, and the task-card hover/selected/focus treatments.
+Run `node --test apps/evo_dash/assets/css/density.test.cjs` for density, the single-scroller paths in both docks (including the branch-search backdrop's own panel tone), and shared composer focus/touch contracts.
+Run `node --test apps/evo_dash/assets/css/surfaces.test.cjs` for surface tokens and layer boundaries, the rail-sits-beneath-the-canvas relationship in both theme blocks, the shared rail fill both docked panels take with only Source Control's hairline, the inset canvas frame, compact tab geometry and separate committed/pending states, and the task-card hover/selected/focus treatments.
 Run `node --test apps/evo_dash/assets/css/workbench_motion.test.cjs` for the workbench right-panel contracts: the transition-bearing `.workbench-history` rule declares exactly `transform`/`opacity`/`flex-basis`/`padding`/`border-inline-start-width`, each with `var(--motion-slow)` + `var(--motion-ease-out)` and no bare duration or literal easing keyword, the `closed` + `closing` pair is ONE shared geometry rule carrying `opacity`/`transform`/`pointer-events`, `hidden` still owns `display`, the docked and drawer media queries collapse/slide that same family, the per-component reduced-motion guard stays, and the `.workbench-row.is-current` accent-pill tint keeps its `--workbench-selected` background.
 This dependency-free Node suite is not part of `mix test` or the existing JS-only globs; include `apps/evo_dash/assets/css/*.test.cjs` in any aggregate asset-test command alongside `apps/evo_dash/assets/js/*.test.cjs apps/evo_dash/assets/js/hooks/*.test.cjs`.
 Run `mix tailwind evo_dash` from the repository root to compile the CSS and `git diff --check` for whitespace checks.

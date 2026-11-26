@@ -69,7 +69,10 @@ defmodule EvoDashWeb.AgentsLive.TaskNavigationTest do
     {:ok, view, _html} = live(conn, task_agents_path(pending))
     settle_agents(view)
 
-    assert has_element?(view, "#main-content h1")
+    # The workbench tab rail owns the page name, so the page carries no h1:
+    # the task identity lives in the task-scope strip.
+    assert has_element?(view, "#agents-task-scope p", "Task: #{pending}")
+    assert has_element?(view, "#agents-clear-task-scope")
     assert_task_shell(view, pending)
     assert_agent_cards(view, [])
   end
