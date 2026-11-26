@@ -4834,301 +4834,140 @@ defmodule EvoDashWeb.ReviewLiveChromeTest do
 end
 
 defmodule EvoDashWeb.ReviewLiveRemoteAutoResolveTest do
-  # `async: true` — the auto-resolve attempt here runs against an UNREACHABLE
-  # remote node: `Actions.auto_resolve/3` issues its `set_review_status` /
-  # `start_task` writes THROUGH `EvoDash.NodeContext` with that node, so both
-  # are `:erpc` calls that fail fast (:nodedown) and NOTHING is published on the
-  # local "tasks" topic — the very reason the sibling merge/reject modules are
-  # `async: false`. The config dir this describe writes
-  # (`EvoGit.RemoteConnections.save`) is isolated PER PROCESS through the
-  # test-only `:config_dir_fun` seam (`EvoDash.Test.ConfigDir.isolate!/1`),
-  # never through the BEAM-global `XDG_CONFIG_HOME`, and the fake
-  # ConnectionManager registers under a per-test unique target id in the shared
-  # `EvoGit.RemoteConnection.Registry`.
-  #
-  # MOVED here out of `EvoDashWeb.ReviewLiveSyncTest`: the config dir was this
-  # describe's only blocker.
+  # `async: true`: both writes go through :erpc to the unreachable BEAM node,
+  # so neither reaches the local TaskRegistry or publishes on "tasks".
   use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   import EvoDashWeb.ReviewLiveTest.CaseHelpers
   import EvoDashWeb.ReviewLiveTest.Helpers
 
-  setup_all do
-    # Canonical merge-check stub for EVERY mount in this module (see the file
-    # header). Never deleted.
-    install_canonical_merge_check_runner()
-    :ok
-  end
-
   setup do
-    # This suite depends on the PRODUCTION Store/TaskRegistry pair (it does no
-    # isolation of its own), so fail loudly at the source if a prior suite
-    # leaked an isolated instance instead of silently reading a foreign DB.
     EvoDash.Test.IsolatedTaskStore.assert_production!()
-
-    # ActiveTasks is a process-less public ETS table shared by the whole run.
-    # This module is `async: true`, so clear ONLY the local `{nil, node()}`
-    # context — a whole-table reset would delete a concurrent module's
-    # per-test snapshot between its put and its get.
     EvoDash.ActiveTasks.invalidate(nil, node())
-
-    on_exit(fn ->
-      # Clear the local context on EXIT as well as on entry — every page mount
-      # asynchronously writes a sidebar snapshot into it, and the LAST test's
-      # snapshot would otherwise survive into a later suite that mounts pages
-      # without clearing it (PageControllerTest does a dead render through
-      # Layouts.app and reads the hub).
-      EvoDash.ActiveTasks.invalidate(nil, node())
-    end)
-
+    on_exit(fn -> EvoDash.ActiveTasks.invalidate(nil, node()) end)
+    EvoDash.Test.ConfigDir.isolate!("evogit_review_remote_auto_resolve")
     :ok
   end
 
-  describe "auto merge conflict resolution on an unreachable remote node" do
-    # Same per-process config-dir isolation + fake ConnectionManager seam as the
-    # sibling "remote node review" describe.
-    setup do
-      EvoDash.Test.ConfigDir.isolate!("evogit_review_remote_auto_resolve")
+  test "unreachable remote review degrades gracefully and refuses auto-resolve", %{conn: conn} do
+    id = "review-auto-target-#{System.unique_integer([:positive])}"
+    task_id = "some-remote-task-id"
+    remote_node = :"genesis_remote@127.0.0.1"
 
-      :ok
-    end
+    {:ok, _target} =
+      EvoGit.RemoteConnections.save(%{
+        ssh_target: "user@host",
+        id: id,
+        name: "Review Auto Target"
+      })
 
-    test "auto-resolve against an unreachable node fails with an error flash", %{conn: conn} do
-      id = "review-auto-target-#{System.unique_integer([:positive])}"
+    start_supervised!(
+      {EvoDashWeb.ReviewLiveTest.ConnectionManager,
+       {id, %{phase: :connected, node: Atom.to_string(remote_node), last_error: nil}}}
+    )
 
-      {:ok, _target} =
-        EvoGit.RemoteConnections.save(%{
-          ssh_target: "user@host",
-          id: id,
-          name: "Review Auto Target"
-        })
+    {:ok, view, _html} = live(conn, ~p"/review/#{task_id}?node=#{id}")
+    html = flush_review_load(view)
 
-      start_supervised!(
-        {EvoDashWeb.ReviewLiveTest.ConnectionManager,
-         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
-      )
+    assert assigns(view)[:current_node] == remote_node
+    assert html =~ "Review Not Available"
+    assert html =~ "Task not found"
+    refute html =~ "ArgumentError"
 
-      # The task does not exist on the (unreachable) remote node — the real
-      # async load fails fast with :nodedown and the page renders the graceful
-      # error state (review_repos stays []). The merge-check result handler
-      # drops results for repo ids absent from @review_repos (per-repo
-      # stale-guard), so to reach the auto-resolve RPC-failure path we first
-      # inject a VALID load result carrying a primary review-repo entry (with
-      # branch_exists: false and merge_targets: [] so MergeCheck.maybe_start
-      # does NOT spawn an async check — fully deterministic), then inject the
-      # conflict result for "primary".
-      {:ok, view, _html} = live(conn, "/review/some-remote-task-id?node=" <> id)
+    # Only the load and check results are injected after the real failed load.
+    # The branch flag renders the conflict button; no targets means no check
+    # spawns. Clicking the button still sends both real RPCs to the dead node.
+    primary = %{
+      review_repo("primary", "/nonexistent/repo/path", [])
+      | branch_exists: true,
+        review_data: nil
+    }
 
-      # Flush the real async load (nodedown → error state) so the injected
-      # load result cannot be clobbered by a racing message.
-      flush_review_load(view)
+    send(
+      view.pid,
+      {:review_data_loaded, task_id, remote_node, assigns(view)[:load_generation],
+       {:ok, %{review_repos: [primary], active_repo_id: "primary", error: nil}}}
+    )
 
-      remote_node = assigns(view)[:current_node]
-      assert remote_node != node()
+    send(
+      view.pid,
+      {:merge_check_result, task_id, remote_node, "primary", "main",
+       {:ok, {:conflict, ["file_a.txt"]}}}
+    )
 
-      gen = assigns(view)[:load_generation]
+    assert render(view) =~ "file_a.txt"
+    view |> element("#repo-card-primary button[phx-click='auto_resolve']") |> render_click()
 
-      send(
-        view.pid,
-        {:review_data_loaded, "some-remote-task-id", remote_node, gen,
-         {:ok,
-          %{
-            review_repos: [
-              %{
-                repo_id: "primary",
-                repo_path: "/nonexistent/repo/path",
-                branch_name: "evogit/test-branch",
-                commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-                base_sha: nil,
-                branch_exists: false,
-                review_data: nil,
-                commits: [],
-                merge_targets: [],
-                default_merge_target: nil,
-                merge_status: nil
-              }
-            ],
-            active_repo_id: "primary",
-            loading: false,
-            error: nil
-          }}}
-      )
-
-      render(view)
-
-      send(
-        view.pid,
-        {:merge_check_result, "some-remote-task-id", remote_node, "primary", "main",
-         {:ok, {:conflict, ["file_a.txt"]}}}
-      )
-
-      render(view)
-
-      # The set_review_status and start_task RPCs both fail fast with
-      # :nodedown → error flash, no navigation.
-      render_click(view, "auto_resolve")
-
-      # The action runs in a TaskSupervisor child; the flash lands one
-      # {:review_action_result, ...} frame later.
-      html = await_review_action_settled(view)
-
-      assert html =~ "Failed to start auto-resolve"
-      refute_redirected(view)
-    end
+    html = await_review_action_settled(view)
+    assert html =~ "Failed to start auto-resolve"
+    assert html =~ "{:erpc, :noconnection}"
+    refute_redirected(view)
   end
 end
 
 defmodule EvoDashWeb.ReviewLiveAutoResolveTest do
-  # `async: false` — every test here CLICKS a review action (merge / reject /
-  # resume / ignore / auto_resolve), and each action's production path casts to
-  # `EvoGit.TaskRegistry`, which broadcasts `{:task_updated, id, nil, node()}`
-  # on the global "tasks" topic. A same-node broadcast arms the node-aware
-  # reload debounce of EVERY mounted page in the BEAM, so running this module
-  # concurrently would break `agents_live_test`'s negative
-  # `:tasks_reload_pending` poll (proven: 1 failure in 5 concurrent runs).
+  # `async: false`: real EvoGit.TaskRegistry resume/auto-resolve writes and task
+  # submission publish on the global "tasks" topic, arming NodeAware's debounce
+  # on other mounted pages (including AgentsLive's negative debounce assertion).
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
   import EvoDashWeb.ReviewLiveTest.CaseHelpers
   import EvoDashWeb.ReviewLiveTest.Helpers
-  alias EvoGit.TaskInfo
+  alias EvoGit.Store
   alias EvoGit.TaskRegistry
 
-  setup_all do
-    # Canonical merge-check stub for EVERY mount in this module (see the file
-    # header). Never deleted.
-    install_canonical_merge_check_runner()
+  @moduletag :tmp_dir
+  @primary_sha "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+  @foreign_sha "cafebabecafebabecafebabecafebabecafebabe"
 
-    # Only the branch shapes THIS module's fixtures ask for: the templates are
-    # per-module so concurrently running modules never share a mutable fixture.
-    templates = build_templates!([{"main", "dev"}])
-    on_exit(fn -> rm_templates!(templates) end)
-    {:ok, review_templates: templates}
-  end
-
-  setup %{review_templates: templates} do
-    # The fixture hand-off is per TEST PROCESS: `review_template!/2` reads the
-    # templates from the process dictionary, and every `on_exit` closure
-    # captures a value instead.
-    Process.put(:review_templates, templates)
-    :ok
-  end
-
-  setup do
-    # This suite depends on the PRODUCTION Store/TaskRegistry pair (it does no
-    # isolation of its own), so fail loudly at the source if a prior suite
-    # leaked an isolated instance instead of silently reading a foreign DB.
+  setup %{tmp_dir: tmp_dir} do
     EvoDash.Test.IsolatedTaskStore.assert_production!()
-
-    # ActiveTasks is a global ETS hub under EvoDash.Application that is NOT
-    # terminated by the per-test isolation above — reset it so one test's
-    # sidebar snapshot never leaks into the next (ConnCase resets it too; kept
-    # explicit here because this file's tests mount whole pages through
-    # Layouts.app, which seeds the sidebar from it).
     EvoDash.ActiveTasks.reset()
+    on_exit(fn -> EvoDash.ActiveTasks.reset() end)
 
-    on_exit(fn ->
-      # Reset on EXIT as well as on entry — every page mount asynchronously
-      # writes a sidebar snapshot into this global hub, and the LAST test's
-      # snapshot would otherwise survive into a later suite that mounts pages
-      # without resetting the hub (PageControllerTest does a dead render through
-      # Layouts.app and reads the hub).
-      EvoDash.ActiveTasks.reset()
-    end)
+    # Persist real rows with no available repositories, so the loader can
+    # project both entries without Git calls or review-metadata writes.
+    primary_path = Path.join(tmp_dir, "primary")
+    foreign_path = Path.join(tmp_dir, "foreign")
 
-    :ok
+    task_id =
+      seed_multi_repo_task!(
+        primary_path,
+        @primary_sha,
+        [%{"id" => "original", "root" => foreign_path, "writable" => true}],
+        %{
+          "primary" => %{"commit_sha" => @primary_sha, "branch_name" => "task-branch"},
+          "original" => %{"commit_sha" => @foreign_sha, "branch_name" => "foreign-task-branch"}
+        }
+      )
+
+    {:ok, task_id: task_id, primary_path: primary_path, foreign_path: foreign_path}
   end
 
   describe "auto merge conflict resolution — foreign repos carried from the previous task" do
-    # Same NONEXISTENT-path pattern as the "auto merge conflict resolution"
-    # describe: no async check starts on mount (branch_exists false), so the
-    # injected conflict result is fully deterministic. The previous task is
-    # seeded WITH :foreign_repos + a per-repo `repos` map to prove the review
-    # page builds a multi-repo entry list even for auto-resolve.
-    setup do
-      task_id = "review_test_auto_resolve_multi_#{System.unique_integer([:positive])}"
-
-      task = %TaskInfo{
-        id: task_id,
-        type: :evolve,
-        status: :completed,
-        opts: [
-          path: "/nonexistent/repo/path",
-          objective: "Test objective",
-          foreign_repos: [
-            %{"id" => "original", "root" => "/nonexistent/foreign/path", "writable" => true}
-          ]
-        ],
-        ref: nil,
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        review_status: nil,
-        result:
-          {:ok,
-           %{
-             commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-             branch_name: "task-branch",
-             result: "Agent summary",
-             pr_url: nil,
-             pr_title: nil,
-             repos: %{
-               "primary" => %{
-                 "commit_sha" => "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-                 "branch_name" => "task-branch"
-               },
-               "original" => %{
-                 "commit_sha" => "cafebabecafebabecafebabecafebabecafebabe",
-                 "branch_name" => "task-branch"
-               }
-             }
-           }}
-      }
-
-      EvoGit.Store.put_task(EvoGit.Store, task)
-
-      on_exit(fn -> delete_seeded_task!(task_id) end)
-
-      {:ok, task_id: task_id}
-    end
-
     test "auto-resolve carries merge opts but NOT foreign_repos (runtime-only carry)", %{
       conn: conn,
-      task_id: task_id
+      task_id: task_id,
+      primary_path: primary_path
     } do
+      # A missing path alone can be initialized by Runtime.ensure_repo/1.
+      # A regular file at the repo path forces mkdir_p! to fail before Git or an LLM.
+      File.write!(primary_path, "not a repository\n")
+
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
 
-      # The load builds a multi-repo entry list from the previous task's
-      # foreign_repos + per-repo `repos` map (both entry branches are gone).
-      repos = assigns(view)[:review_repos]
-      assert Enum.map(repos, & &1.repo_id) == ["primary", "original"]
+      # Keep the loader's entries and make only the primary look mergeable.
+      # No targets means the injected conflict cannot race a real check.
+      assert [%{repo_id: "primary"} = primary, %{repo_id: "original"} = foreign] =
+               assigns(view)[:review_repos]
 
-      # Enable the primary's per-repo conflict affordances: branch_exists true
-      # (so the card renders its merge-status block) with NO merge targets (so
-      # no async check spawns — the injected conflict result is race-free).
-      gen = assigns(view)[:load_generation]
-
-      modded =
-        Enum.map(repos, fn repo ->
-          if repo.repo_id == "primary" do
-            Map.merge(repo, %{
-              branch_exists: true,
-              merge_targets: [],
-              default_merge_target: nil,
-              # The load seeds :handled for the nonexistent fixture branches;
-              # clear it so the card renders its merge-status block instead of
-              # the terminal presentation.
-              resolution: nil
-            })
-          else
-            repo
-          end
-        end)
+      primary = %{primary | branch_exists: true, resolution: nil}
 
       send(
         view.pid,
-        {:review_data_loaded, task_id, node(), gen,
-         {:ok, %{review_repos: modded, active_repo_id: "primary", loading: false, error: nil}}}
+        {:review_data_loaded, task_id, node(), assigns(view)[:load_generation],
+         {:ok, %{review_repos: [primary, foreign], active_repo_id: "primary", error: nil}}}
       )
 
       send(
@@ -5140,152 +4979,103 @@ defmodule EvoDashWeb.ReviewLiveAutoResolveTest do
       html = render(view)
       assert html =~ "Auto-resolve conflict"
       assert html =~ "file_a.txt"
-      # Wrap the trigger AND the await of the spawned merge-resolution task's
-      # terminal status in a capture_log/2 window: the task's wrapper fails fast
-      # on the fixture's nonexistent repo path, and EvoGit.TaskRegistry logs the
-      # wrapper crash / FAILED_TRANSITION ASYNCHRONOUSLY. Awaiting the terminal
-      # status BEFORE the capture is turned off guarantees that log lands inside
-      # the window instead of leaking into the between-test gap (ExUnit's
-      # capture_log: true only keeps the Logger :default handler swapped out
-      # while a capture is actually active).
+
+      # Keep capture open until the real wrapper's failure is persisted.
       log =
         ExUnit.CaptureLog.capture_log(fn ->
-          render_click(view, "auto_resolve")
+          view |> element("#repo-card-primary button[phx-click='auto_resolve']") |> render_click()
           await_review_action_settled(view)
           await_merge_task_terminal(task_id)
         end)
 
-      # Proof the capture actually held the TaskRegistry log line.
-      assert log =~ "TaskRegistry"
-
-      # The auto-resolve redirect is emitted by ActionResults when the spawned
-      # action settles, so poll for it instead of the short default window.
       assert_redirect(view, "/projects", 2000)
+      assert %EvoGit.TaskInfo{review_status: :continued} = Store.get_task(task_id)
 
-      assert TaskRegistry.get_task(task_id).review_status == :continued
-
-      new_task =
+      started_task =
         Enum.find(TaskRegistry.list_tasks(), &(merge_opt(&1.opts, :merge_from) == task_id))
 
-      assert new_task, "expected a merge-resolution task to be started"
+      assert started_task, "expected a merge-resolution task to be started"
 
       on_exit(fn ->
-        if new_task, do: TaskRegistry.delete_task(new_task.id)
+        TaskRegistry.delete_task(started_task.id)
         TaskRegistry.list_tasks()
       end)
 
-      assert new_task.type == :evolve
-      assert merge_opt(new_task.opts, :merge_from) == task_id
-      assert merge_opt(new_task.opts, :merge_target) == "main"
-      assert new_task.opts[:mode] == "simple"
-      assert new_task.opts[:path] == "/nonexistent/repo/path"
-      assert new_task.opts[:starting_commit] == "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+      assert %EvoGit.TaskInfo{type: :evolve, status: :failed, opts: opts} =
+               Store.get_task(started_task.id)
 
-      # NOTE: the foreign-repo carry through auto-resolve is RUNTIME-only —
-      # TaskRegistry persists the original submission opts, and the core
-      # `EvoGit.TaskRegistry.MergeContext.apply_merge_context/4` threads
-      # :foreign_repos into the spawned executor's RUNTIME opts (not the
-      # persisted ones). Covered by core merge_context_test.exs — do NOT
-      # assert foreign_repos in the new task's persisted opts (it is not
-      # there by design).
-      refute Enum.any?(new_task.opts, fn
-               {:foreign_repos, _} -> true
-               {"foreign_repos", _} -> true
-               _ -> false
-             end)
+      assert log =~ "TaskRegistry: FAILED_TRANSITION task_id=#{started_task.id}"
+      assert log =~ "%File.Error{"
+      assert log =~ inspect(primary_path)
+
+      assert merge_opt(opts, :merge_from) == task_id
+      assert merge_opt(opts, :merge_target) == "main"
+      assert opts[:mode] == "simple"
+      assert opts[:path] == primary_path
+      assert opts[:starting_commit] == @primary_sha
+
+      # The core's MergeContext carries foreign repos into runtime opts (pinned
+      # in merge_context_test.exs), never into the persisted submission opts.
+      refute Enum.any?(opts, fn {key, _} -> key in [:foreign_repos, "foreign_repos"] end)
     end
   end
 
   describe "multi-repo review — resume is primary-scoped" do
-    setup do
-      {primary_dir, foreign_dir, task_id, primary_sha, foreign_sha} =
-        create_multi_repo_review_task!("main", "dev")
-
-      on_exit(fn -> rm_rf_retry(primary_dir) end)
-
-      {:ok,
-       primary_dir: primary_dir,
-       foreign_dir: foreign_dir,
-       task_id: task_id,
-       primary_sha: primary_sha,
-       foreign_sha: foreign_sha}
-    end
-
     test "resume redirects with the primary repo's params", %{
       conn: conn,
       task_id: task_id,
-      primary_dir: primary_dir,
-      primary_sha: primary_sha
+      primary_path: primary_path
     } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
-      # Drain the mount-time reload the load's set_review_metadata broadcast
-      # armed (10 ms debounce window) so the resume click starts from the
-      # settled, non-loading page.
-      settle_debounced_task_reload(view)
 
-      render_click(view, "resume")
+      assert %{active_repo_id: "primary", repo_path: ^primary_path, commit_sha: @primary_sha} =
+               assigns(view)
 
-      # The resume action runs off-process; settle it (the view STOPS on its
-      # push_navigate, which this helper tolerates) so the action has been
-      # applied, then poll for the redirect: it is relayed to the test proxy
-      # asynchronously, so a short default window can miss it on a loaded host.
-      await_review_action_settled(view)
-
-      # The resume URL carries resume_from/starting_commit/project for the
-      # PRIMARY repo. The handler builds the query with Keyword.put/3, which
-      # PREPENDS keys — so the actual order is
-      # [project:, starting_commit:, resume_from:] (project FIRST). The ~p
-      # sigil encodes the query with Plug.Conn.Query, so build the expected
-      # URL with the same call and the same key order.
-      expected =
-        "/projects?" <>
-          Plug.Conn.Query.encode(
-            project: primary_dir,
-            starting_commit: primary_sha,
-            resume_from: task_id
-          )
-
-      assert_redirect(view, expected, 2000)
-
-      assert TaskRegistry.get_task(task_id).review_status == :continued
+      assert_primary_resume(view, task_id, primary_path)
     end
 
     test "resume stays primary-scoped even with the foreign tab active", %{
       conn: conn,
       task_id: task_id,
-      primary_dir: primary_dir,
-      primary_sha: primary_sha
+      primary_path: primary_path,
+      foreign_path: foreign_path
     } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
-      # Drain the mount-time reload (armed by the load's set_review_metadata
-      # broadcast) before the repo switch + resume click, so neither acts on a
-      # page whose reload lands mid-sequence.
-      settle_debounced_task_reload(view)
+      open_commits_tab(view)
 
-      # Switch to the foreign repo via the selector — resume must NOT pick up
-      # the foreign repo's path/commit (PRIMARY-scoped by design).
-      render_change(view, "switch_repo", %{"repo_id" => "original"})
-      assert assigns(view)[:active_repo_id] == "original"
+      view
+      |> element("#commits-repo-switch-form")
+      |> render_change(%{"repo_id" => "original"})
 
-      render_click(view, "resume")
+      assert %{active_repo_id: "original", repo_path: ^foreign_path, commit_sha: @foreign_sha} =
+               assigns(view)
 
-      # Settle the off-process action (the view stops on its push_navigate).
-      await_review_action_settled(view)
-
-      # Same key order as the handler's Keyword.put/3-built query (project
-      # FIRST — see the sibling test above).
-      expected =
-        "/projects?" <>
-          Plug.Conn.Query.encode(
-            project: primary_dir,
-            starting_commit: primary_sha,
-            resume_from: task_id
-          )
-
-      assert_redirect(view, expected, 2000)
+      assert_primary_resume(view, task_id, primary_path)
     end
+  end
+
+  defp assert_primary_resume(view, task_id, primary_path) do
+    # No directory means the loader hides the follow-up button. Exercise the
+    # event directly to pin its scope without a real repo or a fake load result.
+    render_click(view, "resume")
+    await_review_action_settled(view)
+
+    expected =
+      "/projects?" <>
+        Plug.Conn.Query.encode(
+          project: primary_path,
+          starting_commit: @primary_sha,
+          resume_from: task_id
+        )
+
+    assert_redirect(view, expected, 2000)
+
+    # The advisory TaskRegistry cast can persist after navigation.
+    wait_until(fn ->
+      match?(%EvoGit.TaskInfo{review_status: :continued}, Store.get_task(task_id))
+    end)
   end
 end
 
@@ -6076,34 +5866,6 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
       EvoDash.Test.ConfigDir.isolate!("evogit_review_remote_node")
 
       :ok
-    end
-
-    test "unreachable remote node renders the graceful not-available state", %{conn: conn} do
-      id = "review-test-target-#{System.unique_integer([:positive])}"
-
-      {:ok, _target} =
-        EvoGit.RemoteConnections.save(%{
-          ssh_target: "user@host",
-          id: id,
-          name: "Review Test Target"
-        })
-
-      start_supervised!(
-        {EvoDashWeb.ReviewLiveTest.ConnectionManager,
-         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
-      )
-
-      # The task does not exist on the (unreachable) remote node — the RPC
-      # fails fast with :nodedown, so the page must render the existing
-      # "Review Not Available" error state without crashing. The task fetch
-      # now runs in the async load task; flush it.
-      {:ok, view, _html} = live(conn, "/review/some-remote-task-id?node=" <> id)
-
-      html = flush_review_load(view)
-
-      assert html =~ "Review Not Available"
-      assert html =~ "Task not found"
-      refute html =~ "ArgumentError"
     end
 
     test "unknown node param falls back to local (task not found locally)", %{conn: conn} do
