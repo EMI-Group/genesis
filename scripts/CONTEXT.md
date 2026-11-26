@@ -79,13 +79,15 @@ Printed next steps: `genesis` (foreground server), `genesis start` (service via 
 
 - `./sync-readme-evidence.py` → Python standard-library generator for the bounded README Evidence block. `--refresh` fetches the website manifest; `--check` validates against the committed snapshot offline. Selection, snapshot and maintenance instructions live in `../docs/readme-evidence*`.
 - `./install.sh` → one-line installer for the headless `genesis_server` distribution.
-- `./test-genesis-cli.sh` → smoke test for `../rel/overlays/bin/genesis` (temp release + stub `bin/genesis_server`, PATH-shadowed systemd/launchd/launchctl and stubbed `loginctl`/`journalctl`/`curl`/`uname`, a real stub "server instance" for the single-instance `genesis remote` control plane, and real `.tar.xz` fixtures for the `genesis update` self-update path; run with `bash scripts/test-genesis-cli.sh`, no release build, service manager or network needed) — its CLI surface, linger/remote/update coverage and fixture/shim inventory: `### test-genesis-cli.sh` above.
+- `./test-genesis-cli.sh` → smoke test for `../rel/overlays/bin/genesis` (temp release + stub `bin/genesis_server`, PATH-shadowed systemd/launchd/launchctl and stubbed `loginctl`/`journalctl`/`curl`/`uname`, a real stub "server instance" for the single-instance `genesis remote` control plane, and real `.tar.xz` fixtures for the `genesis update` self-update path; run with `bash scripts/test-genesis-cli.sh`, no release build, service manager or network needed) — its CLI surface, linger/remote/update coverage and fixture/shim inventory: this file's Local section, `### test-genesis-cli.sh`.
 - `../rel/overlays/` → release overlay sources; `../rel/overlays/bin/genesis` is the CLI this installer links.
 - `../.github/workflows/` → builds and uploads the `genesis_server_*` tarballs and the `install.sh` asset.
 - `../apps/evo_git/lib/evo_git/remote_bootstrap.ex` → Elixir mirror of the same `/dl/` asset-URL pattern (`direct_url/1`).
 - The Mix umbrella build (`../apps/`, `../mix.exs`) does not include this directory.
 
 <!-- genesis:local -->
+
+## Local: test-genesis-cli.sh
 
 ### `test-genesis-cli.sh`
 
