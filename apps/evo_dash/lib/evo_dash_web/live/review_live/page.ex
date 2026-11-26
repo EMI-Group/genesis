@@ -12,25 +12,21 @@ defmodule EvoDashWeb.ReviewLive.Page do
   use EvoDashWeb, :html
 
   alias EvoDashWeb.RemoteGateComponents
+  alias EvoDashWeb.ReviewLive.LoadRequest
 
   def render(assigns) do
-    remote_gate? = RemoteGateComponents.gate_active?(assigns)
-    remote_requested? = assigns[:workbench_remote_requested] == true
-    unresolved_remote? = remote_requested? and is_nil(assigns.current_node_id)
-    local_fallback? = remote_requested? and assigns.current_node == node()
+    unresolved_remote? =
+      assigns[:workbench_remote_requested] == true and is_nil(assigns.current_node_id)
 
-    # Keep same-node refreshes stable, but never send the previous node's path
-    # or a pending target's local fallback data to the workbench.
-    scope_ready? =
-      assigns.page_ready? and not remote_gate? and not local_fallback? and
-        assigns[:workbench_loaded_node] == assigns.current_node
+    scope_ready? = LoadRequest.scope_ready?(assigns)
 
     assigns =
       assign(assigns,
-        remote_gate?: remote_gate?,
+        remote_gate?: RemoteGateComponents.gate_active?(assigns),
         shell_project: if(scope_ready?, do: assigns.workbench_project),
         shell_title: if(scope_ready?, do: assigns[:objective]),
-        shell_task: unless(unresolved_remote?, do: assigns.task_id)
+        shell_task: unless(unresolved_remote?, do: assigns.task_id),
+        history_scope_pending?: LoadRequest.history_scope_pending?(assigns)
       )
 
     ~H"""
@@ -42,6 +38,7 @@ defmodule EvoDashWeb.ReviewLive.Page do
       remote_targets={assigns[:remote_targets] || []}
       connection_statuses={assigns[:connection_statuses] || %{}}
       workbench_project={@shell_project}
+      workbench_history_scope_pending?={@history_scope_pending?}
       workbench_git_project={@shell_project}
       workbench_task={@shell_task}
       workbench_title={@shell_title}

@@ -178,13 +178,7 @@ defmodule EvoDashWeb.HomeLive.AttachPipeline do
   @doc """
   Refreshes the shared sidebar's Conversations load for the current node.
   """
-  def maybe_load_sessions(socket) do
-    if connected?(socket) do
-      SessionList.spawn_load(socket, socket.assigns[:current_node])
-    else
-      socket
-    end
-  end
+  def maybe_load_sessions(socket), do: SessionList.refresh(socket)
 
   ## Chat-agent / history / task loaders ---------------------------------
 

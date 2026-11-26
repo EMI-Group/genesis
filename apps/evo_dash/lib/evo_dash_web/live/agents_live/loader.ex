@@ -31,11 +31,25 @@ defmodule EvoDashWeb.AgentsLive.Loader do
           else: fn -> LoadData.load(node, cache) end
 
       case SafeCall.start(self(), tag, runner) do
-        {:ok, _pid} -> socket
-        {:error, reason} -> fail_page(socket, reason)
+        {:ok, _pid} ->
+          if task_id, do: assign(socket, :scoped_page_load, {scope, gen}), else: socket
+
+        {:error, reason} ->
+          fail_page(socket, reason)
       end
     else
       socket
+    end
+  end
+
+  @doc "Whether a started, current scoped load has yet to resolve the task's project metadata."
+  def history_scope_pending?(assigns) do
+    case assigns[:scoped_page_load] do
+      {{_, _, task_id} = scope, gen} when is_binary(task_id) ->
+        is_nil(assigns[:scoped_task]) and owns?(assigns, scope, gen, :load_generation)
+
+      _ ->
+        false
     end
   end
 
@@ -61,15 +75,18 @@ defmodule EvoDashWeb.AgentsLive.Loader do
   end
 
   def loaded(socket, scope, gen, result) do
-    if owns?(socket, scope, gen, :load_generation) do
-      {:noreply, apply_page(socket, result)}
+    assigns = socket.assigns
+
+    if owns?(assigns, scope, gen, :load_generation) and
+         (is_nil(assigns[:task_scope_id]) or assigns[:scoped_page_load] == {scope, gen}) do
+      {:noreply, socket |> assign(:scoped_page_load, nil) |> apply_page(result)}
     else
       {:noreply, socket}
     end
   end
 
   def refreshed(socket, {_, _, nil} = scope, seq, result) do
-    if owns?(socket, scope, seq, :refresh_seq) do
+    if owns?(socket.assigns, scope, seq, :refresh_seq) do
       case result do
         {:ok, {agents, cache}} ->
           {:noreply,
@@ -124,9 +141,9 @@ defmodule EvoDashWeb.AgentsLive.Loader do
     end
   end
 
-  defp owns?(socket, scope, seq, counter) do
-    Scope.available?(socket.assigns) and scope == Scope.identity(socket.assigns) and
-      seq == Map.get(socket.assigns, counter)
+  defp owns?(assigns, scope, seq, counter) do
+    Scope.available?(assigns) and scope == Scope.identity(assigns) and
+      seq == Map.get(assigns, counter)
   end
 
   defp apply_page(socket, {:ok, {:ok, %{task: nil} = data}}) do
@@ -165,7 +182,7 @@ defmodule EvoDashWeb.AgentsLive.Loader do
   defp apply_page(socket, _result), do: fail_page(socket, :invalid_load_result)
 
   defp fail_page(socket, reason) do
-    socket = assign(socket, agents_loading: false, agents_error: reason)
+    socket = assign(socket, agents_loading: false, agents_error: reason, scoped_page_load: nil)
 
     socket =
       if socket.assigns[:task_scope_id] && !socket.assigns[:scoped_task],

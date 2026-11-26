@@ -4,11 +4,9 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
 
   Runs the whole review-page load sequence (task, merge targets, review
   metadata, commits, and — on the `:commit` route — the commit-inspection
-  data) OUTSIDE the LiveView process, in a supervised task. The LiveView
-  spawns the task via its private `start_async_load/2` and applies the result
-  from `{:review_data_loaded, ...}` messages; `@loading` renders the spinner
-  until the result arrives. Kept as a support module (same pattern as
-  `EvoDashWeb.ReviewLive.MergeCheck`) so the single-page LiveView stays lean.
+  data) OUTSIDE the LiveView process, in a supervised task. `LoadRequest`
+  starts the task and stamps the workbench scope on its result; the LiveView
+  applies the result from `{:review_data_loaded, ...}` messages.
 
   The task row itself comes from the LITE read (`get_task_lite/2`): result,
   opts, SHAs, timestamps, usage and agent_count — but NOT the archive, which
@@ -191,7 +189,6 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
       selected_file: nil,
       repo_path: primary.repo_path,
       workbench_project: primary.repo_path,
-      workbench_loaded_node: node,
       objective: objective,
       commits: primary.commits,
       task_usage: task.usage,

@@ -75,6 +75,9 @@ The lite task's projected `@scoped_task` is `%{id:, objective:, project_path:, s
 Task and agent result are applied together via `Loader.loaded(socket, scope, gen, result)`; scoped refresh uses the same generation, while the nested unscoped refresh message routes to `Loader.refreshed(socket, scope, seq, result)` on its own sequence.
 The old flat `{:agents_data_loaded, node, gen, result}` and `{:agents_refresh_result, seq, node, result}` test envelopes route to `Loader.legacy_loaded/4` and `Loader.legacy_refreshed/4` respectively and cannot change a scoped or target view.
 `@scoped_task_state` is nil for unscoped, else `:loading | :unavailable | :missing | :error | :ready`; pass it as `scoped_task_state={@scoped_task_state}` to `TreePanel`, which distinguishes initial loading, unavailable/missing/error, a real empty roster and a refresh of a retained view.
+Pass `Loader.history_scope_pending?(assigns)` to `Layouts.app` as `workbench_history_scope_pending?`: this reports only a started, available scoped load awaiting the task row, not the tree's initial loading placeholder.
+`Loader` records the scoped request's existing `{scope, generation}` only after a successful connected spawn and consumes it on the matching receipt; scope resets, task deletion and spawn failure discard it, while stale or duplicate scoped receipts cannot change it or apply metadata.
+A same-scope refresh keeps its task metadata and does not mark History pending, even for an already known task with no project; settled missing/error states, the disconnected render, unavailable targets and the unscoped view report false.
 `retry_agents_load` delegates to `Loader.start_page_load/1`, including in focused mode.
 
 `{:task_updated, …}` and `{:task_deleted, …}` route to `Scope.task_event/2`; only a node/task match can refresh or clear the focused data, while available-node events retain the independent shared sidebar debounce (`:node_aware_reload_tasks` stays with NodeAware).

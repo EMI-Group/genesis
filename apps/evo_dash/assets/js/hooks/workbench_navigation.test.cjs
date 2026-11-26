@@ -192,14 +192,16 @@ function fixture({initial = OVERVIEW, defaultDraft, tabs = [], widths, historyOp
   }
   const globals = {location, document, queueMicrotask: fn => microtasks.push(fn)};
   const rail = load('workbench_rail', '{railMethods, link, TAB_KEY}', {...store, ...helpers, ...globals});
+  const historyMethods = load('workbench_history', 'historyMethods', {...globals, Event});
   const api = load('workbench', '{Workbench, navigation, attach: hook => { mountedWorkbench = hook; bindNavigation() }}', {
-    ...rail, ...helpers, ...globals, safeHrefBase: store.safeHref, sameScope: store.sameScope,
+    ...rail, ...helpers, ...globals, historyMethods, safeHrefBase: store.safeHref, sameScope: store.sameScope,
     projectPreview: {forget() {}, remember() {}, show() {}, release() {},
       sync() { if (activeLayout) geometry('preview'); },
       reposition() { geometry('preview reposition'); }},
     createPanelHost: () => ({apply(panel, open, animate) {
       geometry(animate ? 'panel sync' : 'panel seed');
       panel.hidden = !open;
+      panel.dataset.panelState = open ? 'open' : 'closed';
     }, destroy() {}}),
     matchMedia: query => query.includes('1280px') ? media : {matches: false},
     initialPanelState: open => open, PANEL_OPEN: true,
@@ -238,6 +240,7 @@ function fixture({initial = OVERVIEW, defaultDraft, tabs = [], widths, historyOp
       },
       querySelectorAll() { return [...tabRail.children, ...list.children]; },
       contains(row) { return historyRows.includes(row); },
+      addEventListener() {},
       append() {},
     },
     node: '', project: '/repo', tabs: store.restore(tabs), navigation: api.navigation,
@@ -249,12 +252,13 @@ function fixture({initial = OVERVIEW, defaultDraft, tabs = [], widths, historyOp
       this.captureTab(); this.renderTabs(); this.renderHistory(); this.settleActivation(); this.maybeOpenDefaultDraft();
     },
   });
+  hook.mountHistory();
   api.attach(hook);
 
-  function mount(page) {
+  function mount(page, options = {}) {
     const layout = element('div'), panel = element('aside'), center = element('div');
     Object.assign(layout.dataset, {workbenchProject: '/repo', workbenchPage: page, workbenchTask: 'task-1',
-      workbenchAccentDefault: 'blue'});
+      workbenchAccentDefault: 'blue', ...options.dataset});
     panel.hidden = true;
     const inline = new Map();
     layout.style = {
@@ -294,11 +298,51 @@ function fixture({initial = OVERVIEW, defaultDraft, tabs = [], widths, historyOp
     };
     layout.querySelector = selector => nodes.get(selector);
     layout.querySelectorAll = () => [];
+    // History events delegate in the capture phase, including non-bubbling scroll.
+    const captured = new Map();
+    layout.addEventListener = (type, fn, capture) => { if (capture) captured.set(type, fn); };
+    layout.removeEventListener = (type, fn, capture) => { if (capture && captured.get(type) === fn) captured.delete(type); };
+    const historyContent = Object.assign(element('section'), {style: {visibility: ''}});
+    panel.append(historyContent);
+    nodes.set('#workbench-history-content', historyContent);
+    const fallback = element('button');
+    nodes.set('#workbench-create-toggle', fallback);
+    const toggle = element('button');
+    nodes.set('#workbench-history-toggle', toggle);
+    function putRows({top = 0, max = 1000, loading = false, more = false,
+      filter = '/repo', status = '', query = '', kind = 'tasks'} = {}) {
+      const form = Object.assign(element('form'), {elements: {
+        project: {value: filter}, status: {value: status}, query: {value: query},
+      }});
+      const kindPicker = element('div');
+      kindPicker.dataset.historyKind = kind;
+      form.querySelector = () => kindPicker;
+      const rows = Object.assign(element('div'), {clientHeight: 400, scrollHeight: 400 + max, scrollTop: top});
+      rows.dataset.loading = String(loading);
+      const moreButton = element('button');
+      rows.closest = selector => selector === '#workbench-history-rows' ? rows : null;
+      moreButton.closest = selector => ({'#workbench-history-rows': rows, '[data-workbench-more]': moreButton}[selector]);
+      rows.querySelector = selector => selector === '[data-workbench-more]' && moreButton.present ? moreButton : null;
+      moreButton.present = more;
+      historyContent.replaceChildren(form, rows);
+      historyContent.querySelector = selector => nodes.get(selector);
+      nodes.set('#workbench-history-filters', form);
+      nodes.set('#workbench-history-rows', rows);
+      return {rows, form, moreButton};
+    }
+    function clearRows() {
+      historyContent.replaceChildren();
+      nodes.delete('#workbench-history-filters');
+      nodes.delete('#workbench-history-rows');
+    }
+    const entries = options.rows ? putRows(options.rows) : {};
     const rail = addRail(), control = addOverflow(), left = addHandle('left'), right = addHandle('right');
     activeLayout = layout;
     const live = Object.assign(Object.create(api.Workbench), {el: layout});
     live.mounted();
-    return {live, layout, rail, control, left, right, panel, center, inline, addOverflow, addHandle, addRail};
+    return {live, layout, rail, control, left, right, panel, center, inline, addOverflow, addHandle, addRail,
+      historyContent, toggle, fallback, putRows, clearRows, ...entries, captured,
+      event(type, target, fields) { captured.get(type)?.({type, target, ...fields}); }};
   }
 
   return {hook, document, tabRail, list, history, addHistory, navigated, frames, emit, expire: clock.expire,
@@ -763,4 +807,155 @@ test('drag and viewport changes keep width geometry current without persisting a
   live.setHistory(true);
   assert.equal(center.inert, true);
   assert.equal(right.hidden, true, 'resize handle remains hidden in drawer mode');
+});
+
+const pendingHistory = {workbenchProject: '', workbenchHistoryScopePending: 'true'};
+
+function settleHistory(shell, project = '/repo') {
+  delete shell.layout.dataset.workbenchHistoryScopePending;
+  shell.layout.dataset.workbenchProject = project;
+  shell.live.updated();
+}
+
+function scrollHistory(shell, top) {
+  shell.rows.scrollTop = top;
+  shell.event('scroll', shell.rows);
+}
+
+test('an open desktop dock reserves its saved width through a pending remount without exposing content', () => {
+  const f = fixture({historyOpen: true, widths: {left: 300, right: 425}});
+  const from = f.mount('dashboard', {rows: {}});
+  scrollHistory(from, 200);
+  from.live.destroyed();
+  assert.equal(from.captured.has('scroll'), false);
+  assert.equal(from.captured.has('input'), false);
+
+  const to = f.mount('review', {dataset: pendingHistory, rows: {top: 33}});
+  assert.deepEqual(f.getWidths(to.layout), ['300px', '425px']);
+  assert.equal(to.panel.hidden, false);
+  assert.equal(to.panel.inert, true);
+  assert.equal(to.historyContent.style.visibility, 'hidden');
+  assert.equal(to.toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(to.toggle.inert, true);
+  assert.equal(to.right.hidden, false);
+  assert.equal(to.right.inert, true);
+  assert.equal(to.center.inert, false, 'reserving a dock is not opening a drawer');
+  to.historyContent.style.visibility = '';
+  to.panel.hidden = true;
+  to.live.updated();
+  assert.equal(to.historyContent.style.visibility, 'hidden', 'a same-marker morph repairs the stale frame');
+  assert.equal(to.panel.hidden, false);
+  const newRows = to.putRows({loading: true});
+  settleHistory(to);
+  assert.equal(to.panel.hidden, false, 'resolving scope does not close and reopen the panel');
+  assert.equal(to.panel.inert, false);
+  assert.equal(to.historyContent.style.visibility, '');
+  assert.equal(to.right.inert, false);
+  assert.equal(to.toggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(newRows.rows.scrollTop, 0);
+  newRows.rows.dataset.loading = 'false';
+  to.live.updated();
+  assert.equal(newRows.rows.scrollTop, 200, 'loading settlement works even on a no-sweep patch');
+});
+
+test('same-shell pending scope releases focus and ends at unavailable/unscoped History', () => {
+  const f = fixture({historyOpen: true});
+  const shell = f.mount('tasks', {rows: {}});
+  scrollHistory(shell, 150);
+  f.document.activeElement = shell.rows;
+  Object.assign(shell.layout.dataset, pendingHistory);
+  shell.live.updated();
+  assert.equal(shell.panel.hidden, false);
+  assert.equal(f.document.activeElement, shell.fallback);
+  assert.equal(shell.historyContent.style.visibility, 'hidden');
+  shell.clearRows();
+  settleHistory(shell, '');
+  assert.equal(shell.panel.hidden, true);
+  shell.live.destroyed();
+  const back = f.mount('tasks', {rows: {}});
+  assert.equal(back.rows.scrollTop, 0, 'unscoped settlement discards the old offset');
+});
+
+test('pending History reserves no space without an outgoing dock, on another node, or in overlay mode', () => {
+  const fresh = fixture({historyOpen: true}).mount('agents', {dataset: pendingHistory});
+  assert.equal(fresh.panel.hidden, true, 'a preference alone is not an open dock');
+  for (const boundary of ['node', 'narrow']) {
+    const f = fixture({historyOpen: true});
+    const from = f.mount('tasks', {rows: {}});
+    scrollHistory(from, 220);
+    from.live.destroyed();
+    if (boundary === 'narrow') f.viewport(1000, false);
+    const to = f.mount('agents', {dataset: {...pendingHistory,
+      workbenchNode: boundary === 'node' ? 'remote' : ''}, rows: {}});
+    assert.equal(to.panel.hidden, true, boundary);
+    assert.equal(to.center.inert, false, boundary);
+    assert.equal(to.layout.hasAttribute('data-workbench-history-drawer-open'), false, boundary);
+    settleHistory(to);
+    assert.equal(to.panel.hidden, boundary === 'narrow');
+    assert.equal(to.rows.scrollTop, 0);
+  }
+});
+
+test('History can transfer before late outgoing hook teardown without reviving its old position', () => {
+  const f = fixture({historyOpen: true});
+  const from = f.mount('dashboard', {rows: {}});
+  from.rows.scrollTop = 180; // no scroll event delivered yet
+  const to = f.mount('review', {rows: {}});
+  assert.equal(to.rows.scrollTop, 180);
+  scrollHistory(to, 330);
+  to.live.destroyed();
+  from.live.destroyed();
+  const next = f.mount('agents', {rows: {}});
+  assert.equal(next.rows.scrollTop, 330);
+});
+
+test('Back/Forward remounts share the offset only when node, project and view filters still match', () => {
+  const f = fixture({historyOpen: true});
+  let shell = f.mount('dashboard', {rows: {}});
+  scrollHistory(shell, 180);
+  for (const path of ['/review/task-1', OVERVIEW, '/review/task-1']) {
+    shell.live.destroyed();
+    f.at(path);
+    f.emit('popstate');
+    shell = f.mount(path === OVERVIEW ? 'dashboard' : 'review', {rows: {}});
+    assert.equal(shell.rows.scrollTop, 180, path);
+  }
+  for (const options of [{dataset: {workbenchProject: '/other'}}, {rows: {filter: ''}},
+    {rows: {status: 'running'}}, {rows: {query: 'query'}}, {rows: {kind: 'conversations'}}]) {
+    const f = fixture({historyOpen: true});
+    const from = f.mount('dashboard', {rows: {}});
+    scrollHistory(from, 180);
+    from.live.destroyed();
+    const to = f.mount('review', {rows: {}, ...options});
+    assert.equal(to.rows.scrollTop, 0, JSON.stringify(options));
+  }
+});
+
+test('History scroll restoration waits for explicit pagination, clamps at the end, and yields to user input', () => {
+  for (const action of ['page', 'clamp', 'wheel', 'keydown', 'scroll', 'filter']) {
+    const f = fixture({historyOpen: true});
+    const from = f.mount('dashboard', {rows: {}});
+    scrollHistory(from, 800);
+    from.live.destroyed();
+    const to = f.mount('review', {rows: {more: true, max: 120}});
+    assert.equal(to.rows.scrollTop, 0, 'the first page cannot restore the old offset');
+    if (action === 'page') {
+      to.event('pointerdown', to.moreButton);
+      to.event('keydown', to.moreButton, {key: 'Enter'});
+    }
+    if (action === 'keydown') to.event('keydown', to.rows, {key: 'PageDown'});
+    if (action === 'wheel') to.event('wheel', to.rows);
+    if (action === 'scroll') scrollHistory(to, 70);
+    if (action === 'filter') {
+      const input = to.form.elements.query;
+      input.closest = () => to.form;
+      input.value = 'different';
+      to.event('input', input);
+      input.value = ''; // even if the server later renders the old filter again
+    }
+    to.moreButton.present = false;
+    to.rows.scrollHeight = to.rows.clientHeight + (action === 'clamp' ? 300 : 1000);
+    to.live.updated();
+    assert.equal(to.rows.scrollTop, {page: 800, clamp: 300, wheel: 0, keydown: 0, scroll: 70, filter: 0}[action], action);
+  }
 });

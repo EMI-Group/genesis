@@ -172,6 +172,7 @@ defmodule EvoDashWeb.AgentsLive.Scope do
     |> StreamWatch.detach()
     |> assign(
       scoped_task: nil,
+      scoped_page_load: nil,
       scoped_task_state:
         if(assigns[:task_scope_id], do: if(available?, do: :loading, else: :unavailable)),
       agents_loading: available?,

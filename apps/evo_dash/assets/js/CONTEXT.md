@@ -13,6 +13,7 @@ Client-side JavaScript for the EvoDash dashboard: `app.js` (a thin entry — the
 - `./hooks/workbench_navigation.js` → exact-route confirmation and pending intent across LiveView patches and mounts, including the one-shot blank Assistant draft for an eligible overview whose project rail is empty after restore.
 - `./hooks/workbench_rail.js` → the client-owned `#workbench-tabs` rail and overflow plus pending/current markers on history links.
   The rail is the only list of open views; closing a tab closes the view, not a task or session.
+- `./hooks/workbench_history.js` → desktop History dock reservation during server-marked scope resolution and in-memory, scope-checked History scroll handoff between adjacent shells; see `hooks/CONTEXT.md` for the lifecycle and DOM contracts.
 - `./hooks/workbench_project_preview.js` → `projectPreview` — the bounded (LRU) `#main-content` snapshot cache + shadow-DOM handoff host appended to `document.body`, and the exported `release()` teardown seam the workbench shell calls.
 - `./hooks/workbench_panel.js` → PURE right-panel state machine (`closed | open | closing`) consumed by `workbench.js` and sliced by `./hooks/workbench_panel.test.cjs`.
 - `./hooks/workbench_panel_dom.js` → the right panel's DOM half: `createPanelHost(reducedMotion)` → `{apply(panel, wantOpen, animate), destroy()}` (per-panel state map, armed close, ONE synchronous start-frame flush through `settleDisplayedLayout/1` = `void panel.offsetWidth`, no frame scheduling), consumed by `workbench.js` and sliced by `./hooks/workbench_panel_dom.test.cjs`.

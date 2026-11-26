@@ -4,6 +4,7 @@ import {createPanelHost} from "./workbench_panel_dom"
 import {initialPanelState, PANEL_OPEN} from "./workbench_panel"
 import {closeTab as closeTabIn, restore as restoreTabs, safeHref as safeHrefBase, sameScope} from "./workbench_tabs"
 import {link, railMethods, TAB_KEY} from "./workbench_rail"
+import {historyMethods} from "./workbench_history"
 import {defaultDraftHref, exactHref, historyKey, navigationState, sameTabClick} from "./workbench_navigation"
 
 const ACCENT_KEY = "genesis-workbench.accent"
@@ -108,6 +109,7 @@ const SYNC_DATASET_KEYS = [
   "workbenchNode", "workbenchProject", "workbenchTask", "workbenchSession",
   "workbenchDraft", "workbenchDraftProject", "workbenchPage", "workbenchTitle",
   "workbenchDefaultDraft", "workbenchGitBranch", "workbenchStartingCommit", "workbenchNodeName",
+  "workbenchHistoryScopePending",
 ]
 
 // One normalised string per input: `undefined`, `null` and a missing field read
@@ -168,10 +170,12 @@ function workbenchSyncNeeded(state, applied) {
 
 const Workbench = {
   ...railMethods,
+  ...historyMethods,
 
   mounted() {
     // The persisted list is untrusted input the store normalises and re-keys.
     this.navigation = navigation
+    this.mountHistory(mountedWorkbench)
     mountedWorkbench = this
     bindNavigation()
     this.tabs = restoreTabs(read(sessionStorage, TAB_KEY, []), safeHref)
@@ -197,6 +201,7 @@ const Workbench = {
       this.syncSidebarWidths()
       projectPreview.reposition(this.el)
       this.positionCreateMenu()
+      this.syncHistoryScroll()
       this.syncTabOverflow()
     }
     this.onResize = () => {
@@ -339,6 +344,7 @@ const Workbench = {
 
   destroyed() {
     this.paintHistoryPending(null)
+    this.destroyHistory(mountedWorkbench === this)
     this.projectSidebarNav?.removeEventListener("scroll", this.onProjectSidebarScroll)
     this.settingsWindow?.removeEventListener("close", this.onSettingsClose)
     window.removeEventListener("message", this.onWindowMessage)
@@ -371,6 +377,8 @@ const Workbench = {
     // Restore them before probing or letting the panels, rail or preview measure.
     const widthChanged = this.syncSidebarWidths()
     if (patch && !workbenchSyncNeeded(this.syncState(), this.appliedSyncState)) {
+      if (this.el.dataset.workbenchHistoryScopePending === "true") this.syncHistoryPanel()
+      else this.syncHistoryScroll()
       this.syncTabOverflow({onlyIfReplaced: !widthChanged})
       this.paintHistoryPending()
       return
@@ -577,35 +585,6 @@ const Workbench = {
       if (this.project && !this.currentTab && !this.gitDiff && idle && emptyHistory) create.dataset.workbenchAttention = "true"
       else delete create.dataset.workbenchAttention
     }
-  },
-
-  // The per-panel state machine and the open/close start frames live in the
-  // `panelHost` (workbench_panel_dom.js); an unchanged state is a pure
-  // re-assert that never restarts a running close.
-  syncHistoryPanel(animate = true) {
-    const panel = this.el.querySelector("#workbench-history")
-    if (!panel) return
-    const git = this.el.querySelector("#workbench-git")
-    const gitOpen = Boolean(git && this.gitOpen && this.project)
-    const open = this.historyOpen && Boolean(this.project) && !gitOpen
-    this.panelHost.apply(panel, open, animate)
-    if (git) this.panelHost.apply(git, gitOpen, animate)
-    const drawerOpen = (open || gitOpen) && !this.media.matches
-    const resizer = this.el.querySelector("#workbench-right-resize")
-    if (resizer) resizer.hidden = drawerOpen || !(open || gitOpen)
-    const overlay = this.el.querySelector("#workbench-history-overlay")
-    if (overlay) overlay.hidden = !drawerOpen
-    const center = this.el.querySelector(".workbench-center")
-    if (center) center.inert = drawerOpen || Boolean(this.previewTab)
-    panel.inert = Boolean(this.previewTab)
-    if (git) git.inert = Boolean(this.previewTab)
-    const attribute = "data-workbench-history-drawer-open"
-    if (drawerOpen !== this.el.hasAttribute(attribute)) {
-      this.el.toggleAttribute(attribute, drawerOpen)
-      this.el.dispatchEvent(new Event("workbench:history-drawer"))
-    }
-    this.el.querySelector("#workbench-history-toggle")?.setAttribute("aria-expanded", String(open))
-    this.el.querySelector("#workbench-git-toggle")?.setAttribute("aria-expanded", String(gitOpen))
   },
 
   setHistory(open, focus = false) {

@@ -34,8 +34,14 @@ defmodule EvoDashWeb.HomeLive.SessionList do
 
   ## Async load contract
 
+  `sync_context/1,2` replaces rows on a scope change, seeding only from this
+  transport's last successful read of the exact `{target_id, BEAM_node}`.
+  On first sync, preassigned rows can be retained if the previous and current
+  view resolve to the same available scope. `refresh/1` also reloads an
+  unchanged scope. Neither loads a gated context.
+
   `spawn_load/2` runs the (possibly remote) load on `EvoDash.TaskSupervisor`
-  through `EvoDash.SafeCall.start/4` and ALWAYS reports
+  through `EvoDash.SafeCall.start/4` and reports
   `{{:session_list_loaded, seq, node}, result}` — the tag is NESTED inside the
   message's first element, so the consumer's clause must match
   `{{:session_list_loaded, seq, node}, result}`. `applied/4` applies only a
@@ -53,6 +59,7 @@ defmodule EvoDashWeb.HomeLive.SessionList do
 
   use EvoDashWeb, :html
 
+  alias EvoDash.WorkbenchSidebarCache
   alias EvoDashWeb.HomeLive.SessionActions
 
   # Title cap: enough to identify a conversation in a narrow rail.
@@ -167,6 +174,73 @@ defmodule EvoDashWeb.HomeLive.SessionList do
     end
   end
 
+  @doc "Sync the viewed scope; callers changing node or gate assigns pass their previous assigns."
+  def sync_context(socket), do: sync_context(socket, socket.assigns)
+  def sync_context(socket, previous_assigns), do: request(socket, previous_assigns, false)
+
+  @doc "Refresh the current Conversations scope, retaining its displayed rows."
+  def refresh(socket), do: request(socket, socket.assigns, true)
+
+  defp request(socket, previous_assigns, refresh?) do
+    context = context(socket.assigns)
+    changed? = Map.fetch(socket.assigns, :session_list_context) != {:ok, context}
+
+    socket =
+      if changed? do
+        assign(socket,
+          session_list_context: context,
+          session_list: seed_rows(socket, context, previous_assigns),
+          session_list_loading: false,
+          session_list_error: nil
+        )
+      else
+        socket
+      end
+
+    case context do
+      nil when changed? ->
+        assign(socket, :session_list_seq, next_seq(socket))
+
+      {_, beam} when changed? or refresh? ->
+        if Phoenix.LiveView.connected?(socket), do: spawn_load(socket, beam), else: socket
+
+      _ ->
+        socket
+    end
+  end
+
+  defp seed_rows(_socket, nil, _previous_assigns), do: []
+
+  defp seed_rows(socket, scope, previous_assigns) do
+    rows = previous_assigns[:session_list]
+
+    if match?([_ | _], rows) and not Map.has_key?(previous_assigns, :session_list_context) and
+         context(previous_assigns) == scope do
+      rows
+    else
+      WorkbenchSidebarCache.get(socket, cache_key(scope)) || []
+    end
+  end
+
+  defp context(%{current_node_id: nil, current_node: beam}) when beam == node(), do: {nil, beam}
+
+  # A connection update can arrive before handle_params resolves the new BEAM.
+  # A connected phase alone does not make the previous BEAM a valid scope.
+  # Same-BEAM aliases stay gated here because the Assistant cannot open their sessions.
+  defp context(%{
+         current_node_id: target,
+         current_node: beam,
+         remote_status: %{phase: :connected, node: advertised}
+       })
+       when is_binary(target) and is_atom(beam) and beam not in [nil, node()] do
+    if Atom.to_string(beam) == advertised, do: {target, beam}
+  end
+
+  defp context(_assigns), do: nil
+
+  defp cache_key(context), do: {:session_list, context}
+  defp next_seq(socket), do: (socket.assigns[:session_list_seq] || 0) + 1
+
   @doc """
   Starts ONE supervised, guarded list load for `target_node`.
 
@@ -178,8 +252,7 @@ defmodule EvoDashWeb.HomeLive.SessionList do
   """
   @spec spawn_load(Phoenix.LiveView.Socket.t(), node()) :: Phoenix.LiveView.Socket.t()
   def spawn_load(socket, target_node) do
-    seq = (socket.assigns[:session_list_seq] || 0) + 1
-    node = socket.assigns[:current_node]
+    seq = next_seq(socket)
 
     socket =
       assign(socket,
@@ -188,7 +261,7 @@ defmodule EvoDashWeb.HomeLive.SessionList do
         session_list_error: nil
       )
 
-    case EvoDash.SafeCall.start(self(), {:session_list_loaded, seq, node}, fn ->
+    case EvoDash.SafeCall.start(self(), {:session_list_loaded, seq, target_node}, fn ->
            load(target_node)
          end) do
       {:ok, _pid} ->
@@ -205,16 +278,22 @@ defmodule EvoDashWeb.HomeLive.SessionList do
   (older in-flight results and results from a previously viewed node are
   dropped silently).
 
-  A success replaces `:session_list`; an error keeps the rows already shown and
-  records `:session_list_error`. A matching result ALWAYS clears the loading
-  flag, so the panel can never wedge.
+  A success replaces `:session_list` and remembers it for this transport (even
+  when empty); an error keeps the rows already shown and records
+  `:session_list_error`. An unavailable scope never accepts results.
   """
   @spec applied(Phoenix.LiveView.Socket.t(), term(), term(), term()) ::
           Phoenix.LiveView.Socket.t()
   def applied(socket, seq, node, result) do
-    if seq == socket.assigns[:session_list_seq] and node == socket.assigns[:current_node] do
+    context = context(socket.assigns)
+
+    if context != nil and seq == socket.assigns[:session_list_seq] and
+         node == socket.assigns[:current_node] and
+         Map.get(socket.assigns, :session_list_context, context) == context do
       case normalize_result(result) do
         {:ok, rows} ->
+          WorkbenchSidebarCache.put(socket, cache_key(context), rows)
+
           assign(socket,
             session_list: rows,
             session_list_loading: false,

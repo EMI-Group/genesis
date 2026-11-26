@@ -4,6 +4,7 @@
   current_page={:agents}
   workbench_task={assigns[:task_scope_id]}
   workbench_project={scoped_task && scoped_task.project_path}
+  workbench_history_scope_pending?={Loader.history_scope_pending?(assigns)}
   workbench_title={scoped_task && scoped_task.objective}
   config_status={@config_status}
   current_node_id={@current_node_id}
