@@ -97,18 +97,27 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
     * the sidebar load (`request_tasks_load/1`) runs `fetch_active_tasks/2`
       inside `EvoDash.SafeCall.run/1` in the spawned task and sends its tagged
-      result (`{:ok, {running, pending}} | {:error, reason}`). Every request
-      settles EXACTLY ONCE: when the spawn itself fails (twice — it is retried
-      once) the caller settles immediately with
-      `{:error, {:spawn_failed, reason}}` and logs one warning, so a supervisor
-      hiccup can never silently drop a sidebar refresh;
+      result (`{:ok, {running, pending}} | {:error, reason}`). A request is
+      never left UNSETTLED: it settles at least once (zero is impossible), and
+      when the spawn itself fails on both attempts the caller settles it
+      immediately with `{:error, {:spawn_failed, reason}}` and logs one
+      warning, so a supervisor hiccup can never silently drop a sidebar
+      refresh. The spawn is re-attempted once, so a transient `:noproc`/timeout
+      recovers; a first spawn call that TIMED OUT may still have started its
+      child (a `GenServer.call` timeout does not cancel the request), so a
+      timed-out-then-retried spawn can deliver TWO identical results for one
+      `seq` — the stale guard applies the duplicate idempotently (same node
+      context, same read);
     * the node-INDEPENDENT connection bookkeeping (`:remote_targets` from the
       saved-targets TOML, `:connection_statuses` from the local connection
       managers) is NEVER read on the dead render: both assigns seed `[]`/`%{}`
       and the connected mount spawns ONE `request_remote_context_load/1` whose
       result (`{:node_aware_remote_context, seq, node_id, node, {:ok, {targets,
-      statuses}} | {:error, reason}}`) lands through the same attached
-      `:handle_info` hook, seq-stale-guarded;
+      statuses}} | {:error, reason} | {:error, {:spawn_failed, reason}}}`)
+      lands through the same attached `:handle_info` hook, seq-stale-guarded,
+      under the SAME never-unsettled spawn contract (re-attempted once, then
+      settled by the caller) so a failed spawn cannot drop the bookkeeping
+      either;
     * inline lookups in `assign_node/2`'s resolution path (`get_target/1`,
       `connection_status/0,1`) are guarded with safe fallbacks (`:local` /
       `:disconnected` / keep-last-known), so a dead manager can never crash
@@ -295,9 +304,11 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   sidebar content stays visible until the fresh result arrives via the
   attached `:handle_info` hook + `handle_tasks_result/2` stale-guard. The
   spawned fetch is `fetch_active_tasks/2` → `partition_active_tasks/1` (see
-  their docs for the node-aware fetch semantics). Every request settles
-  exactly once: either the child's own tagged result, or — when the spawn fails
-  twice — an immediate `{:error, {:spawn_failed, reason}}` result.
+  their docs for the node-aware fetch semantics). Every request settles at
+  least once: either the child's own tagged result, or — when the spawn fails
+  on both attempts — an immediate `{:error, {:spawn_failed, reason}}` result.
+  A timed-out-then-retried spawn may deliver two identical results for one
+  `seq`; the stale guard applies the duplicate idempotently.
   """
   def load_running_and_pending_tasks(socket), do: request_tasks_load(socket)
 
@@ -510,6 +521,15 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   # manager exits instead of raising) and ALWAYS sends its tagged result, which
   # the attached `:handle_info` hook applies via
   # `handle_remote_context_result/2`. Returns the socket unchanged.
+  #
+  # NEVER UNSETTLED, like the sidebar loader above: when the spawn itself fails
+  # on both attempts (a transient `:noproc`/call timeout on the SHARED
+  # supervisor) the caller settles the request immediately with
+  # `{:error, {:spawn_failed, reason}}` and logs one warning — the seq-guarded
+  # `handle_remote_context_result/2` then keeps the last-known
+  # `:remote_targets`/`:connection_statuses` exactly like any other failed load
+  # (a silently dropped request would leave a caller waiting for a result that
+  # can never arrive, with no log to explain it).
   defp request_remote_context_load(socket) do
     view_pid = self()
     current_node = socket.assigns[:current_node] || node()
@@ -518,22 +538,26 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
     socket = assign(socket, :remote_context_seq, seq)
 
-    _ =
-      EvoDash.SafeCall.run(fn ->
-        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-          result =
-            EvoDash.SafeCall.run(fn ->
-              {EvoDash.NodeContext.list_targets(), EvoDash.NodeContext.connection_status()}
-            end)
+    case retry_spawn_once(fn ->
+           spawn_remote_context_load(view_pid, seq, current_node, current_node_id)
+         end) do
+      {:ok, _pid} ->
+        socket
 
-          send(
-            view_pid,
-            {:node_aware_remote_context, seq, current_node_id, current_node, result}
-          )
-        end)
-      end)
+      {:error, reason} ->
+        Logger.warning(
+          "NodeAware: node-context load could not be spawned after 2 attempts " <>
+            "(seq #{seq}, node #{inspect(current_node)}): #{inspect(reason)}"
+        )
 
-    socket
+        send(
+          view_pid,
+          {:node_aware_remote_context, seq, current_node_id, current_node,
+           {:error, {:spawn_failed, reason}}}
+        )
+
+        socket
+    end
   end
 
   # Shared async sidebar-load spawner for `load_running_and_pending_tasks/1`,
@@ -550,15 +574,22 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   # `rescue` cannot catch) becomes an `{:error, reason}` VALUE and the child's
   # result message reports it.
   #
-  # TOTAL: every request settles EXACTLY ONCE, whatever the spawn does. A
-  # failed spawn is normally a transient hiccup of the SHARED supervisor (a
-  # `:noproc`/call timeout while it restarts), so it is re-attempted ONCE; when
-  # both attempts fail the request still settles with
-  # `{:error, {:spawn_failed, reason}}` — the stale-guarded
+  # TOTAL: never UNSETTLED, whatever the spawn does — a request settles AT
+  # LEAST once (zero is impossible). A failed spawn is normally a transient
+  # hiccup of the SHARED supervisor (a `:noproc`/call timeout while it
+  # restarts), so it is re-attempted ONCE; when both attempts fail the request
+  # still settles with `{:error, {:spawn_failed, reason}}` — the stale-guarded
   # `handle_tasks_result/2` then keeps the last-known lists and clears
   # `:tasks_reload_pending` exactly like any other failed load (a dropped load
   # would otherwise leave the sidebar stale forever with no result to wait for,
   # and no log to explain it). No retry timers: the re-attempt is immediate.
+  #
+  # Not necessarily EXACTLY once: a first `Task.Supervisor.start_child/2` call
+  # that TIMED OUT may still have started its child (a `GenServer.call` timeout
+  # does not cancel the request), so the retried request can deliver TWO
+  # identical results for the same `seq`. The stale guard applies the duplicate
+  # idempotently — same node context, same read — so this is harmless by
+  # construction rather than by luck.
   defp request_tasks_load(socket) do
     view_pid = self()
     current_node = socket.assigns[:current_node] || node()
@@ -567,31 +598,36 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
     socket = assign(socket, :tasks_load_seq, seq)
 
-    case spawn_tasks_load(view_pid, seq, current_node, current_node_id) do
+    case retry_spawn_once(fn ->
+           spawn_tasks_load(view_pid, seq, current_node, current_node_id)
+         end) do
       {:ok, _pid} ->
         socket
 
-      {:error, _first_reason} ->
-        # One immediate re-attempt: the shared supervisor may have been
-        # restarting when the first call landed.
-        case spawn_tasks_load(view_pid, seq, current_node, current_node_id) do
-          {:ok, _pid} ->
-            socket
+      {:error, reason} ->
+        Logger.warning(
+          "NodeAware: sidebar active-tasks load could not be spawned after 2 attempts " <>
+            "(seq #{seq}, node #{inspect(current_node)}): #{inspect(reason)}"
+        )
 
-          {:error, reason} ->
-            Logger.warning(
-              "NodeAware: sidebar active-tasks load could not be spawned after 2 attempts " <>
-                "(seq #{seq}, node #{inspect(current_node)}): #{inspect(reason)}"
-            )
+        send(
+          view_pid,
+          {:node_aware_active_tasks, seq, current_node_id, current_node,
+           {:error, {:spawn_failed, reason}}}
+        )
 
-            send(
-              view_pid,
-              {:node_aware_active_tasks, seq, current_node_id, current_node,
-               {:error, {:spawn_failed, reason}}}
-            )
+        socket
+    end
+  end
 
-            socket
-        end
+  # ONE immediate re-attempt, shared by both async loaders: the SHARED
+  # supervisor may have been restarting when the first call landed, so a
+  # transient `:noproc`/call timeout is the recoverable case. Returns the second
+  # attempt's own outcome.
+  defp retry_spawn_once(spawn) do
+    case spawn.() do
+      {:ok, pid} -> {:ok, pid}
+      {:error, _first_reason} -> spawn.()
     end
   end
 
@@ -603,27 +639,45 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
     do: EvoDash.Seam.get(:node_aware_task_supervisor, EvoDash.TaskSupervisor)
 
   # Spawns ONE `fetch_active_tasks/2` child that sends its tagged result to
-  # `view_pid` before exiting. Returns `{:ok, pid}` or `{:error, reason}`; the
-  # spawn call itself is guarded because `Task.Supervisor.start_child/2` is a
-  # `GenServer.call` that EXITS on a dead/unknown supervisor.
+  # `view_pid` before exiting.
   defp spawn_tasks_load(view_pid, seq, current_node, current_node_id) do
-    view_pid
-    |> start_fetch(seq, current_node, current_node_id)
-    |> normalize_spawn()
+    spawn_fetch(
+      fn -> fetch_active_tasks(current_node, current_node_id) end,
+      fn result ->
+        send(view_pid, {:node_aware_active_tasks, seq, current_node_id, current_node, result})
+      end
+    )
   end
 
-  defp start_fetch(view_pid, seq, current_node, current_node_id) do
-    EvoDash.SafeCall.run(fn ->
-      Task.Supervisor.start_child(task_supervisor(), fn ->
-        result =
-          EvoDash.SafeCall.run(fn -> fetch_active_tasks(current_node, current_node_id) end)
-
+  # Spawns ONE node-context child (both registry lookups in one guarded call)
+  # that sends its tagged result to `view_pid` before exiting.
+  defp spawn_remote_context_load(view_pid, seq, current_node, current_node_id) do
+    spawn_fetch(
+      fn ->
+        {EvoDash.NodeContext.list_targets(), EvoDash.NodeContext.connection_status()}
+      end,
+      fn result ->
         send(
           view_pid,
-          {:node_aware_active_tasks, seq, current_node_id, current_node, result}
+          {:node_aware_remote_context, seq, current_node_id, current_node, result}
         )
+      end
+    )
+  end
+
+  # The ONE spawn boundary for both async loaders: runs `fetch` (guarded) in a
+  # child on `task_supervisor/0` and hands its result to `report`, which sends
+  # the tagged message. Returns `{:ok, pid}` or `{:error, reason}`; the spawn
+  # call itself is guarded because `Task.Supervisor.start_child/2` is a
+  # `GenServer.call` that EXITS on a dead/unknown supervisor.
+  defp spawn_fetch(fetch, report) do
+    EvoDash.SafeCall.run(fn ->
+      Task.Supervisor.start_child(task_supervisor(), fn ->
+        result = EvoDash.SafeCall.run(fetch)
+        report.(result)
       end)
     end)
+    |> normalize_spawn()
   end
 
   defp normalize_spawn({:ok, {:ok, pid}}) when is_pid(pid), do: {:ok, pid}

@@ -655,7 +655,9 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
       # restarts) must never SILENTLY drop a sidebar refresh: with no child
       # there is no child message and, before this contract, nothing settled the
       # request at all — the sidebar stayed stale and a waiting test saw an empty
-      # mailbox. The request now settles EXACTLY ONCE even then.
+      # mailbox. The request is now never left unsettled (it settles at least
+      # once; a timed-out-then-retried spawn may still deliver a duplicate, which
+      # the stale guard applies idempotently).
       #
       # The seam is resolved on the caller's spawn chain (`EvoDash.Seam.get/2`)
       # and installed only in THIS test process' dictionary, so a concurrently
@@ -1070,9 +1072,14 @@ defmodule EvoDashWeb.NodeAwareTest do
   # on EVERY connected mount (never on a dead render). Returns the payload
   # result. Tests that only care about the sidebar still call this so the
   # message never lingers in the test process's mailbox.
+  #
+  # The read is BOUNDED by the same budget as every other positive load
+  # assertion: `await_sidebar_result/0`'s child-exit witness is only the fast
+  # path (a load whose spawn failed has no child to await), so a 0 ms window
+  # could only fail with an empty mailbox instead of the real diagnosis.
   defp assert_remote_context_loaded do
     await_sidebar_result()
-    assert_receive {:node_aware_remote_context, 1, _node_id, _node, result}, 0
+    assert_receive {:node_aware_remote_context, 1, _node_id, _node, result}, @sidebar_await_budget_ms
     result
   end
 
@@ -1583,6 +1590,10 @@ defmodule EvoDashWeb.NodeAwareTest do
     # hook (`handle_remote_context_result/2` — seq-stale-guarded only, since a
     # node switch must not throw the target list away).
     #
+    # The spawn contract matches the sidebar loader's: re-attempted once, then
+    # settled BY THE CALLER with `{:error, {:spawn_failed, reason}}` plus one
+    # warning, so a supervisor hiccup can never silently drop the bookkeeping.
+    #
     # This describe has no global of its OWN: the config dir it writes
     # (`save_target!`) is isolated per process through the seam. It stays in
     # this `async: false` module — the MODULE is sync for the singleton reasons
@@ -1626,6 +1637,58 @@ defmodule EvoDashWeb.NodeAwareTest do
                )
 
       assert Enum.any?(applied.assigns.remote_targets, &(&1.id == "target-ctx"))
+      assert applied.assigns.connection_statuses == statuses
+    end
+
+    test "an UNSPAWNABLE node-context load settles with {:error, {:spawn_failed, reason}}" do
+      # The same never-unsettled contract as the sidebar loader: an unknown/dead
+      # supervisor name must not silently drop the node-context bookkeeping (no
+      # child → no result message → a caller waiting forever, with no log).
+      # The seam is chain-scoped, installed only in THIS test process' dictionary,
+      # so no app-env write and no other test sees it.
+      EvoDash.Test.Seam.put(:node_aware_task_supervisor, :node_aware_no_such_supervisor)
+
+      current_node = node()
+      targets = [%{id: "prev-target", name: "Prev"}]
+      statuses = %{"prev-target" => %{phase: :connected}}
+
+      # Both settle synchronously in the call, and the warning names the operation.
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          mounted = NodeAware.on_mount(:default, %{}, %{}, connected_mount_socket())
+          send(self(), {:mounted_socket, mounted})
+        end)
+
+      assert log =~ "NodeAware: node-context load could not be spawned after 2 attempts"
+
+      assert_received {:mounted_socket, {:cont, socket}}
+      assert socket.assigns.remote_context_seq == 1
+
+      # The caller-settled result — the ONLY node-context message (no child was
+      # ever spawned, so `await_sidebar_result/0` would have nothing to await).
+      assert_receive {:node_aware_remote_context, 1, nil, ^current_node,
+                      {:error, {:spawn_failed, _reason}}},
+                     @sidebar_await_budget_ms
+
+      refute_receive {:node_aware_remote_context, _, _, _, _}, 0
+
+      # The seq-guarded handler treats it like ANY other failed load: the
+      # last-known targets/statuses are kept (the node selector must not empty).
+      kept =
+        socket(%{
+          remote_targets: targets,
+          connection_statuses: statuses,
+          remote_context_seq: 1
+        })
+
+      assert {:halt, applied} =
+               NodeAware.handle_info(
+                 {:node_aware_remote_context, 1, nil, current_node,
+                  {:error, {:spawn_failed, :noproc}}},
+                 kept
+               )
+
+      assert applied.assigns.remote_targets == targets
       assert applied.assigns.connection_statuses == statuses
     end
   end
