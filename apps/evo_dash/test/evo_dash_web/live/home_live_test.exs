@@ -5688,6 +5688,25 @@ defmodule EvoDashWeb.HomeLiveTest do
   # It must NEVER start a task, so tests also pin the empty task store.
   # ─────────────────────────────────────────────────────────────────────────────
   describe "interactive session reattach (?session=)" do
+    test "restores history without displaying an old project-selection notice", %{conn: conn} do
+      session_id = 6_510
+
+      notice =
+        "Authoritative selected project: none. This supersedes earlier selections; existing tasks keep their original project."
+
+      history =
+        attach_history("Before the selection notice") ++
+          attach_history(notice) ++ [history_assistant_message("Restored assistant reply")]
+
+      install_watch_seams(session_id, self(), snapshot_answer(7, history, phase: :awaiting_input))
+
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
+
+      wait_until(fn -> has_element?(view, "#chat-messages", "Restored assistant reply") end)
+      assert has_element?(view, "#chat-messages", "Before the selection notice")
+      refute has_element?(view, "#chat-messages", notice)
+    end
+
     test "adopts a parked session from the cache in ONE attach and starts no task", %{conn: conn} do
       test_pid = self()
       session_id = 6_501

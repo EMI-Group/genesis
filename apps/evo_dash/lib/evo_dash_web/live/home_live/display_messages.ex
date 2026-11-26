@@ -50,6 +50,7 @@ defmodule EvoDashWeb.HomeLive.DisplayMessages do
     * the graceful-cancel save-work message (`The task is being cancelled by
       the user.`, `EvoGit.AgentScheduler`'s `@cancel_message`) contributes
       nothing;
+    * a project-selection notice from `EvoGit.Agent.Session` contributes nothing;
     * anything else is a user turn and is shown (trimmed).
 
   The prefixes are pinned HERE, not read from the core, so the dashboard
@@ -187,7 +188,12 @@ defmodule EvoDashWeb.HomeLive.DisplayMessages do
   defp injection?(text) when is_binary(text) do
     String.starts_with?(text, @refresh_prefix) or
       Enum.any?(@notice_prefixes, &String.starts_with?(text, &1)) or
-      Enum.any?(@notice_texts, &String.starts_with?(text, &1))
+      Enum.any?(@notice_texts, &String.starts_with?(text, &1)) or
+      (String.starts_with?(text, "Authoritative selected project: ") and
+         String.ends_with?(
+           text,
+           ". This supersedes earlier selections; existing tasks keep their original project."
+         ))
   end
 
   defp injection?(_text), do: false
