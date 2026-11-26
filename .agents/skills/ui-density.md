@@ -9,7 +9,7 @@ The dashboard has ONE density and ONE type scale. Full design record: `docs/ui-d
 
 ## Non-negotiables
 
-- Type ladder (utility → size/line-height): `text-2xs` 12/16 (micro badges only) · `text-xs` 13/18 (metadata) · `text-sm` 14/20 (UI default: labels, buttons, rows, cells) · `text-base` 15/24 (reading, task titles, composer) · `text-lg` 17/24 (card/section title) · `text-xl` 20/26 (the one page `h1`) · `text-2xl` 24/30 (hero only).
+- Type ladder (utility → size/line-height): `text-2xs` 12/16 (micro badges only) · `text-xs` 13/18 (metadata) · `text-sm` 14/20 (UI default: labels, buttons, rows, cells) · `text-base` 15/24 (reading, task titles, composer) · `text-lg` 17/24 (card/section title) · `text-xl` 20/26 (a page-scoped headline that is NOT the page name — onboarding, review header; in-shell pages carry no page `h1` because the workbench rail names the page at `text-sm font-semibold`) · `text-2xl` 24/30 (hero only).
 - Never write an arbitrary font size (`text-[10px]`, `text-[11px]`, `text-[13px]`, `text-[15px]`). 12 px is the floor for dashboard chrome.
 - Weights: 400 / 500 / 600 only (700 only for numbers/badges/`<strong>`). No numeric weights like 450/550/650.
 - Controls: default 40 px, compact (`-sm`) 32 px, icon-only 32 px (`btn-xs` 24 px only for inline adornments, never the sole action).
