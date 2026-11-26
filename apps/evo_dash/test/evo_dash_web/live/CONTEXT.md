@@ -104,11 +104,12 @@ Archive seams: `:review_archive_runner` (3-arity `(node, task_id, opts) -> %{ent
 Result messages: `{:review_archive_loaded, task_id, node, seq, offset, result}` (`offset == 0` REPLACES, larger APPENDS deduped by `agent_id`) and `{:review_archive_agent_loaded, task_id, node, agent_id, seq, result}`; both stale-dropped on a task/node mismatch or older `seq`.
 `NodeContext.get_task_lite/2` is the page load (LITE, no archive key); `ArchiveLoad.sync_context/1` is unit-tested on a hand-built `%Phoenix.LiveView.Socket{}` (`archive_socket/1` carries `__changed__: nil` because `force_assign/3` reads it).
 
-**Git fixtures** need REAL repos (base commit, a primary branch renamed from the machine's `init.defaultBranch`, optional secondary branch, an agent `task-branch` with a change commit).
-- Templates are PER module, never shared: `setup_all` pre-builds ONE repo per required `{primary, secondary}` shape via `build_templates!/1` → `build_repo_with_task_branch!/3` and hands it over via `Process.put(:review_templates, templates)`; `review_template!/2` reads `Process.get(:review_templates)` (never `__MODULE__`) and every `on_exit` closure captures the map.
-- Per-test copy: `create_review_task_with_repo!/3` / `create_multi_repo_review_task!/2` call `copy_review_template!/3` → `File.cp_r!/2` into a unique `System.tmp_dir!()` dir — a plain recursive BYTE copy, never `cp -l`/hard links, never `git clone --shared`, so a test may freely mutate its copy.
-- `build_repo_with_task_branch!/3` runs `git init --template=` (an EMPTY template dir): a template is 2 files instead of the 34 `git init` seeds, and a byte copy pays per FILE; nothing reads a hook, `info/exclude` or `description`.
-- `review_template!/2` RAISES for a pair this module's `setup_all` did not pre-build — add it to that module's `build_templates!/1` list.
+**Git fixtures**: build real repos only for behavior that needs Git objects, refs or mutations; the mounted navigation tests need two stored commits per repo but no task branch or merge target discovery.
+- Templates are PER module: `setup_all` pre-builds ONE repo per required `{primary, secondary}` shape via `build_templates!/1` → `build_repo_with_task_branch!/3`; each test stores the template map with `Process.put(:review_templates, templates)` for `review_template!/2`.
+- Each per-test copy from `copy_review_template!/3` is a recursive byte copy, never a hard link or `git clone --shared`, so real branch mutations cannot affect the template or a sibling test.
+- `review_tmp_path/1` generates a cross-VM-unique path; whoever builds or copies a Git fixture registers its one cleanup before writes, including partial builds.
+- `build_repo_with_task_branch!/3` uses `git init --template= -b <primary>` and local identity, signing and hook settings so the fixture does not depend on the host's default branch, signing key or Git hooks.
+- `review_template!/2` raises for shapes not pre-built by the module using it.
 ## Notes for Agents — async mount loads & exit-safety seams
 
 `ProjectsLive`, `TasksLive` and `SettingsLive` do ZERO task-store work in `mount/3`: loads run through app-env RUNNER seams resolved AT SPAWN TIME inside `EvoDash.SafeCall.run/1`, so a runner that exits/raises becomes an error VALUE (or sends nothing) instead of crashing the page.
