@@ -6,38 +6,35 @@ defmodule EvoDashWeb.ReviewNavigationTest do
   import Phoenix.LiveViewTest
   import EvoDashWeb.ReviewLiveTest.Helpers
 
-  setup_all do
-    setup_review_templates!([{"main", "dev"}])
-  end
+  alias EvoGit.Adapters.Git
 
-  setup context do
-    setup_async_review(context)
+  setup do
+    EvoDash.Test.IsolatedTaskStore.assert_production!()
+    :ok
   end
 
   describe "canonical workbench navigation" do
     test "review, foreign commit detail and its back link keep one task and primary project", %{
       conn: conn
     } do
-      {primary, primary_sha, base} =
-        copy_review_template!("review_navigation_primary_", "main", "dev")
+      {primary, primary_sha, base} = navigation_repo!("Agent change commit")
+      {foreign, foreign_sha, foreign_base} = navigation_repo!("Foreign navigation commit")
 
-      on_exit(fn -> rm_rf_retry(primary) end)
-      {foreign, _, _} = copy_review_template!("review_navigation_foreign_", "main", "dev")
-      on_exit(fn -> rm_rf_retry(foreign) end)
-
-      # The foreign SHA must not exist in the primary repo: otherwise the
-      # commit page could incorrectly inspect the primary and still pass.
-      git!(foreign, ["checkout", "task-branch"])
-      git!(foreign, ["commit", "--amend", "-m", "Foreign navigation commit"])
-      {foreign_sha, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: foreign)
-      git!(foreign, ["checkout", "main"])
-      foreign_sha = String.trim(foreign_sha)
+      # The commit page must not be able to read the foreign commit from primary.
+      assert {:error, _} = Git.run(["cat-file", "-e", foreign_sha <> "^{commit}"], primary)
 
       task_id =
         seed_multi_repo_task!(
           primary,
           primary_sha,
-          [%{"id" => "original", "root" => foreign, "writable" => true}],
+          [
+            %{
+              "id" => "original",
+              "root" => foreign,
+              "writable" => true,
+              "base_sha" => foreign_base
+            }
+          ],
           %{
             "primary" => %{"commit_sha" => primary_sha, "branch_name" => "task-branch"},
             "original" => %{"commit_sha" => foreign_sha, "branch_name" => "task-branch"}
@@ -101,7 +98,8 @@ defmodule EvoDashWeb.ReviewNavigationTest do
            {target, %{phase: :connecting, node: nil, last_error: nil}}}
         )
 
-      {primary, task_id, sha} = create_review_task_with_repo!("main", "dev")
+      {primary, sha, base} = navigation_repo!("Agent change commit")
+      task_id = seed_review_task!(primary, sha, base)
       # Node navigation splices the node pair into the URL, not a decoded map.
       # Deliberately use a noncanonical encoding for the repo id.
       commit = ~p"/review/#{task_id}/commit/#{sha}" <> "?repo=prim%61ry&tab=commits"
@@ -115,7 +113,12 @@ defmodule EvoDashWeb.ReviewNavigationTest do
       assert_patch(view, remote_commit, async_wait_budget())
       assert has_element?(view, "#main-content p", "Connecting to #{name}…")
       assert_unscoped_review(view, target, task_id)
-      assert assigns(view).load_generation == local_generation + 1
+
+      assert %{task_id: ^task_id, current_node: local_node, load_generation: generation} =
+               assigns(view)
+
+      assert local_node == node()
+      assert generation == local_generation + 1
 
       # A pending target still shares the local BEAM identity. An outstanding
       # reply for the same task and BEAM must not settle this new generation.
@@ -145,6 +148,7 @@ defmodule EvoDashWeb.ReviewNavigationTest do
       assert_patch(view, commit, async_wait_budget())
       flush_review_load(view)
       assert has_element?(view, "#main-content h1", "Agent change commit")
+      refute has_element?(view, "#review-commit-error")
       assert_review_shell(view, task_id, primary)
     end
 
@@ -161,6 +165,42 @@ defmodule EvoDashWeb.ReviewNavigationTest do
       render_patch(view, ~p"/review/#{task_id}?node=unknown-review-target")
       assert has_element?(view, "#review-load-error", "the requested node is unavailable")
       assert_unscoped_review(view, "", nil)
+    end
+
+    # Review reads the persisted SHAs even after a task branch is gone. Keep
+    # the commits on main so navigation needs neither a merge check nor its stub.
+    defp navigation_repo!(subject) do
+      nonce = Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
+
+      repo =
+        Path.join(
+          System.tmp_dir!(),
+          "review-navigation-#{System.pid()}-#{System.unique_integer([:positive])}-#{nonce}"
+        )
+
+      on_exit(fn -> EvoDash.Test.FsCleanup.rm_rf!(repo) end)
+      File.mkdir_p!(repo)
+      git!(repo, ~w(init --template= --initial-branch=main))
+
+      command = [
+        "-c",
+        "user.name=Test User",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "core.hooksPath=.git/hooks",
+        "commit",
+        "--no-gpg-sign"
+      ]
+
+      git!(repo, command ++ ~w(--allow-empty -m Base))
+      File.write!(Path.join(repo, "feature.txt"), subject <> "\n")
+      git!(repo, ~w(add --force -- feature.txt))
+      git!(repo, command ++ ["-m", subject])
+
+      assert {:ok, base} = Git.rev_parse(repo, "HEAD^")
+      assert {:ok, sha} = Git.rev_parse(repo)
+      {repo, sha, base}
     end
 
     defp assert_review_shell(view, task_id, project) do
