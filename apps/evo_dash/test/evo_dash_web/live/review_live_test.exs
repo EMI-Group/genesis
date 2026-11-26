@@ -2,8 +2,7 @@
 #
 # ExUnit parallelises across MODULES, never within one, so the page suite is
 # partitioned into SEVEN `async: true` modules plus THREE `async: false` modules
-# for the tests that publish process-global state. Every test body, assertion and
-# comment is carried over unchanged; only module boilerplate moved.
+# for the tests that publish process-global state.
 #
 # Two PROCESS-GLOBAL hazards decide a module's phase, and both are symmetric:
 #   * APP ENV (`Application.put_env/2` seams) + `PATH`, and ASSERTING on an
@@ -22,7 +21,7 @@
 #     the merge module was async). Fixture SEEDS go through `EvoGit.Store.put_task`
 #     and fixture CLEANUP goes through `delete_seeded_task!/1` (Store delete, no
 #     broadcast) for exactly this reason. A CLICK that reaches only an
-#     UNREACHABLE REMOTE node (every `:erpc` fails fast with `:nodedown`) writes
+#     UNREACHABLE REMOTE node (here `:erpc` fails with `:noconnection`) writes
 #     nothing locally and therefore publishes nothing.
 #
 # The CONFIG DIR is no longer a phase reason: a suite that WRITES it isolates it
@@ -88,18 +87,14 @@
 # may write any key.
 #
 # :merge_check_runner — ONE canonical fast stub for the whole file family
-# (Helpers.canonical_merge_check_runner/4), installed in EVERY module's
-# `setup_all` and NEVER deleted: the async merge check is spawned on mount for
-# mergeable repos and an unstubbed runner performs real `git merge-tree` work
-# that races ExUnit's temp-repo teardown. A per-test/per-module DELETE would
-# punch a hole in which a concurrently mounting module ran the real check; only
-# this file family reads the key (no other suite mounts a /review/ LiveView), so
-# leaving it installed is inert.
+# (Helpers.canonical_merge_check_runner/4), installed before mounts that can
+# spawn an async merge check and NEVER deleted: an unstubbed runner performs
+# real `git merge-tree` work that races ExUnit's temp-repo teardown. A cleanup
+# that deleted the runner could leave a concurrent mount with the real check.
 # The merge-check module's BLOCKING stubs are SCOPED to its own fixture repos
 # (every other repo resolves to the canonical :clean immediately) and live in a
-# per-test `:persistent_term` registry consulted by that one canonical function —
-# NOT in a replaced app-env value, which a concurrently starting sibling module's
-# `setup_all` would clobber mid-test.
+# per-test `:persistent_term` registry that the shared stub consults, so another
+# setup can reinstall the same runner without disrupting a blocked check.
 
 Code.require_file("review_test_helper.exs", __DIR__)
 
@@ -853,13 +848,9 @@ defmodule EvoDashWeb.ReviewLiveTest.CaseHelpers do
   # task whose opts carry `merge_from == original_task_id`) reaching a TERMINAL
   # status (:failed | :completed | :cancelled), then returns :ok.
   #
-  # MUST be called INSIDE an ExUnit.CaptureLog.capture_log/2 window: the spawned
-  # task's wrapper fails fast on the fixture's nonexistent repo path
-  # (File.mkdir_p! in EvoGit.Runtime.ensure_repo), and EvoGit.TaskRegistry logs
-  # the wrapper crash / FAILED_TRANSITION ASYNCHRONOUSLY — awaiting the terminal
-  # status here guarantees that log is emitted BEFORE the capture is turned off,
-  # so it never leaks into the between-test gap (ExUnit's capture_log: true only
-  # keeps the Logger :default handler swapped out while a capture is active).
+  # MUST be called INSIDE an ExUnit.CaptureLog.capture_log/2 window: the wrapper
+  # fails during repository setup, and EvoGit.TaskRegistry logs FAILED_TRANSITION
+  # asynchronously. Awaiting the terminal status keeps that log inside capture.
   def await_merge_task_terminal(original_task_id) do
     wait_until(fn ->
       case Enum.find(
@@ -3021,32 +3012,12 @@ defmodule EvoDashWeb.ReviewLiveMergeCheckTest do
   import EvoDashWeb.ReviewLiveTest.CaseHelpers
   import EvoDashWeb.ReviewLiveTest.Helpers
 
-  setup_all do
-    install_canonical_merge_check_runner()
-    :ok
-  end
-
   setup do
     # This suite depends on the PRODUCTION Store/TaskRegistry pair (it does no
     # isolation of its own), so fail loudly at the source if a prior suite
     # leaked an isolated instance instead of silently reading a foreign DB.
     EvoDash.Test.IsolatedTaskStore.assert_production!()
-
-    # ActiveTasks is a process-less public ETS table shared by the whole run.
-    # This module is `async: true`, so clear ONLY the local `{nil, node()}`
-    # context — a whole-table reset would delete a concurrent module's
-    # per-test snapshot between its put and its get.
-    EvoDash.ActiveTasks.invalidate(nil, node())
-
-    on_exit(fn ->
-      # Clear the local context on EXIT as well as on entry — every page mount
-      # asynchronously writes a sidebar snapshot into it, and the LAST test's
-      # snapshot would otherwise survive into a later suite that mounts pages
-      # without clearing it (PageControllerTest does a dead render through
-      # Layouts.app and reads the hub).
-      EvoDash.ActiveTasks.invalidate(nil, node())
-    end)
-
+    install_canonical_merge_check_runner()
     :ok
   end
 
@@ -4786,8 +4757,6 @@ defmodule EvoDashWeb.ReviewLiveRemoteAutoResolveTest do
 
   setup do
     EvoDash.Test.IsolatedTaskStore.assert_production!()
-    EvoDash.ActiveTasks.invalidate(nil, node())
-    on_exit(fn -> EvoDash.ActiveTasks.invalidate(nil, node()) end)
     EvoDash.Test.ConfigDir.isolate!("evogit_review_remote_auto_resolve")
     :ok
   end
@@ -4841,9 +4810,9 @@ defmodule EvoDashWeb.ReviewLiveRemoteAutoResolveTest do
     assert render(view) =~ "file_a.txt"
     view |> element("#repo-card-primary button[phx-click='auto_resolve']") |> render_click()
 
-    html = await_review_action_settled(view)
-    assert html =~ "Failed to start auto-resolve"
-    assert html =~ "{:erpc, :noconnection}"
+    await_review_action_settled(view)
+    assert has_element?(view, "#flash-error", "Failed to start auto-resolve")
+    assert has_element?(view, "#flash-error", "{:erpc, :noconnection}")
     refute_redirected(view)
   end
 end
@@ -4859,14 +4828,17 @@ defmodule EvoDashWeb.ReviewLiveAutoResolveTest do
   alias EvoGit.Store
   alias EvoGit.TaskRegistry
 
-  @moduletag :tmp_dir
   @primary_sha "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
   @foreign_sha "cafebabecafebabecafebabecafebabecafebabe"
 
-  setup %{tmp_dir: tmp_dir} do
+  setup do
     EvoDash.Test.IsolatedTaskStore.assert_production!()
     EvoDash.ActiveTasks.reset()
     on_exit(fn -> EvoDash.ActiveTasks.reset() end)
+
+    tmp_dir = review_tmp_path("evogit_review_auto_resolve_")
+    on_exit(fn -> File.rm_rf!(tmp_dir) end)
+    File.mkdir!(tmp_dir)
 
     # Persist real rows with no available repositories, so the loader can
     # project both entries without Git calls or review-metadata writes.
@@ -4944,12 +4916,16 @@ defmodule EvoDashWeb.ReviewLiveAutoResolveTest do
         TaskRegistry.list_tasks()
       end)
 
-      assert %EvoGit.TaskInfo{type: :evolve, status: :failed, opts: opts} =
-               Store.get_task(started_task.id)
+      assert %EvoGit.TaskInfo{
+               type: :evolve,
+               status: :failed,
+               opts: opts,
+               error: %{kind: :down, source: :down_handler, message: message}
+             } = Store.get_task(started_task.id)
 
-      assert log =~ "TaskRegistry: FAILED_TRANSITION task_id=#{started_task.id}"
-      assert log =~ "%File.Error{"
-      assert log =~ inspect(primary_path)
+      assert message =~ "make directory"
+      assert message =~ inspect(primary_path)
+      assert log =~ "TaskRegistry: FAILED_TRANSITION task_id=#{started_task.id} "
 
       assert merge_opt(opts, :merge_from) == task_id
       assert merge_opt(opts, :merge_target) == "main"

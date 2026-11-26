@@ -17,10 +17,10 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
 
   @blocking_merge_check_key {__MODULE__, :blocking_merge_check_repos}
 
-  # Every review suite installs the same merge-check stub in setup_all and
-  # leaves it in place so concurrent mounts never run a real merge-tree check.
+  # Suites that can start a merge check install this same stub before mounting
+  # and leave it in place so concurrent mounts never run a real merge-tree check.
   # Only the merge-check suite registers its fixture paths with a test owner;
-  # concurrent setup_all callbacks can reinstall the stub without clobbering it.
+  # setup and setup_all can reinstall the stub without replacing that registry.
   def canonical_merge_check_runner(node, repo, branch, target) do
     case Map.fetch(blocking_merge_check_repos(), repo) do
       {:ok, owner} ->
