@@ -63,7 +63,7 @@ Three layers, expressed as tokens in `apps/evo_dash/assets/css/surfaces.css`:
 
 | Layer | Surfaces | Treatment |
 |---|---|---|
-| 0 chrome/shell | sidebar, tab strip background, right dock | recessed: muted shell fill, a subtle secondary tone for the right dock, restrained hairlines and no shadow |
+| 0 chrome/shell | sidebar, tab strip background, right dock | recessed and unshadowed: Project History shares the sidebar's theme-aware fill without a divider; Source Control keeps its own tint and leading hairline |
 | 1 content canvas | page canvas, active tab, lists | inset, rounded canvas with density-derived gutters, subtle tone and a hairline; no elevation shadow |
 | 2 overlay | menus, command palette, modals, popovers | the only floating, shadowed layer (`--elev-1/2/3`) |
 
@@ -77,14 +77,16 @@ Rules that keep it coherent:
 
 ## Right dock
 
-History and Source Control share a recessed dock treatment with one leading hairline and no elevation. They start closed in a fresh tab; the workbench hook owns their open/close state, resize handle and narrow-screen overlay. The active panel's content scrolls, not the dock itself.
+Project History uses the same theme-aware fill as the left sidebar, with no divider. Source Control retains its distinct tint and leading divider. Both start closed in a fresh tab; the workbench hook owns their open/close state, resize handle and narrow-screen overlay. The active panel's content scrolls, not the dock itself.
+
+Across LiveView route swaps, the workbench keeps the saved desktop sidebar width and restores the open History dock with its desktop geometry. History results and scroll position remain scoped to the destination rather than carrying over from the previous route. Narrow-screen drawers are transient and do not reopen on navigation.
 
 - **History** lists prior work. The **Project** and **Status** filters come before the search field, followed by a **Tasks / Conversations** segmented pill switch. The current project is selected by default; **All projects** widens the search on the viewed node. Task search is server-side and paged. The controls stay in place while the results scroll. Neutral rows use spacing rather than dividers, with a truncated title above a quiet status-and-date line; only conversations have a kind icon.
 - **Source Control** shows repository state. Its summary header and **Changes / Branches / Commits** switcher keep their intrinsic height; only the selected view scrolls in the remaining bounded space. Branch search stays at the top of its view. Working-tree and commit diffs open in the central canvas, not in the dock.
 
 ## Tab rail semantics
 
-The Chrome-like tab rail is the only open-view list. Compact tabs sit along the bottom of the top bar beside the Create, History and Git controls. The confirmed tab shares the canvas fill and covers its top hairline, so it joins the inset canvas instead of floating above it. The strip scrolls horizontally without squeezing the fixed controls; close affordances reserve their space.
+The Chrome-like tab rail is the only open-view list. A compact title for the current route, project or workspace comes before the tab strip. Compact tabs sit along the bottom of the top bar beside the Create, History and Git controls. The confirmed active tab shares the canvas fill and curves outward at its lower corners to join the inset canvas, covering the top hairline where they meet. The strip scrolls horizontally without squeezing the fixed controls; close affordances reserve their space.
 
 - A task has one canonical tab key `{node, task_id}` across `/agents?task=<id>`, `/tasks?task=<id>`, `/review/<id>` and `/review/<id>/commit/<sha>`. The tab keeps the exact destination separately, including the commit or query parameters. Bare `/agents` is a node-wide destination, not a task tab. Project, draft, conversation and working-tree diff views keep their own identities.
 - ONE reused **preview** tab per project, replaced in place by the next preview; middle-click PINS it without navigating. `draft`, `project`, `assistant` and `diff` tabs are always pinned, so a preview can never overwrite unsaved input.
