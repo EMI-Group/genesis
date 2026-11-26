@@ -125,7 +125,7 @@ defmodule EvoGit.Agent.Tools.Context do
             "type" => "string",
             "enum" => ["shared", "local", "all"],
             "description" =>
-              "Matching and replace_all are restricted to the selected scope. 'shared' (default) matches text before the '<!-- genesis:local -->' divider line; 'local' matches text after it; 'all' edits across the whole file. The divider line and the untouched region survive unchanged.",
+              "Matching and replace_all are restricted to the selected scope. 'shared' (default) matches text before the '<!-- genesis:local -->' divider line; 'local' matches text after it; 'all' edits the whole file, divider line included (the divider survives unless the edit itself changes it). The divider line and the untouched region survive unchanged.",
             "default" => "shared"
           }
         },
@@ -280,10 +280,11 @@ defmodule EvoGit.Agent.Tools.Context do
   end
 
   # Region-restricted string replacement: matching, occurrence counting and
-  # `replace_all` all run on the SELECTED scope only, and `ContextScope.splice/3`
-  # puts the edited region back so the divider line and the untouched region are
-  # preserved byte-for-byte. All divider/split/splice logic lives in
-  # `EvoGit.Core.ContextScope` — never re-implemented here.
+  # `replace_all` all run on the SELECTED region only (`edit_region/2`), and
+  # `ContextScope.splice/3` puts an edited `:shared`/`:local` region back so the
+  # divider line and the untouched region are preserved byte-for-byte. All
+  # divider/split/splice logic lives in `EvoGit.Core.ContextScope` — never
+  # re-implemented here.
   defp scoped_string_replace(
          context_path,
          relative_path,
@@ -298,7 +299,7 @@ defmodule EvoGit.Agent.Tools.Context do
         if scope == :local and not ContextScope.has_local?(content) do
           no_local_section_error(dir_path)
         else
-          region = ContextScope.scope_content(content, scope)
+          region = edit_region(content, scope)
 
           replace_in_region(
             content,
@@ -316,6 +317,15 @@ defmodule EvoGit.Agent.Tools.Context do
         Failure.error("failed to read #{relative_path}: #{:file.format_error(reason)}")
     end
   end
+
+  # The region `edit_context` matches/replaces inside.
+  # `:all` edits the RAW file (divider line included) so a whole-file edit can
+  # never drop the divider and an `old_string` spanning it still matches —
+  # `ContextScope.splice/3` returns the new region verbatim for `:all`.
+  # `:shared`/`:local` edit their own region (`scope_content/2` excludes the
+  # divider) and are spliced back so the divider and the other region survive.
+  defp edit_region(content, :all), do: content
+  defp edit_region(content, scope), do: ContextScope.scope_content(content, scope)
 
   defp replace_in_region(
          content,
