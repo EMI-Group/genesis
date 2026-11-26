@@ -6,7 +6,7 @@ Foundational domain models: **Spatial Dimension** (ContextNode — directory/fil
 
 ## Routing Table
 
-None — leaf directory (modules: `context_node.ex`, `phylo_graph_node.ex`, `foreign_repo.ex`).
+None — leaf directory (modules: `context_node.ex`, `context_scope.ex`, `phylo_graph_node.ex`, `foreign_repo.ex`).
 The persisted task struct is NOT here: `EvoGit.TaskInfo` is `lib/evo_git/task_info.ex` (owning detail: `lib/evo_git/CONTEXT.md` + `store/`).
 Of this directory's three structs, only `ForeignRepo` is persisted (as JSON nested in `TaskInfo.opts[:foreign_repos]`, so it round-trips string-keyed); `ContextNode` and `PhyloGraphNode` are runtime-only and never touch the store.
 
