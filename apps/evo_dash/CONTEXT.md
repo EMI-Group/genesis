@@ -116,7 +116,9 @@ Phoenix 1.8 umbrella child app (`:evo_dash`) depending on sibling `:evo_git`.
   Opening, creating or selecting a project uses the normal overview route; the deliberate last-tab close uses `wb_home=1` and never reopens the draft.
   A confirmed project or resolved workspace overview advertises its exact scoped draft URL via `data-workbench-default-draft`; the browser opens the unsent draft only when the restored rail is empty and suppresses the default for explicit compose/resume and Back/Forward.
   A direct path to an unregistered repo can still use the manual composer; the project picker must register it before scoped Assistant chat is offered.
-- **Right dock** — History and Source Control start closed and preserve the panel state, overlay and resize contracts in `workbench_panel*.js`.
+- **Right dock** — History and Source Control start closed and preserve their desktop panel state, overlays and resize contracts in `workbench_panel*.js`; a narrow routed shell never opens a drawer from a saved desktop preference.
+  While a scoped task's project resolves, an already-open desktop History retains its width without displaying stale rows or loading an assumed project.
+  History can restore its list scroll on shell remount only for matching node, project, view and filters, without initiating pagination or overriding user input.
   History puts project and status filters before search, uses a locally animated Tasks/Conversations pill, and lists compact title and metadata rows without repeated task icons.
   Search stays server-side and paged (`WorkbenchComponent`, size 15, current project default, off-process behind a monotonic guard); history destinations remain the Tasks focus view for live tasks, Review for terminal tasks and Assistant for conversations.
   Source Control has intrinsic-height Changes/Branches/Commits controls and a bounded scrolling active view; working-tree and commit diffs open in the central canvas through a portal, with drawer dismissal and focus handled by the workbench hook (`components/CONTEXT.md`, `assets/css/CONTEXT.md`).
