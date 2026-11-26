@@ -18,6 +18,7 @@ Isolation rule: a tool test whose fixture is a SUBPROCESS cwd (anything passed a
 | `shared_test.exs` | `EvoGit.Agent.Tools.Shared` (pure arg/path helpers) |
 | `commit_files_test.exs` | `Tools.Shared.commit_files/4` (the shared stage+commit helper) |
 | `context_amend_test.exs` | `Tools.Shared.commit_files/5` `amend: true` / `amend_message_fun` and the `write_context`/`edit_context` squash contract (same-dir, cross-directory and multi-file squashes, every refusal, `amend_message_fun` invocation/override rules) |
+| `context_scope_test.exs` | `EvoGit.Agent.Tools.Context` (`read_context` / `edit_context` / `write_context`) scope selection over the Shared/Local divider primitive `EvoGit.Core.ContextScope` |
 | `file_read_test.exs` | `Tools` `"read_file"` (incl. its OUTPUT shape) |
 | `file_edit_test.exs` | `Tools` `"edit_file"` (model-facing `edit`; owns the edit OUTPUT shape) |
 | `glob_test.exs` | `Tools` `"glob"` |
