@@ -35,43 +35,6 @@ The domain-layer persistence/registry modules (`Store`, `Store.Codec`, `TaskInfo
 
 Full per-module detail: `./evo_dash/CONTEXT.md`.
 
-### Web Modules (`./evo_dash_web/`)
-
-| Module | Purpose |
-|--------|---------|
-| `EvoDashWeb.Endpoint` | Phoenix endpoint |
-| `EvoDashWeb.Router` | Routes to LiveViews and LiveDashboard |
-| `EvoDashWeb.Helpers` | Shared UI utilities (status badges, datetime, icons, modals) |
-| `EvoDashWeb.Gettext` | i18n backend |
-
-#### LiveViews (`./evo_dash_web/live/`)
-
-| LiveView | Route | Purpose |
-|----------|-------|---------|
-| `ProjectsLive` | `GET /`, `GET /projects` (same LiveView + action, direct route, no redirect); `GET /dashboard` (`:system_dashboard` action) | Projects page — project tabs, task form, task cards, project settings |
-| `HomeLive` | `GET /assistant` (`GET /help` is a 302 alias preserving the query string) | Genesis Assistant page — a conversation is ONE long-lived interactive agent session (one agent id, one worktree, many messages) addressed as `/assistant?session=<agent_id>`; the one-shot `:reflect` task remains the fallback when interactive sessions are unavailable. The page has no conversation rail: the list is the shared app-layout sidebar's Conversations section (`EvoDashWeb.HomeLive.SessionList.session_list/1`, async load owned by `EvoDashWeb.LiveHooks.NodeAware`), and approvals render as a fixed-height `#approval-status-bar` strip above the composer plus ONE `#approval-dialog` modal (`EvoDashWeb.HomeLive.ApprovalDialog`). Session model, send path and fallback triggers: `evo_dash_web/live/home_live/CONTEXT.md` |
-| `TasksLive` | `GET /tasks` | Task history page — status filters, pagination, archive, cancel/force-kill, review links |
-| `ReviewLive` | `GET /review/:task_id` (+ `:commit` action) | Code review page — diff viewer, merge/reject/resume, GitHub PR creation |
-| `AgentsLive` | `GET /agents` | Agent tree inspector with chat history |
-| `SettingsLive` | `GET /settings` | Config GUI editor (categories); the LLM category is one guided provider-account surface (compact account list + single expanded editor + inline create wizard + add-model mini-wizard), plus custom agents + model-selection script + custom-tools editors |
-| `SystemLive` | `GET /system` | System controls (scheduler pause/resume, restart/stop VM), self-check, update card, usage guides |
-| `WelcomeLive` | `GET /welcome` | First-run onboarding — six-step provider wizard (provider → auth → model → reasoning + recommended schedule → connection test → done) over the shared `EvoDashWeb.LLMSetup.*` + `SettingsComponents.ProviderWizard` foundation |
-| `WelcomeCompleteLive` | `GET /welcome/complete` | Post-setup page — example objective + "Go to Dashboard" |
-
-#### Components (`./evo_dash_web/components/`)
-
-| Component | Purpose |
-|-----------|---------|
-| `CoreComponents` | Phoenix 1.8 base components (input, button, flash, table, list, icon) |
-| `Layouts` | App layout with navbar, theme toggle, flash group |
-| `ProjectComponents` / `TaskFormComponents` / `TaskCardComponents` | Command-palette project selector, task form, task cards, project settings |
-| `AgentsComponents` | Recursive agent path tree with connector lines and status coloring |
-| `SettingsComponents` | Settings page sections (model profiles, custom agents, model-selection script editors) |
-| `ReviewComponents` | Review page actions (merge/reject/resume, async merge-check block) |
-| `GitHubComponents` | GitHub issues modal |
-| `ArchiveComponents` | Paged task archive tree display (per-agent result loaded on demand, shared count/exhaustion line `archive_count_line/1`, retention-windowed entries) |
-| `RemoteGateComponents` | Remote-connection gate (full-page connecting/error gate) |
-
 ### Cross-App Communication: EvoDash → EvoGit
 
 All communication from EvoDash to EvoGit is **direct function calls** (synchronous GenServer calls and direct module calls). Both apps run in the same BEAM VM — no network boundary or serialization.
@@ -167,3 +130,42 @@ The export is the full-fidelity consumer: `TaskExportController.fetch_page/3` pa
 - EvoGit.PubSub is owned by the evo_git application; EvoDash subscribes as a consumer
 - Config freshness is PER PROCESS for every page except ProjectsLive: `EvoDashWeb.ProjectsLive` subscribes to the core's `"config"` topic and handles `{:config_reloaded, node, dir, generation}` (publishing BEAM node filter + a `{dir, generation}` guard) by re-spawning its picker batch, while nothing else under `./` consumes that event — for every other page a config.toml/credentials.toml write made elsewhere (the `/settings/window` iframe, the CLI, another tab, a ChatGPT registration) reaches it only on its next mount/`handle_params`.
 - The `/settings/window` LiveView runs in an iframe inside the mounting page's shell (`components/layouts.ex`), so a save there cannot tell the parent page to reload — the only iframe→parent channel is the `genesis:close-settings-window` postMessage that closes the dialog, and on the Projects page the `Workbench` hook answers that close by pushing `retry_model_selection` (the client-side edge that also covers a REMOTE target, whose save never reaches this BEAM's `"config"` topic).
+
+<!-- genesis:local -->
+
+### Web Modules (`./evo_dash_web/`)
+
+| Module | Purpose |
+|--------|---------|
+| `EvoDashWeb.Endpoint` | Phoenix endpoint |
+| `EvoDashWeb.Router` | Routes to LiveViews and LiveDashboard |
+| `EvoDashWeb.Helpers` | Shared UI utilities (status badges, datetime, icons, modals) |
+| `EvoDashWeb.Gettext` | i18n backend |
+
+#### LiveViews (`./evo_dash_web/live/`)
+
+| LiveView | Route | Purpose |
+|----------|-------|---------|
+| `ProjectsLive` | `GET /`, `GET /projects` (same LiveView + action, direct route, no redirect); `GET /dashboard` (`:system_dashboard` action) | Projects page — project tabs, task form, task cards, project settings |
+| `HomeLive` | `GET /assistant` (`GET /help` is a 302 alias preserving the query string) | Genesis Assistant page — a conversation is ONE long-lived interactive agent session (one agent id, one worktree, many messages) addressed as `/assistant?session=<agent_id>`; the one-shot `:reflect` task remains the fallback when interactive sessions are unavailable. The page has no conversation rail: the list is the shared app-layout sidebar's Conversations section (`EvoDashWeb.HomeLive.SessionList.session_list/1`, async load owned by `EvoDashWeb.LiveHooks.NodeAware`), and approvals render as a fixed-height `#approval-status-bar` strip above the composer plus ONE `#approval-dialog` modal (`EvoDashWeb.HomeLive.ApprovalDialog`). Session model, send path and fallback triggers: `evo_dash_web/live/home_live/CONTEXT.md` |
+| `TasksLive` | `GET /tasks` | Task history page — status filters, pagination, archive, cancel/force-kill, review links |
+| `ReviewLive` | `GET /review/:task_id` (+ `:commit` action) | Code review page — diff viewer, merge/reject/resume, GitHub PR creation |
+| `AgentsLive` | `GET /agents` | Agent tree inspector with chat history |
+| `SettingsLive` | `GET /settings` | Config GUI editor (categories); the LLM category is one guided provider-account surface (compact account list + single expanded editor + inline create wizard + add-model mini-wizard), plus custom agents + model-selection script + custom-tools editors |
+| `SystemLive` | `GET /system` | System controls (scheduler pause/resume, restart/stop VM), self-check, update card, usage guides |
+| `WelcomeLive` | `GET /welcome` | First-run onboarding — six-step provider wizard (provider → auth → model → reasoning + recommended schedule → connection test → done) over the shared `EvoDashWeb.LLMSetup.*` + `SettingsComponents.ProviderWizard` foundation |
+| `WelcomeCompleteLive` | `GET /welcome/complete` | Post-setup page — example objective + "Go to Dashboard" |
+
+#### Components (`./evo_dash_web/components/`)
+
+| Component | Purpose |
+|-----------|---------|
+| `CoreComponents` | Phoenix 1.8 base components (input, button, flash, table, list, icon) |
+| `Layouts` | App layout with navbar, theme toggle, flash group |
+| `ProjectComponents` / `TaskFormComponents` / `TaskCardComponents` | Command-palette project selector, task form, task cards, project settings |
+| `AgentsComponents` | Recursive agent path tree with connector lines and status coloring |
+| `SettingsComponents` | Settings page sections (model profiles, custom agents, model-selection script editors) |
+| `ReviewComponents` | Review page actions (merge/reject/resume, async merge-check block) |
+| `GitHubComponents` | GitHub issues modal |
+| `ArchiveComponents` | Paged task archive tree display (per-agent result loaded on demand, shared count/exhaustion line `archive_count_line/1`, retention-windowed entries) |
+| `RemoteGateComponents` | Remote-connection gate (full-page connecting/error gate) |
