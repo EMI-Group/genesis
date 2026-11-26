@@ -17,6 +17,7 @@ defmodule EvoGit.Agent.Tools.SearchContext do
       name: "search_context",
       description:
         "Use the search_context tool to search every CONTEXT.md under a node path. " <>
+          "It searches WHOLE CONTEXT.md files, so matches come from BOTH the Shared and the Local scope — there is no scope filter. " <>
           "The pattern is a ripgrep regex; matching lines come back with their file path and surrounding context lines.",
       parameter_schema: %{
         "type" => "object",
