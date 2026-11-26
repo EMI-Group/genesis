@@ -19,9 +19,11 @@ defmodule EvoGit.Agent.Tools.ContextAmendTest do
       replaces the caller's message — it is never invoked on the plain path;
     * the amend is refused (plain commit instead) when HEAD is not this tool's
       own context commit (foreign subject, or any non-CONTEXT.md path in its
-      diff), when HEAD is a merge commit, or when HEAD is not PRIVATE to the
-      current branch (the base-commit protection the subagent/octopus-merge flow
-      depends on);
+      diff), when HEAD is a merge commit, or when a shared/published ref contains
+      HEAD — another branch, a remote-tracking ref or a tag (the base-commit
+      protection the subagent/octopus-merge flow depends on); Genesis's own
+      `refs/genesis/*` bookkeeping (e.g. an `agent-state` checkpoint anchor) does
+      not block the amend;
     * `create_files` / `make_dir` keep one commit per call — no cross-call
       squashing.
 
@@ -108,6 +110,38 @@ defmodule EvoGit.Agent.Tools.ContextAmendTest do
     write_context!(repo, "x", "# X\n\nthree\n")
     assert commit_count(repo) == before
     assert File.read!(Path.join(repo, "x/CONTEXT.md")) == "# X\n\nthree\n"
+  end
+
+  test "a refs/genesis/agent-state anchor at HEAD does not block squashing", %{repo: repo} do
+    write_context!(repo, "./x", "# X\n\nfirst\n")
+    after_write = commit_count(repo)
+
+    # Durable agent state anchors every commit-advancing checkpoint at
+    # `refs/genesis/agent-state/<task_id>/<agent_id>`. That is the run's own
+    # bookkeeping, not a shared/published ref, so it must not block the amend.
+    git!(repo, ["update-ref", "refs/genesis/agent-state/task-1/agent-1", "HEAD"])
+
+    assert git!(repo, ["for-each-ref", "--contains", "HEAD", "--format=%(refname)"]) =~
+             "refs/genesis/agent-state/task-1/agent-1"
+
+    assert_context_edit(repo, "./x", "first", "second edit")
+    assert commit_count(repo) == after_write
+
+    content = File.read!(Path.join(repo, "x/CONTEXT.md"))
+    assert content =~ "second edit"
+    refute content =~ "first\n"
+    assert last_subject(repo) == @context_prefix <> "./x"
+  end
+
+  test "an identical-content amend is a git exit-0 no-op (no new commit)", %{repo: repo} do
+    write_context!(repo, "./x", "# X\n\nsame\n")
+    before = commit_count(repo)
+
+    write_context!(repo, "./x", "# X\n\nsame\n")
+
+    assert commit_count(repo) == before
+    assert File.read!(Path.join(repo, "x/CONTEXT.md")) == "# X\n\nsame\n"
+    assert last_subject(repo) == @context_prefix <> "./x"
   end
 
   test "unrelated staged content is never folded into the amended commit", %{repo: repo} do
@@ -227,6 +261,33 @@ defmodule EvoGit.Agent.Tools.ContextAmendTest do
     assert tracked =~ "z/CONTEXT.md"
   end
 
+  test "two DIFFERENT directories squash across an anchor ref into ONE commit listing both", %{
+    repo: repo
+  } do
+    write_context!(repo, "./x", "# X\n\nfirst\n")
+
+    # A checkpoint anchor at HEAD between the two edits (see the agent-state
+    # regression test above) must not split the squash in two.
+    git!(repo, ["update-ref", "refs/genesis/agent-state/task-2/agent-2", "HEAD"])
+
+    write_context!(repo, "./y", "# Y\n\nfirst\n")
+
+    # ONE context commit beyond the template's base commit.
+    assert commit_count(repo) == 2
+    assert git!(repo, ["log", "-1", "--pretty=%s", "HEAD~1"]) == "base"
+
+    assert changed_paths(repo) == ["x/CONTEXT.md", "y/CONTEXT.md"]
+
+    assert commit_body(repo) ==
+             """
+             Update CONTEXT.md for ./y
+
+             Files in this commit:
+             - x/CONTEXT.md
+             - y/CONTEXT.md\
+             """
+  end
+
   # ---------------------------------------------------------------------------
   # Refusals — each creates a NEW commit and rewrites nothing
   # ---------------------------------------------------------------------------
@@ -260,6 +321,42 @@ defmodule EvoGit.Agent.Tools.ContextAmendTest do
     assert_context_edit(repo, "./x", "edited", "edited+again")
     assert commit_count(repo) == before
     assert git!(repo, ["rev-parse", "main"]) == base_sha
+  end
+
+  test "HEAD shared with another branch is never amended", %{repo: repo} do
+    write_context!(repo, "./x", "# X\n\nfirst\n")
+    before = commit_count(repo)
+    git!(repo, ["branch", "other"])
+
+    assert_context_edit(repo, "./x", "first", "second")
+
+    # A NEW commit was created; the shared commit is untouched.
+    assert commit_count(repo) == before + 1
+    assert git!(repo, ["rev-parse", "other"]) == git!(repo, ["rev-parse", "HEAD~1"])
+  end
+
+  test "HEAD shared with a remote-tracking ref is never amended", %{repo: repo} do
+    write_context!(repo, "./x", "# X\n\nfirst\n")
+    before = commit_count(repo)
+    git!(repo, ["update-ref", "refs/remotes/origin/main", "HEAD"])
+
+    assert_context_edit(repo, "./x", "first", "second")
+
+    assert commit_count(repo) == before + 1
+
+    assert git!(repo, ["rev-parse", "refs/remotes/origin/main"]) ==
+             git!(repo, ["rev-parse", "HEAD~1"])
+  end
+
+  test "HEAD shared with a tag is never amended", %{repo: repo} do
+    write_context!(repo, "./x", "# X\n\nfirst\n")
+    before = commit_count(repo)
+    git!(repo, ["tag", "v1"])
+
+    assert_context_edit(repo, "./x", "first", "second")
+
+    assert commit_count(repo) == before + 1
+    assert git!(repo, ["rev-parse", "v1"]) == git!(repo, ["rev-parse", "HEAD~1"])
   end
 
   test "a HEAD touching only x/CONTEXT.md but with another subject is never amended", %{
