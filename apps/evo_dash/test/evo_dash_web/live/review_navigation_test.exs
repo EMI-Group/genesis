@@ -170,13 +170,7 @@ defmodule EvoDashWeb.ReviewNavigationTest do
     # Review reads the persisted SHAs even after a task branch is gone. Keep
     # the commits on main so navigation needs neither a merge check nor its stub.
     defp navigation_repo!(subject) do
-      nonce = Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
-
-      repo =
-        Path.join(
-          System.tmp_dir!(),
-          "review-navigation-#{System.pid()}-#{System.unique_integer([:positive])}-#{nonce}"
-        )
+      repo = review_tmp_path("review-navigation-")
 
       on_exit(fn -> EvoDash.Test.FsCleanup.rm_rf!(repo) end)
       File.mkdir_p!(repo)

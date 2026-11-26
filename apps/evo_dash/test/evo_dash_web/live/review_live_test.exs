@@ -510,10 +510,6 @@ defmodule EvoDashWeb.ReviewLiveTest.CaseHelpers do
         primary_base_sha
       )
 
-    on_exit(fn ->
-      rm_rf_retry(foreign_dir)
-    end)
-
     {primary_dir, foreign_dir, task_id, primary_sha, foreign_sha}
   end
 
@@ -940,7 +936,6 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
     # Only the branch shapes THIS module's fixtures ask for: the templates are
     # per-module so concurrently running modules never share a mutable fixture.
     templates = build_templates!([{"main", nil}])
-    on_exit(fn -> rm_templates!(templates) end)
     {:ok, review_templates: templates}
   end
 
@@ -1896,7 +1891,6 @@ defmodule EvoDashWeb.ReviewLiveMergeTest do
     # Only the branch shapes THIS module's fixtures ask for: the templates are
     # per-module so concurrently running modules never share a mutable fixture.
     templates = build_templates!([{"main", "dev"}, {"dev", nil}])
-    on_exit(fn -> rm_templates!(templates) end)
     {:ok, review_templates: templates}
   end
 
@@ -2230,10 +2224,8 @@ defmodule EvoDashWeb.ReviewLiveMergeTest do
     # completion banner renders, the sidebar hub snapshot is invalidated — and
     # the page NEVER navigates on a settle (only Ignore / resume navigate).
     test "a persisted review status wins over a later computed value", %{conn: conn} do
-      {primary_dir, _foreign_dir, task_id, _primary_sha, _foreign_sha} =
+      {_primary_dir, _foreign_dir, task_id, _primary_sha, _foreign_sha} =
         create_multi_repo_review_task!("main", "dev")
-
-      on_exit(fn -> rm_rf_retry(primary_dir) end)
 
       # Pre-seed the persisted aggregate as :merged (as a prior visit would
       # have), then run a REJECT-ONLY resolution: every repo ends :rejected,
@@ -2339,8 +2331,6 @@ defmodule EvoDashWeb.ReviewLiveMergeTest do
     setup do
       {primary_dir, foreign_dir, task_id, _primary_sha, _foreign_sha} =
         create_multi_repo_review_task!("main", "dev")
-
-      on_exit(fn -> rm_rf_retry(primary_dir) end)
 
       {:ok, primary_dir: primary_dir, foreign_dir: foreign_dir, task_id: task_id}
     end
@@ -2502,8 +2492,6 @@ defmodule EvoDashWeb.ReviewLiveMergeTest do
     setup do
       {primary_dir, foreign_dir, task_id, _primary_sha, _foreign_sha} =
         create_multi_repo_review_task!("main", "dev")
-
-      on_exit(fn -> rm_rf_retry(primary_dir) end)
 
       {:ok, primary_dir: primary_dir, foreign_dir: foreign_dir, task_id: task_id}
     end
@@ -2814,8 +2802,6 @@ defmodule EvoDashWeb.ReviewLiveMergeTest do
       {primary_dir, _foreign_dir, task_id, primary_sha, _foreign_sha} =
         create_multi_repo_review_task!("main", "dev")
 
-      on_exit(fn -> rm_rf_retry(primary_dir) end)
-
       {:ok, primary_dir: primary_dir, task_id: task_id, primary_sha: primary_sha}
     end
 
@@ -3036,22 +3022,7 @@ defmodule EvoDashWeb.ReviewLiveMergeCheckTest do
   import EvoDashWeb.ReviewLiveTest.Helpers
 
   setup_all do
-    # Canonical merge-check stub for EVERY mount in this module (see the file
-    # header). Never deleted.
     install_canonical_merge_check_runner()
-
-    # Only the branch shapes THIS module's fixtures ask for: the templates are
-    # per-module so concurrently running modules never share a mutable fixture.
-    templates = build_templates!([{"main", "dev"}])
-    on_exit(fn -> rm_templates!(templates) end)
-    {:ok, review_templates: templates}
-  end
-
-  setup %{review_templates: templates} do
-    # The fixture hand-off is per TEST PROCESS: `review_template!/2` reads the
-    # templates from the process dictionary, and every `on_exit` closure
-    # captures a value instead.
-    Process.put(:review_templates, templates)
     :ok
   end
 
@@ -3080,48 +3051,11 @@ defmodule EvoDashWeb.ReviewLiveMergeCheckTest do
   end
 
   describe "async merge check on the review page" do
-    # The async dry-run merge check is spawned on mount for mergeable repos.
-    # The runner is stubbed via the :merge_check_runner test seam: the
-    # describe-level blocking runner holds the status at :checking for the
-    # whole test (it only unblocks on its long timeout, far beyond any test
-    # here), so no auto-generated result can race a manually injected
-    # {:merge_check_result, ...} message. Results are injected directly via
-    # send/2, making the state machine fully deterministic.
-    setup do
-      {repo_path, task_id, change_sha} = create_review_task_with_repo!("main", "dev")
+    test "one mount drives the merge-check state machine end to end", %{conn: conn} do
+      {view, task_id, [repo]} = mount_mergeable_review(conn, ["primary"])
 
-      # Hold THIS fixture repo's check at :checking — tests that assert on
-      # :checking (or inject their own results) must never race an auto-generated
-      # result message. Registered on the SHARED canonical stub rather than by
-      # replacing the app-env value: `:merge_check_runner` is process-global and a
-      # concurrently starting sibling module's `setup_all/1` re-installs the
-      # canonical function, which would silently clobber a per-test override. The
-      # registry entry is keyed by this test's unique repo path, so every other
-      # repo (all concurrent modules' mounts) still resolves to :clean at once.
-      block_merge_check_for!([repo_path])
-      on_exit(fn -> unblock_merge_check_for!([repo_path]) end)
-      {:ok, repo_path: repo_path, task_id: task_id, change_sha: change_sha}
-    end
-
-    # ONE mount drives the whole state machine (every scenario below used to
-    # mount the identical real-repo fixture on its own): a mount costs a full
-    # git-backed review load, so the sequential scenarios share it.
-    test "one mount drives the merge-check state machine end to end", %{
-      conn: conn,
-      task_id: task_id
-    } do
-      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
-
-      # The merge check is only started AFTER the async review-data load
-      # completes (MergeCheck.maybe_start runs from the load's handle_info,
-      # never from handle_params) — flush the load first, then drain the
-      # mount-time reload (armed by the load's set_review_metadata broadcast)
-      # so every state read below is the settled one, never a reload's
-      # transient loading state.
-      flush_review_load(view)
-      settle_debounced_task_reload(view)
-
-      # --- starts a merge check on mount -------------------------------
+      # The current-generation load starts the check in a real worker.
+      main_check = await_merge_check!(view, repo.repo_path, "main")
       assert %{state: :checking, target: "main", files: []} = assigns(view)[:merge_status]
 
       # --- ignores stale results (wrong target or wrong task id) -------
@@ -3148,7 +3082,8 @@ defmodule EvoDashWeb.ReviewLiveMergeCheckTest do
       refute html =~ "Merge check passed"
 
       # --- renders the clean state and keeps the merge form ------------
-      send(view.pid, {:merge_check_result, task_id, node(), "primary", "main", {:ok, :clean}})
+      reply_to_merge_check(main_check, {:ok, :clean})
+      assert wait_until(fn -> assigns(view)[:merge_status].state == :clean end)
       html = render(view)
 
       assert html =~ "Merge check passed"
@@ -3159,13 +3094,17 @@ defmodule EvoDashWeb.ReviewLiveMergeCheckTest do
       assert target_branch_select(html) != ""
 
       # --- changing the target branch re-checks, ignores old-target results
-      render_change(view, "merge_target_change", %{"target_branch" => "dev"})
+      view
+      |> element("#merge-form-primary")
+      |> render_change(%{"target_branch" => "dev"})
 
+      dev_check = await_merge_check!(view, repo.repo_path, "dev")
       assert assigns(view)[:default_merge_target] == "dev"
       assert %{state: :checking, target: "dev"} = assigns(view)[:merge_status]
 
       # Result for the NEW target is applied.
-      send(view.pid, {:merge_check_result, task_id, node(), "primary", "dev", {:ok, :clean}})
+      reply_to_merge_check(dev_check, {:ok, :clean})
+      assert wait_until(fn -> assigns(view)[:merge_status].state == :clean end)
       html = render(view)
 
       assert assigns(view)[:merge_status].state == :clean
@@ -3199,75 +3138,45 @@ defmodule EvoDashWeb.ReviewLiveMergeCheckTest do
   end
 
   describe "multi-repo review — per-repo merge check" do
-    # Same deterministic pattern as the single-repo "async merge check" describe:
-    # a BLOCKING :merge_check_runner holds every repo's status at :checking for
-    # the whole test (it only unblocks on its long timeout, far beyond any test
-    # here), so injected 6-tuple results cannot race an auto-generated message.
-    setup do
-      {primary_dir, foreign_dir, task_id, _primary_sha, _foreign_sha} =
-        create_multi_repo_review_task!("main", "dev")
+    test "applies per-repo results, drops stale ones and renders each repo's own status", %{
+      conn: conn
+    } do
+      {view, task_id, [primary, foreign]} = mount_mergeable_review(conn, ["primary", "original"])
 
-      # Same deterministic pattern as the single-repo "async merge check"
-      # describe: hold BOTH of this fixture's repos at :checking through the
-      # shared canonical stub's per-test registry (a per-test app-env override
-      # would be clobbered by a concurrently starting sibling module's
-      # `setup_all/1`). Every other repo resolves to :clean immediately.
-      block_merge_check_for!([primary_dir, foreign_dir])
-      on_exit(fn -> unblock_merge_check_for!([primary_dir, foreign_dir]) end)
-
-      on_exit(fn -> rm_rf_retry(primary_dir) end)
-
-      {:ok, primary_dir: primary_dir, foreign_dir: foreign_dir, task_id: task_id}
-    end
-
-    # One mount covers both the stale-guard math and the per-card / per-tab
-    # rendering of the results: they inject the SAME per-repo results into the
-    # same real-repo fixture, so a second git-backed mount bought nothing.
-    test "applies per-repo results, drops stale ones and renders each repo's own status",
-         %{
-           conn: conn,
-           task_id: task_id
-         } do
-      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
-      flush_review_load(view)
-      # Drain the mount-time reload armed by the load's set_review_metadata
-      # broadcast: merged fixtures persist SHAs on first load, so a reload is
-      # armed and would otherwise land mid-test, re-projecting @review_repos and
-      # marking the page loading (the injected results below would then apply to
-      # a page whose fresh load overwrote the :checking state they key off).
-      settle_debounced_task_reload(view)
-
-      # One async check per review repo, each against its own default target
-      # ("main" — the first default-candidate branch in both repos).
+      # One async check per review repo, each against its own default target.
+      primary_check = await_merge_check!(view, primary.repo_path, "main")
+      foreign_check = await_merge_check!(view, foreign.repo_path, "main")
       repos = assigns(view)[:review_repos]
       assert Enum.all?(repos, &(&1.merge_status.state == :checking))
       assert Enum.all?(repos, &(&1.merge_status.target == "main"))
 
       # Clean result for the primary, conflict for the foreign repo.
-      send(view.pid, {:merge_check_result, task_id, node(), "primary", "main", {:ok, :clean}})
+      reply_to_merge_check(primary_check, {:ok, :clean})
+      reply_to_merge_check(foreign_check, {:ok, {:conflict, ["foreign.txt"]}})
 
-      send(
-        view.pid,
-        {:merge_check_result, task_id, node(), "original", "main",
-         {:ok, {:conflict, ["foreign.txt"]}}}
-      )
+      assert wait_until(fn ->
+               Enum.map(assigns(view).review_repos, & &1.merge_status.state) == [
+                 :clean,
+                 :conflict
+               ]
+             end)
 
       # Results for a repo id absent from @review_repos ("ghost"), a wrong
       # task id, and a wrong node are all DROPPED by the stale-guards.
       send(view.pid, {:merge_check_result, task_id, node(), "ghost", "main", {:ok, :clean}})
+      stale_result = {:ok, {:conflict, ["stale.txt"]}}
 
       send(
         view.pid,
-        {:merge_check_result, "other-task-id", node(), "primary", "main", {:ok, :clean}}
+        {:merge_check_result, "other-task-id", node(), "primary", "main", stale_result}
       )
 
       send(
         view.pid,
-        {:merge_check_result, task_id, :some_other_node, "primary", "main", {:ok, :clean}}
+        {:merge_check_result, task_id, :some_other_node, "primary", "main", stale_result}
       )
 
-      render(view)
-
+      assert Enum.map(assigns(view).review_repos, & &1.repo_id) == ["primary", "original"]
       repos = assigns(view)[:review_repos]
 
       primary = Enum.find(repos, &(&1.repo_id == "primary"))
@@ -3312,6 +3221,40 @@ defmodule EvoDashWeb.ReviewLiveMergeCheckTest do
       assert html =~ "foreign.txt"
       assert html =~ "Merge conflict"
     end
+  end
+
+  # The orphan's real load cannot discover Git data or persist review metadata.
+  # Once it settles, mount_with_repos/3 delivers the current-generation data
+  # through the normal LiveView handler, which starts the real check workers.
+  defp mount_mergeable_review(conn, repo_ids) do
+    repos = Enum.map(repo_ids, &mergeable_repo!/1)
+    block_merge_check_for!(Enum.map(repos, & &1.repo_path))
+    task_id = seed_orphaned_review_task!()
+    {mount_with_repos(conn, task_id, repos), task_id, repos}
+  end
+
+  defp mergeable_repo!(repo_id) do
+    path = review_tmp_path("evogit_review_merge_check_")
+    on_exit(fn -> File.rm_rf!(path) end)
+    File.mkdir!(path)
+
+    repo = review_repo(repo_id, path, [file_info("feature.txt", 1)], [commit_info("a", "Change")])
+    %{repo | branch_exists: true, merge_targets: ["main", "dev"], default_merge_target: "main"}
+  end
+
+  defp await_merge_check!(view, path, target) do
+    local_node = node()
+
+    assert_receive {:merge_check_started, worker, ref, ^local_node, ^path, "evogit/test-branch",
+                    ^target},
+                   async_wait_budget()
+
+    refute worker == view.pid
+    {worker, ref}
+  end
+
+  defp reply_to_merge_check({worker, ref}, result) do
+    send(worker, {:merge_check_reply, ref, result})
   end
 end
 
@@ -5110,7 +5053,6 @@ defmodule EvoDashWeb.ReviewLiveOutcomeTest do
     # Only the branch shape THIS module's fixtures ask for: the templates are
     # per-module so concurrently running modules never share a mutable fixture.
     templates = build_templates!([{"main", nil}])
-    on_exit(fn -> rm_templates!(templates) end)
 
     {:ok, review_templates: templates}
   end
@@ -5507,9 +5449,6 @@ defmodule EvoDashWeb.ReviewLiveOutcomeTest do
         primary_base_sha
       )
 
-    on_exit(fn -> rm_rf_retry(primary_dir) end)
-    on_exit(fn -> rm_rf_retry(foreign_dir) end)
-
     {primary_dir, foreign_dir, task_id}
   end
 
@@ -5558,7 +5497,6 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
     # Only the branch shapes THIS module's fixtures ask for: the templates are
     # per-module so concurrently running modules never share a mutable fixture.
     templates = build_templates!([{"main", "dev"}])
-    on_exit(fn -> rm_templates!(templates) end)
     {:ok, review_templates: templates}
   end
 
@@ -5982,10 +5920,6 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
       {primary_dir, foreign_dir, task_id, primary_sha, foreign_sha} =
         create_multi_repo_review_task!("main", "dev")
 
-      # The committed fixture only cleans up the foreign dir; tidy the primary
-      # temp repo here too.
-      on_exit(fn -> rm_rf_retry(primary_dir) end)
-
       {:ok,
        primary_dir: primary_dir,
        foreign_dir: foreign_dir,
@@ -6116,8 +6050,6 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
       {primary_dir, foreign_dir, task_id, _primary_sha, _foreign_sha} =
         create_multi_repo_review_task!("main", "dev")
 
-      on_exit(fn -> rm_rf_retry(primary_dir) end)
-
       {:ok, primary_dir: primary_dir, foreign_dir: foreign_dir, task_id: task_id}
     end
 
@@ -6191,8 +6123,6 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
     setup do
       {primary_dir, foreign_dir, task_id, _primary_sha, _foreign_sha} =
         create_multi_repo_review_task!("main", "dev")
-
-      on_exit(fn -> rm_rf_retry(primary_dir) end)
 
       {:ok, primary_dir: primary_dir, foreign_dir: foreign_dir, task_id: task_id}
     end
@@ -6488,10 +6418,8 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
     end
 
     test "a mixed merge + reject completes as :merged (≥1 merged wins)", %{conn: conn} do
-      {primary_dir, _foreign_dir, task_id, _primary_sha, _foreign_sha} =
+      {_primary_dir, _foreign_dir, task_id, _primary_sha, _foreign_sha} =
         create_multi_repo_review_task!("main", "dev")
-
-      on_exit(fn -> rm_rf_retry(primary_dir) end)
 
       Application.put_env(:evo_dash, :review_merge_runner, fn _n, _p, _b, _t ->
         {:ok, "deadbeef"}
@@ -6547,8 +6475,6 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
     setup do
       {primary_dir, _foreign_dir, task_id, _primary_sha, _foreign_sha} =
         create_multi_repo_review_task!("main", "dev")
-
-      on_exit(fn -> rm_rf_retry(primary_dir) end)
 
       Application.put_env(:evo_dash, :review_merge_runner, fn _n, _p, _b, _t ->
         {:ok, "deadbeef"}
@@ -6614,8 +6540,6 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
     } do
       {primary_dir, foreign_dir, task_id, _primary_sha, _foreign_sha} =
         create_multi_repo_review_task!("main", "dev")
-
-      on_exit(fn -> rm_rf_retry(primary_dir) end)
 
       test_pid = self()
 
@@ -6790,8 +6714,6 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
     setup do
       {primary_dir, _foreign_dir, task_id, primary_sha, _foreign_sha} =
         create_multi_repo_review_task!("main", "dev")
-
-      on_exit(fn -> rm_rf_retry(primary_dir) end)
 
       {:ok, primary_dir: primary_dir, task_id: task_id, primary_sha: primary_sha}
     end

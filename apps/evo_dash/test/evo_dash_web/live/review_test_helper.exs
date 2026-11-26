@@ -19,30 +19,21 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
 
   # Every review suite installs the same merge-check stub in setup_all and
   # leaves it in place so concurrent mounts never run a real merge-tree check.
-  #
-  # The merge-check module's BLOCKING stubs ride this SAME function: the set of
-  # repos to hold at `:checking` lives in `:persistent_term` (registered per
-  # test via `block_merge_check_for!/1`), never in a replaced app-env value. A
-  # per-test `Application.put_env(:merge_check_runner, ...)` override would be
-  # clobbered MID-TEST by a concurrently starting sibling module's `setup_all/1`
-  # re-installing this canonical function (measured: the override silently
-  # degraded to the fast `:clean` stub), whereas a constant env value cannot be
-  # clobbered at all.
-  def canonical_merge_check_runner(_node, repo, _branch, _target) do
-    if MapSet.member?(blocking_merge_check_repos(), repo) do
-      # Nothing ever sends :release_merge_check, and the spawned check Task
-      # lives on EvoDash.TaskSupervisor (Task.Supervisor.start_child does NOT
-      # link it to the LiveView), so an unbounded receive would block that
-      # process forever — leaking one per test. The bound is far longer than any
-      # test here, so a late result can only ever be sent to the already-dead
-      # view's pid.
-      receive do
-        :release_merge_check -> {:ok, :clean}
-      after
-        30_000 -> {:ok, :clean}
-      end
-    else
-      {:ok, :clean}
+  # Only the merge-check suite registers its fixture paths with a test owner;
+  # concurrent setup_all callbacks can reinstall the stub without clobbering it.
+  def canonical_merge_check_runner(node, repo, branch, target) do
+    case Map.fetch(blocking_merge_check_repos(), repo) do
+      {:ok, owner} ->
+        ref = Process.monitor(owner)
+        send(owner, {:merge_check_started, self(), ref, node, repo, branch, target})
+
+        receive do
+          {:merge_check_reply, ^ref, result} -> result
+          {:DOWN, ^ref, :process, ^owner, _reason} -> :test_finished
+        end
+
+      :error ->
+        {:ok, :clean}
     end
   end
 
@@ -54,30 +45,27 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
     )
   end
 
-  # Registers/unregisters repos whose merge check must stay held at `:checking`
-  # (see `canonical_merge_check_runner/4`). Only the merge-check module writes
-  # this registry and its fixture paths are unique per test, so a concurrently
-  # mounting module can never see one of ITS repos blocked.
+  # Park checks for these unique paths until the owning test replies or exits.
+  # Checks from other suites still return :clean immediately.
   def block_merge_check_for!(repos) do
-    repos = MapSet.new(repos)
+    owner = self()
+    blocked = Map.new(repos, &{&1, owner})
+
+    on_exit(fn ->
+      :persistent_term.put(
+        @blocking_merge_check_key,
+        Map.drop(blocking_merge_check_repos(), repos)
+      )
+    end)
 
     :persistent_term.put(
       @blocking_merge_check_key,
-      MapSet.union(blocking_merge_check_repos(), repos)
-    )
-  end
-
-  def unblock_merge_check_for!(repos) do
-    repos = MapSet.new(repos)
-
-    :persistent_term.put(
-      @blocking_merge_check_key,
-      MapSet.difference(blocking_merge_check_repos(), repos)
+      Map.merge(blocking_merge_check_repos(), blocked)
     )
   end
 
   defp blocking_merge_check_repos do
-    :persistent_term.get(@blocking_merge_check_key, MapSet.new())
+    :persistent_term.get(@blocking_merge_check_key, %{})
   end
 
   def setup_review_templates!(shapes) do
@@ -114,12 +102,6 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
       {change_sha, _primary, base_sha} = build_repo_with_task_branch!(dir, primary, secondary)
       {{primary, secondary}, %{dir: dir, change_sha: change_sha, base_sha: base_sha}}
     end
-  end
-
-  # Legacy teardown for callers that still capture the template map.
-  # build_templates!/1 already registers each directory before building it.
-  def rm_templates!(templates) do
-    Enum.each(templates, fn {_pair, %{dir: dir}} -> rm_rf_retry(dir) end)
   end
 
   # Extracts the repo selector's state from a rendered page: %{values: [...]}
@@ -203,7 +185,7 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
       review_template!(primary, secondary)
 
     copy_dir = review_tmp_path(prefix)
-    on_exit(fn -> rm_rf_retry(copy_dir) end)
+    on_exit(fn -> EvoDash.Test.FsCleanup.rm_rf!(copy_dir) end)
 
     File.cp_r!(template_dir, copy_dir)
     {copy_dir, change_sha, base_sha}
@@ -324,23 +306,6 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
     EvoGit.Store.put_task(EvoGit.Store, task)
 
     task_id
-  end
-
-  # Removes a temp repo dir with retries (defense in depth): a spawned merge
-  # check can briefly touch the repo while ExUnit tears it down, which makes
-  # File.rm_rf!/1 raise intermittently. Never raises.
-  def rm_rf_retry(path, attempts \\ 5) do
-    case File.rm_rf(path) do
-      {:ok, _} ->
-        :ok
-
-      {:error, _, _} when attempts > 1 ->
-        Process.sleep(20)
-        rm_rf_retry(path, attempts - 1)
-
-      other ->
-        other
-    end
   end
 
   # Seeds a completed review task pointing at `repo_path` with the agent
