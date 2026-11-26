@@ -54,6 +54,7 @@ defmodule EvoGit.Agents.ContextExtractor do
          Not all sections apply everywhere — include any section that would save a future agent from re-investigating or re-discovering something.
       """ <>
       PromptFragments.context_current_state_clause() <>
+      " The CONTEXT.md you write documents the directory for itself and its descendants, so write it all as Shared — no divider is needed unless you are recording material only an agent assigned to this directory should see." <>
       "\n" <>
       "2. **Routing Table** — A " <>
       PromptFragments.routing_table_markdown_list_clause() <>

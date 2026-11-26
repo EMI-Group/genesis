@@ -6,7 +6,7 @@ Foundational domain models: **Spatial Dimension** (ContextNode — directory/fil
 
 ## Routing Table
 
-None — leaf directory (modules: `context_node.ex`, `phylo_graph_node.ex`, `foreign_repo.ex`).
+None — leaf directory (modules: `context_node.ex`, `context_scope.ex`, `phylo_graph_node.ex`, `foreign_repo.ex`).
 The persisted task struct is NOT here: `EvoGit.TaskInfo` is `lib/evo_git/task_info.ex` (owning detail: `lib/evo_git/CONTEXT.md` + `store/`).
 Of this directory's three structs, only `ForeignRepo` is persisted (as JSON nested in `TaskInfo.opts[:foreign_repos]`, so it round-trips string-keyed); `ContextNode` and `PhyloGraphNode` are runtime-only and never touch the store.
 
@@ -26,25 +26,33 @@ Struct: `path`, `repo`, `vct_path` (`nil` by default), `repo_id` (defaults to `"
 | `normalize_relpath/1` | Normalizes a relative path to canonical `"./foo/bar"`; raises on absolute paths; `""`/`"."` → `"./"`; only trims/normalizes separators + prepends `"./"` (it does NOT collapse interior `..`/`.` segments; UNCHANGED by the VCT). ⚠️ `EvoGit.Agent.Tools.Shared.normalize_relpath/1` is a DIFFERENT function with the same name and returns `{:error, msg}` for absolute paths instead of raising |
 | `load/2,3` | Creates ONE ContextNode from a filesystem path (`repo_id` for multi-repo); sets `vct_path` via the single-node read `EvoGit.VCT.vct_path_for(repo_path, normalized_path)` — `nil` when unmounted/no server |
 | `hierarchy_nodes/2,3` | Full chain of ContextNodes from repo root to given path (`{:ok, nodes} \| {:error, :invalid_path}`); the chain is built syntactically and its `vct_path`s come from ONE batched `EvoGit.VCT.vct_paths_for/2` read for the WHOLE chain (never one VCT call per level), one node per path with `vct_path` alone degrading to `nil` |
-| `build_context/2` | Assembles full AI-ready context string by traversing hierarchy (directories only; YAML frontmatter stripped via `EvoGit.Skills.strip_front_matter/1`) |
+| `build_context/2` | Assembles full AI-ready context string by traversing hierarchy (directories only; scoped per `EvoGit.Core.ContextScope`, then YAML frontmatter stripped via `EvoGit.Skills.strip_front_matter/1` + per-stage truncation) |
 
 > The agent loop calls `build_context/2` and `EvoGit.Skills.hierarchical_skill_names/2` separately — there is no combined context+skills load function. `hierarchical_skill_names/2` has live callers in the session setup path — `EvoGit.Agent.Session.Setup.build_initial_state/3` (`agent/session/setup.ex`, skill loading at agent startup) — and `agent/tools/skill/skill_list.ex`.
 
 ### Context-Tree Render Format (what reaches the agent prompt)
-`build_context/2` (`context_node.ex:214-241`) is the ONLY function that turns the context tree into prompt text.
+`build_context/2` (`context_node.ex:245-284`) is the ONLY function that turns the context tree into prompt text.
 Its caller is `EvoGit.Agent.ContextBuilder.build_dynamic_context/1` (`agent/context_builder.ex:45`, reached from `build_context_block/1`), which `EvoGit.Agent.Session.Setup.build_initial_state/3` invokes from the session's `:start` event via `ContextBuilder.build_initial_messages/4` — injecting the string into the agent's first-user `<context>` block.
-Output = `"# Context Tree\n" <> <rendered stages joined by "\n\n"> <> "\n\n" <> <location_info>`, or just `location_info` when NO stage renders (`context_node.ex:231-238`).
-Stages are, in order, the VCT GLOBAL context first (`global_stage/1`) and then the in-repo directory chain (`in_repo_stage/2`).
+Output = `"# Context Tree\n" <> <rendered stages joined by "\n\n"> <> "\n\n" <> <location_info>`, or just `location_info` when NO stage renders (`context_node.ex:275-281`).
+Stages are, in order, the VCT GLOBAL context first (`global_stage/1`) and then the in-repo directory chain (`in_repo_stage/3`).
 The global stage is read from `EvoGit.VCT.global_context()` (`<data_dir>/vct/CONTEXT.md`, `""` when absent or when the VCT server is unreachable) and is ALWAYS labelled with the literal `File: global/CONTEXT.md` — never an OS path, never `"/"`, never the file's `vct:///` URL.
 In-repo stages use RELATIVE paths ONLY: header is the literal `File: ./CONTEXT.md` for the root node, else `File: #{Path.join(node.path, "CONTEXT.md")}` (e.g. `File: ./lib/CONTEXT.md`); `node.repo` and `node.vct_path` are NEVER rendered here — no absolute OS path and no `vct:///` URL ever appears as a CONTEXT.md file label.
-A stage whose CONTEXT.md is absent, blank after `EvoGit.Skills.strip_front_matter/1`, or front-matter-only is SKIPPED (`render_stage/3` → `nil`, `List.wrap(nil)` → `[]`), so no empty fenced code block is ever emitted.
-`build_context/2` calls `hierarchy_nodes/2` (`context_node.ex:215`), never `/3`, so every node it builds carries `repo_id: "primary"` — the multi-repo repo_id plays no part in prompt rendering.
-`location_info` (`context_node.ex:222-229`) is where the ABSOLUTE path appears: `Current Repository (worktree): '#{repo_path}'` interpolates the raw 2nd argument, plus `Current Assigned Node: '#{relative_path}'` (relative, raw 1st argument).
+A stage whose selected text is absent or blank is SKIPPED (`render_stage/4` → `nil`, `List.wrap(nil)` → `[]`), so no empty fenced code block is ever emitted — blankness is judged AFTER scope selection AND after `EvoGit.Skills.strip_front_matter/1` (so a front-matter-only stage still never renders).
+`build_context/2` calls `hierarchy_nodes/2`, never `/3`, so every node it builds carries `repo_id: "primary"` — the multi-repo repo_id plays no part in prompt rendering.
+`location_info` (`context_node.ex:253-261`) is where the ABSOLUTE path appears: `Current Repository (worktree): '#{repo_path}'` interpolates the raw 2nd argument, plus `Current Assigned Node: '#{relative_path}'` (relative, raw 1st argument).
 So the agent's first prompt ALWAYS carries the absolute repo/worktree path; the assigned node is rendered as the caller's relative `./...` path in the success path, and a contextless tree still yields that location block (no `# Context Tree` header).
 `repo_path` at this call site = `Process.get(:repo_path)` = the agent's WORKTREE path (installed by `EvoGit.Agent.Session.Setup.bind_worktree/2` + `install_process_context/3` in `agent/session/setup.ex`, read at `agent/tool_dispatch.ex:916`), NOT the repo root.
 On the `{:error, _}` path `build_dynamic_context/1` returns `"Current Path: '#{state.node_path}'."` (no repo path at all).
 `ContextNode.load/2,3` (`context_node.ex:104-122`) sets `path: normalize_relpath(relative_path)` (canonical relative `./...`), `repo: repo_path` VERBATIM (absolute when the caller passes an absolute root — all runtime callers do: `runtime/genesis.ex:219`, `runtime/evolution.ex:97`, `runtime/skill_extraction.ex:21`, `runtime/self_reflective.ex:78`) and `vct_path: EvoGit.VCT.vct_path_for(repo_path, normalized_path)` — but `build_context/2` receives `repo_path` as a SEPARATE argument, not via `node.repo`.
 `hierarchy_nodes/3` does NOT call `load/3` per level: it builds the syntactic chain, issues ONE `EvoGit.VCT.vct_paths_for/2` call for it and assembles the same `%__MODULE__{}` structs directly (index-paired, `nil`-padded), so a chain of N levels costs ONE VCT read instead of N — `vct_path` is the only field that degrades when that read cannot answer.
+
+### Two-Scope CONTEXT.md (Shared vs Local)
+A `CONTEXT.md` may carry ONE divider line, the literal `<!-- genesis:local -->` (`EvoGit.Core.ContextScope.marker/0`): text before it is **Shared** (the node AND its descendants), text after it is **Local** (ONLY agents assigned to that directory), and the divider line itself is NEVER rendered.
+The VCT global stage and EVERY ancestor stage render SHARED ONLY (`:shared`), so a parent's node-local note never reaches a leaf agent.
+The ASSIGNED node — the LAST element of `hierarchy_nodes/2`, which is the root itself for `build_context("./", repo)` — renders the WHOLE file (`:all`).
+Scope selection runs on the RAW content FIRST; front-matter stripping and per-stage `context_max_bytes` truncation then run on the SELECTED text, so front matter belongs to the Shared part.
+A divider-less file renders BYTE-IDENTICALLY to the pre-scope output (the invariant that keeps every existing prompt stable), and a stage blank after scope selection is skipped: an all-Local ancestor contributes no stage, while an all-Local assigned node still renders ONE stage with empty Shared.
+The divider/splice primitives live in `EvoGit.Core.ContextScope`; the design record is `docs/context-scopes.md`.
 
 ### Node identity & path semantics (canonical definition)
 A context-tree node is identified ONLY by the pair `{%ContextNode{}.repo_id, %ContextNode{}.path}` — there is no id, hash or registry row; `path` is ALWAYS a relative directory path from that repo's root (`"primary"` or a foreign repo id), in canonical `"./foo/bar"` form with `"./"` as the root; `vct_path` is derived METADATA and takes no part in identity.
@@ -57,6 +65,23 @@ There is NO children-discovery function in this directory: the ancestor chain (r
 Task admission of a ROOT node path is stricter than `load/2,3`: `EvoGit.Runtime.Helpers.validate_node_path/2` requires an existing directory that contains a `CONTEXT.md` (except literal `"./"`), and subagents' node paths are dirname-coerced from file paths at spawn.
 No virtual/synthetic/file/skill node types exist: skills are per-DIRECTORY frontmatter on the same directory nodes (`EvoGit.Skills.ContextIntegration.hierarchical_skill_names/2` walks the same hierarchy and keeps existing dirs only; `find_skill_node/3` returns a plain relative node path).
 `is_ignored?/1` returns `true` when the path or ANY parent is gitignored, and `false` (not an error) when `git check-ignore` fails.
+
+### `EvoGit.Core.ContextScope` (`context_scope.ex`)
+
+The ONE source of truth for the two-scope divider: PURE (no file/system I/O, no config reads), so it is safe anywhere and cheap to test.
+It operates on RAW content — callers apply scope selection BEFORE front-matter stripping and truncation — and slicing is exact byte work (`Regex.run/@divider … return: :index` + `binary_part/3`), never a `split("\n")`/re-join, so CRLF files round-trip.
+
+| Function | Description |
+|---|---|
+| `marker/0` | The divider literal `"<!-- genesis:local -->"` |
+| `split/1` | `%{shared: String.t(), local: String.t()}` — text before/after the divider LINE, the line excluded from both; no divider → `%{shared: content, local: ""}` |
+| `scope_content/2` | Selected text for `:shared \| :local \| :all` (divider excluded; `:all` = `shared <> local`, byte-identical to the input when divider-less; `:local` is `""` there) |
+| `splice/3` | FULL content with the selected region replaced by `new_region`, the divider line (with its exact ending) and the OTHER region preserved byte-for-byte; no divider → `:all`/`:shared` yield `new_region`, `:local` returns the content unchanged (guard with `has_local?/1`) |
+| `has_local?/1` | `true` iff a divider line is present |
+| `parse_scope/1` | `{:ok, :shared \| :local \| :all} \| {:error, message}` for untrusted tool args (`"shared"/"local"/"all"` or the atoms); total, NEVER raises, the message names all three values |
+
+Matching rules: ONE line-anchored pattern `~r/^[ \t]*<!-- genesis:local -->[ \t]*\r?\n?/m`, leading/trailing whitespace on that line tolerated, the FIRST occurrence wins (a later one is ordinary Local text), and there is NO Markdown fence awareness — a divider line inside a ``` block still splits.
+Headings stay free-form: the divider is the only structural requirement.
 
 ### `EvoGit.Core.PhyloGraphNode` (`phylo_graph_node.ex`)
 

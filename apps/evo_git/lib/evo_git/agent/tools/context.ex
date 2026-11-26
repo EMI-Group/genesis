@@ -5,6 +5,9 @@ defmodule EvoGit.Agent.Tools.Context do
 
   alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
+  alias EvoGit.Core.ContextScope
+
+  @scope_description_suffix "Another node's Local text is readable here, but it only reaches agents assigned to that directory."
 
   @doc """
   Returns the tool schema for reading directory context.
@@ -15,7 +18,10 @@ defmodule EvoGit.Agent.Tools.Context do
       description:
         "Use the read_context tool to read the CONTEXT.md of one directory. " <>
           "Read it before delegating work into a child directory. " <>
-          "Prefer spawning a subagent at the target path over reading it yourself — the subagent inherits that CONTEXT.md.",
+          "Prefer spawning a subagent at the target path over reading it yourself — the subagent inherits that CONTEXT.md. " <>
+          "A CONTEXT.md may carry ONE divider line, the literal '<!-- genesis:local -->'. " <>
+          "Text before it is Shared (this node and all of its descendants); text after it is Local (only agents assigned to that directory). " <>
+          @scope_description_suffix,
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
@@ -23,6 +29,13 @@ defmodule EvoGit.Agent.Tools.Context do
             "type" => "string",
             "description" =>
               "The path of the directory to read CONTEXT.md from, relative to the repo root (e.g. './', './lib')."
+          },
+          "scope" => %{
+            "type" => "string",
+            "enum" => ["all", "shared", "local"],
+            "description" =>
+              "'all' (default) returns the whole file; 'shared' returns only the text before the '<!-- genesis:local -->' divider line; 'local' returns only the text after it.",
+            "default" => "all"
           }
         },
         "required" => ["dir_path"]
@@ -54,7 +67,8 @@ defmodule EvoGit.Agent.Tools.Context do
           "content" => %{
             "type" => "string",
             "description" =>
-              "The full markdown content: Intent (purpose), API Surface, Constraints, and a Routing Table of child subdirectories. One sentence per line."
+              "The full markdown content: Intent (purpose), API Surface, Constraints, and a Routing Table of child subdirectories. One sentence per line. " <>
+                "It is the FULL file and MAY include the divider line '<!-- genesis:local -->': write the Shared part first, then that line on its own line, then the Local part (read only by agents assigned to this directory)."
           },
           "commit" => %{
             "type" => "boolean",
@@ -106,6 +120,13 @@ defmodule EvoGit.Agent.Tools.Context do
             "type" => "boolean",
             "description" => "Whether to commit only this CONTEXT.md file. Default: true.",
             "default" => true
+          },
+          "scope" => %{
+            "type" => "string",
+            "enum" => ["shared", "local", "all"],
+            "description" =>
+              "Matching and replace_all are restricted to the selected scope. 'shared' (default) matches text before the '<!-- genesis:local -->' divider line; 'local' matches text after it; 'all' edits the whole file, divider line included (the divider survives unless the edit itself changes it). The divider line and the untouched region survive unchanged.",
+            "default" => "shared"
           }
         },
         "required" => ["dir_path", "old_string", "new_string"]
@@ -120,8 +141,14 @@ defmodule EvoGit.Agent.Tools.Context do
   def execute_read(args, repo_path, _repo_root) do
     case Shared.fetch_string_arg(args, "dir_path") do
       {:ok, dir_path} ->
-        full_dir = Shared.expand_path(dir_path, repo_path)
-        do_context_read(full_dir, dir_path)
+        case ContextScope.parse_scope(Map.get(args, "scope", "all")) do
+          {:ok, scope} ->
+            full_dir = Shared.expand_path(dir_path, repo_path)
+            do_context_read(full_dir, dir_path, scope)
+
+          {:error, message} ->
+            Failure.error(message)
+        end
 
       {:error, message} ->
         Failure.error(message)
@@ -142,6 +169,7 @@ defmodule EvoGit.Agent.Tools.Context do
          {:ok, new_string} <- Shared.fetch_string_arg(args, "new_string"),
          {:ok, replace_all} <- Shared.validate_replace_all(Map.get(args, "replace_all", false)),
          {:ok, commit} <- Shared.validate_commit(Map.get(args, "commit", true)),
+         {:ok, scope} <- ContextScope.parse_scope(Map.get(args, "scope", "shared")),
          full_dir = Shared.expand_path(dir_path, repo_path),
          :ok <-
            Shared.validate_file_scope(
@@ -157,6 +185,7 @@ defmodule EvoGit.Agent.Tools.Context do
         new_string,
         replace_all,
         commit,
+        scope,
         repo_path,
         repo_root
       )
@@ -165,7 +194,7 @@ defmodule EvoGit.Agent.Tools.Context do
     end
   end
 
-  defp do_context_read(full_dir, dir_path) do
+  defp do_context_read(full_dir, dir_path, scope) do
     cond do
       not File.exists?(full_dir) ->
         missing_dir_error(dir_path)
@@ -178,7 +207,7 @@ defmodule EvoGit.Agent.Tools.Context do
 
         case File.read(context_path) do
           {:ok, content} ->
-            content
+            scoped_read_content(content, dir_path, scope)
 
           {:error, :enoent} ->
             Failure.error("No CONTEXT.md found in directory '#{dir_path}'")
@@ -189,6 +218,21 @@ defmodule EvoGit.Agent.Tools.Context do
     end
   end
 
+  # `:all` is the RAW file, byte-identical to a pre-scope read (the divider line
+  # is content for a whole-file read, so it is NOT stripped here).
+  defp scoped_read_content(content, _dir_path, :all), do: content
+
+  defp scoped_read_content(content, _dir_path, :shared),
+    do: ContextScope.scope_content(content, :shared)
+
+  defp scoped_read_content(content, dir_path, :local) do
+    if ContextScope.has_local?(content) do
+      ContextScope.scope_content(content, :local)
+    else
+      no_local_section_error(dir_path)
+    end
+  end
+
   defp do_context_edit(
          full_dir,
          dir_path,
@@ -196,6 +240,7 @@ defmodule EvoGit.Agent.Tools.Context do
          new_string,
          replace_all,
          commit,
+         scope,
          repo_path,
          repo_root
        ) do
@@ -215,12 +260,14 @@ defmodule EvoGit.Agent.Tools.Context do
           relative_path = Path.join(dir_path, "CONTEXT.md")
 
           result =
-            Shared.perform_string_replace(
+            scoped_string_replace(
               context_path,
               relative_path,
+              dir_path,
               old_string,
               new_string,
-              replace_all
+              replace_all,
+              scope
             )
 
           if String.starts_with?(result, "Error:") do
@@ -229,6 +276,96 @@ defmodule EvoGit.Agent.Tools.Context do
             maybe_commit_context(result, dir_path, commit, repo_path, repo_root)
           end
         end
+    end
+  end
+
+  # Region-restricted string replacement: matching, occurrence counting and
+  # `replace_all` all run on the SELECTED region only (`edit_region/2`), and
+  # `ContextScope.splice/3` puts an edited `:shared`/`:local` region back so the
+  # divider line and the untouched region are preserved byte-for-byte. All
+  # divider/split/splice logic lives in `EvoGit.Core.ContextScope` — never
+  # re-implemented here.
+  defp scoped_string_replace(
+         context_path,
+         relative_path,
+         dir_path,
+         old_string,
+         new_string,
+         replace_all,
+         scope
+       ) do
+    case File.read(context_path) do
+      {:ok, content} ->
+        if scope == :local and not ContextScope.has_local?(content) do
+          no_local_section_error(dir_path)
+        else
+          region = edit_region(content, scope)
+
+          replace_in_region(
+            content,
+            region,
+            context_path,
+            relative_path,
+            old_string,
+            new_string,
+            replace_all,
+            scope
+          )
+        end
+
+      {:error, reason} ->
+        Failure.error("failed to read #{relative_path}: #{:file.format_error(reason)}")
+    end
+  end
+
+  # The region `edit_context` matches/replaces inside.
+  # `:all` edits the RAW file (divider line included) so a whole-file edit can
+  # never drop the divider and an `old_string` spanning it still matches —
+  # `ContextScope.splice/3` returns the new region verbatim for `:all`.
+  # `:shared`/`:local` edit their own region (`scope_content/2` excludes the
+  # divider) and are spliced back so the divider and the other region survive.
+  defp edit_region(content, :all), do: content
+  defp edit_region(content, scope), do: ContextScope.scope_content(content, scope)
+
+  defp replace_in_region(
+         content,
+         region,
+         context_path,
+         relative_path,
+         old_string,
+         new_string,
+         replace_all,
+         scope
+       ) do
+    case Shared.find_actual_string(region, old_string) do
+      nil ->
+        Failure.error("old_string not found in file #{relative_path}")
+
+      actual_old ->
+        count = Shared.count_occurrences(region, actual_old)
+
+        if count > 1 and not replace_all do
+          Failure.error(
+            "Found #{count} matches of old_string in file. Set replace_all=true or provide more context."
+          )
+        else
+          new_region = Shared.apply_string_edit(region, actual_old, new_string, replace_all)
+          write_spliced(context_path, relative_path, content, scope, new_region, replace_all)
+        end
+    end
+  end
+
+  defp write_spliced(context_path, relative_path, content, scope, new_region, replace_all) do
+    case File.write(context_path, ContextScope.splice(content, scope, new_region)) do
+      :ok ->
+        if replace_all do
+          "The file #{relative_path} has been updated. All occurrences were successfully replaced."
+        else
+          "The file #{relative_path} has been updated successfully."
+        end
+
+      {:error, reason} ->
+        Failure.error("failed to write #{relative_path}: #{:file.format_error(reason)}")
     end
   end
 
@@ -288,6 +425,15 @@ defmodule EvoGit.Agent.Tools.Context do
 
   defp not_a_dir_error(dir_path) do
     Failure.error("'#{dir_path}' is a file, not a directory. CONTEXT.md is only for directories.")
+  end
+
+  # Shared by read_context (`scope: "local"`) and edit_context (`scope: "local"`):
+  # a Local-only operation needs the divider line to know where Local text starts.
+  defp no_local_section_error(dir_path) do
+    Failure.error(
+      "CONTEXT.md in directory '#{dir_path}' has no Local section. " <>
+        "Add a '#{ContextScope.marker()}' line on its own line to separate Shared text (before it) from Local text (after it)."
+    )
   end
 
   # Optionally stages and commits the CONTEXT.md for the given directory.

@@ -22,6 +22,17 @@ defmodule EvoGit.Core.ContextNode do
   server or an unmounted repository simply yields `nil`. A single node reads its
   own path (`load/2,3`), while a whole chain is resolved by ONE batched read
   (`hierarchy_nodes/2,3`).
+
+  ## Two-scope CONTEXT.md
+
+  A `CONTEXT.md` may carry ONE divider line, the literal
+  `<!-- genesis:local -->`, splitting it into a **Shared** part (applies to the
+  node and its descendants) and a **Local** part (applies ONLY to agents
+  assigned to that directory). `build_context/2` renders the VCT global stage
+  and every ancestor stage SHARED ONLY and the assigned node in FULL, so a
+  node-local note never leaks into a leaf agent's prompt. The divider logic
+  lives in the pure `EvoGit.Core.ContextScope` module, and the design record is
+  `docs/context-scopes.md`.
   """
   require Logger
 
@@ -29,6 +40,7 @@ defmodule EvoGit.Core.ContextNode do
   defstruct [:path, :repo, :vct_path, repo_id: "primary"]
 
   alias EvoGit.Adapters.Git
+  alias EvoGit.Core.ContextScope
   alias EvoGit.Platform
 
   @type t :: %__MODULE__{
@@ -207,8 +219,27 @@ defmodule EvoGit.Core.ContextNode do
   When the Virtual Context Tree's GLOBAL context is non-empty, it is rendered
   FIRST as the `global/CONTEXT.md` stage (never an OS path, never a `vct:///`
   URL) ahead of the in-repo `./CONTEXT.md` chain. Directory stages whose
-  `CONTEXT.md` is absent or blank (after front-matter stripping) are skipped, so
-  no empty fenced code block is rendered.
+  `CONTEXT.md` is absent or blank (after scope selection and front-matter
+  stripping) are skipped, so no empty fenced code block is rendered.
+
+  ## Scopes
+
+  A `CONTEXT.md` may carry ONE divider line, the literal
+  `<!-- genesis:local -->` (see `EvoGit.Core.ContextScope`). Text before it is
+  **Shared** (the node and its descendants), text after it is **Local** (that
+  directory's assigned agents only):
+
+  - the global stage renders `:shared` only;
+  - every ANCESTOR stage renders `:shared` only, so a parent's node-local note
+    never reaches a leaf agent;
+  - the ASSIGNED node (the last element of `hierarchy_nodes/2`, i.e. the root
+    itself for `build_context("./", repo)`) renders the WHOLE file (`:all`).
+
+  The divider line is never rendered. Scope selection runs on the RAW content
+  before front-matter stripping and before truncation, so front matter belongs
+  to the Shared part and truncation applies to the selected text only. A file
+  WITHOUT a divider renders byte-identically to the pre-scope behaviour. See
+  `docs/context-scopes.md`.
   """
   @spec build_context(String.t(), String.t()) :: {:ok, String.t()} | {:error, :invalid_path}
   def build_context(relative_path, repo_path) do
@@ -216,8 +247,19 @@ defmodule EvoGit.Core.ContextNode do
       {:ok, nodes} ->
         context_max = context_max_bytes()
 
-        stages =
-          global_stage(context_max) ++ Enum.flat_map(nodes, &in_repo_stage(&1, context_max))
+        # The LAST node is the assigned one: it alone renders its Local scope,
+        # every ancestor (and the global stage) contributes Shared text only.
+        last_index = length(nodes) - 1
+
+        in_repo_stages =
+          nodes
+          |> Enum.with_index()
+          |> Enum.flat_map(fn {node, index} ->
+            scope = if index == last_index, do: :all, else: :shared
+            in_repo_stage(node, context_max, scope)
+          end)
+
+        stages = global_stage(context_max) ++ in_repo_stages
 
         location_info =
           """
@@ -243,14 +285,15 @@ defmodule EvoGit.Core.ContextNode do
 
   # The VCT global context is rendered exactly like an in-repo stage, but with
   # the fixed label `global/CONTEXT.md` — never "/" or an OS path, and never the
-  # `vct:///` URL of the file.
+  # `vct:///` URL of the file. It is shared with the whole tree, so only its
+  # Shared scope renders.
   defp global_stage(context_max) do
     EvoGit.VCT.global_context()
-    |> render_stage("global/CONTEXT.md", context_max)
+    |> render_stage("global/CONTEXT.md", context_max, :shared)
     |> List.wrap()
   end
 
-  defp in_repo_stage(%__MODULE__{} = node, context_max) do
+  defp in_repo_stage(%__MODULE__{} = node, context_max, scope) do
     abs_path = Platform.safe_expand(node.path, node.repo)
 
     if File.dir?(abs_path) do
@@ -267,17 +310,25 @@ defmodule EvoGit.Core.ContextNode do
           Path.join(node.path, "CONTEXT.md")
         end
 
-      render_stage(content, file, context_max) |> List.wrap()
+      render_stage(content, file, context_max, scope) |> List.wrap()
     else
       []
     end
   end
 
   # Renders one context stage, or `nil` when the content is absent/blank after
-  # YAML front-matter stripping (a stage with nothing to show is SKIPPED rather
-  # than rendered as an empty fenced block).
-  defp render_stage(content, file, context_max) when is_binary(content) do
-    display_content = EvoGit.Skills.strip_front_matter(content)
+  # scope selection and YAML front-matter stripping (a stage with nothing to
+  # show is SKIPPED rather than rendered as an empty fenced block).
+  #
+  # The scope is applied FIRST, on the RAW content, so front matter stays in the
+  # Shared part and truncation below only ever sees the selected text. On a
+  # divider-less file `scope_content/2` returns the content unchanged for both
+  # `:shared` and `:all`, which keeps the pre-scope rendering byte-identical.
+  defp render_stage(content, file, context_max, scope) when is_binary(content) do
+    display_content =
+      content
+      |> ContextScope.scope_content(scope)
+      |> EvoGit.Skills.strip_front_matter()
 
     if String.trim(display_content) == "" do
       nil
@@ -301,7 +352,7 @@ defmodule EvoGit.Core.ContextNode do
     end
   end
 
-  defp render_stage(_content, _file, _context_max), do: nil
+  defp render_stage(_content, _file, _context_max, _scope), do: nil
 
   defp context_max_bytes do
     EvoGit.Config.resolve([:truncation, :context_max_bytes])

@@ -18,6 +18,7 @@ Isolation rule: a tool test whose fixture is a SUBPROCESS cwd (anything passed a
 | `shared_test.exs` | `EvoGit.Agent.Tools.Shared` (pure arg/path helpers) |
 | `commit_files_test.exs` | `Tools.Shared.commit_files/4` (the shared stage+commit helper) |
 | `context_amend_test.exs` | `Tools.Shared.commit_files/5` `amend: true` / `amend_message_fun` and the `write_context`/`edit_context` squash contract (same-dir, cross-directory and multi-file squashes, every refusal, `amend_message_fun` invocation/override rules) |
+| `context_scope_test.exs` | `EvoGit.Agent.Tools.Context` (`read_context` / `edit_context` / `write_context`) scope selection over the Shared/Local divider primitive `EvoGit.Core.ContextScope` |
 | `file_read_test.exs` | `Tools` `"read_file"` (incl. its OUTPUT shape) |
 | `file_edit_test.exs` | `Tools` `"edit_file"` (model-facing `edit`; owns the edit OUTPUT shape) |
 | `glob_test.exs` | `Tools` `"glob"` |
@@ -176,6 +177,11 @@ Refusals each pin a plain commit with the earlier commit untouched: merge-commit
 The `amend_message_fun` describe pins the builder boundary directly: one invocation with the sorted HEAD ∪ new path set (a `send/2` probe), its non-empty binary return REPLACING the commit body, no invocation at all on the plain path (`refute_received`), and an empty/non-binary return keeping the caller's message.
 `create_files`/`make_dir` stay one commit per call, so the squash remains a CONTEXT-tool opt-in.
 The module's config dir has no `config.toml`, so `[:git, :co_authored_by_enabled]` is `false` and the full-body assertions carry no co-author trailer.
+## Two-Scope Shared/Local Coverage
+`context_scope_test.exs` (`async: true`, one `:tmp_dir` per test, `commit: false` on EVERY call so no git repo and no config are needed) owns the scope selection of `read_context` / `edit_context` / `write_context` over `EvoGit.Core.ContextScope`, and introduces no fixture the sibling suites already own.
+Reads: an absent scope and `scope: "all"` both return the RAW file with the divider line included, `"shared"` / `"local"` return just their region, a divider-less file is entirely Shared so `"local"` answers the no-Local-section error naming the literal marker, an invalid value is rejected on both tools while naming `shared`/`local`/`all`, and reading takes no node path so another directory's Local text stays readable.
+Edits: the DEFAULT scope is `"shared"` (an identical Local occurrence stays byte-identical), `scope: "local"` / `"shared"` leave the other region AND the divider byte-for-byte, `scope: "all"` edits the RAW whole file including the divider line so the divider and the Local text survive an ordinary whole-file edit, `replace_all` applies inside the selected region only, occurrence counting is region-scoped (one Shared match beats two Local ones), an `old_string` present only in the other region is the `old_string not found in file <dir>/CONTEXT.md` error, `"local"` without a divider errors, and the node scope check runs before the existence check and before any read or write.
+Exact full-file content is asserted with `==` for every splice/preservation case; commit and amend behaviour stays with `context_amend_test.exs`.
 ## Retention Tombstone Rendering Coverage
 `job_tools_test.exs`'s `describe "retention tombstones (records that aged out)"` (4 tests, `async: false` with the rest of the module) owns the aged-out rendering of the background-job tool surface.
 `job_output` keeps the byte-identical `[status: …]` line and appends ONE `[note: this job's record aged out of retention (<reason>); finished with exit code N; its log is at <path>]` line after it (last line, no inferred-id note), while still serving the surviving log tail from the tombstone's saved cursor.
