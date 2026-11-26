@@ -8,6 +8,19 @@ CI/CD workflow definitions for the Genesis project: a lightweight CI gate on PRs
 
 Leaf directory: `ci.yml`, `build-desktop.yml`, and `readme-evidence.yml`.
 
+## Constraints
+
+- Triggered by tag pushes (`v*`) and manual dispatch only — no branch-push triggers (those are CI).
+- **Gotcha — workflow runs from the pushed tag's commit**: GitHub executes the workflow file from the commit the tag points at, so a tag must point at a commit that already contains the current workflow (push the tag only after the workflow change is committed); otherwise the old release-triggered workflow runs — or none at all.
+- Each platform builds natively — no cross-compilation.
+- The `genesis_server` tarballs (Linux x64/arm64 + macOS arm64) and the repo's `scripts/install.sh` (as the asset `install.sh`) are uploaded alongside the desktop installers as release assets; `install.sh` is the entry point for `curl -LsSf https://genesis.evox.group/dl/install.sh | sh`.
+- The workflow file is the single source of truth for the release build process.
+- Release assets are **unversioned** with permanent `releases/latest/download/<name>` links (e.g. `genesis_desktop_darwin_arm64.dmg`); the version comes from the release tag and is baked into the app at build time, never into the filename.
+- **SSH remote development uses the `genesis_server` tarballs**: there is no separate `evo_git`-only remote release; `EvoGit.RemoteBootstrap` (apps/evo_git/lib/evo_git/remote_bootstrap.ex) bootstraps the same unsuffixed `genesis_server_<platform>.tar.xz` assets the headless installer uses (Linux x64/arm64 from `build-linux-server`, darwin arm64 from `build-macos-arm64`).
+- **`genesis_server` naming convention**: glibc only, NO suffix, arch segment `x64`/`arm64` — `genesis_server_linux_x64.tar.xz`, `genesis_server_linux_arm64.tar.xz` (both glibc, `build-linux-server` on ubuntu-22.04) and `genesis_server_darwin_arm64.tar.xz` (`build-macos-arm64`). The tarball's top-level directory is `genesis_server/`, and `scripts/install.sh` builds its download URL from this exact unsuffixed shape.
+
+<!-- genesis:local -->
+
 ### `readme-evidence.yml` — README Evidence updates
 
 Weekly Monday 03:00 UTC and manual dispatch refresh the website manifest, check the generated README block and open or update a PR on the dedicated `automation/readme-evidence` branch. No automatic merge. A path-filtered PR job checks against the committed snapshot without network access. Only the refresh job requests contents/PR write permissions. See `../../docs/readme-evidence.md` for setup and curation.
@@ -123,14 +136,3 @@ The macOS notarization step sources `./.github/actions/retry/retry.sh` to reuse 
 The three `Build Tauri app` steps (Linux, macOS, Windows) source `${GITHUB_WORKSPACE}/.github/actions/retry/retry.sh` and run their final `tauri build` through `retry()` with `RETRY_ATTEMPTS: "3"`, because bundling downloads tooling (Windows NSIS, Linux `linuxdeploy`/`appimagetool`) and fetches crates.
 `softprops/action-gh-release` v3.0.2 exposes no retry inputs, so it stays pinned and untouched.
 `./.github/actions/setup-mix` also caches the `rustler_precompiled` NIF tarball directories (`~/.cache/rustler_precompiled`, `~/Library/Caches/rustler_precompiled`, `~\AppData\Local\rustler_precompiled`), so a cached tarball is reused instead of re-downloaded.
-
-## Constraints
-
-- Triggered by tag pushes (`v*`) and manual dispatch only — no branch-push triggers (those are CI).
-- **Gotcha — workflow runs from the pushed tag's commit**: GitHub executes the workflow file from the commit the tag points at, so a tag must point at a commit that already contains the current workflow (push the tag only after the workflow change is committed); otherwise the old release-triggered workflow runs — or none at all.
-- Each platform builds natively — no cross-compilation.
-- The `genesis_server` tarballs (Linux x64/arm64 + macOS arm64) and the repo's `scripts/install.sh` (as the asset `install.sh`) are uploaded alongside the desktop installers as release assets; `install.sh` is the entry point for `curl -LsSf https://genesis.evox.group/dl/install.sh | sh`.
-- The workflow file is the single source of truth for the release build process.
-- Release assets are **unversioned** with permanent `releases/latest/download/<name>` links (e.g. `genesis_desktop_darwin_arm64.dmg`); the version comes from the release tag and is baked into the app at build time, never into the filename.
-- **SSH remote development uses the `genesis_server` tarballs**: there is no separate `evo_git`-only remote release; `EvoGit.RemoteBootstrap` (apps/evo_git/lib/evo_git/remote_bootstrap.ex) bootstraps the same unsuffixed `genesis_server_<platform>.tar.xz` assets the headless installer uses (Linux x64/arm64 from `build-linux-server`, darwin arm64 from `build-macos-arm64`).
-- **`genesis_server` naming convention**: glibc only, NO suffix, arch segment `x64`/`arm64` — `genesis_server_linux_x64.tar.xz`, `genesis_server_linux_arm64.tar.xz` (both glibc, `build-linux-server` on ubuntu-22.04) and `genesis_server_darwin_arm64.tar.xz` (`build-macos-arm64`). The tarball's top-level directory is `genesis_server/`, and `scripts/install.sh` builds its download URL from this exact unsuffixed shape.
