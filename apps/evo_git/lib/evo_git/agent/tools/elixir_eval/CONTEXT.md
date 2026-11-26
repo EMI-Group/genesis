@@ -98,6 +98,14 @@ Unexpected custodian exceptions also kill the guardian and all pids in its last 
 The broker independently monitors original owner, tool, controller and attached worker; trusted runtime operations run in a separate pending Task so lifecycle messages remain serviceable.
 Worker loss cancels a pending operation, and broker termination cancels its pending Task and kills its attached worker; committed side effects cannot be rolled back.
 
+## Constraints
+Keep authorization, approval and execution boundaries distinct, and never infer a tier by executing code or automatically escalate a denied read/write operation.
+Do not replace original tool/owner identities with guardian or Dune child identities, use links as ancestry proof, expose broker controls to Dune or add Process dictionary access to its allowlist.
+Do not expose raw runtime structs, nested configuration, full histories or unbounded task collections through facades; add explicit projected fields and quota accounting instead.
+Generic failure rendering is a confidentiality boundary, while truncation and resource sampling alone are not.
+
+<!-- genesis:local -->
+
 ## Exact Direct API Admission
 `DirectAPI` is the shared literal four-field MFA/tier registry, fixed native-call generator and help source; both allowlists consult it before any EvoGit fallback.
 Read and write tiers admit exactly `EvoGit.TaskRegistry.list_tasks_page/0,1`, `get_task_lite/1`, `get_task/1`, `EvoGit.AgentScheduler.RemoteAPI.list_agents/0`, `EvoGit.AgentScheduler.get_config/1`, `paused?/0`, `get_llm_slot_status/0`, `EvoGit.Config.resolve/0,1`, `list_settings/0`, `show/0,1`, `user_config/0`, `config_path/0`, `EvoGit.VCT.projects/0,1`, `search/1,2`, `workspaces/0,1`, `workspace_members/1` and `workspaces_for/1` in addition to the compatible facades.
@@ -197,12 +205,6 @@ BoundedIO captures native group-leader character writes up to the requested cap,
 Dune internal diagnostic StringIO is not replaced; code, heap and execution limits bound that internal channel indirectly, while evaluated user IO uses the bounded broker.
 Unexpected facade, IPC, guardian and evaluated exceptions/exits use generic fixed errors, withholding raw messages, stacktraces, exit/throw values and Dune failure stdio that might contain secrets.
 Known validation errors remain descriptive, and sudo's deliberately returned values or printed secrets are not redacted.
-
-## Constraints
-Keep authorization, approval and execution boundaries distinct, and never infer a tier by executing code or automatically escalate a denied read/write operation.
-Do not replace original tool/owner identities with guardian or Dune child identities, use links as ancestry proof, expose broker controls to Dune or add Process dictionary access to its allowlist.
-Do not expose raw runtime structs, nested configuration, full histories or unbounded task collections through facades; add explicit projected fields and quota accounting instead.
-Generic failure rendering is a confidentiality boundary, while truncation and resource sampling alone are not.
 
 ## Test Strategy
 Persistent tests belong to the sibling test subtree and require parent coordination; do not modify tests from this node.

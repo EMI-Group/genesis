@@ -107,6 +107,7 @@ Per-function detail lives in the child CONTEXT.md each row names; arrow = that c
 
 Bootstrap asset: `genesis_server_<platform>.tar.xz` (glibc the ONLY published Linux variant), extracted to a top-level `genesis_server/` dir, launcher `<remote_path>/bin/genesis_server` (default `/tmp/genesis_server`), NixOS via on-the-fly patchelf.
 SSH connect: `wait_for_tunnel/4` polls the forwarded port (100ms × 10s) BEFORE `Node.connect/1`; `connect/1` is NON-BLOCKING, outcome arrives as `{:remote_connection_status, target_id, status_map}`.
+Supervision-tree order is a contract: `Store` → `VCT` → `TaskRegistry`, with `EvoGit.CatalogWarmup` immediately before `AgentScheduler`; the full boot profile lives in this file's Local scope.
 
 ## PubSub Event Contract (event-driven dashboard)
 
@@ -208,6 +209,8 @@ Idle detection: `TaskRegistry.list_task_ids/1`, `list_tasks_summary/2`, `list_ta
 Task status lives ONLY in SQLite (`tasks.status`); scheduler ETS holds summary/control rows plus sched_meta for LIVE agents (never the conversation) and dies with the app, so a BEAM restart fails any `:awaiting_input` session and reclaims its worktree. Lease: `@lease_duration` 120 s, heartbeat 60 s renewing `[:running, :pending, :cancelling, :awaiting_input, :pausing]` (not `:finalizing`, never `:paused`); the one-shot `:lease_sweep` at 150 s fails an orphaned `:running` row only when the lease is invalid AND no live sched_meta agent exists.
 Startup reconciliation: `:finalizing` → `:failed`, `:cancelling` → `:cancelled` (result preserved), a RESUMABLE `:running`/`:pausing` row → `:paused` + `pause_kind: :dirty` (else `:running` untouched).
 In-place resume restores the durable ROOT of the SAME task id, while the Review page's `resume_from` remains a NEW `:evolve` task (`ResumeContext`).
+
+<!-- genesis:local -->
 
 ## Store Upgrades & Local Development Repair
 

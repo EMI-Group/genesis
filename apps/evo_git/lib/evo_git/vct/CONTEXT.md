@@ -80,6 +80,8 @@ Primitives in this directory:
 - Workspaces are ONE level deep by construction: a workspace member may not be a workspace point, so nesting and cycles are unrepresentable, and a workspace is never expanded into its members by any VCT API.
 - A workspace has no OS path and no worktree, so it is NEVER an execution path: `EvoGit.TaskRegistry.RuntimeOpts.admit_task_path/1` refuses `vct:///workspaces/…` with `{:error, :workspace_not_executable}` (and any other `vct:` point with `:vct_point_not_executable`) at task admission, and `build_common_runtime_opts/3` raises `ArgumentError` for a direct caller.
 - Isolated instances use a unique `:name` + `:data_dir` + `:store` (an isolated `EvoGit.Store` owning its own database), so a test's mounts never reach the app-global table.
+<!-- genesis:local -->
+
 ## Known Issues
 - Every mount read is ONE `GenServer.call` into this process with a hardcoded 30 s timeout and no ETS read path, so a per-item caller pays one call per item; the batched forms (`workspace_entries/1`, `vct_paths_for/2`) collapse such a fan-out into ONE call, and `EvoGit.Core.ContextNode.hierarchy_nodes/3` reads a whole context chain through `vct_paths_for/2` while the single-node `load/3` keeps its own `vct_path_for/2` read.
 - Every mutation persists the WHOLE table (`Store.save_vct_mounts/2` = `delete_all` + `insert_all`) inside one immediate transaction, so a mutation is O(table size) — near the 100-project cap that is ~100 rewritten rows per project open — and workspaces are uncapped, so the table (and each write) has no upper bound.

@@ -36,21 +36,6 @@ All agents `use EvoGit.Agent` and implement overridable callbacks.
 All 30 fragments are **unconditional single-clause arity-0 functions returning a fixed String** — none takes arguments, none returns `""`, none has a variant/no-op clause.
 The only prompt-builder that returns `""` in a no-op case is `EvoGit.Agent.ContextBuilder.build_authority_section/1` (`../agent/context_builder.ex:113` — `%{repo_less: true}` → `""`; `:115` the general clause; omitted for tasks with no non-primary foreign repos) — that lives in `../agent/`, NOT here.
 
-**Function inventory (30 functions, grouped by theme; verbatim first lines live in `prompt_fragments.ex`):**
-
-| Theme | Functions (users) |
-|---|---|
-| **Worktree isolation** | `worktree_isolation_note/0` (Executor, ContextExtractor, TaskScheduler, Investigator); `worktree_isolation_note_short/0` (SkillExtractor); `subagent_worktree_tail_isolated/0` (Manager, Architect) |
-| **Delegation principles** | `delegation_investigation_sentence/0` (Manager, Investigator); `delegation_occasional_reads_sentence/0` (Manager, Investigator, GenesisPlanner); `subagent_report_trust_clause/0` (Manager, Architect — trust-by-default + escalation signals for subagent reports) |
-| **Genesis architecture** | `genesis_architecture_header/0`, `context_tree_routing_table_clause/0`, `phylogenetic_graph_sentence/0`, `transient_memory_clause/0`, `recursive_loop_intro/0`, `recursive_loop_tail/0` (all Manager, Architect) |
-| **Sibling paths & routing tables** | `routing_sibling_prefix/0` (Manager, Architect); `sibling_example_parenthetical/0` (Manager, Architect, ContextExtractor) |
-| **Code quality & file structure** | `solid_principles_sentence/0`, `large_files_intro/0`, `large_files_remediation/0`, `user_config_specifies_clause/0`, `file_structure_expectations_prefix/0` (all Manager, Architect) |
-| **Context Tree definition** | `context_tree_definition_clause/0`, `routing_table_markdown_list_clause/0`, `delegate_without_investigating_clause/0` (all Architect, ContextExtractor) |
-| **CONTEXT.md = current state, not history** | `context_current_state_clause/0` (Manager, Architect, Investigator, ContextExtractor) — the shared "current state, not history" paragraph + active-maintenance guidance (keep CONTEXT.md concise by pruning when adding; one sentence per line for granular git diffs; write findings at the best-fit child/descendant node with a routing-table entry at the current level; extract oversized sections into skills) + the TWO-SCOPE model (Shared text before a lone `<!-- genesis:local -->` line applies to the node and all its descendants, Local text after it is read only by agents assigned to that directory, and a file without the divider is entirely Shared) + per-stage truncation advice (a `... [Content Truncated] ...` marker means the SELECTED SCOPE as rendered exceeded ~64 KB — the Shared part for a descendant, the whole file for the assigned agent — not the chain; prune it and push detail down). Detail: `docs/context-scopes.md`. Architect and ContextExtractor each add one line that the CONTEXT.md they generate is Shared, so no divider is needed. |
-| **Shared canonical phrases** | `standard_sections_enum/0` (Architect, Investigator); `context_chain_example/0` (Manager, Architect); `genesis_context_header/0` (TaskScheduler, GenesisPlanner) |
-| **Foreign repositories** | `foreign_repo_absolute_path_clause/0`, `foreign_repo_spawn_right_level/0`, `writable_foreign_repo_clause/0` (Architect, ContextExtractor) |
-| **Objective scope** | `objective_not_in_node_prefix/0` (Executor, ContextExtractor) |
-
 ### SelfReflective — Local Prompt and Tool Contract
 `self_reflective.ex` defines `EvoGit.Agents.SelfReflective` with `agent_type/0 = :read`, `delegation_level/0 = :low`, and `subagent_modules/0 = []`.
 The dashboard Assistant uses one long-lived interactive session per conversation (`Runtime.Assistant` + `send_session_message/3`), retaining its conversation across replies until explicit close; a tool-free reply yields for input rather than closing the session.
@@ -85,6 +70,31 @@ The `:read` agent metadata and repo-less behavior remain unchanged; neither impl
 - **Finish contract (`dsh`-aligned):** a reply with NO tool calls ends the run, and its text becomes the agent's report/answer — `EvoGit.Agent.CompletionProtocol.classify/1` returns `{:tool_calls, calls}` / `{:text_reply, text}` / `:empty`, and `ToolDispatch` turns a text reply into the `%EvoGit.Agent.Result{}` carrying that text as the report (no completion tool exists, so every finish is a plain reply). Role prompts state this contract once, in their own words (SelfReflective: "your final message text is the answer the user reads in this chat"), and no prompt may present a tool call as the way to finish.
 - **Tool spellings are the model-facing names.** Prompts name a tool exactly as the model is offered it: `read`, `write`, `edit`, `bash`, `rg`, `glob`, `web_search`, `web_fetch`, alongside our own `read_context`/`write_context`/`edit_context`/`search_context`/`search_history`/`list_dir`/`create_files`/`make_dir`/`run_command` and the generated `subagent_*` tools. `lsp` is only available when the user configures a language server (`[lsp] enabled = true` plus a non-empty `command`), so prompts refer to it conditionally ("if an `lsp` tool is available") instead of advertising it unconditionally. `bash` is the model-facing shell name on EVERY platform (Windows included). The internal dispatch keys (`read_file`/`write_file`/`edit_file`/`run_bash`/`run_powershell`/`search_web`) are an implementation detail bridged by `EvoGit.Agent.ToolNames` — the old spellings stay ACCEPTED as aliases, but prompts never document them to the model. There is no `curl` tool: network reads go through `web_fetch` (one HTTP GET → Markdown).
 - **Register:** plain imperatives and declarative sentences in the prompt strings — no emoji prefixes, no shouted caps (`CRITICAL`/`MUST`/`ALWAYS`), no rhetorical emphasis (a lone `NEVER` inside an otherwise plain sentence is the only residue: `context_extractor.ex:62`, `PromptFragments.writable_foreign_repo_clause/0`; this file's own prose is documentation, not prompt text). The shared convention lives in the `PromptFragments` moduledoc.
+
+## Constraints
+- Every agent module MUST `use EvoGit.Agent` and implement `system_prompt/0`.
+- The behaviour module (`EvoGit.Agent`) lives in `../agent.ex`, NOT in this directory.
+- Tool modules (`EvoGit.Agent.Tools.*`) live in `../agent/tools/`, NOT in this directory.
+- Cross-references between agent types use the `EvoGit.Agents.*` namespace.
+- Each agent declares a `delegation_level/0` (`:high` or `:low`) controlling turn-budget warning frequency for delegation reminders. `:high` = Manager, Architect, GenesisPlanner (full delegation guidance: `:beginning` warning at ≥25% budget + 15-turn `:middle` reminders). `:low` = Executor, **Investigator**, TaskScheduler, ContextExtractor, SkillExtractor, SelfReflective (no `:beginning` warning, 45-turn `:middle` interval). `EvoGit.Agents.Custom` derives it from the agents.toml definition (default `:low`).
+- Verified `agent_type/0` per module: `:read_write` = Manager, Architect, Executor, SkillExtractor (+ Custom unless its definition says `"read"`); `:read` = Investigator, TaskScheduler, ContextExtractor, GenesisPlanner, SelfReflective.
+
+<!-- genesis:local -->
+
+**Function inventory (30 functions, grouped by theme; verbatim first lines live in `prompt_fragments.ex`):**
+
+| Theme | Functions (users) |
+|---|---|
+| **Worktree isolation** | `worktree_isolation_note/0` (Executor, ContextExtractor, TaskScheduler, Investigator); `worktree_isolation_note_short/0` (SkillExtractor); `subagent_worktree_tail_isolated/0` (Manager, Architect) |
+| **Delegation principles** | `delegation_investigation_sentence/0` (Manager, Investigator); `delegation_occasional_reads_sentence/0` (Manager, Investigator, GenesisPlanner); `subagent_report_trust_clause/0` (Manager, Architect — trust-by-default + escalation signals for subagent reports) |
+| **Genesis architecture** | `genesis_architecture_header/0`, `context_tree_routing_table_clause/0`, `phylogenetic_graph_sentence/0`, `transient_memory_clause/0`, `recursive_loop_intro/0`, `recursive_loop_tail/0` (all Manager, Architect) |
+| **Sibling paths & routing tables** | `routing_sibling_prefix/0` (Manager, Architect); `sibling_example_parenthetical/0` (Manager, Architect, ContextExtractor) |
+| **Code quality & file structure** | `solid_principles_sentence/0`, `large_files_intro/0`, `large_files_remediation/0`, `user_config_specifies_clause/0`, `file_structure_expectations_prefix/0` (all Manager, Architect) |
+| **Context Tree definition** | `context_tree_definition_clause/0`, `routing_table_markdown_list_clause/0`, `delegate_without_investigating_clause/0` (all Architect, ContextExtractor) |
+| **CONTEXT.md = current state, not history** | `context_current_state_clause/0` (Manager, Architect, Investigator, ContextExtractor) — the shared "current state, not history" paragraph + active-maintenance guidance (keep CONTEXT.md concise by pruning when adding; one sentence per line for granular git diffs; write findings at the best-fit child/descendant node with a routing-table entry at the current level; extract oversized sections into skills) + the TWO-SCOPE model (Shared text before a lone `<!-- genesis:local -->` line applies to the node and all its descendants, Local text after it is read only by agents assigned to that directory, and a file without the divider is entirely Shared) + per-stage truncation advice (a `... [Content Truncated] ...` marker means the SELECTED SCOPE as rendered exceeded ~64 KB — the Shared part for a descendant, the whole file for the assigned agent — not the chain; prune it and push detail down). Detail: `docs/context-scopes.md`. Architect and ContextExtractor each add one line that the CONTEXT.md they generate is Shared, so no divider is needed. |
+| **Shared canonical phrases** | `standard_sections_enum/0` (Architect, Investigator); `context_chain_example/0` (Manager, Architect); `genesis_context_header/0` (TaskScheduler, GenesisPlanner) |
+| **Foreign repositories** | `foreign_repo_absolute_path_clause/0`, `foreign_repo_spawn_right_level/0`, `writable_foreign_repo_clause/0` (Architect, ContextExtractor) |
+| **Objective scope** | `objective_not_in_node_prefix/0` (Executor, ContextExtractor) |
 
 ## Notes for Agents (prompt composition)
 
@@ -146,11 +156,3 @@ No numeric subagent limit appears anywhere in these prompts; the only numeric gu
 - `available_tools/0` is the ONE callback re-evaluated every turn (`agent/turn.ex` `Turn.effective_tools/1`, called from `Turn.run/3` for each turn), so it is the only per-turn-variable input to the tool-definition prefix: the default and read-only schema sets append `web_search`/`lsp` behind CALL-TIME config gates (`agent/tools.ex:196-218` → `EvoGit.Config.tools_search_enabled?/0`/`lsp_enabled?/0`), `Custom.available_tools/0` re-resolves its definition plus `CustomTools.schemas/0` per call (`custom.ex:122-161`), and subagent schemas are dropped at max depth from the LIVE `max_depth` (`agent/turn.ex` `Turn.effective_tools/1`, comparing `state.depth >= state.max_depth` on every turn).
 - Skill schemas are snapshotted ONCE at run start (`agent/session/setup.ex` `Session.Setup.build_initial_state/3`, into `state.skill_schemas`) and never refreshed mid-run, so a skill added during the run does not change the tool list.
 - Per-agent-type-but-constant-within-a-run: `system_prompt/0`, `available_tools/0` output (absent a mid-run config/definition change), `subagent_modules/0`, `agent_type/0`, `delegation_level/0`, `max_turns`, and the model selection.
-
-## Constraints
-- Every agent module MUST `use EvoGit.Agent` and implement `system_prompt/0`.
-- The behaviour module (`EvoGit.Agent`) lives in `../agent.ex`, NOT in this directory.
-- Tool modules (`EvoGit.Agent.Tools.*`) live in `../agent/tools/`, NOT in this directory.
-- Cross-references between agent types use the `EvoGit.Agents.*` namespace.
-- Each agent declares a `delegation_level/0` (`:high` or `:low`) controlling turn-budget warning frequency for delegation reminders. `:high` = Manager, Architect, GenesisPlanner (full delegation guidance: `:beginning` warning at ≥25% budget + 15-turn `:middle` reminders). `:low` = Executor, **Investigator**, TaskScheduler, ContextExtractor, SkillExtractor, SelfReflective (no `:beginning` warning, 45-turn `:middle` interval). `EvoGit.Agents.Custom` derives it from the agents.toml definition (default `:low`).
-- Verified `agent_type/0` per module: `:read_write` = Manager, Architect, Executor, SkillExtractor (+ Custom unless its definition says `"read"`); `:read` = Investigator, TaskScheduler, ContextExtractor, GenesisPlanner, SelfReflective.

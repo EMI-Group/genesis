@@ -63,6 +63,12 @@ A retention-evicted record that a live owner has not observed never degrades int
 - All REMAINING call-time seams are app-env only (no TOML keys) so the suite stays async-safe: `:background_wait_default_ms`, `:background_wait_max_ms`, `:background_poll_interval_ms`, `:background_tick_interval_ms`, `:background_probe_min_interval_ms`, `:background_unknown_grace_ms`, `:process_manager`; retention is the `:retention` START option instead, with no app-env seam.
 - `Retention.prune/1` is bounded work over in-memory maps (no OS call, no file I/O, no timer) and never touches `state.owners`, so running it inside a handler keeps the registry answering.
 
+## Routing Table
+
+No child directories — helper modules only.
+Cross-node contracts: the parent `EvoGit.BackgroundJobs` (`../background_jobs.ex`), the Job tools that consume these answers (`../../agent/tools/`), and `EvoGit.ProcessManager` (`../process_manager/`), which owns each job's `:background_job` execution and routes a manager-initiated kill back into `EvoGit.BackgroundJobs.kill/3`.
+<!-- genesis:local -->
+
 ## Design Decisions
 
 - Retention is OBSERVATION-AWARE because a finished record a live owner has not seen yet is not garbage: it is what that agent's next `job_output` / `job_list` and its pending completion notice depend on.
@@ -76,8 +82,3 @@ A retention-evicted record that a live owner has not observed never degrades int
 
 - A registry CRASH/RESTART is still destructive: `state.jobs`, `state.tombstones` and the notice mirror live in the registry process, so records (and pending notices) of the previous incarnation are gone and an id it handed out can answer `{:error, :not_found}` again until the restarted registry issues ids from 1.
   The intended fix (not implemented) is a keeper process or ETS heir started before the registry in `application.ex` that owns the record/tombstone tables and lets a restarted registry adopt them, re-monitor live owners and settle every previously-live record terminally as `:failed` with reason `{:crashed, :registry_restart}` (an eviction reason `Retention` already reserves); isolated test registries must keep working through the existing `:name`/`:process_manager` seams.
-
-## Routing Table
-
-No child directories — helper modules only.
-Cross-node contracts: the parent `EvoGit.BackgroundJobs` (`../background_jobs.ex`), the Job tools that consume these answers (`../../agent/tools/`), and `EvoGit.ProcessManager` (`../process_manager/`), which owns each job's `:background_job` execution and routes a manager-initiated kill back into `EvoGit.BackgroundJobs.kill/3`.

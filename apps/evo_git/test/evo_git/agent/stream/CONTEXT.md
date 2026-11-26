@@ -34,6 +34,8 @@ No external network, global scheduler mutation or artificial host load is needed
 Keep assertions exact and waits event-driven; do not substitute sleep windows for a causal barrier.
 Source defects must be reported upstream rather than repaired in this test node.
 
+<!-- genesis:local -->
+
 ## Test Strategy
 Run `ERL_FLAGS='+S 4:4' mix test apps/evo_git/test/evo_git/agent/stream --no-deps-check --seed 42` from the repository cwd.
 The suite contains 83 tests, and every file remains below 1000 lines.

@@ -149,19 +149,6 @@ When the provider is cache-capable but the registered params still carry no `pro
 
 `EvoGit.PeakHourEngine` lives in `../peak_hour_engine.ex` (outside this node) and re-derives EVERY peak/day/holiday decision from `EvoGit.PeakHours` (`in_peak?/4`, `next_transition/4`, `effective_concurrency/2`), with no second code path; the scheduler only carries the per-account schedule keys (`off_peak_days`, `off_peak_holidays`, `windows`, `tz`) through `State` and re-derives them on a `"scheduler_config"` event (`../CONTEXT.md`).
 
-## Blocking Surface (ONE GenServer serves every agent)
-
-Every turn-path scheduler interaction is a plain `GenServer.call` into the ONE `EvoGit.AgentScheduler` mailbox, so inline work in a handler delays every other agent's slot grant, release, config read and pause/cancel probe.
-`request_llm_slot/2` and `request_tool_slot/2` default to `timeout \\ :infinity`, so a queued caller waits silently; the wait shows only as the `:llm_waiting` activity `Sink.start_call/1` sets BEFORE `with_llm_slot/2`, so queueing renders as "Waiting for model capacity", never `:idle`.
-Inline work that stalls all slot traffic:
-- `Lifecycle.retry_agent/4` → `WorktreeManager.salvage_for_retry/2` on EVERY abnormal session `:DOWN` (budget `Salvage.timeout_ms() + @salvage_call_grace_ms` = 20 s), the salvage commit + `rm_rf_retry` + `git prune` + branch delete running inline.
-- `{:run_agent, …}` → `maybe_reset_task_archives/2` (synchronous `Store.delete_task_archives/1`) + `Dispatch.next_task_number/1` (`File.ls` of `.genesis/workers`).
-- `{:update_config, …}` → `reconcile_pool_after_update/1` (`ReqLLMPool.reconcile/1` → `Finch.set_pool_count`).
-- `{:DOWN, …}` → `Slots.release_agent_slots/2` + `grant_pending_llm_slots/1`, each a full pass over `State.all_model_ids/1`.
-- `{:force_kill_task_agents_for_task | :begin_graceful_cancel | :begin_task_pause, …}` → `Store.list_sched_meta/0` full scan + per-agent ETS writes + queue purges.
-The scheduler owns NO periodic scan or heartbeat: its only timers are the per-account backoff sweep (`:retry_llm_waiting`) and the sub-agent re-attach timeout, and `SystemSampler` is the only periodic external caller (3 s, `get_llm_slot_status/0`, cheap map reads).
-A crash RETRY sleeps `30_000 * retries` in the session's start task (`agent/session/setup.ex`, after the fresh worktree exists) — 30/60/90 s of registered `:running` with no `:llm_waiting` activity, so the dashboard shows "Idle".
-
 ## Slot Management (Slots + ToolPermits)
 
 LLM slots use agent-ID `MapSet`s; availability derives from `MapSet.size/1`, and session `:DOWN` removes the agent from both pools and purges its queued requests.
@@ -180,18 +167,6 @@ Detached-job permit acquisition, handoff and terminal release belong to `backgro
 |---|---|---|---|
 | LLM | `llm_holders`, `llm_waiting`, `llm_backoff_until`, `llm_last_granted` | **per-account** `model_concurrency[pool_id]` (account `concurrency`, default 3), fallback `default_llm_max_concurrency` (3) via `State.concurrency_for/2` | **per-account** on `:rate_limit` AND `:insufficient_balance` (HTTP 402) — caller duration (default 60 s, clamped to `@max_timer_ms`), self-rescheduling sweep; one account never blocks others |
 | Tool | `tool_holders`, `tool_waiting`, `tool_permits`, `tool_permit_monitors` | `max_tool_concurrency` (default `EvoGit.Platform.cpu_threads/0`) | None |
-
-## Worktree Lifecycle (WorktreeManager + Worktrees)
-
-**Fresh per agent run** — no pool, no reuse across retries.
-
-1. **Lazy per-repo init** on the FIRST create for a repo: rm_rf `.genesis/workers` → `git worktree prune` → orphaned `evogit-agent-*` cleanup → mkdir_p (never from the scheduler), gated on the persistent `:evogit_worktree_repos` marker: PRESENT (manager-only restart) → wipe skipped, only `mkdir_p_retry/2`; ABSENT (first request or genuine BEAM restart) → full wipe, then record. Destructive steps are **PRIMARY-ONLY** (`ForeignRepo.primary?/1` on `spec.repo_id`); foreign repos get prune + mkdir_p + marker. `mkdir_p_retry` raises `File.Error` on exhaustion — safe because the marker is written before the first worktree exists.
-2. **Request path**: `create_worktree_for_agent/6` (`:infinity`) offloads to a MONITORED Task replying exactly once (the result, or `{:error, reason}` when the create fun raises/throws/exits or the task dies silently) plus the `{:create_finished, agent_id}` permit-release cast.
-3. **Create pipeline** (`prepare_new_worktree/5`): destroy leftover dir/branch (rm_rf failure escalates) → CoW create (fallback `Git.add_worktree`; failure → `{:error, {:worktree_create_failed, msg}}`) → `assign_and_prepare_worktree/3` → `run_init_script/3` (genesis.toml `[worktree]` script, primary only; env `SOURCE_REPO_PATH`/`SOURCE_WORKTREE_PATH`/`TARGET_WORKTREE_PATH`; Windows via `Platform.shell_args/1`).
-4. **Monitor-based reclaim**: `:DOWN` for ANY reason (including after a successful completion) → `destroy_worktree/3` in FOUR ordered steps: `BackgroundJobs.reap_under(worktree_path)` under `safe_reap/1` → `rm_rf_retry/2` → only AFTER the dir is gone `Git.prune_worktrees(repo_root)` → `delete_branch_tolerant(repo_root, branch_name)`. An rm_rf failure logs ERROR and skips prune + branch delete (a surviving dir with its `.git` file + registration is safe; a pruned partially-removed dir becomes a PLAIN unregistered dir — the leak precondition). Idempotent; `recycle_agent/2`, `cancel_agent/2` and permanent failure never delete worktrees; after a manager-only restart `rebuild_monitors/1` re-monitors live agents from `:evogit_sched_meta` + `:evogit_agent_summary`, skipping missing/stale rows.
-   An **ABNORMAL** death (`Salvage.abnormal_exit?/1` rejects `:normal`/`:shutdown`/`{:shutdown, _}`) salvages FIRST (`Salvage.salvage/3`: stage-all + commit the crashed run's dirty state, anchored at `refs/genesis/salvage/<branch_name>` because reclaim deletes the agent branch) and retains the sha in `state.salvaged` (newest 64, in-memory only); `salvage_for_retry/2` answers `Lifecycle` (salvaging on demand while the agent is `:live`, else the retained entry) and stores it as `SchedMeta.crash_commit`. A salvage error/timeout (`:worktree_salvage_timeout_ms`, 15 000) logs at WARNING and reclaims as before.
-   Reclaim is keyed ONLY by the agent process monitor — never by task completion — and the ETS rows are deleted by `Lifecycle.recycle_agent/2`, not here.
-   `task_number` comes from `Dispatch.next_task_number/1` (`File.ls` for `worker_T<n>_` maxima, `1` when missing) ONCE per task from the ROOT's repo root and every subagent inherits it — each repo owns its own `.genesis/workers`, so dir and branch names REPEAT across repos (unique per repo, never task-globally).
 
 ## Persistent Foreign-Repo Worktrees (ForeignWorktree)
 
@@ -265,6 +240,33 @@ The two status vocabularies never mix (`SchedMeta`: `:pending | :running | :wait
 - `remote_api.ex` is a long cohesive RPC facade shared with `../remote_node.ex`: add functions there (`defnode` for identity-unwrap wrappers, hand-written per-function fallbacks) and never split it.
 - Liveness/timing seams are read at CALL time (`Application.get_env(:evo_git, key, default)`), never cached at compile time.
 - Messages carry `metadata[:timestamp]` from `EvoGit.Agent.Clock.now_seconds/0`; tests pin it per process with the default-inert `Clock.with_now/2`, never through an app-env global.
+
+<!-- genesis:local -->
+
+## Blocking Surface (ONE GenServer serves every agent)
+
+Every turn-path scheduler interaction is a plain `GenServer.call` into the ONE `EvoGit.AgentScheduler` mailbox, so inline work in a handler delays every other agent's slot grant, release, config read and pause/cancel probe.
+`request_llm_slot/2` and `request_tool_slot/2` default to `timeout \\ :infinity`, so a queued caller waits silently; the wait shows only as the `:llm_waiting` activity `Sink.start_call/1` sets BEFORE `with_llm_slot/2`, so queueing renders as "Waiting for model capacity", never `:idle`.
+Inline work that stalls all slot traffic:
+- `Lifecycle.retry_agent/4` → `WorktreeManager.salvage_for_retry/2` on EVERY abnormal session `:DOWN` (budget `Salvage.timeout_ms() + @salvage_call_grace_ms` = 20 s), the salvage commit + `rm_rf_retry` + `git prune` + branch delete running inline.
+- `{:run_agent, …}` → `maybe_reset_task_archives/2` (synchronous `Store.delete_task_archives/1`) + `Dispatch.next_task_number/1` (`File.ls` of `.genesis/workers`).
+- `{:update_config, …}` → `reconcile_pool_after_update/1` (`ReqLLMPool.reconcile/1` → `Finch.set_pool_count`).
+- `{:DOWN, …}` → `Slots.release_agent_slots/2` + `grant_pending_llm_slots/1`, each a full pass over `State.all_model_ids/1`.
+- `{:force_kill_task_agents_for_task | :begin_graceful_cancel | :begin_task_pause, …}` → `Store.list_sched_meta/0` full scan + per-agent ETS writes + queue purges.
+The scheduler owns NO periodic scan or heartbeat: its only timers are the per-account backoff sweep (`:retry_llm_waiting`) and the sub-agent re-attach timeout, and `SystemSampler` is the only periodic external caller (3 s, `get_llm_slot_status/0`, cheap map reads).
+A crash RETRY sleeps `30_000 * retries` in the session's start task (`agent/session/setup.ex`, after the fresh worktree exists) — 30/60/90 s of registered `:running` with no `:llm_waiting` activity, so the dashboard shows "Idle".
+
+## Worktree Lifecycle (WorktreeManager + Worktrees)
+
+**Fresh per agent run** — no pool, no reuse across retries.
+
+1. **Lazy per-repo init** on the FIRST create for a repo: rm_rf `.genesis/workers` → `git worktree prune` → orphaned `evogit-agent-*` cleanup → mkdir_p (never from the scheduler), gated on the persistent `:evogit_worktree_repos` marker: PRESENT (manager-only restart) → wipe skipped, only `mkdir_p_retry/2`; ABSENT (first request or genuine BEAM restart) → full wipe, then record. Destructive steps are **PRIMARY-ONLY** (`ForeignRepo.primary?/1` on `spec.repo_id`); foreign repos get prune + mkdir_p + marker. `mkdir_p_retry` raises `File.Error` on exhaustion — safe because the marker is written before the first worktree exists.
+2. **Request path**: `create_worktree_for_agent/6` (`:infinity`) offloads to a MONITORED Task replying exactly once (the result, or `{:error, reason}` when the create fun raises/throws/exits or the task dies silently) plus the `{:create_finished, agent_id}` permit-release cast.
+3. **Create pipeline** (`prepare_new_worktree/5`): destroy leftover dir/branch (rm_rf failure escalates) → CoW create (fallback `Git.add_worktree`; failure → `{:error, {:worktree_create_failed, msg}}`) → `assign_and_prepare_worktree/3` → `run_init_script/3` (genesis.toml `[worktree]` script, primary only; env `SOURCE_REPO_PATH`/`SOURCE_WORKTREE_PATH`/`TARGET_WORKTREE_PATH`; Windows via `Platform.shell_args/1`).
+4. **Monitor-based reclaim**: `:DOWN` for ANY reason (including after a successful completion) → `destroy_worktree/3` in FOUR ordered steps: `BackgroundJobs.reap_under(worktree_path)` under `safe_reap/1` → `rm_rf_retry/2` → only AFTER the dir is gone `Git.prune_worktrees(repo_root)` → `delete_branch_tolerant(repo_root, branch_name)`. An rm_rf failure logs ERROR and skips prune + branch delete (a surviving dir with its `.git` file + registration is safe; a pruned partially-removed dir becomes a PLAIN unregistered dir — the leak precondition). Idempotent; `recycle_agent/2`, `cancel_agent/2` and permanent failure never delete worktrees; after a manager-only restart `rebuild_monitors/1` re-monitors live agents from `:evogit_sched_meta` + `:evogit_agent_summary`, skipping missing/stale rows.
+   An **ABNORMAL** death (`Salvage.abnormal_exit?/1` rejects `:normal`/`:shutdown`/`{:shutdown, _}`) salvages FIRST (`Salvage.salvage/3`: stage-all + commit the crashed run's dirty state, anchored at `refs/genesis/salvage/<branch_name>` because reclaim deletes the agent branch) and retains the sha in `state.salvaged` (newest 64, in-memory only); `salvage_for_retry/2` answers `Lifecycle` (salvaging on demand while the agent is `:live`, else the retained entry) and stores it as `SchedMeta.crash_commit`. A salvage error/timeout (`:worktree_salvage_timeout_ms`, 15 000) logs at WARNING and reclaims as before.
+   Reclaim is keyed ONLY by the agent process monitor — never by task completion — and the ETS rows are deleted by `Lifecycle.recycle_agent/2`, not here.
+   `task_number` comes from `Dispatch.next_task_number/1` (`File.ls` for `worker_T<n>_` maxima, `1` when missing) ONCE per task from the ROOT's repo root and every subagent inherits it — each repo owns its own `.genesis/workers`, so dir and branch names REPEAT across repos (unique per repo, never task-globally).
 
 ## Known Issues
 

@@ -49,6 +49,8 @@ The agent no longer owns concurrency logic: `EvoGit.Agent.ToolDispatch.batch_exe
 - `./output.ex` → `Output.sanitize/3`, the sanitize/wrap boundary shared with `ToolDispatch.sanitize_tool_result/3`.
 - Sandbox execution handles / `:execution_id` → `../sandbox/CONTEXT.md`; the registry itself → `../process_manager.ex`; the timeout + hint policy owned agent-side → `../agent/CONTEXT.md`; per-task tmpdir → `../sandbox/` (`EvoGit.TaskTmpdir`).
 
+<!-- genesis:local -->
+
 ## Batch partition, task topology & pd installation
 
 Detail moved here from `../agent/CONTEXT.md` because this node is the ONLY execution engine.

@@ -76,6 +76,13 @@ A registry request has THREE possible outcomes and they are never conflated: a d
 - Started unconditionally by `EvoGit.Application` AFTER `Phoenix.PubSub` and BEFORE `EvoGit.BackgroundJobs` (which registers its detached jobs here).
 - Every EXTERNAL execution carries a REAL OS identity on its backend path: `EvoGit.Sandbox.Helpers.run_task_with_partial/9` and `run_tracked_command/7` spawn the child through a directly owned port and attach its pid (`:posix`) as soon as `wait_for_os_pid/2` observes it, so the non-sandboxed Linux/bwrap/macOS paths, the macOS `sandbox-exec` path and the `None` Unix path are observable and controllable instead of pid-less; the systemd path attaches the transient unit instead.
 
+## Routing Table
+
+No child directories — all modules live directly in this directory.
+Cross-node contracts: `../tool_runtime/`, `../background_jobs` and `../sandbox/` register executions here; `../agent_scheduler/` exposes the node-local RPC reads/controls (`RemoteAPI.list_processes/get_process/process_stats/process_control`) that a remote dashboard calls into this node's manager.
+
+<!-- genesis:local -->
+
 ## Retention
 
 `EvoGit.ProcessManager.Retention` owns the ONE retention decision (`doomed_ids/2`) and `Registry.prune_state/1` only does the state surgery — the record, its `Handle` and its kill intent go together, then any owner monitor nobody needs is dropped.
@@ -101,8 +108,3 @@ It is never a claim that the work did not happen: the agent-facing answer for an
 - `stats` are best-effort point-in-time samples read from `/proc`, one `ps` table, `tasklist` or `systemctl show` at the call-time-configurable sampling interval, not exact accounting; on a backend that reports cumulative CPU only (Linux `/proc`, Windows PowerShell) the value the backend returns carries `cpu_percent: nil` — the sampling TIMER derives it from the delta against the previous sample of the same tree, so the FIRST sample of an execution has no percentage and an on-demand `sample/2` / `sample_all/1` read never derives one (macOS `ps` supplies `%CPU` per sample and needs no delta).
 - Retention deletes NON-PROTECTED terminal records outright once the retention window (Retention) passes or the global cap pushes them out, so a pruned id answers `{:error, :not_found}` from `get/2` and is absent from `list/1` and `sample_all/1`; a LIVE owner's `:background_job` records survive that window but are lost once that owner dies and its own per-owner cap is exceeded: a FAILED kill never transitions the record (it stays live and controllable, appends `%{action: :kill, reason: {:kill_failed, reason}, actor: actor}` to `control_log` and returns that error), so only successful kills become `:killed`. `:unknown` is declared in `Execution.status` for that degraded case, but NO current code path produces it (only `:starting | :running | :paused | :completed | :failed | :killed` are ever assigned).
 - `attach/3` and `finish/3` can answer `{:error, :timeout}` / `{:error, {:registry_exit, reason}}`, while `EvoGit.Sandbox.Helpers.attach_execution/3` (`../sandbox/`) still specs `:: :ok` and returns `attach/3`'s value verbatim; every caller ignores that value, so the drift is documentation-only.
-
-## Routing Table
-
-No child directories — all modules live directly in this directory.
-Cross-node contracts: `../tool_runtime/`, `../background_jobs` and `../sandbox/` register executions here; `../agent_scheduler/` exposes the node-local RPC reads/controls (`RemoteAPI.list_processes/get_process/process_stats/process_control`) that a remote dashboard calls into this node's manager.

@@ -92,19 +92,6 @@ Schema/defaults APIs and this node's `Definitions`, `LLM` and `LLMConstraints` f
 `Definitions` describes metadata without user values, whereas `LLM` helpers can return unredacted supplied profiles, create provider atoms, import OAuth credentials or load catalog metadata, and constraint filtering can log model specs containing secrets.
 `context_window_for/2` defaults on an unknown id and skips malformed legacy entries through `get_model_profile/2`; schema helper access is not evaluator authorization or a redaction guarantee.
 
-## Reasoning Selection and Resolution Gotchas
-`LLM.default_model_profile/1` honors `llm.default_provider_profile` for canonical and legacy profiles, selecting the first profile only when the selector is absent and returning `{:error, :not_found}` for an invalid explicit selector.
-`get_model_profile/2` skips malformed legacy entries, returns the first matching legacy id, and reads canonical accounts through the provider resolver's duplicate/default-model/effort checks.
-The legacy `LLM` API gives each model profile one optional scalar `reasoning_effort`; ordered provider/model effort inventories and default selection are handled separately by `ProviderProfiles`.
-The flat reasoning schema is a string with nil default and a membership rule over the canonical option strings (`definitions.ex:225–234`), and generation assembly omits nil instead of inventing a model default (`llm.ex:541–557,729–731`).
-The ONE reasoning ladder is `EvoGit.Config.Schema.ReasoningEffort` (`levels/0` → `[:none, :minimal, :low, :medium, :high, :xhigh]`, `options/0` adding `:default` = send no effort at all, i.e. the provider default, `allowed?/1` as the total acceptance predicate, `canonical/1` as the total normalizer and `convert/1` = `canonical(value) || value`).
-`Schema.LLM` re-exports it as `reasoning_efforts/0`, `reasoning_effort_options/0`, `allowed?/1`, `canonical_reasoning_effort/1` and `convert_reasoning_effort/1`, so every consumer and schema enum reads the same list.
-`max` is an accepted legacy ALIAS of `xhigh` and never an offered level, and `convert_reasoning_effort/1` maps `"max"`/`:max` to `:xhigh` while passing canonical atoms (and any other value) through unchanged.
-Known efforts are matched case- and whitespace-insensitively (`" High "` → `:high`), and no reader interns an atom to do it.
-`LLMConstraints` compares efforts on their canonical form and produces the provider-documented wire value only at the request boundary, through its per-table `:reasoning_effort_wire_aliases` mapping (`llm_constraints.ex:355–382`).
-A nonempty metadata capabilities map that omits reasoning, or lacks explicit `reasoning.enabled == true`, removes a configured effort, whereas nil metadata and empty capabilities leave it alone (`llm_constraints.ex:357–373`).
-The constraint table's `reasoning_effort.default` is an allowed-values fallback for unmatched model ids, not a default effort injected into requests (`llm_constraints.ex:101–105,207–239`).
-
 ## Canonical Provider Profiles (`ProviderProfiles`)
 `EvoGit.Config.Schema.ProviderProfiles` exposes `provider_profiles/1`, `model_selections/1`, `resolve_selection/2` and `resolve_runtime_profile/2` independently of the legacy `LLM` entry points, and `resolve_model_spec/2` remains as the documented compatibility alias of `resolve_selection/2` (both delegate to the private `resolve_selection_fields/3`).
 **Enumeration and model validation are CONFIG-ONLY**: `provider_profiles/1` reads just `llm.providers` (nested `models`) with legacy `llm.models`/flat `llm.model` fallback, `model_selections/1` merely maps those nested models, and `find_model/2` searches `profile["models"]` alone — none of them consults the ChatGPT/SIWC account store (`EvoGit.Auth.ChatGPT.Store`) or any other live auth store, and `siwc_account` travels through the runtime profile as an opaque reference only.
@@ -175,6 +162,21 @@ Avoid embedding inspected validation values or whole resolved profiles in health
 - Schema definitions are the single source of truth for all config keys.
 - The parameter filter never raises on user config and never guesses: a constraint is only applied where there is documented provenance or actual model metadata.
 
+<!-- genesis:local -->
+
+## Reasoning Selection and Resolution Gotchas
+`LLM.default_model_profile/1` honors `llm.default_provider_profile` for canonical and legacy profiles, selecting the first profile only when the selector is absent and returning `{:error, :not_found}` for an invalid explicit selector.
+`get_model_profile/2` skips malformed legacy entries, returns the first matching legacy id, and reads canonical accounts through the provider resolver's duplicate/default-model/effort checks.
+The legacy `LLM` API gives each model profile one optional scalar `reasoning_effort`; ordered provider/model effort inventories and default selection are handled separately by `ProviderProfiles`.
+The flat reasoning schema is a string with nil default and a membership rule over the canonical option strings (`definitions.ex:225–234`), and generation assembly omits nil instead of inventing a model default (`llm.ex:541–557,729–731`).
+The ONE reasoning ladder is `EvoGit.Config.Schema.ReasoningEffort` (`levels/0` → `[:none, :minimal, :low, :medium, :high, :xhigh]`, `options/0` adding `:default` = send no effort at all, i.e. the provider default, `allowed?/1` as the total acceptance predicate, `canonical/1` as the total normalizer and `convert/1` = `canonical(value) || value`).
+`Schema.LLM` re-exports it as `reasoning_efforts/0`, `reasoning_effort_options/0`, `allowed?/1`, `canonical_reasoning_effort/1` and `convert_reasoning_effort/1`, so every consumer and schema enum reads the same list.
+`max` is an accepted legacy ALIAS of `xhigh` and never an offered level, and `convert_reasoning_effort/1` maps `"max"`/`:max` to `:xhigh` while passing canonical atoms (and any other value) through unchanged.
+Known efforts are matched case- and whitespace-insensitively (`" High "` → `:high`), and no reader interns an atom to do it.
+`LLMConstraints` compares efforts on their canonical form and produces the provider-documented wire value only at the request boundary, through its per-table `:reasoning_effort_wire_aliases` mapping (`llm_constraints.ex:355–382`).
+A nonempty metadata capabilities map that omits reasoning, or lacks explicit `reasoning.enabled == true`, removes a configured effort, whereas nil metadata and empty capabilities leave it alone (`llm_constraints.ex:357–373`).
+The constraint table's `reasoning_effort.default` is an allowed-values fallback for unmatched model ids, not a default effort injected into requests (`llm_constraints.ex:101–105,207–239`).
+
 ## Notes for Agents
 - **`llm.ex` is deliberately one long module (~1150 lines)**: it is the single LLM assembly boundary (generation parameters, OAuth/provider-option precedence, context-window resolution, prompt-cache identity, model metadata seam), re-exporting the effort ladder that `Schema.ReasoningEffort` owns. Splitting it would scatter one choke point across modules and force every caller to re-derive which half owns which rule; extract a helper only if a genuinely separable concern appears.
 - **`Definitions.schemas/0` yields 112 entries** = 75 hand-written schema maps (58 in the first list, 17 in the post-`search_provider_schema_maps()` list) + 37 generated search-provider maps (6 providers × 6 keys + Perplexity's extra `:model`).
@@ -200,7 +202,6 @@ The `llm.models` schema defaults to `[]`, and its description documents per-prof
 - In `definitions.ex`, the search-provider schemas (`[:tools, :search, <provider>, ...]`) are NOT hand-written literals — they are generated from the data-driven `@search_provider_defs` list (one `%{name:, label:, credential_key:, base_url:, optional model:, optional keyless:}` map per search provider: `:tavily`/`:perplexity`/`:exa`/`:bing`/`:brave`/`:keenable`, where only `:keenable` carries `keyless: true`), each entry expanded by `search_provider_schema_maps/1` into the repeated per-key schema maps (39 search schema maps in `schemas/0` in total incl. the fixed `:enabled`/`:provider`). The `keyless` flag only feeds `search_provider_keyless?/1` (the ONE public predicate the key guards call) and never becomes a schema key. Adding or extending a search provider means editing that list, not hand-writing repeated provider maps. `@search_providers`/`search_providers/0` remains the source of truth for the provider-ID list used by the `:provider` schema `in:` validation.
 - `EvoGit.Config.Schema` (validate + defaults + typespecs) lives in the PARENT node file `../schema.ex`; the validation ENGINE (former `type_errors/3`/`rule_errors/3` privates) now lives in the parent node's `../ecto_validation.ex` (`EctoValidation.errors_for/4`) with scalar type decisions routed through the strict custom Ecto types in `../ecto_types.ex` (`EctoTypes`). Definitions here, the engine there and the `@type schema_type` union in `schema.ex` must stay in sync. **Adding a new validation type requires three touch points** (see the "Validation Engine — Ecto-backed" section of the parent `../CONTEXT.md`): (1) a definition entry here, (2) a new nested strict `use Ecto.Type` module in `ecto_types.ex` + a `type_for/1` clause (returning the fully-qualified `__MODULE__.X` atom) + a `@type scalar_type` union entry, and (3) a `type_errors/2,3`-style clause in `ecto_validation.ex` plus the `@type schema_type` union entry in `schema.ex`. `min`/`max`/`in` rules need no type-module — they are pure predicates in `EctoValidation.rule_errors/3`.
 - `llm_constraints.ex` deliberately does NOT depend on any catalog being loadable: the Z.AI/GLM table rules must stay effective with zero metadata. Do not move table rules behind a metadata check.
-
 
 ## Known Issues
 

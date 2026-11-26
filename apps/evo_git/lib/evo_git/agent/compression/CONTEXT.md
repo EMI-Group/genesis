@@ -100,6 +100,7 @@ The phase is inert without an installed sink (the Sink resolves its session from
 Neither module resolves a selection from configuration or looks up provider-profile credentials itself.
 Slot admission and exhaustion reporting carry only `agent_id`, through `AgentScheduler.with_llm_slot/2` and `report_llm_error/3`, so the scheduler owns account/profile identity independently of the actual request model.
 The parent orchestrator separately supplies a numeric configured context window and charges summary usage through `Cost.apply_to_usage/3`, which obtains model/account identity outside this directory.
+<!-- genesis:local -->
 ## Notes for Agents
 
 - **Recency math must never be re-implemented** in a caller — call `Recency.boundary/3` (the two-arity form remains for callers outside the compression pipeline).
