@@ -279,6 +279,25 @@ defmodule EvoDashWeb.ProcessesLiveTest do
   # 1. Rendering
   # ---------------------------------------------------------------------------
 
+  # The workbench tab rail owns the page name ("Processes"), so the canvas must
+  # not repeat it: no in-canvas <h1> title and no descriptor subtitle. The
+  # filter bar IS the page's first row.
+  test "the tab rail owns the page name: no in-canvas title or subtitle", %{conn: conn} do
+    install_load_runner(fn _node, _opts -> {:ok, executions()} end)
+    view = mount_page(conn)
+    html = render(view)
+
+    # Non-vacuous: `main` IS the page canvas, and this test's row renders in it.
+    assert [main] = html |> Floki.parse_document!() |> Floki.find("#main-content")
+    headings = main |> Floki.find("h1") |> Enum.map(&(&1 |> Floki.text() |> String.trim()))
+    refute "Processes" in headings
+    refute html =~ "Monitor tool calls and background jobs on this node."
+
+    # The functional rows that replaced the header still render.
+    assert has_element?(view, "#main-content #process-kind-filter")
+    assert has_element?(view, "#main-content #process-row-proc-1")
+  end
+
   test "renders status, links, command, runtime, backend, target and usage", %{conn: conn} do
     install_load_runner(fn _node, _opts -> {:ok, executions()} end)
 

@@ -773,6 +773,24 @@ defmodule EvoDashWeb.SystemLiveTest do
   end
 
   describe "system page" do
+    # The workbench tab rail owns the page name ("System"), so the canvas must
+    # not repeat it: no in-canvas <h1> title and no descriptor subtitle. The
+    # card sections are the page's first row.
+    test "the tab rail owns the page name: no in-canvas title or subtitle", %{conn: conn} do
+      {:ok, view, html} = live(conn, ~p"/system")
+
+      # Non-vacuous: `main` IS the page canvas, and its sections render in it.
+      assert [main] = html |> Floki.parse_document!() |> Floki.find("#main-content")
+      headings = main |> Floki.find("h1") |> Enum.map(&(&1 |> Floki.text() |> String.trim()))
+      refute "System" in headings
+      refute html =~ "Runtime health, scheduler activity and system controls."
+
+      # The cards that replaced the header still render (the Software Update
+      # card is desktop-only, so pin the always-present sections).
+      assert has_element?(view, "#main-content #system-self-check")
+      assert has_element?(view, "#main-content #system-charts")
+    end
+
     test "LLM Test in Settings link carries &node=<id> when a remote node is active", %{
       conn: conn
     } do

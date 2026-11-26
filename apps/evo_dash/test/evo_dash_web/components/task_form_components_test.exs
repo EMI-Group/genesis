@@ -843,6 +843,74 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       [input] = Floki.find(parse(html), "input#persist-agent-state-toggle")
       assert input |> Floki.attribute("checked") == []
     end
+
+    # ONE shell for both boolean toggles (`.workbench-task-option-toggle`): the
+    # tall row hit area and the internal padding are shared, so the pair stays
+    # aligned whether the grid puts them side by side or stacks them on a
+    # narrow width. Pinning the whole class LIST (not one attribute) is what
+    # makes a per-toggle tweak fail instead of silently drifting.
+    test "both option toggles carry the one shared toggle shell" do
+      doc =
+        render_component(&TaskFormComponents.task_options_tab/1, mode: "custom_agent")
+        |> parse()
+
+      toggles = Floki.find(doc, "#task-options label.workbench-task-option-toggle")
+      toggle_classes = Enum.map(toggles, &classes/1)
+
+      assert length(toggle_classes) == 2
+      # Identical class lists — the same shell, rendered twice.
+      assert [shell] = Enum.uniq(toggle_classes)
+      assert "min-h-[var(--row-h-tall)]" in shell
+      assert "py-1" in shell
+
+      # Both toggle rows ARE the archive and persist-agent-state toggles: one
+      # label per title, each wrapping its own checkbox.
+      texts = Enum.map(toggles, &(&1 |> Floki.text() |> String.trim()))
+      assert Enum.any?(texts, &String.starts_with?(&1, "Archive agent detail"))
+      assert Enum.any?(texts, &String.starts_with?(&1, "Persist agent state"))
+      assert Enum.all?(toggles, &(Floki.find(&1, "input[type=checkbox]") != []))
+    end
+
+    # Spacing step between the description, the fields grid and the Advanced
+    # options disclosure: each neighbour is separated by `mt-3`, never flush
+    # against the block above it.
+    test "the fields grid and the advanced disclosure both keep the mt-3 step" do
+      doc =
+        render_component(&TaskFormComponents.task_options_tab/1, mode: "custom_agent")
+        |> parse()
+
+      assert [fields] = Floki.find(doc, "#task-options .workbench-task-options-fields")
+      assert "mt-3" in classes(fields)
+
+      assert [advanced] = Floki.find(doc, "details#task-advanced-options")
+      assert "mt-3" in classes(advanced)
+    end
+
+    # The Advanced options disclosure leads with the SAME right-chevron the
+    # Project Settings panel uses (see
+    # `EvoDashWeb.ProjectComponentsTest`), rotated by the `group-open:`
+    # variant so the two disclosures cannot drift apart again.
+    test "the Advanced options summary keeps the right-chevron group disclosure" do
+      doc =
+        render_component(&TaskFormComponents.task_options_tab/1, mode: "custom_agent")
+        |> parse()
+
+      # The rotation variant only works while the `group` class sits on the
+      # <details> ancestor.
+      assert [advanced] = Floki.find(doc, "details#task-advanced-options")
+      assert "group" in classes(advanced)
+
+      assert [summary] = Floki.find(advanced, "summary")
+      # The chevron LEADS the summary, ahead of the "Advanced options" label.
+      assert [lead | _] = summary |> Floki.children() |> Enum.reject(&is_binary/1)
+      assert "hero-chevron-right" in classes(lead)
+
+      assert [chevron] = Floki.find(summary, "span.hero-chevron-right")
+      chevron_classes = classes(chevron)
+      assert "size-4" in chevron_classes
+      assert "shrink-0" in chevron_classes
+      assert "group-open:rotate-90" in chevron_classes
+    end
   end
 
   # Speed ↔ quality segmented control — the fused mode+speed capsule's Layer-1
@@ -1119,4 +1187,8 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
 
   # Floki 0.38's find/2 + attribute/2 require a parsed tree, not a raw binary.
   defp parse(html), do: Floki.parse_document!(html)
+  # A rendered element's class attribute split into its individual tokens.
+  defp classes(element) do
+    element |> Floki.attribute("class") |> List.first() |> to_string() |> String.split()
+  end
 end
