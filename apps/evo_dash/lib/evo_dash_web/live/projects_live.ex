@@ -122,11 +122,23 @@ defmodule EvoDashWeb.ProjectsLive do
             (@workbench_project_selection && @workbench_project_selection.path) ||
               @remote_project_loading || git_project,
           else: git_project %>
-      <% new_conversation? =
+      <% settled_scope? =
         !remote_gate? and !ModelSelectionScope.pending_remote?(assigns) and
-          is_nil(@remote_project_loading) and is_nil(@workbench_project_selection) and
-          workbench_project == Overview.scope(assigns).exec_path and
+          is_nil(@remote_project_loading) and is_nil(@workbench_project_selection) %>
+      <% scope = if settled_scope?, do: Overview.scope(assigns) %>
+      <% new_conversation? =
+        settled_scope? and workbench_project == scope.exec_path and
           not is_nil(Overview.assistant_path(assigns)) %>
+      <% selected = @workbench_reconnect_params["project"] %>
+      <% context_name =
+        if settled_scope? and !@workbench_idle? and is_binary(selected) and
+             EvoGit.Util.Strings.present?(selected) do
+          case scope do
+            %{kind: :workspace, point: ^selected, name: name} -> name
+            %{kind: :project, path: ^selected, name: name} when selected == workbench_project -> name
+            _ -> nil
+          end
+        end %>
       <EvoDashWeb.Layouts.app
         flash={@flash}
         current_page={:dashboard}
@@ -135,6 +147,7 @@ defmodule EvoDashWeb.ProjectsLive do
         remote_targets={assigns[:remote_targets] || []}
         connection_statuses={assigns[:connection_statuses] || %{}}
         workbench_project={workbench_project}
+        workbench_context_name={context_name}
         workbench_new_conversation?={new_conversation?}
         workbench_default_draft={Overview.default_draft_path(assigns)}
         workbench_git_project={if workbench_project == git_project, do: git_project}
