@@ -126,7 +126,7 @@ The resting composer has its own `--composer-surface` so it remains distinct fro
 
 ### Workbench chrome and tab strip
 `.workbench-top + .workbench-content-stack` is the inset canvas frame shared by the page and Git-diff portal: density-derived gutters, a hairline and `--radius-box`, no elevation shadow and no new scroll or containing block for fixed overlays.
-The sidebar uses the muted `--surface-shell` backdrop, with space and subtle hover/selected fills separating destinations rather than repeated dividers.
+The sidebar uses the recessed `--surface-rail` fill, merging with the canvas as one surface while space and subtle hover/selected fills separate destinations rather than repeated dividers.
 `.workbench-top` keeps the only `flex: 0 0 var(--shell-topbar-h)` and holds a bottom-aligned tab strip beside the create, history and Git controls.
 `.workbench-context-title` precedes the strip, with a capped, shrinkable inline box that ellipsizes long scope names so the rail controls retain their targets.
 `.workbench-tabs` uses intrinsic width up to the available rail space; it scrolls horizontally without squeezing the controls or inserting a scrollbar between the tabs and canvas.
