@@ -137,38 +137,12 @@ Model-facing tool names are `read`/`write`/`edit`/`bash`/`web_search` (plus `rg`
 
 `RemoteNode.default_merge_target/2` specifies `{:ok, String.t()} | {:error, term()}`. `RemoteConnections.delete/1`/`touch/1` document only `{:error, :not_found}` but also propagate `write_connections/1` / `save/1` failures.
 
-## Windows PowerShell Invocation — `-EncodedCommand`
-
-PowerShell re-joins the raw command line as code (quoting mangles; a lost arg falls back to INTERACTIVE mode: exit 0, no output) and PS 5.1 pipes through `[Console]::OutputEncoding` (OEM/UTF-16, invalid for `UTF8.ensure_utf8/1`).
-Spawning uses `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand <b64>` with b64 = base64(UTF-16LE of `& { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; <script> } *>&1`).
-Applied at `Platform.shell_args/1`'s PowerShell clause (shell tool + `Worktrees.run_init_script/3`) and `Sandbox.None`'s `run_windows/3` + `run_with_partial_windows/5` (`transform_args/2` + `decode_output/1`); `transform_args/2` matches ONLY powershell/pwsh with the exact `["-Command", cmd]` shape. Tests: `test/evo_git/powershell_test.exs`.
-
 ## Executable Resolution (`EvoGit.Executable`)
 
 `resolve/1` is system-first, bundled-fallback: a name on PATH returns UNCHANGED; only when absent is `priv/vendor/<platform>/` considered (regular file only); otherwise the ORIGINAL name returns — never a nonexistent absolute path, and a bundled bash is never resolved.
 Pure `@doc false` helpers: `candidates/3` (Windows `git` → `<vendor>/mingit/cmd/git.exe`, other Windows → `<vendor>/<name>.exe`, elsewhere → `<vendor>/<name>`) and `bundled_path/3` (first EXISTING candidate else `nil`).
 `resolve_vendor_dir/0` = `Application.app_dir(:evo_git, …)/priv/vendor/<platform>` with `:code.priv_dir/1` ONLY as fallback and NO env/app-env/config override; `vendor_platform/0` (`macos-<arch>` / `windows-x64` / `linux-<arch>`) and `arch_string/0` (else `unknown`) make an unsupported platform degrade silently to PATH (visible only as `SystemCheck.check_tool/1`'s `ErlangError :enoent`).
 The vendored inventory, per-platform CI/Nix staging and the "adding a new binary" checklist live in root `../CONTEXT.md` § Platform-Specific Native Binaries; `SystemCheck.check_tool/1` covers exactly `git` + `rg`. Tests: `test/evo_git/executable_test.exs`.
-
-## Known Issues
-
-- Background launches lose the caller's per-task scratch dir across the registry boundary: `normalize_start_spec/1` keeps command/cwd/repo-root/label/owner/identities only and the launch runs `scratch_dir/0` in the singleton registry where `TaskTmpdir.current/0` is unset, so output resolves against the legacy system tmpdir.
-- Systemd slice ownership is OS-user-wide: `SandboxSlice` hardcodes `evogit.slice`, and init cleanup and shutdown stop that whole slice, so instances under one user share budgets and cleanup boundaries.
-- `Sandbox.capabilities/0` reports nominal capabilities without consulting `enabled?/0`, while auto-selection checks executable availability, not successful isolation.
-- **scp of a remote config path containing SPACES is unhandled**: `:copying_config` creates/probes the dir with `$HOME`-rooted double-quoted paths, but the scp destination is rewritten to the `~` form by `scp_remote_path/1` (SFTP-speaking scp re-parses it), so uploading into `~/Library/Application Support/genesis` depends on scp's protocol (sftp verbatim works; legacy scp word-splits); failures stay best-effort.
-- **Process/thread exhaustion in containers breaks git forks (EAGAIN)**: in rootless podman per-UID `RLIMIT_NPROC` spans container + host, so `fork()` fails ("cannot fork() ... Resource temporarily unavailable") and agents are lost to crash-retry; the host-limit prevention list is in root `../CONTEXT.md` § Known Issues.
-
-## Windows-Only Runtime Hazards (audit index)
-
-Latently Windows-broken code (`Platform.windows?()`-gated, so unreachable on Linux/macOS dev+CI) — each item is a raise/degradation, not a compile error.
-
-- **`Port.open` `{:env, ...}` requires CHARLISTS** while `System.cmd/3` normalizes binaries — the ONE raw-port env site is `Sandbox.None`'s Windows clause.
-- **`Port.info(port, :os_pid)` returns `{:os_pid, pid}` and `Port.close/1` RAISES on a closed port** — `Sandbox.Helpers.wait_for_os_pid/2` unwraps and timeouts close via idempotent `Helpers.close_port/1`, so `taskkill /T /F` and bwrap's group kill fire.
-- **Tool raises are CONTAINED**: `ToolRuntime.Executor.execute_tool_with_timeout/4` spawns a linked `Task.async` and `execute_tool_task/4` has its own `try/rescue/catch`, so a raising tool becomes `Error: Tool execution crashed: …`; only `:normal`/`:shutdown`/`:kill`/`{:shutdown, _}` exits re-raise (a `nil` yield is the timeout arm).
-- **`GitEnv` exports `GIT_EDITOR` UNQUOTED** (`derive_windows_true_exe/0`) — git hands it to `sh -c`, so `C:\Program Files\…` splits and editor-opening git ops abort (`git_env.ex`).
-- **`RemoteConnection.run_cmd/2` spawn strings interpolate LOCAL paths unquoted** (`curl -fL -o #{cache_file} #{url}`, `scp #{local_path} …`) — one command line re-parsed by the child, so a spaced `AppData` path splits; those sites pass no `:hide`.
-- **`SystemCheck.check_tool/1`** passes `Executable.resolve/1`'s output to `System.cmd/3`, so a missing tool raises `ErlangError :enoent` instead of "unavailable".
-- **`Skills.Executor`'s Windows branch resolves bash only via `System.find_executable("bash")`** — bundled MinGit ships `sh`, not `bash.exe`, so bash skills degrade to the "install Git for Windows" error.
 
 ## OAuth / Subscription Auth (`EvoGit.Auth`)
 A model profile can use a ChatGPT or Claude subscription instead of a metered API key; detail: `./auth/CONTEXT.md` + `config/CONTEXT.md`.
@@ -253,11 +227,6 @@ A message is a legacy `String.t()` OR `%{text:, attachments:}` via `AgentSchedul
 **Retention**: `EvoGit.BackgroundJobs.Retention.prune/1` (on every accepted start and after a notice claim) never evicts a LIVE owner's unobserved record, trims dead owners (10) and observed records (20 per owner) first, keeps ≤ 500 finished records overall, and converts a still-unobserved record into a TOMBSTONE instead of deleting it, so `job/2`/`read/2`/`list/1` keep answering honestly; `:retention` is a START option overlaying the module defaults per key.
 **Compression**: the job snapshot rides ONLY the stage-2 path (`## Background Jobs`), and both rebuild paths drop EVERY earlier refresh via `ContextCompression.drop_stale_refreshes/1` before appending, so exactly ONE section survives; the summariser does NOT list job ids under `## Pending Jobs`. Detail: `./background_jobs/CONTEXT.md` + `./agent/CONTEXT.md`.
 
-## Background Job Timers (test seam)
-
-All timing knobs are CALL-TIME app-env reads (never TOML, so overriding modules stay `async: false` and restore in `on_exit`): `:background_tick_interval_ms` (1_000), `:background_poll_interval_ms` (100, read ONCE per wait as the base of the ×1.5 backoff capped at 3_000 ms), `:background_wait_default_ms` (120_000), `:background_wait_max_ms` (test-only, POSITIVE ints only).
-`wait_max_ms/0` is DERIVED at CALL time: `Config.resolve([:scheduler, :max_tool_timeout])` minus `dispatch_headroom_ms/0` (`@dispatch_headroom_ms` 25_000, the ONE headroom literal), floored at 1_000 ms (1_775_000 ms with the default config); `Agent.Tools.default_timeout_ms/1` adds the SAME headroom back for `job_output`, landing its dispatch ceiling exactly on `[:scheduler, :max_tool_timeout]`. Detail: `./agent/tools/CONTEXT.md` + `./background_jobs/CONTEXT.md`.
-
 ## ReqLLM Finch Pool (`EvoGit.ReqLLMPool`)
 
 **API**: `desired_count(total)` → `max(total + 2, 8)` (single source of truth; `config/runtime.exs` delegates); `error_target_count(total)` → `max(ceil(total * 1.5), 8)`; `effective_concurrency(map, default)` → `max(sum of values, default)`; `reconcile/1,2`; `bump_for_excess_queuing/2,3`; `excess_queuing_error?/1`.
@@ -280,3 +249,36 @@ Ring buffer: last 60 samples; `get_recent_samples/0` → `{:ok, samples}` | `{:e
 `DaemonControl` (supervised in every env EXCEPT test) is the file protocol the release CLI drives: request `<data_dir>/remote/control.request` (`ACTION=enable|disable`, `NODE`, `COOKIE`, `DIST_PORT`, `SEQ`) + SIGHUP; answer `dist.env` = the ACTUAL state (`GENESIS_DIST_ENABLED`, `GENESIS_NODE`, `GENESIS_DIST_PORT` (`unknown` when unset), `GENESIS_CONTROL_SEQ`, `GENESIS_CONTROL_RESULT` (`ok`/`error`), `GENESIS_CONTROL_MESSAGE`). Both files are written atomically (tmp + `File.rename/2`, mode 0600), the result BEFORE the request is deleted, and `dist.env` is NEVER deleted.
 `desired.env` records intent only after a SUCCESSFUL action (`ENABLED=1` + `NODE`/`COOKIE`/`DIST_PORT`, or `ENABLED=0`) and is untouched on failure; `init/1` re-adopts an `ENABLED=1` intent best-effort (warning, never raise) then publishes the ACTUAL state (covering a `RELEASE_DISTRIBUTION=name` boot and a plain boot `0`), and any raise/exit is caught by ONE boundary writing the error `dist.env`.
 The SIGHUP hook is Unix-only (`Platform.windows?/0`; `EVOGIT_NO_SIGNAL_HOOK=1` skips it): `:os.set_signal(:sighup, :handle)` + `:gen_event.add_handler(:erl_signal_server, EvoGit.DaemonControl.SignalHandler, [])`, an already-present handler normalizing to `:ok`; the handler only calls `reload/1`. No timers, no polling: `reload/1` is a cast, `sync/1` a `@doc false` test barrier, the pure core (`handle_control_request/2`, `publish_state/2`) runs without a process, and call-time default-inert seams `:daemon_control_dist` / `:daemon_control_signal_install` plus `init/1` opts (winning over `dir:`, `dist:`, `signal_install:`, `name:`) keep `daemon_control_test.exs` `async: true`.
+
+<!-- genesis:local -->
+
+## Windows PowerShell Invocation — `-EncodedCommand`
+
+PowerShell re-joins the raw command line as code (quoting mangles; a lost arg falls back to INTERACTIVE mode: exit 0, no output) and PS 5.1 pipes through `[Console]::OutputEncoding` (OEM/UTF-16, invalid for `UTF8.ensure_utf8/1`).
+Spawning uses `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand <b64>` with b64 = base64(UTF-16LE of `& { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; <script> } *>&1`).
+Applied at `Platform.shell_args/1`'s PowerShell clause (shell tool + `Worktrees.run_init_script/3`) and `Sandbox.None`'s `run_windows/3` + `run_with_partial_windows/5` (`transform_args/2` + `decode_output/1`); `transform_args/2` matches ONLY powershell/pwsh with the exact `["-Command", cmd]` shape. Tests: `test/evo_git/powershell_test.exs`.
+
+## Known Issues
+
+- Background launches lose the caller's per-task scratch dir across the registry boundary: `normalize_start_spec/1` keeps command/cwd/repo-root/label/owner/identities only and the launch runs `scratch_dir/0` in the singleton registry where `TaskTmpdir.current/0` is unset, so output resolves against the legacy system tmpdir.
+- Systemd slice ownership is OS-user-wide: `SandboxSlice` hardcodes `evogit.slice`, and init cleanup and shutdown stop that whole slice, so instances under one user share budgets and cleanup boundaries.
+- `Sandbox.capabilities/0` reports nominal capabilities without consulting `enabled?/0`, while auto-selection checks executable availability, not successful isolation.
+- **scp of a remote config path containing SPACES is unhandled**: `:copying_config` creates/probes the dir with `$HOME`-rooted double-quoted paths, but the scp destination is rewritten to the `~` form by `scp_remote_path/1` (SFTP-speaking scp re-parses it), so uploading into `~/Library/Application Support/genesis` depends on scp's protocol (sftp verbatim works; legacy scp word-splits); failures stay best-effort.
+- **Process/thread exhaustion in containers breaks git forks (EAGAIN)**: in rootless podman per-UID `RLIMIT_NPROC` spans container + host, so `fork()` fails ("cannot fork() ... Resource temporarily unavailable") and agents are lost to crash-retry; the host-limit prevention list is in root `../CONTEXT.md` § Known Issues.
+
+## Windows-Only Runtime Hazards (audit index)
+
+Latently Windows-broken code (`Platform.windows?()`-gated, so unreachable on Linux/macOS dev+CI) — each item is a raise/degradation, not a compile error.
+
+- **`Port.open` `{:env, ...}` requires CHARLISTS** while `System.cmd/3` normalizes binaries — the ONE raw-port env site is `Sandbox.None`'s Windows clause.
+- **`Port.info(port, :os_pid)` returns `{:os_pid, pid}` and `Port.close/1` RAISES on a closed port** — `Sandbox.Helpers.wait_for_os_pid/2` unwraps and timeouts close via idempotent `Helpers.close_port/1`, so `taskkill /T /F` and bwrap's group kill fire.
+- **Tool raises are CONTAINED**: `ToolRuntime.Executor.execute_tool_with_timeout/4` spawns a linked `Task.async` and `execute_tool_task/4` has its own `try/rescue/catch`, so a raising tool becomes `Error: Tool execution crashed: …`; only `:normal`/`:shutdown`/`:kill`/`{:shutdown, _}` exits re-raise (a `nil` yield is the timeout arm).
+- **`GitEnv` exports `GIT_EDITOR` UNQUOTED** (`derive_windows_true_exe/0`) — git hands it to `sh -c`, so `C:\Program Files\…` splits and editor-opening git ops abort (`git_env.ex`).
+- **`RemoteConnection.run_cmd/2` spawn strings interpolate LOCAL paths unquoted** (`curl -fL -o #{cache_file} #{url}`, `scp #{local_path} …`) — one command line re-parsed by the child, so a spaced `AppData` path splits; those sites pass no `:hide`.
+- **`SystemCheck.check_tool/1`** passes `Executable.resolve/1`'s output to `System.cmd/3`, so a missing tool raises `ErlangError :enoent` instead of "unavailable".
+- **`Skills.Executor`'s Windows branch resolves bash only via `System.find_executable("bash")`** — bundled MinGit ships `sh`, not `bash.exe`, so bash skills degrade to the "install Git for Windows" error.
+
+## Background Job Timers (test seam)
+
+All timing knobs are CALL-TIME app-env reads (never TOML, so overriding modules stay `async: false` and restore in `on_exit`): `:background_tick_interval_ms` (1_000), `:background_poll_interval_ms` (100, read ONCE per wait as the base of the ×1.5 backoff capped at 3_000 ms), `:background_wait_default_ms` (120_000), `:background_wait_max_ms` (test-only, POSITIVE ints only).
+`wait_max_ms/0` is DERIVED at CALL time: `Config.resolve([:scheduler, :max_tool_timeout])` minus `dispatch_headroom_ms/0` (`@dispatch_headroom_ms` 25_000, the ONE headroom literal), floored at 1_000 ms (1_775_000 ms with the default config); `Agent.Tools.default_timeout_ms/1` adds the SAME headroom back for `job_output`, landing its dispatch ceiling exactly on `[:scheduler, :max_tool_timeout]`. Detail: `./agent/tools/CONTEXT.md` + `./background_jobs/CONTEXT.md`.
