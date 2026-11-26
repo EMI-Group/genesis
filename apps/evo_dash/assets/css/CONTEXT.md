@@ -101,9 +101,8 @@ THREE layers, every value derived with `color-mix()` from the existing base/neut
 
 | Token | Layer | Role |
 |---|---|---|
-| `--surface-shell` | 0 | workbench top bar + window chrome |
-| `--surface-rail` | 0 | left sidebar, Settings navigation and History dock |
-| `--surface-dock` | 0 | Source Control dock with a restrained secondary wash |
+| `--surface-shell` | 0 | workbench top bar + frame gutter (the ONE chrome tone that lifts in the dark theme) |
+| `--surface-rail` | 0 | the recessed tone: left sidebar, Settings navigation, BOTH docked right panels (History + Source Control) and a nested task-card panel |
 | `--surface-canvas` | 1 | center content canvas (`#main-content`/`#main-scroll`), flat, never shadowed |
 | `--surface-text-muted` | — | opaque neutral foreground for the composer placeholders and History controls |
 | `--surface-raised` | 2 | palettes, menus, dialogs, notifications |
