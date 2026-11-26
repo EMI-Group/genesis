@@ -56,6 +56,9 @@ defmodule EvoDashWeb.SettingsLive.ModelIdsTest do
     Enum.filter(@retired_ids, &retired_id?(value, &1))
   end
 
+  # A mounted page can be starved for seconds on a loaded host, where
+  # `:sys.get_state/1`'s 5 s default exits the test.
+  @assigns_timeout_ms 30_000
   setup do
     # Per-process config dir: an EMPTY temp dir guarantees no config.toml
     # exists, so the page renders catalog/schema defaults deterministically
@@ -221,7 +224,7 @@ defmodule EvoDashWeb.SettingsLive.ModelIdsTest do
     end
   end
 
-  defp assigns(view), do: :sys.get_state(view.pid, 30_000).socket.assigns
+  defp assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
   # Non-vacuity: a provider that ships catalog models must actually render at
   # least one CURRENT model id at the model step — proving the assertions above
   # inspected real model buttons rather than an empty panel.

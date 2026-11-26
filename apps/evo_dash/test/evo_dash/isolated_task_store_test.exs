@@ -21,6 +21,10 @@ defmodule EvoDash.Test.IsolatedTaskStoreTest do
   # Witness for "two successive `isolate!/1` calls get DISTINCT database files",
   # shared by this module's tests (ExUnit may run them in either order).
   @observed_key {__MODULE__, :observed_sqlite_paths}
+  # The isolated `EvoGit.Store` is a GenServer whose call path contends on the
+  # sqlite writer queue and can be starved for seconds on a loaded host, where
+  # `:sys.get_state/1`'s 5 s default exits the test.
+  @wait_budget_ms 30_000
 
   setup do
     # Registered BEFORE any `isolate!/1` call below, and ExUnit runs `on_exit`
@@ -245,7 +249,7 @@ defmodule EvoDash.Test.IsolatedTaskStoreTest do
   # The sqlite FILE the isolated `EvoGit.Store` (which holds the singleton name
   # while a test isolates) is opened on; the temp dirs this module's own
   # `isolate!/1` calls created (asserted EMPTY by the post-teardown hook).
-  defp isolated_sqlite_path, do: :sys.get_state(EvoGit.Store).data_dir
+  defp isolated_sqlite_path, do: :sys.get_state(EvoGit.Store, @wait_budget_ms).data_dir
 
   defp isolated_root_dirs do
     Path.wildcard(Path.join(System.tmp_dir!(), "evogit_test_#{@prefix}_*"))

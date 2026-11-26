@@ -152,6 +152,11 @@ defmodule EvoDash.Test.IsolatedTaskStore do
   # `isolated_supervisor/0`.
   @supervisor_key {__MODULE__, :isolated_supervisor}
 
+  # The store/registry state reads below can be starved for seconds on a loaded
+  # host (a Store call path contends on the sqlite writer queue), where
+  # `:sys.get_state/1`'s 5 s default exits the caller.
+  @wait_budget_ms 30_000
+
   @doc """
   The PID of the isolated supervisor the LAST `isolate!/1` call started in the
   CALLING process (`nil` when that process never isolated).
@@ -822,7 +827,7 @@ defmodule EvoDash.Test.IsolatedTaskStore do
         raise "EvoGit.Store is not running; the production store was never restored"
 
       store_pid ->
-        actual = :sys.get_state(store_pid).data_dir
+        actual = :sys.get_state(store_pid, @wait_budget_ms).data_dir
 
         if actual != expected do
           raise "EvoGit.Store is bound to #{inspect(actual)}, expected the production " <>
@@ -835,7 +840,7 @@ defmodule EvoDash.Test.IsolatedTaskStore do
         raise "EvoGit.TaskRegistry is not running"
 
       tr_pid ->
-        task_store = :sys.get_state(tr_pid).task_store
+        task_store = :sys.get_state(tr_pid, @wait_budget_ms).task_store
 
         if task_store != EvoGit.Store do
           raise "EvoGit.TaskRegistry is bound to task_store #{inspect(task_store)}, " <>
@@ -1012,7 +1017,7 @@ defmodule EvoDash.Test.IsolatedTaskStore do
         raise "EvoGit.Store was not restored after isolation"
 
       pid ->
-        actual = :sys.get_state(pid).data_dir
+        actual = :sys.get_state(pid, @wait_budget_ms).data_dir
 
         if actual != expected do
           raise "EvoGit.Store restored onto #{inspect(actual)}, expected #{inspect(expected)}"

@@ -2,6 +2,10 @@ defmodule EvoDashWeb.MCPTest do
   use EvoDashWeb.ConnCase, async: false
   @moduletag :tmp_dir
   @token String.duplicate("test-token", 5)
+  # The scheduler is a registry GenServer whose call path contends with running
+  # agents and can be starved for seconds on a loaded host, where
+  # `:sys.get_state/1`'s 5 s default exits the test.
+  @wait_budget_ms 30_000
 
   setup %{tmp_dir: dir} do
     Process.put(:evogit_config_dir, dir)
@@ -180,7 +184,7 @@ defmodule EvoDashWeb.MCPTest do
   end
 
   test "configuration paths and existing reload behavior are exposed without the dashboard" do
-    scheduler = :sys.get_state(EvoGit.AgentScheduler)
+    scheduler = :sys.get_state(EvoGit.AgentScheduler, @wait_budget_ms)
     on_exit(fn -> :sys.replace_state(EvoGit.AgentScheduler, fn _ -> scheduler end) end)
     check = rpc("tools/call", %{"name" => "genesis_check"})["result"]["structuredContent"]
     assert check["config_files"]["config"] == EvoGit.Config.config_path()

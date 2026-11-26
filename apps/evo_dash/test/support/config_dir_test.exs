@@ -374,6 +374,10 @@ defmodule EvoDash.Test.ConfigDirMountedTest do
   alias EvoDash.Test.ConfigDir
   alias EvoDash.Test.ConfigDirTest.Fixture
 
+  # A mounted page can be starved for seconds on a loaded host, where
+  # `:sys.get_state/1`'s 5 s default exits the test.
+  @assigns_timeout_ms 30_000
+
   setup context, do: Fixture.setup(context)
 
   test "the mounted LiveView resolves the per-process config dir",
@@ -446,5 +450,5 @@ defmodule EvoDash.Test.ConfigDirMountedTest do
 
   # LiveViewTest's View exposes no assigns accessor; use the same synchronous
   # state read as the Projects and Settings page suites.
-  defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
+  defp assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
 end
