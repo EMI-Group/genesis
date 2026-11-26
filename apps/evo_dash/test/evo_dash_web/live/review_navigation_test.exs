@@ -6,6 +6,8 @@ defmodule EvoDashWeb.ReviewNavigationTest do
   import Phoenix.LiveViewTest
   import EvoDashWeb.ReviewLiveTest.Helpers
 
+  alias EvoDashWeb.ReviewLive.LoadData
+  alias EvoDashWeb.WorkbenchComponent
   alias EvoGit.Adapters.Git
 
   setup do
@@ -14,6 +16,57 @@ defmodule EvoDashWeb.ReviewNavigationTest do
   end
 
   describe "canonical workbench navigation" do
+    test "History waits for the Review lookup, then reads only the resolved project", %{
+      conn: conn
+    } do
+      {project, sha, base} = navigation_repo!("Agent change commit")
+      task_id = seed_review_task!(project, sha, base)
+      sibling_id = seed_review_task!(project, sha, base)
+      other_id = seed_review_task!(review_tmp_path("review-other-project-"), sha, base)
+      block_review_lookup(task_id)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      local = node()
+      assert_receive {:review_lookup_waiting, worker, ref, ^local, ^task_id}, async_wait_budget()
+
+      assert has_element?(view, ~s(#app-layout[data-workbench-history-scope-pending="true"]))
+      assert has_element?(view, "#workbench-history-toggle")
+      assert has_element?(view, "#workbench-history-content [role=status]", "Resolving project…")
+      refute has_element?(view, "#workbench-git-toggle")
+      refute_history_data(view)
+
+      # These fields are set before the component starts either History read.
+      # Unlike absent rows or async pids, they also detect a fetch that already finished.
+      assert %{
+               scope_pending?: true,
+               project: nil,
+               request: nil,
+               history_sig: nil,
+               project_options_scope: nil
+             } = history_assigns(view)
+
+      send(worker, {:release_review_lookup, ref})
+      flush_review_load(view)
+      html = render_async(view, async_wait_budget())
+
+      assert_review_shell(view, task_id, project)
+      refute has_element?(view, "#workbench-history-content [role=status]", "Resolving project…")
+
+      assert has_element?(
+               view,
+               ~s(#workbench-history-project-filter option[selected][value="#{project}"])
+             )
+
+      row_ids =
+        html
+        |> Floki.parse_document!()
+        |> Floki.find("#workbench-history-rows [data-workbench-item=task]")
+        |> Floki.attribute("data-item-id")
+
+      refute other_id in row_ids
+      assert Enum.sort(row_ids) == Enum.sort([task_id, sibling_id])
+    end
+
     test "review, foreign commit detail and its back link keep one task and primary project", %{
       conn: conn
     } do
@@ -167,6 +220,42 @@ defmodule EvoDashWeb.ReviewNavigationTest do
       assert_unscoped_review(view, "", nil)
     end
 
+    defp block_review_lookup(task_id) do
+      owner = self()
+
+      EvoDash.Test.Seam.put(:review_load_runner, fn
+        node, ^task_id, opts ->
+          ref = Process.monitor(owner)
+          send(owner, {:review_lookup_waiting, self(), ref, node, task_id})
+
+          receive do
+            {:release_review_lookup, ^ref} ->
+              Process.demonitor(ref, [:flush])
+              LoadData.load(node, task_id, opts)
+
+            {:DOWN, ^ref, :process, ^owner, _reason} ->
+              {:error, "Test ended before releasing the Review lookup"}
+          end
+
+        node, other_task_id, opts ->
+          LoadData.load(node, other_task_id, opts)
+      end)
+    end
+
+    defp history_assigns(view) do
+      # Read the mounted component's own assigns from the LiveView channel.
+      %{components: {instances, ids, _next_cid}} = :sys.get_state(view.pid, async_wait_budget())
+      id = "workbench-history-content"
+      cid = ids |> Map.fetch!(WorkbenchComponent) |> Map.fetch!(id)
+      {WorkbenchComponent, ^id, assigns, _private, _prints} = Map.fetch!(instances, cid)
+      assigns
+    end
+
+    defp refute_history_data(view) do
+      refute has_element?(view, "#workbench-history-filters")
+      refute has_element?(view, "#workbench-history-rows")
+    end
+
     # Review reads the persisted SHAs even after a task branch is gone. Keep
     # the commits on main so navigation needs neither a merge check nor its stub.
     defp navigation_repo!(subject) do
@@ -206,6 +295,7 @@ defmodule EvoDashWeb.ReviewNavigationTest do
                "data-workbench-title" => "Test objective"
              }
 
+      refute has_element?(view, "#app-layout[data-workbench-history-scope-pending]")
       assert has_element?(view, "#workbench-tabs[phx-update=ignore]")
       refute has_element?(view, "#workbench-tabs > *")
       assert has_element?(view, "#workbench-history-toggle")
@@ -221,6 +311,9 @@ defmodule EvoDashWeb.ReviewNavigationTest do
 
       expected = if task_id, do: Map.put(expected, "data-workbench-task", task_id), else: expected
       assert review_shell(view) == expected
+      refute has_element?(view, "#app-layout[data-workbench-history-scope-pending]")
+      refute has_element?(view, "#workbench-history-content [role=status]", "Resolving project…")
+      refute_history_data(view)
       refute has_element?(view, "#workbench-history-toggle")
       refute has_element?(view, "#workbench-git-toggle")
       refute has_element?(view, "#main-content h1", "Agent change commit")
