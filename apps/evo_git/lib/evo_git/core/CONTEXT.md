@@ -46,6 +46,14 @@ On the `{:error, _}` path `build_dynamic_context/1` returns `"Current Path: '#{s
 `ContextNode.load/2,3` (`context_node.ex:104-122`) sets `path: normalize_relpath(relative_path)` (canonical relative `./...`), `repo: repo_path` VERBATIM (absolute when the caller passes an absolute root — all runtime callers do: `runtime/genesis.ex:219`, `runtime/evolution.ex:97`, `runtime/skill_extraction.ex:21`, `runtime/self_reflective.ex:78`) and `vct_path: EvoGit.VCT.vct_path_for(repo_path, normalized_path)` — but `build_context/2` receives `repo_path` as a SEPARATE argument, not via `node.repo`.
 `hierarchy_nodes/3` does NOT call `load/3` per level: it builds the syntactic chain, issues ONE `EvoGit.VCT.vct_paths_for/2` call for it and assembles the same `%__MODULE__{}` structs directly (index-paired, `nil`-padded), so a chain of N levels costs ONE VCT read instead of N — `vct_path` is the only field that degrades when that read cannot answer.
 
+### Two-Scope CONTEXT.md (Shared vs Local)
+A `CONTEXT.md` may carry ONE divider line, the literal `<!-- genesis:local -->` (`EvoGit.Core.ContextScope.marker/0`): text before it is **Shared** (the node AND its descendants), text after it is **Local** (ONLY agents assigned to that directory), and the divider line itself is NEVER rendered.
+The VCT global stage and EVERY ancestor stage render SHARED ONLY (`:shared`), so a parent's node-local note never reaches a leaf agent.
+The ASSIGNED node — the LAST element of `hierarchy_nodes/2`, which is the root itself for `build_context("./", repo)` — renders the WHOLE file (`:all`).
+Scope selection runs on the RAW content FIRST; front-matter stripping and per-stage `context_max_bytes` truncation then run on the SELECTED text, so front matter belongs to the Shared part.
+A divider-less file renders BYTE-IDENTICALLY to the pre-scope output (the invariant that keeps every existing prompt stable), and a stage blank after scope selection is skipped: an all-Local ancestor contributes no stage, while an all-Local assigned node still renders ONE stage with empty Shared.
+The divider/splice primitives live in `EvoGit.Core.ContextScope`; the design record is `docs/context-scopes.md`.
+
 ### Node identity & path semantics (canonical definition)
 A context-tree node is identified ONLY by the pair `{%ContextNode{}.repo_id, %ContextNode{}.path}` — there is no id, hash or registry row; `path` is ALWAYS a relative directory path from that repo's root (`"primary"` or a foreign repo id), in canonical `"./foo/bar"` form with `"./"` as the root; `vct_path` is derived METADATA and takes no part in identity.
 `repo` is the absolute base path the relative `path` is expanded against (`Platform.safe_expand(node.path, node.repo)`); runtime callers pass the agent's WORKTREE, so the same relative path resolves inside that worktree.
