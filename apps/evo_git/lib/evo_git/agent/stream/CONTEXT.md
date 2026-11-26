@@ -83,6 +83,18 @@ Terminal delivery, current-worker down, force cancellation and termination reset
 At most one flush timer exists; a bounded pending yield/reset batch may briefly keep it in `:awaiting_input` or `:finalizing`, and `:flush_deltas` is handled in every phase.
 Once the pending batch settles, no flush timer remains; there is no idle TTL or polling timer.
 
+## Constraints
+A phase must describe work that is actually running: context compression and turn preparation now publish `:compressing` and `:preparing`, and any other new pre-turn work (drains, setup) must likewise publish a named phase rather than leaving `:idle`, or a busy agent is reported as idle for its whole duration.
+No replay or periodic snapshot polling may be added.
+Capture must remain independent of the watcher gate so mid-attempt attachment and interruption do not depend on prior watchers.
+Publication is gated by the session's watcher map, never inferred from Registry or PubSub subscriber counts.
+Subscriptions and their consumer-local memo must be managed from the same consumer process.
+Snapshots carry the full transcript and are heavy RPC payloads; ordinary deltas and unwatch are lightweight.
+
+## Routing Table
+This directory has no child directories.
+`activity.ex` owns pure live projection, `sink.ex` owns worker-local capture, `snapshot.ex` owns snapshot shape, `watchers.ex` owns monitors/publication, `batcher.ex` owns coalescing data, and `interrupted.ex` owns the stream interrupt exception.
+<!-- genesis:local -->
 ## Activity Timeline — every busy window has a name
 
 `Activity.t()` carries NO timestamp — only `%{phase: …, current_call: %{id, turn, attempt, text, thinking, checkpointed} | nil}` — so a consumer cannot distinguish a fresh `:idle` from a 60-second-old one and must not invent a staleness rule.
@@ -97,15 +109,3 @@ Slot queueing is NOT idle by construction: `start_call/1` precedes `AgentSchedul
 Phases that outlive the work they name: `:llm_complete` also covers the post-batch `ConflictState.refresh/1` git call and the commit reads (before the boundary checkpoint), and `:tools` also covers tool-slot and subagent queueing.
 Remaining genuine `:idle` sites: `Sink.call_phase(id, :idle)` on a stream interrupt, `Session.resume/3` before the next exchange worker, and the exit/reset paths that reset before flushing.
 Consumer mapping (owned outside this node): `EvoDashWeb.AgentsLive.StreamPresentation.activity/1` + `StreamPanel.activity_label/1` render `:idle` as "Idle", `:llm_waiting` as "Waiting for model capacity", `:llm` as "Generating response", `:tools` as "Executing tools", `:llm_complete` as "Response generated" and `:retry_wait` as "Waiting to retry", with no timer and no staleness heuristic; `:compressing` and `:preparing` are the two new labels owned by the dashboard, which falls back to "Activity unavailable" for anything it does not label.
-
-## Constraints
-A phase must describe work that is actually running: context compression and turn preparation now publish `:compressing` and `:preparing`, and any other new pre-turn work (drains, setup) must likewise publish a named phase rather than leaving `:idle`, or a busy agent is reported as idle for its whole duration.
-No replay or periodic snapshot polling may be added.
-Capture must remain independent of the watcher gate so mid-attempt attachment and interruption do not depend on prior watchers.
-Publication is gated by the session's watcher map, never inferred from Registry or PubSub subscriber counts.
-Subscriptions and their consumer-local memo must be managed from the same consumer process.
-Snapshots carry the full transcript and are heavy RPC payloads; ordinary deltas and unwatch are lightweight.
-
-## Routing Table
-This directory has no child directories.
-`activity.ex` owns pure live projection, `sink.ex` owns worker-local capture, `snapshot.ex` owns snapshot shape, `watchers.ex` owns monitors/publication, `batcher.ex` owns coalescing data, and `interrupted.ex` owns the stream interrupt exception.
