@@ -32,6 +32,7 @@ defmodule EvoDashWeb.HomeLive.Workspace do
   alias EvoDashWeb.DraftScope
   alias EvoDashWeb.HomeLive.ChatState
   alias EvoDashWeb.ProjectsLive.ProjectFlow
+  alias EvoGit.Util.Strings
 
   @workspace_prefix "vct:///workspaces/"
 
@@ -58,6 +59,37 @@ defmodule EvoDashWeb.HomeLive.Workspace do
       _ -> nil
     end
   end
+
+  @doc """
+  The optional workbench title of an already resolved project or workspace.
+
+  Only the current target's settled selection can supply a name. An open draft
+  must also address the selection (a workspace matches by point, not by its
+  execution member's path). An attached conversation can use its scoped cached
+  selection without a draft key. Otherwise the shell owns the path/route fallback.
+  """
+  def context_name(assigns) do
+    {target_id, target} = current_scope = scope(assigns)
+
+    with false <- assigns[:workspace_loading] == true,
+         false <- not is_nil(target_id) and target == node(),
+         %{node: ^target, path: path, name: name} = selection <- assigns[:workspace],
+         true <- Map.get(selection, :node_id) == target_id,
+         true <- ProjectFlow.absolute_path_for_node?(target, path),
+         true <- is_binary(name) and Strings.present?(name),
+         true <- context_matches_draft?(assigns[:workbench_draft_key], current_scope, selection) do
+      name
+    else
+      _ -> nil
+    end
+  end
+
+  defp context_matches_draft?(nil, _scope, _selection), do: true
+
+  defp context_matches_draft?({target_id, target, token, _}, {target_id, target}, selection),
+    do: token in draft_aliases(selection)
+
+  defp context_matches_draft?(_, _, _), do: false
 
   @doc "The draft-scope token the open workbench draft is keyed by (nil when none)."
   def draft_scope(%{workbench_draft_key: {_, _, token, _}}) when is_binary(token), do: token
