@@ -80,7 +80,7 @@ Per-function detail lives in the child CONTEXT.md each row names; arrow = that c
 | `EvoGit.Adapters.Git` / `GitHub` / `CowWorktree` / `GitEnv` | git/gh wrappers, CoW worktrees, single git env source → `adapters/` |
 | `EvoGit.Sandbox` / `SandboxSlice` / `SandboxProcessRegistry` | backend dispatch (`[sandbox] backend`) + Linux slice/registry → `sandbox/` |
 | `EvoGit.Runtime` / `Runtime.Helpers` / `Runtime.SelfReflective` | phase coordinator + `merge_and_report/3,4`, `notify_finalizing`, `load_foreign_repos`, `resolve_root_agent/2` + repo-less runtime → `runtime/` |
-| `EvoGit.SelfReflectiveSource` | managed clone `<data_dir>/genesis-source` as reserved mount `vct:///genesis-source` (`point/0`, `system_mounts/0`, `ensure_mount/0`, `status/0`, `reference_path/0`, `available?/0`); LOCAL-NODE-ONLY |
+| `EvoGit.SelfReflectiveSource` | Genesis source root as reserved mount `vct:///genesis-source` — `source_mode/0` + `source_dir/0` (the running checkout in `:source` mode, the managed clone `<data_dir>/genesis-source` in `:release` mode), `running_source_dir/0`, `managed_dir/0`, `point/0`, `system_mounts/0`, `ensure_mount/0`, `status/0`, `reference_path/0`, `available?/0`, `clone_at/2`, release boot auto-pull (`running_version/0`, `sync_needed?/0`, `sync_now/0`, `maybe_sync_on_boot/0`); LOCAL-NODE-ONLY |
 | `EvoGit.ProjectConfig` | `genesis.toml` reader (`[foreign_repos.<id>]` `writable`, `base_sha`) |
 | `EvoGit.Review` / `CommitGraph` / `TaskCommitGraph` | review diff/merge (`merge_branch/2,3`, `check_merge/3`, `default_merge_target/1`) + commit graph → `lib/evo_git/CONTEXT.md` |
 | `EvoGit.Config` / `Defaults` / `Platform` | 3-level resolver over the RAM snapshot, account persistence/health, OS/data-dir detection → `config/` |
