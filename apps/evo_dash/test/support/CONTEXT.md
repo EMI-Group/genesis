@@ -154,3 +154,4 @@ Measured per-call breakdown: ~0.9 ms already-migrated boot + ~0.07 ms copy + ~1.
   Genesis worker tasks share one per-task `TMPDIR`, which is exactly that condition; give one run a private `export TMPDIR=$(mktemp -d)` (or re-run standalone) before suspecting a real regression.
   Within ONE run the contract above is untouched: isolated roots are unique.
 - Test-support modules must not be called from `lib/`.
+- Every `:sys.get_state/1` read of a process that can be starved passes an explicit 30 s budget (`@assigns_timeout_ms` for LiveView assigns, `@wait_budget_ms` for store/registry state), because the 5 s default exits the caller on a loaded host: `config_dir_test.exs`'s `assigns/1` and all three state reads in `isolated_task_store.ex` (`assert_production!/0`, `verify_restored!/0`).
