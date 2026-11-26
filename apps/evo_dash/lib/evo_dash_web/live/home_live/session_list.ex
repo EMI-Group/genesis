@@ -34,9 +34,11 @@ defmodule EvoDashWeb.HomeLive.SessionList do
 
   ## Async load contract
 
-  `sync_context/1` replaces rows on a scope change, seeding only from this
+  `sync_context/1,2` replaces rows on a scope change, seeding only from this
   transport's last successful read of the exact `{target_id, BEAM_node}`.
-  `refresh/1` also reloads an unchanged scope. Neither loads a gated context.
+  On first sync, preassigned rows can be retained if the previous and current
+  view resolve to the same available scope. `refresh/1` also reloads an
+  unchanged scope. Neither loads a gated context.
 
   `spawn_load/2` runs the (possibly remote) load on `EvoDash.TaskSupervisor`
   through `EvoDash.SafeCall.start/4` and reports
@@ -172,13 +174,14 @@ defmodule EvoDashWeb.HomeLive.SessionList do
     end
   end
 
-  @doc "Replace rows and refresh when the viewed Conversations scope changes."
-  def sync_context(socket), do: request(socket, false)
+  @doc "Sync the viewed scope; callers changing node or gate assigns pass their previous assigns."
+  def sync_context(socket), do: sync_context(socket, socket.assigns)
+  def sync_context(socket, previous_assigns), do: request(socket, previous_assigns, false)
 
   @doc "Refresh the current Conversations scope, retaining its displayed rows."
-  def refresh(socket), do: request(socket, true)
+  def refresh(socket), do: request(socket, socket.assigns, true)
 
-  defp request(socket, refresh?) do
+  defp request(socket, previous_assigns, refresh?) do
     context = context(socket.assigns)
     changed? = Map.fetch(socket.assigns, :session_list_context) != {:ok, context}
 
@@ -186,8 +189,7 @@ defmodule EvoDashWeb.HomeLive.SessionList do
       if changed? do
         assign(socket,
           session_list_context: context,
-          session_list:
-            if(context, do: WorkbenchSidebarCache.get(socket, cache_key(context)) || [], else: []),
+          session_list: seed_rows(socket, context, previous_assigns),
           session_list_loading: false,
           session_list_error: nil
         )
@@ -207,12 +209,24 @@ defmodule EvoDashWeb.HomeLive.SessionList do
     end
   end
 
-  defp context(%{current_node: beam} = assigns) when beam == node() do
-    if is_nil(assigns[:current_node_id]), do: {nil, beam}
+  defp seed_rows(_socket, nil, _previous_assigns), do: []
+
+  defp seed_rows(socket, scope, previous_assigns) do
+    rows = previous_assigns[:session_list]
+
+    if match?([_ | _], rows) and not Map.has_key?(previous_assigns, :session_list_context) and
+         context(previous_assigns) == scope do
+      rows
+    else
+      WorkbenchSidebarCache.get(socket, cache_key(scope)) || []
+    end
   end
+
+  defp context(%{current_node_id: nil, current_node: beam}) when beam == node(), do: {nil, beam}
 
   # A connection update can arrive before handle_params resolves the new BEAM.
   # A connected phase alone does not make the previous BEAM a valid scope.
+  # Same-BEAM aliases stay gated here because the Assistant cannot open their sessions.
   defp context(%{
          current_node_id: target,
          current_node: beam,

@@ -897,6 +897,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   def assign_node(socket, params, opts \\ []) do
     node_param = params["node"]
     preserve_unresolved? = Keyword.get(opts, :preserve_unresolved?, false)
+    previous_assigns = socket.assigns
 
     socket =
       case resolve_node_context(node_param) do
@@ -954,7 +955,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
     # differs.
     context = {socket.assigns[:current_node_id], socket.assigns[:current_node]}
 
-    socket = SessionList.sync_context(socket)
+    socket = SessionList.sync_context(socket, previous_assigns)
 
     if Map.get(socket.assigns, :tasks_node_loaded) == context do
       socket
@@ -1108,7 +1109,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   defp assign_remote_status(socket, status) do
     socket
     |> assign(:remote_status, status)
-    |> SessionList.sync_context()
+    |> SessionList.sync_context(socket.assigns)
   end
 
   # Derives the `:remote_status` assign for a remote node param from the
