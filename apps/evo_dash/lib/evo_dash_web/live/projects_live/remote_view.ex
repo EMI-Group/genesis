@@ -49,13 +49,14 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
     />
     <details
       id="workbench-task-settings"
-      class={["border-t border-base-300", !@inline && "mt-4"]}
+      class={["group border-t border-base-300", !@inline && "mt-4"]}
       phx-mounted={JS.ignore_attributes("open")}
     >
       <summary
         id="workbench-task-settings-title"
-        class="min-h-[var(--row-h)] pointer-coarse:min-h-[var(--touch-target)] cursor-pointer content-center text-sm font-semibold"
+        class="min-h-[var(--row-h)] pointer-coarse:min-h-[var(--touch-target)] cursor-pointer flex items-center gap-2 text-sm font-semibold"
       >
+        <.icon name="hero-chevron-right" class="size-4 shrink-0 group-open:rotate-90" />
         {gettext("Project Settings")}
       </summary>
       <div class="pb-4">

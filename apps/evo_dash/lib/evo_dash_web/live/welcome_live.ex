@@ -557,12 +557,16 @@ defmodule EvoDashWeb.WelcomeLive do
         </div>
 
         <div>
-          <h1 class="text-xl font-semibold">
-            {if ViewModel.all_set?(@step, @has_model?, @wizard_active),
-              do: gettext("You're All Set!"),
-              else: gettext("Welcome to Genesis")}
+          <h1
+            :if={ViewModel.all_set?(@step, @has_model?, @wizard_active)}
+            class="text-xl font-semibold"
+          >
+            {gettext("You're All Set!")}
           </h1>
-          <p class="text-sm text-base-content/70 mt-1">
+          <p class={[
+            "text-sm text-base-content/70",
+            ViewModel.all_set?(@step, @has_model?, @wizard_active) && "mt-1"
+          ]}>
             {gettext("Configure a provider and its models to start building with Genesis.")}
           </p>
         </div>
