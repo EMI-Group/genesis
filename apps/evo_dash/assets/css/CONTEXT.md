@@ -117,7 +117,7 @@ THREE layers, every value derived with `color-mix()` from the existing base/neut
 
 Light values are near-invisible (a light UI separates by border and tone, not shadow); the `[data-theme="dark"]` block re-declares every TONE with a stronger alpha and achromatic black elevations, because a dark surface separates by depth — `--radius-tab` is geometry and is NOT re-declared for dark.
 The rail is ONE restrained step BENEATH the content canvas in both themes, so the sidebar and the canvas read as one continuous surface; only the shell (top bar) wears the chrome step.
-In the dark theme the rail anchors on `var(--color-base-100)` because `base-200` is LIGHTER than `base-100` there, and that anchoring was what lifted the sidebar above the canvas; the dark token block therefore never lifts the rail.
+In the dark theme the rail anchors on `var(--color-base-100)` because `base-200` is LIGHTER than `base-100` there, so a `base-200` mix would lift the sidebar above the canvas; the dark token block therefore never lifts the rail.
 `:root` + `[data-theme="dark"]` is the only pair, because the Settings popup's iframe document has no `#app-layout` and still needs the tokens from its own `<html data-theme=…>`.
 RULE: content surfaces never carry a real shadow — only overlays consume `var(--elev-2)`/`var(--elev-3)`; a `box-shadow` on a content rule is either `none` or a `0 0 0 …` focus/glow ring (rings are not elevation).
 `workbench.css`/`assistant.css` therefore consume these tokens instead of defining a second tone pair: `--workbench-surface`/`--workbench-rail` are gone, and `--workbench-hover`/`--workbench-selected` are thin aliases of `--surface-hover`/`--surface-selected`, declared on BOTH `#app-layout` and `#workbench-window-content`.
