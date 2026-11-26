@@ -35,8 +35,8 @@ defmodule EvoDashWeb.HomeLive.SessionActions do
       module's own loader (exported as `default_load_attach/2`, because
       `load_attach/2` itself resolves the seam and would otherwise recurse).
     * `:home_session_list_runner` — 1-arity `(node)`, default
-      `&default_list/1` — the raw `{list_agents, list_awaiting_input}` pair,
-      shared with the conversation-list panel.
+      `&default_list/1` — the raw `{list_agents, list_awaiting_input}` pair or
+      an error when a remote read fails.
 
   ## Delivery policy
 
@@ -456,7 +456,7 @@ defmodule EvoDashWeb.HomeLive.SessionActions do
   end
 
   @doc """
-  The raw conversation-list data: `{agent_summaries, awaiting_entries}` from
+  The raw `{agent_summaries, awaiting_entries}` pair or an error from
   `:home_session_list_runner` (default `default_list/1`).
 
   Neither element is normalized here — the list panel decides how to render a
@@ -469,8 +469,24 @@ defmodule EvoDashWeb.HomeLive.SessionActions do
 
   @doc false
   # Seam default for `:home_session_list_runner` — the raw pair.
-  def default_list(node) do
-    {NodeContext.list_agents(node), NodeContext.list_awaiting_input(node)}
+  def default_list(local) when local == node() do
+    {NodeContext.list_agents(local), NodeContext.list_awaiting_input(local)}
+  end
+
+  def default_list(remote) do
+    # The forgiving list helpers turn RPC failures into [], indistinguishable
+    # from an empty node. The sidebar must only cache a successful read.
+    api = EvoGit.AgentScheduler.RemoteAPI
+
+    with {:ok, agents} when is_list(agents) <-
+           NodeContext.call_remote(remote, api, :list_agents, []),
+         {:ok, awaiting} when is_list(awaiting) <-
+           NodeContext.call_remote(remote, api, :list_awaiting_input, []) do
+      {agents, awaiting}
+    else
+      {:error, _} = error -> error
+      {:ok, other} -> {:error, {:unexpected_session_list_reply, other}}
+    end
   end
 
   ## Seams & small normalizers

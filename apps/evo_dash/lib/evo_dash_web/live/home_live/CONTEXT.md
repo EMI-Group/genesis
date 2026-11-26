@@ -102,9 +102,12 @@ The render wrapper carries `.assistant-column.is-empty` under the same condition
 No left rail: `SessionList.session_list/1` renders only the BODY of the shared app-layout sidebar's **Conversations** section, which `EvoDashWeb.Layouts.app` renders below Active Tasks on EVERY page; the page passes `session_list`, `session_list_loading`, `session_list_error`, `current_session_id` (and `current_page`).
 Rows are the UNION of live root self-reflective agents parked at `:awaiting_input`/`:running` (`SessionActions.list/1` = `list_agents/1` + `list_awaiting_input/1`, read defensively through the call-time `:home_session_list_runner` seam) and cached `EvoDash.ChatHistory.list_chats/0` conversations; a live session wins over a cached chat with the same id (the agent id IS the chat id).
 Rows are `%{id, title, marker}`, markers `:awaiting_input | :running | :ended`, ordered awaiting (newest id first), running (newest id first), then ended in cached order; `row_title/2` takes the cached first user message, else the core row's `objective`, else `gettext("Session %{id}")`, capped at 80 characters.
-Load contract: `spawn_load/2` bumps `session_list_seq`, sets `session_list_loading: true`, clears the error and always reports `{{:session_list_loaded, seq, node}, result}` via `EvoDash.SafeCall.start/4` (supervisor-start failure → loading cleared + error recorded); `applied/4` applies only while BOTH seq and node match — success replaces rows, an error keeps them and records it, and any matching result clears the flag.
+`SessionList.sync_context/1` clears the previous scope's rows and seeds the exact ungated `{target_id, BEAM_node}` from the same transport's `EvoDash.WorkbenchSidebarCache` before refreshing; a gated or unresolved scope has no rows or load.
+`SessionList.refresh/1` is shared by the task debounce and Assistant actions, and retains rows only while the scope is unchanged.
+`spawn_load/2` bumps `session_list_seq`, sets loading, and reports `{{:session_list_loaded, seq, node}, result}` through `EvoDash.SafeCall.start/4`; the `NodeAware` hook hands it to `applied/4`, which requires a current seq, node and available scope.
+A successful load replaces both the displayed rows and cache, even for `[]`; an error (including a remote transport failure or failed spawn) records the error without overwriting the rows or cache.
+The default remote `SessionActions.list/1` runner uses the tagged RPC boundary for both reads rather than the forgiving node helpers, so a failed remote read cannot appear as a successful empty list.
 Rendering: `id="chat-session-list"`, "Loading…", a "Could not load conversations." alert, "No conversations yet." when empty, rows `id={"chat-session-#{id}"}`; on `current_page == :assistant` a row PATCHES via `SessionActions.url/2`, elsewhere it NAVIGATES (a cross-LiveView patch is illegal); the current row is highlighted from `current_session_id` with `aria-current="page"`, markers "Waiting for you" (`:awaiting_input`, violet), "Running" (running dot), "Ended" (muted).
-The load OWNER is `EvoDashWeb.LiveHooks.NodeAware` (connected local mount, node-context change, `:node_aware_reload_tasks` debounce); the page refreshes locally only after adopting or closing a session and on `{:node_selected, _}` / `{:remote_connection_status, _, _}` — no polling.
 
 ## Approvals
 
@@ -266,7 +269,7 @@ The LiveView never blocks on a store/registry/cross-node call: every interactive
 | Spawned by | Self-message | Stale guard |
 |-----------|--------------|-------------|
 | `spawn_attach/2` (after `attach_stream/1`) | `{{:session_attached, seq, node, session_id, stream_seq}, result}` | `session_attach_seq` + node + `session_id`; inner `stream_seq` decides whether the attach surface applies |
-| `SessionList.spawn_load/2` | `{{:session_list_loaded, seq, node}, result}` | `session_list_seq` + node |
+| `SessionList.spawn_load/2` | `{{:session_list_loaded, seq, node}, result}` | `session_list_seq` + node + available context |
 | `async_lookup_agent/2` (`Task.Supervisor.start_child`) | `{:chat_agent_lookup, node, seq, task_id, stream_seq, agent}` | `stale?/3` + `chat_task_id` + `stream_attach_seq` + not `stream_active?/1` |
 | `async_fetch_history/2` | `{:chat_history_loaded, node, seq, agent_id, stream_seq, result}` | `stale?/3` + `chat_agent_id` + `stream_attach_seq` + not `stream_active?/1` |
 | `async_fetch_task/2` | `{:chat_task_loaded, node, seq, task_id, task}` | `chat_task_fetch_seq` + node + task_id |
