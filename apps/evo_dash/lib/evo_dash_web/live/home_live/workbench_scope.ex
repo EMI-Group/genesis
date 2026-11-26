@@ -43,6 +43,16 @@ defmodule EvoDashWeb.HomeLive.WorkbenchScope do
   def workspace_select(socket, %{"path" => path}),
     do: {:noreply, Workspace.select(socket, path)}
 
+  def workspace_browsed(socket, context, target, path) do
+    {:noreply,
+     if(
+       context == Workspace.picker_context(socket.assigns) and
+         target == elem(Workspace.scope(socket.assigns), 1),
+       do: Workspace.select(socket, path, :browse),
+       else: socket
+     )}
+  end
+
   def workspace_pick(socket, %{"point" => point}),
     do: {:noreply, Workspace.select_workspace(socket, point)}
 

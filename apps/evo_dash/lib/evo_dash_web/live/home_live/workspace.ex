@@ -37,6 +37,11 @@ defmodule EvoDashWeb.HomeLive.Workspace do
 
   def scope(assigns), do: {assigns[:current_node_id], assigns[:current_node] || node()}
 
+  def picker_context(%{chat_id: chat_id} = assigns) when not is_nil(chat_id),
+    do: if(!locked?(assigns), do: {assigns[:current_node_id], chat_id})
+
+  def picker_context(_assigns), do: nil
+
   def locked?(assigns),
     do:
       assigns[:session_attach_pending?] == true or
@@ -223,11 +228,11 @@ defmodule EvoDashWeb.HomeLive.Workspace do
     if socket.assigns.workspace_open, do: assign(socket, workspace_open: false), else: socket
   end
 
-  def select(socket, path) do
+  def select(socket, path, kind \\ :open) do
     if locked?(socket.assigns) or socket.assigns.workspace_loading do
       socket
     else
-      load(assign(socket, workspace_path: path), {:open, path})
+      load(assign(socket, workspace_path: path), {kind, path})
     end
   end
 
@@ -293,7 +298,7 @@ defmodule EvoDashWeb.HomeLive.Workspace do
             workspace_workspaces: Map.get(bundle, :workspaces) || []
           )
 
-        {loaded, {:ok, {:ok, workspace}}} when loaded in [:open, :mounted, :workspace] ->
+        {loaded, {:ok, {:ok, workspace}}} when loaded in [:open, :browse, :mounted, :workspace] ->
           if locked?(socket.assigns) do
             socket
           else
@@ -301,14 +306,21 @@ defmodule EvoDashWeb.HomeLive.Workspace do
           end
 
         {_, {:ok, {:error, message}}} ->
-          assign(socket, workspace_error: message)
+          selection_error(socket, kind, message)
 
         _ ->
-          assign(socket, workspace_error: gettext("Could not load the project. Try again."))
+          selection_error(socket, kind, gettext("Could not load the project. Try again."))
       end
     else
       socket
     end
+  end
+
+  defp selection_error(socket, kind, message) do
+    assign(socket,
+      workspace_error: message,
+      workspace_open: kind == :browse or socket.assigns.workspace_open
+    )
   end
 
   @doc "The display label of a member mount or an unresolved member ref."
@@ -348,12 +360,15 @@ defmodule EvoDashWeb.HomeLive.Workspace do
         assign(socket, workspace_seq: seq, workspace_loading: true, workspace_error: nil)
 
       _ ->
-        assign(socket, workspace_error: gettext("Could not load the project. Try again."))
+        selection_error(socket, kind, gettext("Could not load the project. Try again."))
     end
   end
 
   defp run_operation(:list, node_id, target), do: list(node_id, target)
-  defp run_operation({:open, path}, node_id, target), do: open(node_id, target, path)
+
+  defp run_operation({kind, path}, node_id, target) when kind in [:open, :browse],
+    do: open(node_id, target, path)
+
   defp run_operation({:mounted, key}, node_id, target), do: mounted(node_id, target, key)
 
   defp run_operation({:workspace, point}, node_id, target),

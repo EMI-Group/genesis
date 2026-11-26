@@ -4589,6 +4589,68 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).chat_draft == "unfinished message"
     end
 
+    test "recent projects are shown first and a browsed folder selects into the same chat", %{
+      conn: conn
+    } do
+      older = mount_test_project!("older")
+      recent = mount_test_project!("recent")
+      path = Path.join(recent.path, "folder to browse")
+      File.mkdir_p!(path)
+      on_exit(fn -> EvoDash.NodeContext.forget_project(node(), path) end)
+
+      {:ok, view, _} = live(conn, "/assistant")
+      chat_id = assigns(view).chat_id
+      render_change(view, "chat_input", %{"message" => "keep my draft"})
+      render_click(view, "workspace_toggle")
+      wait_until(fn -> not assigns(view).workspace_loading end)
+
+      assert has_element?(view, "#workspace-recent", "Recent projects")
+      assert has_element?(view, "#workspace-browse[data-workbench-project-window=select]")
+      assert has_element?(view, "#workspace-manual:not([open]) #workspace-form")
+
+      recent_paths =
+        view
+        |> element("#workspace-recent")
+        |> render()
+        |> Floki.parse_fragment!()
+        |> Floki.attribute("button", "phx-value-path")
+
+      assert Enum.filter(recent_paths, &(&1 in [older.path, recent.path])) ==
+               [recent.path, older.path]
+
+      render_hook(with_target(view, "#workbench-project-window-component"), "prepare", %{
+        "mode" => "select"
+      })
+
+      render_click(view, "workspace_close")
+      view |> form("#project-picker-path-form", %{"path" => path}) |> render_submit()
+      render_async(view, @async_wait_budget_ms)
+
+      assert has_element?(view, "#project-location[disabled]")
+
+      view
+      |> element("#workbench-project-window button[phx-click=open]", "Select project")
+      |> render_click()
+
+      assert_push_event(view, "workbench_project_window_close", %{})
+      wait_until(fn -> get_in(assigns(view), [:workspace, :path]) == path end)
+      assert assigns(view).chat_id == chat_id
+      assert assigns(view).chat_draft == "keep my draft"
+      assert has_element?(view, "#workspace-toggle[title='#{path}']")
+
+      render_hook(with_target(view, "#workbench-project-window-component"), "prepare", %{
+        "mode" => "select"
+      })
+
+      view |> form("#project-picker-path-form", %{"path" => older.path}) |> render_submit()
+      render_async(view, @async_wait_budget_ms)
+
+      render_click(view, "new_chat")
+      assert assigns(view).chat_id != chat_id
+      assert has_element?(view, "#workbench-project-window button[phx-click=open][disabled]")
+      assert assigns(view).workspace.path == path
+    end
+
     test "the picker lists workspaces and expanding one reveals members and missing refs", %{
       conn: conn
     } do

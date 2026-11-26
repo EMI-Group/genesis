@@ -43,6 +43,7 @@ defmodule EvoDashWeb.Layouts do
   attr(:workbench_task, :string, default: nil)
   attr(:workbench_draft, :string, default: nil)
   attr(:workbench_draft_project, :string, default: nil)
+  attr(:assistant_project_context, :any, default: nil)
 
   attr(:workbench_default_draft, :string,
     default: nil,
@@ -588,6 +589,7 @@ defmodule EvoDashWeb.Layouts do
         :if={!@simple_nav}
         module={EvoDashWeb.ProjectWindow}
         id="workbench-project-window-component"
+        assistant_project_context={@assistant_project_context}
         node_id={@current_node_id}
         targets={@remote_targets}
         statuses={@connection_statuses}

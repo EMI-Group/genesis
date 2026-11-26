@@ -90,7 +90,8 @@
 .assistant-menu-item:disabled { opacity: .45; }
 .assistant-project-path { font-size: var(--text-2xs); overflow-wrap: anywhere; color: color-mix(in srgb, var(--color-base-content) 65%, var(--color-base-100)); }
 .assistant-project-current, .assistant-project-recent { margin-block-end: 14px; }
-.assistant-project-form { display: flex; flex-direction: column; gap: 8px; }
+.assistant-project-recent-list { max-block-size: 132px; overflow-y: auto; }
+.assistant-project-form { display: flex; flex-direction: column; gap: 8px; margin-block-start: 8px; }
 .assistant-path-input { inline-size: 100%; min-inline-size: 0; padding: 10px 12px; border: 1px solid var(--color-base-300); border-radius: 9px; background: transparent; font-size: var(--text-xs); }
 .assistant-menu-submit { padding: 9px 12px; border-radius: 9px; background: var(--color-base-content); color: var(--color-base-100); font-size: var(--text-xs); font-weight: 500; }
 .assistant-menu-submit:disabled { opacity: .4; }
@@ -112,8 +113,8 @@
 .assistant-task-choice-meta > :first-child { flex-shrink: 0; }
 .assistant-task-choice-followed { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; font-size: var(--text-2xs); }
 .assistant-task-picker-notice { padding: 16px 8px; font-size: var(--text-xs); line-height: 1.5; color: color-mix(in srgb, var(--color-base-content) 70%, var(--color-base-100)); }
-.assistant-task-by-id { border-block-start: 1px solid var(--color-base-300); padding-block-start: 10px; margin-block-start: 8px; }
-.assistant-task-by-id > summary { cursor: pointer; font-size: var(--text-2xs); color: color-mix(in srgb, var(--color-base-content) 65%, var(--color-base-100)); }
+.assistant-task-by-id, .assistant-project-manual { border-block-start: 1px solid var(--color-base-300); padding-block-start: 10px; margin-block-start: 8px; }
+.assistant-task-by-id > summary, .assistant-project-manual > summary { cursor: pointer; font-size: var(--text-2xs); color: color-mix(in srgb, var(--color-base-content) 65%, var(--color-base-100)); }
 .assistant-task-by-id form { margin-block-start: 10px; }
 @container assistant (inline-size < 540px) {
   .assistant-follow-panel { position: fixed; inset-inline: 12px; inset-block-start: auto; inset-block-end: 12px; inline-size: auto; max-block-size: min(480px, calc(100dvh - 80px)); }

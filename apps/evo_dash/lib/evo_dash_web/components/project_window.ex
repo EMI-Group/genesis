@@ -14,6 +14,8 @@ defmodule EvoDashWeb.ProjectWindow do
        location: "",
        directory: nil,
        target: nil,
+       assistant_project_context: nil,
+       selection_context: nil,
        prepared: false,
        loading: false,
        busy: false,
@@ -40,7 +42,11 @@ defmodule EvoDashWeb.ProjectWindow do
         project_form: to_form(%{"name" => assigns.name}),
         location_form: to_form(%{"location" => assigns.location}),
         path_form: to_form(%{"path" => ""}),
-        selected_directory?: is_binary(get_in(assigns, [:directory, :path]))
+        selected_directory?: is_binary(get_in(assigns, [:directory, :path])),
+        selection_stale?:
+          assigns.mode == "select" and
+            (is_nil(assigns.selection_context) or
+               assigns.selection_context != assigns.assistant_project_context)
       )
 
     ~H"""
@@ -53,9 +59,11 @@ defmodule EvoDashWeb.ProjectWindow do
       >
         <header class="workbench-window-header">
           <h2 id="workbench-project-window-title">
-            {if @mode == "create",
-              do: gettext("Create New Project"),
-              else: gettext("Open Existing Project")}
+            {case @mode do
+              "create" -> gettext("Create New Project")
+              "select" -> gettext("Select project")
+              _ -> gettext("Open Existing Project")
+            end}
           </h2>
           <button
             type="button"
@@ -101,7 +109,7 @@ defmodule EvoDashWeb.ProjectWindow do
                 type="select"
                 options={[{gettext("Local"), ""}] ++ Enum.map(@targets, &{&1.name, &1.id})}
                 class="select w-full"
-                disabled={@busy}
+                disabled={@busy || @mode == "select"}
               />
             </.form>
           </div>
@@ -229,14 +237,18 @@ defmodule EvoDashWeb.ProjectWindow do
               {if @busy, do: gettext("Working…"), else: gettext("Create")}
             </button>
             <button
-              :if={@mode == "open"}
+              :if={@mode in ["open", "select"]}
               type="button"
               phx-click="open"
               phx-target={@myself}
               class="btn btn-primary"
-              disabled={!@selected_directory? || @busy || @loading}
+              disabled={!@selected_directory? || @busy || @loading || @selection_stale?}
             >
-              {if @busy, do: gettext("Working…"), else: gettext("Open project")}
+              {cond do
+                @busy -> gettext("Working…")
+                @mode == "select" -> gettext("Select project")
+                true -> gettext("Open project")
+              end}
             </button>
           </footer>
         </div>
@@ -246,8 +258,11 @@ defmodule EvoDashWeb.ProjectWindow do
   end
 
   @impl true
-  def handle_event("prepare", %{"mode" => mode}, socket) when mode in ["create", "open"] do
-    if socket.assigns.busy do
+  def handle_event("prepare", %{"mode" => mode}, socket)
+      when mode in ["create", "open", "select"] do
+    context = if mode == "select", do: socket.assigns.assistant_project_context
+
+    if socket.assigns.busy or (mode == "select" and is_nil(context)) do
       {:noreply, socket}
     else
       {:noreply,
@@ -255,6 +270,7 @@ defmodule EvoDashWeb.ProjectWindow do
        |> cancel_async(:browse)
        |> assign(
          mode: mode,
+         selection_context: context,
          location: socket.assigns.node_id || "",
          target: nil,
          prepared: true,
@@ -268,7 +284,7 @@ defmodule EvoDashWeb.ProjectWindow do
   end
 
   def handle_event("select_location", %{"location" => location}, socket) do
-    if !socket.assigns.busy and
+    if socket.assigns.mode != "select" and !socket.assigns.busy and
          (location == "" or Enum.any?(socket.assigns.targets, &(&1.id == location))) do
       {:noreply,
        socket
@@ -323,6 +339,27 @@ defmodule EvoDashWeb.ProjectWindow do
 
   def handle_event("open", _, %{assigns: %{mode: "open"}} = socket),
     do: {:noreply, submit(socket, "")}
+
+  def handle_event("open", _, %{assigns: %{mode: "select", loading: false} = assigns} = socket) do
+    case assigns do
+      %{
+        selection_context: {node_id, _chat_id} = context,
+        assistant_project_context: context,
+        target: target,
+        directory: %{path: path}
+      }
+      when is_binary(path) and not is_nil(target) ->
+        if node_id(assigns.location) == node_id do
+          send(self(), {:assistant_project_browsed, context, target, path})
+          {:noreply, push_event(socket, "workbench_project_window_close", %{})}
+        else
+          {:noreply, socket}
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
 
   def handle_event(_, _, socket), do: {:noreply, socket}
 
