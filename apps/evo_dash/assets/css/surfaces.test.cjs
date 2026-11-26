@@ -3,9 +3,12 @@
 // Contract (detail: assets/css/CONTEXT.md, "Surfaces & elevation"):
 //   * `surfaces.css` is the ONE owner of the layering vocabulary and it is
 //     imported right after `density.css`, before every component sheet.
-//   * three layers — chrome (`--surface-shell` / `--surface-rail` / `--surface-dock`), the content
+//   * three layers — chrome (`--surface-shell` / `--surface-rail`), the content
 //     canvas (`--surface-canvas`) and the overlays (`--surface-raised` plus
 //     `--elev-1/2/3`). Overlays are the ONLY shadowed surfaces.
+//   * the rail is ONE restrained step BENEATH the content canvas in both
+//     themes, so the sidebar and the canvas read as one continuous surface;
+//     only the shell (top bar) wears the chrome step.
 //   * every token is declared exactly once, on `:root` (plus a
 //     `[data-theme="dark"]` counterpart whose values differ) and never in
 //     another stylesheet.
@@ -81,7 +84,6 @@ function merge(rules) {
 const TONES = [
   "--surface-shell",
   "--surface-rail",
-  "--surface-dock",
   "--surface-canvas",
   "--surface-text-muted",
   "--surface-hover",
@@ -399,29 +401,47 @@ test("the published tab hooks are styled", () => {
 
 // --- docked right panel ----------------------------------------------------
 
-test("History shares the sidebar fill without a divider; only Git keeps the tinted dock and hairline", () => {
+test("Source Control shares Project History's fill and keeps only the hairline", () => {
   const declared = merge(rulesWith(".workbench-history", workbench, {exactSelectorText: true}));
   const history = merge(rulesWith("#workbench-history", workbench));
   const sidebar = merge(rulesWith("#app-layout #sidebar", workbench));
   const git = merge(rulesWith(".workbench-history:where(#workbench-git)", workbench));
+  const gitFill = merge(rulesWith(".workbench-git", workbench));
   assert.equal(history.background, "var(--surface-rail)");
-  assert.equal(history.background, sidebar.background);
-  assert.equal(git.background, "var(--surface-dock)");
-  assert.equal(git["border-inline-start"], "1px solid var(--border-hairline)");
-  assert.equal(({...declared, ...history})["border-inline-start"], undefined);
-  for (const theme of [":root", '[data-theme="dark"]']) {
-    const palette = values(rulesWith(theme)[0].body);
-    assert.notEqual(palette["--surface-dock"], palette["--surface-rail"]);
-    assert.match(palette["--surface-dock"], /var\(--color-secondary\) [1-9]%/,
-      "Git has a restrained secondary wash in either theme");
-    assert.match(palette["--surface-dock"], /var\(--color-base-200\)/,
-      "start with neutral chrome, not the near-white canvas");
-  }
+  assert.equal(history.background, sidebar.background,
+    "the docked panels share the left sidebar's fill in either theme");
+  assert.equal(git.background, undefined, "no separate dock wash for Source Control");
+  assert.equal(gitFill.background, "var(--surface-rail)",
+    "Source Control takes the same rail fill as Project History");
+  assert.equal(git["border-inline-start"], "1px solid var(--border-hairline)",
+    "only Source Control keeps the one separating hairline");
+  assert.equal(declared["border-inline-start"], undefined, "the base panel frame declares no divider");
+  assert.equal(history["border-inline-start"], undefined, "Project History keeps no divider");
   assert.match(declared["--workbench-selected"], /var\(--color-primary\) 10%/, "accents tint local choices, not the whole dock");
   for (const surface of [declared, history, git]) {
     assert.equal(surface["box-shadow"], undefined, "neither dock floats");
   }
   assert.equal(declared.padding, "calc(var(--card-pad) / 2)", "the panel frame uses the shared density scale");
+});
+
+test("the rail sits one step beneath the canvas in both themes", () => {
+  const light = values(rulesWith(":root")[0].body);
+  const dark = values(rulesWith('[data-theme="dark"]')[0].body);
+
+  // Light: the canvas IS base-100 and the rail is a chrome step just under it.
+  assert.equal(light["--surface-canvas"], "var(--color-base-100)");
+  assert.match(light["--surface-rail"], /var\(--color-base-200\) 86%/,
+    "the light rail derives from the neutral chrome step");
+  assert.match(light["--surface-rail"], /var\(--color-base-300\)/);
+  assert.doesNotMatch(light["--surface-rail"], /var\(--color-base-100\)/,
+    "the light rail is a chrome step, not the canvas itself");
+
+  // Dark: base-200 is LIGHTER than base-100, so the rail anchors on base-100.
+  assert.match(dark["--surface-canvas"], /var\(--color-base-100\) 94%/);
+  assert.equal(dark["--surface-rail"], "var(--color-base-100)",
+    "the dark rail anchors on base-100 so it never lifts above the canvas");
+  assert.doesNotMatch(dark["--surface-rail"], /var\(--color-base-20[02]\)|var\(--color-base-300\)/,
+    "anchoring the dark rail on base-200/base-300 lifted the sidebar above the canvas");
 });
 
 test("the composer and History placeholders use the opaque muted foreground", () => {
@@ -528,7 +548,8 @@ test("the task-card chrome is styled as the surface consumers", () => {
   assert.equal(raised["box-shadow"], "var(--elev-1)");
 
   const panel = values(rulesWith(".task-card-panel", surfaces, {exactSelectorText: true})[0].body);
-  assert.equal(panel.background, "var(--surface-shell)");
+  assert.equal(panel.background, "var(--surface-rail)",
+    "a nested panel is recessed in both themes: the rail tone lifts in neither");
   assert.equal(panel.border, "1px solid var(--border-hairline)");
   assert.equal(panel["border-radius"], "0.5rem");
   assert.equal(panel["box-shadow"], "none", "a nested panel is recessed, not raised");

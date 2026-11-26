@@ -501,10 +501,10 @@
     padding var(--motion-slow) var(--motion-ease-out),
     border-inline-start-width var(--motion-slow) var(--motion-ease-out);
 }
-/* Keep specificity below the docked collapse states so the Git divider can
-   still animate to zero. History instead shares the sidebar's unlined fill. */
+/* Both docked panels share the sidebar's fill; only Source Control keeps the
+   one hairline. Keep specificity below the docked collapse states so that
+   divider can still animate to zero. */
 .workbench-history:where(#workbench-git) {
-  background: var(--surface-dock);
   border-inline-start: 1px solid var(--border-hairline);
 }
 /* Closed AND closing share ONE collapsed geometry: "closed" is the resolved
@@ -670,7 +670,7 @@
   padding: .2rem;
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-field);
-  background: var(--surface-shell);
+  background: var(--surface-rail);
 }
 .workbench-segmented button {
   min-width: 0;
@@ -684,7 +684,7 @@
 }
 .workbench-segmented button:hover { background: var(--workbench-hover); }
 .workbench-segmented button[aria-pressed="true"] {
-  background: var(--surface-canvas);
+  background: var(--surface-raised);
   border-color: var(--border-strong);
   color: var(--color-base-content);
   font-weight: 600;
@@ -955,8 +955,9 @@
   outline-offset: 2px;
 }
 
-/* The left sidebar and History use exactly the same tone in either theme. */
-#app-layout #sidebar, #workbench-history { background: var(--surface-rail); }
+/* The left sidebar and BOTH docked panels share the rail fill in either theme
+   (the class spelling keeps this tone rule out of the combined-id flex rule). */
+#app-layout #sidebar, #workbench-history, .workbench-git { background: var(--surface-rail); }
 #app-layout #sidebar {
   flex-shrink: 0;
   border-right: 0;
@@ -1131,7 +1132,7 @@
   position: sticky;
   inset-block-start: 0;
   z-index: 1;
-  background: var(--surface-dock);
+  background: var(--surface-rail);
 }
 .workbench-git-history-entry {
   display: grid;
@@ -1153,7 +1154,7 @@
   padding: .5rem .6rem;
   border: 1px solid var(--color-base-300);
   border-radius: .75rem;
-  background: var(--color-base-100);
+  background: var(--surface-raised);
 }
 .workbench-git-summary-line {
   display: flex;

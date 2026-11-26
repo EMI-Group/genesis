@@ -593,7 +593,8 @@ test("Source Control keeps its heading, summary and view switcher at intrinsic h
   const declared = values(search.body);
   assert.equal(declared.position, "sticky", "branch search stays reachable inside the scrolling view");
   assert.equal(declared["inset-block-start"], "0");
-  assert.equal(declared.background, "var(--surface-dock)", "rows must not show through the search field");
+  assert.equal(declared.background, "var(--surface-rail)",
+    "the search backdrop is its own panel's opaque tone, so rows never show through");
   const [branches] = blocks("#workbench-git-branches", source["workbench.css"]);
   assert.match(values(branches)["scroll-padding-block-start"], /var\(--touch-target\)/,
     "keyboard scrolling leaves space for sticky branch search");
