@@ -168,6 +168,14 @@ Invariants: `aria-expanded` on `#workbench-history-toggle` / `#workbench-git-tog
 The query, project filter, status filter and kind control are ordinary server-rendered live-component controls: the hook never filters rows by title/kind, writes `#workbench-history-project`, toggles `[data-workbench-more]` or juggles `[data-workbench-empty]`, and `renderHistory/0` only marks the row whose window is open (`data-workbench-open` → `is-current`).
 The decisions are pinned by `./workbench_panel.test.cjs` and its DOM half by `./workbench_panel_dom.test.cjs`; `Workbench`'s own patch-sync probe (`workbenchSyncNeeded`) → `../CONTEXT.md` § Workbench Patch-Sync Probe.
 
+### Workbench sidebar widths and navigation lifecycle
+
+`Workbench` owns the bounded expanded widths (`--workbench-left-width` and `--workbench-right-width` on `#app-layout`, plus resize-handle ARIA values), reads `genesis-workbench.sidebar-widths` from localStorage on mount, and only persists on drag end or keyboard resize; `SidebarCollapse` independently owns the collapsed width and mobile drawer.
+`sync()` applies widths after tab rendering and right-panel reconciliation; its `updated()` probe does not detect missing inline width variables or reset resizer ARIA, so a same-route morph can strip those without requiring a full shell sync.
+Both generated rail links and server History links use LiveView redirect navigation, so a same-LiveView destination can still replace `#app-layout` and mount a fresh hook; in-place patches can morph first and update the URL afterward, and LiveView 1.2.15 emits popstate `phx:navigate` before patching or replacing the view.
+The document-level navigation observer bridges remounts, but History's clicked-row pending marker is scoped to the outgoing DOM; width restoration belongs to mount/morph, not to loading events, task keys or delayed focus callbacks.
+The left mobile drawer below 1024 px and the right overlay below 1280 px use CSS widths independent of the saved desktop widths; the docked right panel and desktop left collapse have their own transition and focus contracts.
+
 ### Workbench tab strip — pure tab store, preview/pin, overflow and Alt+Arrow
 
 `./workbench_tabs.js` is the PURE tab store (`MAX_TABS_PER_PROJECT = 40`, `alwaysPinned/1`, `tabKey/4`, `tabGroup/1`, `sameScope/2`, `tabsForProject/3`, `safeHref/2`, `restore/2`, `openTab/3`, `pinTab/2`, `closeTab/2`, `cycleTab/5`, `activate/2`), with no dependency on the DOM, storage or timers.
@@ -245,7 +253,7 @@ No colocated suite: commit-graph, diff-viewer and the `Workbench` tab rail's DOM
 Known gaps: `CapsulePanel` Escape (document capture, no focus containment or `event.defaultPrevented`, so every open capsule reacts) and view changes (no focus transfer/restoration, no arrow/Home/End listbox keys).
 `CommitGraph.revealLane/2` scans the whole hook root instead of the supplied scroller (wrong-section coordinates), `clearAnimations/1` leaves unsettled animation listeners registered, its deferred mount selection callback is not cancelled on teardown, and entry identity is a DOM-instance WeakSet (a replaced commit element re-animates).
 `LegendTooltip` is mouseenter/mouseleave-only (no focus/blur, Escape, tooltip role, `aria-describedby` or repositioning).
-`SidebarCollapse` has no Escape, mobile focus containment/restoration or dynamic ARIA, destruction leaves the mobile body scroll lock, storage access is unguarded, and its collapse/expand titles are literal English.
+`SidebarCollapse` handles Escape and explicit mobile dismissal, restores focus to the toggle for those dismissals, manages `aria-expanded`/`inert`, and clears its mobile body lock on destruction; persistence access is unguarded and desktop collapse/expand titles are literal English.
 `DiffViewer` leaves its 50 ms deferred scroll uncancelled and reads `window.matchMedia` unguarded; `Guide` and `PaletteList` smooth-scroll without reduced-motion checks; `FocusInput` re-focuses on every patch (pages must prevent focus theft); `InspectorMessages` keeps every seen key until scope change/destruction and scans all marked descendants per subtree mutation.
 
 ## Known Issues
