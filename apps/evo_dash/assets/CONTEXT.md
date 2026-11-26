@@ -142,6 +142,24 @@ The **`@theme` block in `app.css`** (that file's only one, a documented exceptio
 The umbrella's OTHER `@theme` block is `css/density.css`: it owns the type ladder (`--text-2xs` 12px through `--text-3xl` 30px, each with its line-height, plus `--leading-body`) and the `:root` density tokens (`--control-h*`, `--row-h*`, `--touch-target`, `--card-pad*`, `--page-gutter*`); DaisyUI's `--size-field`/`--size-selector` are `0.25rem` in both theme blocks (40/32/24 px controls) and bump on coarse pointers.
 Arbitrary font sizes (`text-[11px]`), sub-12px text and CSS `font-size`/height literals are banned in dashboard chrome — see `../../docs/ui-density.md` and the `ui-density` skill.
 
+Color is token-driven only: the accent splits into a FILL pair (`--color-primary`/`-content`, `--color-accent`) for fills and tints, and a STANDALONE token (`--color-primary-standalone`) for text, icons and outlines; every color literal left in `app.css` is deliberate, so never add one.
+
+## Form-control focus styling ("glow-on-focus")
+
+**ONE global un-layered rule in `css/app.css` is the single source of truth** for every DaisyUI `.input`/`.select`/`.textarea` focus look (solid standalone-accent border + 2px ring at 40%): `:focus` on all three plus `:focus-within` on `.input` (mirroring DaisyUI's selectors), each guarded with `:not(<class>-success):not(<class>-error)` so state classes keep their own focus styling (`input-success` on API-key inputs, `-error` validation classes via `CoreComponents`). It sets `outline: none; border-color: var(--color-primary-standalone); box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary-standalone) 40%, transparent)` — colors via `color-mix + var(--color-*)` only, never `--input-color` re-pointing.
+
+**Why un-layered**: DaisyUI 5 emits its own form-control focus rule (`outline: 2px solid var(--input-color)` — the "detached double border") inside `@layer components`, so a layer-wrapped rule would LOSE; `app.css` has no `@layer` blocks and its un-layered author CSS beats the plugin's layered styles (the precedence the accent overrides rely on). Tailwind `focus:ring-*`/`focus:border-*` utilities are therefore redundant and were removed from every DaisyUI input/select/textarea control (tasks live filter bar, projects live build select, welcome model search, project pickers, task-form selects/inputs, settings sidebar search — which keeps `focus:bg-base-100`); any new control just gets the class.
+
+**Exceptions**: Assistant's `.assistant-textarea` and New Task's `.input-prompt` are borderless and use the shared `.workbench-composer-surface:focus-within` ring instead of the DaisyUI input ring; `.file-manual-input:focus` keeps its amber border. Checkboxes/toggles keep DaisyUI's `:focus-visible` outline.
+
+## Static Assets (`priv/static/`)
+
+`priv/static/images/logo.svg` is the brand source of truth: `favicon.ico` and `images/favicon.svg` are DERIVED from it and must never be hand-edited, and `images/logo-alt.svg` is the dark-theme variant.
+
+<!-- genesis:local -->
+
+## Local: Theming & color detail (palette values, accents, literal audit)
+
 **Palette values (app.css) — GNOME/libadwaita (Adwaita)**: light — base-100 `#ffffff` (view/content), base-200 `#f6f5f4` (window/chrome/hover), base-300 `#e5e5e5` (borders), base-content `#2e3436`; primary = accent `#3584e4` (`--color-accent` mirrors it — GNOME has ONE accent) / content `#ffffff`; secondary `#2190a4`/`#ffffff`, neutral `#4c4c4c`/`#ffffff`, info `#1a5fb4`/`#ffffff`, success `#177245`/`#ffffff`, warning `#ab4f09`/`#1e1e1e`, error `#b91c1c`/`#ffffff`.
 dark — base-100 `#1e1e1e`, base-200 `#242424` (LIGHTER than 100 so hover lightens), base-300 `#454545`, base-content `#ffffff`; primary = accent `#3584e4` (constant across themes)/`#ffffff`, secondary `#33b7cc`/`#1e1e1e`, neutral `#505050`/`#ffffff`, info `#62a0ea`/`#1e1e1e`, success `#2ec27e`/`#1e1e1e`, warning `#f5c211`/`#1e1e1e`, error `#ff7b63`/`#1e1e1e`.
 Adwaita dark is a soft gray — deliberately NOT near-black; light semantic tokens sit on the darker end of each hue and dark tokens on the lighter end, so badge text (`text-<semantic>`) holds ≥ ~4.5:1 on its ~10% tint over the base.
@@ -176,15 +194,7 @@ They are ACTIVE: `Layouts.app` renders `data-accent-color={@accent_color}` on `#
   **fill**: `btn-primary`/filled-control fills + `bg-primary/10`-style tints, `::selection` background, markdown checkbox `accent-color`, `--project-accent` machinery, `.hover-glow`/`.animate-agent-spawn` glows.
   `--color-base-content` (body text), the semantic tokens and the `--chart-*` series are NEVER retargeted by accent; text ON fills (`--color-primary-content`) is a fixed hand-picked pair per palette entry, NOT computed against the surface (brown's dark fill flips content to near-black). The model mirrors libadwaita's `--accent-bg-color` (fill) / `--accent-color` (standalone) / `--accent-fg-color` (text on fill) split.
 
-## Form-control focus styling ("glow-on-focus")
-
-**ONE global un-layered rule in `css/app.css` is the single source of truth** for every DaisyUI `.input`/`.select`/`.textarea` focus look (solid standalone-accent border + 2px ring at 40%): `:focus` on all three plus `:focus-within` on `.input` (mirroring DaisyUI's selectors), each guarded with `:not(<class>-success):not(<class>-error)` so state classes keep their own focus styling (`input-success` on API-key inputs, `-error` validation classes via `CoreComponents`). It sets `outline: none; border-color: var(--color-primary-standalone); box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary-standalone) 40%, transparent)` — colors via `color-mix + var(--color-*)` only, never `--input-color` re-pointing.
-
-**Why un-layered**: DaisyUI 5 emits its own form-control focus rule (`outline: 2px solid var(--input-color)` — the "detached double border") inside `@layer components`, so a layer-wrapped rule would LOSE; `app.css` has no `@layer` blocks and its un-layered author CSS beats the plugin's layered styles (the precedence the accent overrides rely on). Tailwind `focus:ring-*`/`focus:border-*` utilities are therefore redundant and were removed from every DaisyUI input/select/textarea control (tasks live filter bar, projects live build select, welcome model search, project pickers, task-form selects/inputs, settings sidebar search — which keeps `focus:bg-base-100`); any new control just gets the class.
-
-**Exceptions**: Assistant's `.assistant-textarea` and New Task's `.input-prompt` are borderless and use the shared `.workbench-composer-surface:focus-within` ring instead of the DaisyUI input ring; `.file-manual-input:focus` keeps its amber border. Checkboxes/toggles keep DaisyUI's `:focus-visible` outline.
-
-## Static Assets (`priv/static/`)
+## Local: Static assets (`priv/static/`) inventory & favicon regeneration
 
 | File | Purpose |
 |------|---------|
