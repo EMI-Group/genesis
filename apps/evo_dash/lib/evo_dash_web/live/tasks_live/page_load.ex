@@ -43,9 +43,11 @@ defmodule EvoDashWeb.TasksLive.PageLoad do
   without both a `task_id` and an `agent_id` are dropped; that helper already
   degrades to `[]` on any failure.
 
-  `start/3` is the only writer of the monotonic `:page_load_seq` assign; the
-  caller drops any result whose `seq` is stale or whose `node` no longer matches
-  `socket.assigns.current_node`.
+  `start/3` is the only writer of the monotonic `:page_load_seq`; `settle/4`
+  accepts a result only for that generation and its current node/focus scope.
+  Focused loads without a known project path also own the shell's pending
+  History signal. `sync_scope/1` invalidates both the request and its shell
+  metadata when the focus, node, or serving availability changes.
 
   Two app-env seams, both resolved AT SPAWN TIME: `:tasks_page_load_hook`
   (1-arity, wraps the spawn; default identity) and `:tasks_page_load_runner`
@@ -53,47 +55,135 @@ defmodule EvoDashWeb.TasksLive.PageLoad do
   exiting runner and assert the LiveView survives with its loading flag
   cleared.
   """
-  import Phoenix.Component, only: [assign: 3]
+  import Phoenix.Component, only: [assign: 2, assign: 3]
 
   alias EvoDash.SafeCall
+  alias EvoGit.Util.Strings
+
+  @doc "Discard a load and its shell metadata if it no longer owns the viewed scope."
+  def sync_scope(socket) do
+    if socket.assigns[:page_load_scope] == scope(socket.assigns) do
+      socket
+    else
+      assign(socket,
+        page_load_scope: nil,
+        workbench_history_scope_pending?: false,
+        workbench_project: nil,
+        workbench_title: nil
+      )
+    end
+  end
+
+  @doc "The page-load identity, including whether a focused read can use the viewed node."
+  def scope(assigns) do
+    target = assigns[:current_node_id]
+    beam = assigns[:current_node]
+    focus = assigns[:focused_task_id]
+    serving_focus? = is_binary(focus) and serving?(target, beam, assigns)
+
+    {target, beam, focus, serving_focus?}
+  end
+
+  defp serving?(nil, beam, assigns) when beam == node(),
+    do: assigns[:workbench_remote_requested] != true
+
+  # A pending or changing target can still carry an old BEAM name. Check the
+  # advertised connection identity rather than treating `node()` as a sentinel.
+  defp serving?(target, beam, %{remote_status: %{phase: :connected, node: advertised}})
+       when is_binary(target) and is_atom(beam) and not is_nil(beam),
+       do: Atom.to_string(beam) == advertised
+
+  defp serving?(_target, _beam, _assigns), do: false
+
+  @doc "Settle History only for the current load; stale results leave the socket untouched."
+  def settle(socket, seq, node, result) do
+    current_scope = {_target, beam, focus, serving?} = scope(socket.assigns)
+
+    if seq == socket.assigns.page_load_seq and node == beam and
+         socket.assigns[:page_load_scope] == current_scope do
+      socket = assign(socket, :workbench_history_scope_pending?, false)
+      {:ok, settle_focused_metadata(socket, focus, serving?, result)}
+    else
+      :stale
+    end
+  end
+
+  defp settle_focused_metadata(socket, id, true, {:ok, %{tasks: [%{id: id} = task]}})
+       when is_binary(id) do
+    opts = task[:opts] || []
+    path = task[:project_path]
+
+    assign(socket,
+      workbench_project: if(project_path?(path), do: path),
+      workbench_title: opts[:objective] || opts[:prompt]
+    )
+  end
+
+  defp settle_focused_metadata(socket, _id, _serving?, {:ok, _}),
+    do: assign(socket, workbench_project: nil, workbench_title: nil)
+
+  # A refresh error should not erase the last confirmed metadata for this scope.
+  defp settle_focused_metadata(socket, _id, _serving?, _error), do: socket
+
+  defp project_path?(path), do: is_binary(path) and Strings.present?(path)
 
   @doc """
-  Starts one async page load and returns the socket.
+  Starts one async page load on a connected socket and returns the socket.
 
   Bumps `:page_load_seq`, optionally paints the loading placeholder
   (`show_loading?` — user-initiated loads only; a background refresh keeps the
   already-loaded rows on screen), and hands the spawn to the
-  `:tasks_page_load_hook` app-env seam (1-arity, default identity, resolved at
-  spawn time like EvoDash's other runner seams) so tests can count page-load
-  spawns.
+  `:tasks_page_load_hook` app-env seam (1-arity, default identity; wrappers
+  must return the spawn result). Only a successfully started focused read
+  for a serving node can mark History pending.
   """
   @spec start(Phoenix.LiveView.Socket.t(), pos_integer(), boolean()) ::
           Phoenix.LiveView.Socket.t()
   def start(socket, page, show_loading?) do
+    socket = sync_scope(socket)
+
+    if Phoenix.LiveView.connected?(socket) do
+      start_connected(socket, page, show_loading?)
+    else
+      assign(socket, :workbench_history_scope_pending?, false)
+    end
+  end
+
+  defp start_connected(socket, page, show_loading?) do
     seq = socket.assigns.page_load_seq + 1
-    socket = assign(socket, :page_load_seq, seq)
+    scope = {_target, node, focus, serving_focus?} = scope(socket.assigns)
+    socket = assign(socket, page_load_seq: seq, page_load_scope: scope)
     socket = if show_loading?, do: assign(socket, :tasks_loading, true), else: socket
 
     parent = self()
-    node = socket.assigns.current_node
     page_size = socket.assigns.page_size
 
     filters =
-      case Map.get(socket.assigns, :focused_task_id) do
-        nil ->
-          filters(socket)
-
-        id ->
-          [
-            focused_task: id,
-            pending_remote: socket.assigns[:workbench_remote_requested] and node == node()
-          ]
-      end
+      if is_nil(focus),
+        do: filters(socket),
+        else: [focused_task: focus, pending_remote: not serving_focus?]
 
     hook = Application.get_env(:evo_dash, :tasks_page_load_hook, fn inner -> inner.() end)
-    hook.(fn -> run(parent, seq, node, page, page_size, filters) end)
 
-    socket
+    case SafeCall.run(fn -> hook.(fn -> run(parent, seq, node, page, page_size, filters) end) end) do
+      {:ok, {:ok, pid}} when is_pid(pid) ->
+        pending? = serving_focus? and not project_path?(socket.assigns[:workbench_project])
+        assign(socket, :workbench_history_scope_pending?, pending?)
+
+      {:ok, {:error, reason}} ->
+        report_start_error(socket, seq, node, reason)
+
+      {:error, reason} ->
+        report_start_error(socket, seq, node, reason)
+
+      {:ok, other} ->
+        report_start_error(socket, seq, node, {:unexpected_start_result, other})
+    end
+  end
+
+  defp report_start_error(socket, seq, node, reason) do
+    send(self(), {:tasks_page_loaded, seq, node, {:error, reason}})
+    assign(socket, :workbench_history_scope_pending?, false)
   end
 
   @doc """
