@@ -4,6 +4,7 @@ Support documentation for `EvoDashWeb.TasksLive` (`tasks_live.ex`), the cross-pr
 The page is the cross-project LIFECYCLE + REVIEW-TRIAGING surface: every task state is filterable, the review queue is one filter away (`needs_review`), finished work exits to `/review/<id>` from the card, and live work is inspected in place.
 Node-aware — reads task history via `EvoDash.NodeContext` for both the local BEAM node and a remote daemon (the `genesis_server` release in remote-dev mode).
 ONE page load transfers one page of the 18-key task SUMMARY projection (`pause_kind` included); the heavy per-card payloads (`result`, `usage`, `logs`) are fetched lazily per card on expand, and the agent archive arrives in bounded pages only after an explicit disclosure.
+The workbench tab rail owns the page name, so the page renders no in-canvas title: the filter bar is the first row of the unfocused view and the focused single-task view starts at the card.
 ## Routing Table
 - `tasks_live.ex` — the LiveView: filters, pagination, keyed task stream, modals, mutating events.
 - `page_load.ex` — `EvoDashWeb.TasksLive.PageLoad`: the ONE async, exit-safe page-load path (spawn seams, loader task, pure helpers) over the summary projection, and the owner of the filter vocabulary — `filters/1` (the SQL keyword), `needs_review_filter?/1`, `review_status_filter/1` (status-filter precedence) and the single client-side post-load choke point `visible_tasks/2,3`.
