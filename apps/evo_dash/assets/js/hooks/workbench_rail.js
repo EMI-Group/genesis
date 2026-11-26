@@ -173,16 +173,27 @@ export const railMethods = {
     this.syncTabOverflow()
     this.syncTabRailHints()
     this.paintPending()
+    return true
   },
 
-  syncTabOverflow() {
+  syncTabOverflow({onlyIfReplaced = false} = {}) {
     const rail = this.el.querySelector("#workbench-tabs")
     const overflow = this.el.querySelector("#workbench-tabs-overflow")
+    const railChanged = rail !== this.overflowRail
+    if (onlyIfReplaced && !railChanged && overflow === this.overflowControl) return
+    if (railChanged) {
+      if (this.overflowRail) this.railObserver?.unobserve(this.overflowRail)
+      if (rail) this.railObserver?.observe(rail)
+    }
+    this.overflowRail = rail
+    this.overflowControl = overflow
     if (!rail || !overflow) return
     const overflows = rail.children.length > 0 && rail.scrollWidth > rail.clientWidth + 1
-    overflow.hidden = !overflows
-    if (!overflows) overflow.open = false
-    else if (overflow.open) this.renderOverflowTabs()
+    if (overflow.hidden !== !overflows) overflow.hidden = !overflows
+    if (overflow.open) {
+      if (overflows) this.renderOverflowTabs()
+      else overflow.open = false
+    }
   },
 
   // The Git diff is not navigable, so the overflow only lists stored tabs.

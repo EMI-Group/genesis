@@ -95,12 +95,11 @@ const safeHref = value => safeHrefBase(value, location.origin)
 // Decides whether `sync()` — the shell sweep — has to re-run after a LiveView
 // patch. EVERY patch in the shell reaches `updated()`, while `sync()` is a set
 // of full-subtree `querySelectorAll` walks plus per-row writes (the rail, every
-// history row's current marker, the panel states, the sidebar widths, the Git
-// label, the create menu), so running it per patch made CONTENT updates pay for
-// the whole shell. `updated()` probes first: the `state` object below is built
-// from property reads only (no `querySelectorAll`, no geometry) and compared
-// with the state recorded after the last sweep. Everything here is DOM-free, so
-// the planner is testable (hooks/workbench.test.cjs slices this block).
+// history row's current marker, the panel states, the Git label, the create
+// menu), so running it per patch made CONTENT updates pay for the whole shell.
+// After the independent width repair, the probe compares property reads (no
+// `querySelectorAll`, no geometry) with the state recorded after the last sweep.
+// Everything here is DOM-free (hooks/workbench.test.cjs slices this block).
 
 // The dataset fields `captureTab()` derives the current tab from — its key, href
 // and title. A navigation changing ANY of them must sweep: the rail, the per-row
@@ -186,8 +185,15 @@ const Workbench = {
     this.gitOpen = initialPanelState(read(sessionStorage, GIT_KEY, null)) === PANEL_OPEN
     this.gitLoadedScope = null
     this.sidebarWidths = read(localStorage, SIDEBAR_WIDTHS_KEY, {})
+    // The shell fills the viewport; no descendant or shell layout read is
+    // needed to restore widths, even when a patch has just removed them.
+    this.sidebarViewportWidth = window.innerWidth
     this.sidebarDrag = null
+    // Collapse and dock transitions can resize the rail after synchronous sync.
+    this.railObserver = typeof ResizeObserver === "function"
+      ? new ResizeObserver(() => this.syncTabOverflow()) : null
     this.onViewportResize = () => {
+      this.sidebarViewportWidth = window.innerWidth
       this.syncSidebarWidths()
       projectPreview.reposition(this.el)
       this.positionCreateMenu()
@@ -199,7 +205,10 @@ const Workbench = {
         this.historyOpen = false
         this.gitOpen = false
       }
+      this.sidebarViewportWidth = window.innerWidth
+      this.syncSidebarWidths()
       this.syncHistoryPanel()
+      this.syncTabOverflow()
     }
     this.onClick = event => this.click(event)
     this.onPointerDown = event => {
@@ -270,7 +279,7 @@ const Workbench = {
       if (event.key === ACCENT_KEY) applyAccent(this.el)
       if (event.key === SIDEBAR_WIDTHS_KEY && !this.sidebarDrag) {
         this.sidebarWidths = read(localStorage, SIDEBAR_WIDTHS_KEY, {})
-        this.syncSidebarWidths()
+        if (this.syncSidebarWidths()) this.syncTabOverflow()
       }
     }
     this.projectSidebarNav = this.el.querySelector(".workbench-sidebar-nav")
@@ -320,9 +329,7 @@ const Workbench = {
   },
 
   updated() {
-    // Cheap probe FIRST: a CONTENT-only patch cannot change any sync input.
-    if (workbenchSyncNeeded(this.syncState(), this.appliedSyncState)) this.sync()
-    else this.paintHistoryPending()
+    this.sync({patch: true})
   },
 
   disconnected() {
@@ -349,6 +356,7 @@ const Workbench = {
     this.media.removeEventListener("change", this.onResize)
     if (mountedWorkbench === this) mountedWorkbench = null
     window.removeEventListener("storage", this.onStorage)
+    this.railObserver?.disconnect()
     this.panelHost.destroy()
     // Release the preview snapshot cache + its shadow-DOM host — but NEVER mid
     // handoff: `release()` clears a pending handoff, and the host lives on
@@ -358,7 +366,15 @@ const Workbench = {
     if (!document.body.hasAttribute("data-workbench-project-switching")) projectPreview.release()
   },
 
-  sync() {
+  sync({patch = false} = {}) {
+    // A morph can reset widths/ARIA without changing any of the sweep inputs.
+    // Restore them before probing or letting the panels, rail or preview measure.
+    const widthChanged = this.syncSidebarWidths()
+    if (patch && !workbenchSyncNeeded(this.syncState(), this.appliedSyncState)) {
+      this.syncTabOverflow({onlyIfReplaced: !widthChanged})
+      this.paintHistoryPending()
+      return
+    }
     applyAccent(this.el)
     const data = this.el.dataset
     this.node = data.workbenchNode
@@ -372,13 +388,12 @@ const Workbench = {
     this.projectName = this.projectLabel || this.project.split(/[\\/]/).filter(Boolean).at(-1)
     this.captureTab()
     this.previewTab = projectPreview.sync(this.el, this.currentTab)
-    this.renderTabs()
-    this.renderHistory()
-    this.syncEmptyState()
-    // The first sync only SEEDS the panel: no entrance animation on load.
+    // Seed the dock before measuring the rail; on mount there is no entrance.
     this.syncHistoryPanel(this.panelReady)
     this.panelReady = true
-    this.syncSidebarWidths()
+    if (!this.renderTabs()) this.syncTabOverflow()
+    this.renderHistory()
+    this.syncEmptyState()
     this.syncGitStatus()
     this.syncGitDiffFocus()
     this.positionCreateMenu()
@@ -450,7 +465,7 @@ const Workbench = {
 
   sidebarBounds() {
     const {left, right} = SIDEBAR_WIDTHS
-    const room = this.el.clientWidth - CENTER_MIN_WIDTH
+    const room = this.sidebarViewportWidth - CENTER_MIN_WIDTH
     const leftMax = Math.min(left.max, room - (this.media.matches ? right.min : 0))
     const leftWidth = this.sidebarWidth("left", leftMax)
     const rightMax = this.media.matches ? Math.min(right.max, room - leftWidth) : right.max
@@ -472,16 +487,26 @@ const Workbench = {
   },
 
   syncSidebarWidths() {
-    for (const [side, {width, min, max}] of Object.entries(this.sidebarBounds())) {
-      this.el.style.setProperty(`--workbench-${side}-width`, `${width}px`)
-      const handle = this.el.querySelector(`#workbench-${side}-resize`)
-      handle?.setAttribute("aria-valuemin", String(min))
-      handle?.setAttribute("aria-valuemax", String(max))
-      handle?.setAttribute("aria-valuenow", String(width))
+    let changed = false
+    const {style, dataset} = this.el
+    if (this.sidebarDrag && dataset.workbenchResizing !== this.sidebarDrag.side) {
+      dataset.workbenchResizing = this.sidebarDrag.side
     }
-    // The rail lives in the center column, so every sidebar width (a drag, a
-    // viewport resize, a sweep) can flip its overflow state.
-    this.syncTabOverflow()
+    for (const [side, {width, min, max}] of Object.entries(this.sidebarBounds())) {
+      const property = `--workbench-${side}-width`
+      const pixels = `${width}px`
+      if (style.getPropertyValue(property) !== pixels) {
+        style.setProperty(property, pixels)
+        changed = true
+      }
+      const handle = this.el.querySelector(`#workbench-${side}-resize`)
+      if (!handle) continue
+      for (const [name, number] of [["aria-valuemin", min], ["aria-valuemax", max], ["aria-valuenow", width]]) {
+        const value = String(number)
+        if (handle.getAttribute(name) !== value) handle.setAttribute(name, value)
+      }
+    }
+    return changed
   },
 
   sidebarDirection(side) {
@@ -533,7 +558,7 @@ const Workbench = {
   setSidebarWidth(side, width, {min, max}) {
     const {left, right} = this.sidebarBounds()
     this.sidebarWidths = {left: left.width, right: right.width, [side]: Math.max(min, Math.min(max, width))}
-    this.syncSidebarWidths()
+    if (this.syncSidebarWidths()) this.syncTabOverflow()
     this.positionCreateMenu()
   },
 
@@ -555,8 +580,8 @@ const Workbench = {
   },
 
   // The per-panel state machine and the open/close start frames live in the
-  // `panelHost` (workbench_panel_dom.js); every LiveView patch re-runs this, so
-  // an unchanged state is a pure re-assert that never restarts a running close.
+  // `panelHost` (workbench_panel_dom.js); an unchanged state is a pure
+  // re-assert that never restarts a running close.
   syncHistoryPanel(animate = true) {
     const panel = this.el.querySelector("#workbench-history")
     if (!panel) return
