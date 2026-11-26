@@ -1452,6 +1452,93 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert Floki.find(card, ~s(button[id="update-source"])) == []
     end
 
+    test "a source-mode run (atom-keyed `source_mode`) hides clone/update and states the running checkout is the source in use",
+         %{conn: conn} do
+      status =
+        source_status(%{
+          source_mode: :source,
+          running_version: "9.9.9",
+          managed_dir: "/tmp/genesis-managed"
+        })
+
+      Application.put_env(:evo_dash, :source_status_runner, fn _ -> status end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_checks_done(view)
+      await_view_assign(view, :source_status, status)
+
+      card = source_card(render(view))
+      text = Floki.text(card)
+
+      # ONE muted line replaces the action row.
+      assert text =~ "running from a source checkout"
+      # Neither flow is offered in source mode.
+      assert Floki.find(card, ~s(button[id="clone-source"])) == []
+      assert Floki.find(card, ~s(button[id="update-source"])) == []
+
+      # The rest of the card is unchanged.
+      assert text =~ "/tmp/genesis-source"
+      assert text =~ "vct:///genesis-source"
+      assert text =~ "deadbeef"
+      assert text =~ "9.9.9"
+    end
+
+    test "a string-keyed source-mode marker hides clone/update too", %{conn: conn} do
+      status = Map.put(source_status(), "source_mode", "source")
+      Application.put_env(:evo_dash, :source_status_runner, fn _ -> status end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_checks_done(view)
+      await_view_assign(view, :source_status, status)
+
+      card = source_card(render(view))
+      assert Floki.text(card) =~ "running from a source checkout"
+      assert Floki.find(card, ~s(button[id="clone-source"])) == []
+      assert Floki.find(card, ~s(button[id="update-source"])) == []
+
+      # The boolean `running_from_source` spelling is honored as well.
+      flagged = Map.put(source_status(), "running_from_source", true)
+      send(view.pid, {:source_status_loaded, 10_000, node(), flagged})
+      await_view_assign(view, :source_status, flagged)
+
+      card = source_card(render(view))
+      assert Floki.text(card) =~ "running from a source checkout"
+      assert Floki.find(card, ~s(button[id="update-source"])) == []
+    end
+
+    test "today's status shape (no source-mode keys) still renders the buttons and no note",
+         %{conn: conn} do
+      status = source_status()
+      # Tolerance pin: `source_status/0` deliberately carries NO source-mode key.
+      refute Map.has_key?(status, :source_mode)
+      Application.put_env(:evo_dash, :source_status_runner, fn _ -> status end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_checks_done(view)
+      await_view_assign(view, :source_status, status)
+
+      card = source_card(render(view))
+
+      assert Floki.find(card, ~s(button[id="update-source"])) != []
+      assert Floki.find(card, ~s(button[id="clone-source"])) == []
+      refute Floki.text(card) =~ "running from a source checkout"
+    end
+
+    test "not cloned + source mode shows the note and neither button", %{conn: conn} do
+      status = source_status(%{exists: false, commit: nil, version: nil, source_mode: :source})
+      Application.put_env(:evo_dash, :source_status_runner, fn _ -> status end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_checks_done(view)
+      await_view_assign(view, :source_status, status)
+
+      card = source_card(render(view))
+
+      assert Floki.find(card, ~s(button[id="clone-source"])) == []
+      assert Floki.find(card, ~s(button[id="update-source"])) == []
+      assert Floki.text(card) =~ "running from a source checkout"
+    end
+
     test "an explicit reference override shows the muted note (carrying the path) and the in-use badge",
          %{
            conn: conn

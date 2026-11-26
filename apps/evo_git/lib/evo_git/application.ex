@@ -190,7 +190,9 @@ defmodule EvoGit.Application do
           # up — and BEFORE EvoGit.TaskRegistry so every later reader (dashboard,
           # agents) finds a ready mount table. The host-declared `:system_mounts`
           # registers the RESERVED `vct:///genesis-source` mount (the
-          # self-reflective agent's Genesis source checkout) idempotently at boot;
+          # self-reflective agent's Genesis source checkout) idempotently at boot:
+          # in `:source` mode (a dev checkout) it points at the checkout this
+          # instance was built from, in `:release` mode at the managed clone;
           # a reserved point is never listed as a project, never evicted, and its
           # recorded OS path need not exist yet.
           {EvoGit.VCT, system_mounts: EvoGit.SelfReflectiveSource.system_mounts()},
@@ -273,7 +275,17 @@ defmodule EvoGit.Application do
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: EvoGit.Supervisor]
-    Supervisor.start_link(children, opts)
+    result = Supervisor.start_link(children, opts)
+
+    # Release-mode source freshness: once the tree is up (so the VCT child has
+    # already ensured the reserved `vct:///genesis-source` mount), pull the
+    # managed Genesis clone in an UNLINKED background process when its VERSION
+    # differs from this release's. Non-blocking and non-fatal: it returns :ok
+    # immediately and a failed pull is retried on the next boot. Skipped in
+    # tests, which never touch the developer's real source clone.
+    if @mix_env != :test, do: EvoGit.SelfReflectiveSource.maybe_sync_on_boot()
+
+    result
   end
 
   defp ensure_ets_table(name, opts) do

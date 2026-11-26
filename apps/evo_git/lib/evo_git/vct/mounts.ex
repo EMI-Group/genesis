@@ -83,14 +83,7 @@ defmodule EvoGit.VCT.Mounts do
     Enum.reduce(entries, {mounts, false}, fn entry, {acc, changed?} ->
       case system_mount(entry) do
         {:ok, point, path, name} ->
-          case Table.ensure_mount(acc, point, path, name) do
-            {:ok, ensured, _mount, entry_changed?} ->
-              {ensured, changed? or entry_changed?}
-
-            {:error, reason} ->
-              warn_skipped_system_mount(entry, reason)
-              {acc, changed?}
-          end
+          fold_system_mount(acc, changed?, entry, point, path, name)
 
         :error ->
           warn_skipped_system_mount(entry, :invalid_entry)
@@ -100,6 +93,46 @@ defmodule EvoGit.VCT.Mounts do
   end
 
   def merge_system_mounts(mounts, _entries), do: {mounts, false}
+
+  defp fold_system_mount(acc, changed?, entry, point, path, name) do
+    case project_path_owner(acc, point, path) do
+      nil ->
+        case Table.ensure_mount(acc, point, path, name) do
+          {:ok, ensured, _mount, entry_changed?} ->
+            {ensured, changed? or entry_changed?}
+
+          {:error, reason} ->
+            warn_skipped_system_mount(entry, reason)
+            {acc, changed?}
+        end
+
+      %Mount{point: owner} ->
+        # A system mount must never take over an OS path a user registered as a
+        # PROJECT: `ensure_mount/4`'s MOVE rule would carry that row onto the
+        # reserved point and `projects/1` would silently stop listing the
+        # project. The project row stays untouched and the entry's own point
+        # keeps whatever it holds today (possibly nothing) — expected host
+        # state, so this is informational, never a warning.
+        Logger.info(
+          "VCT: not taking over the OS path #{path} for system mount #{point}: " <>
+            "it belongs to the project mount #{owner}"
+        )
+
+        {acc, changed?}
+    end
+  end
+
+  # A path owned by a PROJECT mount at a DIFFERENT point is that user's mount,
+  # not a system mount's to take. A reserved→reserved move stays allowed (a
+  # system mount may be re-pointed between reserved points), and the entry's OWN
+  # point is always folded through `ensure_mount/4` (an idempotent no-op).
+  defp project_path_owner(mounts, point, path) do
+    case Table.find_by_os_path(mounts, Table.normalize_os_path(path)) do
+      %Mount{point: ^point} -> nil
+      %Mount{point: owner} = mount -> if Table.reserved?(owner), do: nil, else: mount
+      nil -> nil
+    end
+  end
 
   defp warn_skipped_system_mount(entry, reason) do
     Logger.warning("VCT: skipping a malformed system mount: #{inspect({entry, reason})}")

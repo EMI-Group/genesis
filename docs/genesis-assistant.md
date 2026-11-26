@@ -50,7 +50,12 @@ The secondary server-path entry reads an existing absolute path on the selected 
 
 Chat and task control need no Genesis checkout. The Assistant starts with minimal repo-less context and does not load the launch directory's CONTEXT tree or project skills.
 
-For implementation questions, `genesis_source` can inspect reference availability, read bounded root context, or prepare a missing checkout after approval. The reference is separate from the execution working directory and user project. The tool reports reference and runtime versions so a mismatched checkout cannot be described as the exact running implementation. Source management remains available in System settings. A missing or failed source download does not block normal chat.
+For implementation questions, `genesis_source` can inspect reference availability, read bounded root context, or — in release mode — prepare a missing checkout after approval. The reference is separate from the execution working directory and user project. The tool reports reference and runtime versions so a mismatched checkout cannot be described as the exact running implementation. Source management remains available in System settings. A missing or failed source download does not block normal chat.
+
+Which checkout the reference is depends on how this instance runs, and `EvoGit.SelfReflectiveSource.source_mode/0` names it.
+An instance started from a checkout (`mix run`, `iex -S mix`, `mix phx.server`) is in `:source` mode and already HAS the source it was built from: the reference is that running checkout, read directly from disk, so nothing needs to be downloaded or prepared, and `prepare` simply answers with the available status.
+A built release is in `:release` mode and has no checkout of its own, so its reference is the managed shallow clone at `<data_dir>/genesis-source`; preparing, cloning and updating are release-mode actions against that state-dir clone (`clone` and `update` refuse a source-mode instance with `:running_from_source`).
+A release keeps that clone current on its own: at boot, when the clone's `VERSION` differs from the running application version, one best-effort background pull refreshes it without blocking startup or chat.
 
 ## Storage and remote nodes
 

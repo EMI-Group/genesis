@@ -25,12 +25,16 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
 
   - `:source_status_runner` — returns the raw status map (backend `status/0`
     shape: `%{dir:, exists:, is_git_repo:, valid:, commit:, branch:, version:,
-    remote_url:, reference:, is_reference:, point:, mounted:}`) or
-    `{:unavailable, reason}`.
+    remote_url:, reference:, is_reference:, point:, mounted:, source_mode:,
+    running_version:, managed_dir:}`) or `{:unavailable, reason}`.
     `point` is the reserved VCT mount point (`"vct:///genesis-source"`) and
     `mounted` says whether that point currently binds the checkout dir. Both
     are OPTIONAL: an older backend (or a test stub) may omit them, so the card
     reads `point` defensively and simply renders no VCT row then.
+    `source_mode` (`:source` | `:release`), `running_version` (string | `nil`)
+    and `managed_dir` (the state-dir clone path) are OPTIONAL too: an older
+    backend or a test stub that omits them renders the clone/update buttons
+    exactly as before (`running_from_source?/1` is false without them).
   - `:source_clone_runner` / `:source_update_runner` — return
     `{:ok, status_map} | {:error, reason} | {:unavailable, reason}`.
 
@@ -48,7 +52,11 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
   and `font-semibold text-sm` title. It shows only the minimal useful info:
   the checkout directory (`dir`), the reserved VCT mount point (`point`, when
   the backend supplies it), the checked-out commit + version when
-  cloned, and the clone/update buttons. The branch and remote-URL displays
+  cloned, and the clone/update buttons. When the backend reports that this
+  instance runs from a source checkout (`running_from_source?/1`) the
+  clone/update flow is not in use, so the buttons are not rendered at all and a
+  single muted line states that the running checkout IS the local source in
+  use. The branch and remote-URL displays
   were dropped (they were always the constants `main` / the repo path), and
   there is no separate reference line — the Directory row already shows the
   checkout path, so the only reference info kept is the "in use" badge and,
@@ -80,7 +88,9 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
 
   Button visibility mirrors the old standalone card: only a map status renders
   buttons (loading / `nil` / `{:unavailable, _}` states show no buttons), and
-  clone-vs-update is chosen by `status.exists`.
+  clone-vs-update is chosen by `status.exists`. A source-mode run
+  (`running_from_source?/1`) renders neither button — that flow is not in use
+  there — and states the running checkout is the source in use instead.
   """
   def source_section(assigns) do
     ~H"""
@@ -173,43 +183,55 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
         <% end %>
 
         <%= if not @source_status_loading and is_map(@source_status) do %>
-          <!-- Bottom-right action row (only a map status renders buttons —
-               loading / nil / {:unavailable, _} states show none) -->
-          <div class="mt-auto pt-3 flex justify-end gap-2">
-            <%= if @source_status.exists do %>
-              <button
-                id="update-source"
-                type="button"
-                phx-click="update_source"
-                class="btn btn-primary btn-sm rounded-md gap-2 shrink-0"
-                disabled={@source_busy != nil}
-              >
-                <.icon
-                  name="hero-arrow-path"
-                  class={"size-4 #{if @source_busy == :update, do: "animate-spin"}"}
-                />
-                {if @source_busy == :update,
-                  do: gettext("Updating…"),
-                  else: gettext("Update")} <% # zh_CN: "更新" %>
-              </button>
-            <% else %>
-              <button
-                id="clone-source"
-                type="button"
-                phx-click="clone_source"
-                class="btn btn-primary btn-sm rounded-md gap-2 shrink-0"
-                disabled={@source_busy != nil}
-              >
-                <.icon
-                  name="hero-arrow-path"
-                  class={"size-4 #{if @source_busy == :clone, do: "animate-spin"}"}
-                />
-                {if @source_busy == :clone,
-                  do: gettext("Cloning…"),
-                  else: gettext("Clone")} <% # zh_CN: "克隆" %>
-              </button>
-            <% end %>
-          </div>
+          <%= if running_from_source?(@source_status) do %>
+            <!-- Source-mode run (a `mix run` / `iex -S mix` dev run): the agent
+                 reads the running checkout itself, so the managed clone/update
+                 flow is not in use and its buttons are not rendered. The line
+                 keeps the action row's `mt-auto pt-3` placement. -->
+            <p class="mt-auto pt-3 text-xs text-base-content/60">
+              {gettext(
+                "Genesis is running from a source checkout; the local source in use is the code this instance was built from."
+              )} <% # zh_CN: "Genesis 正在从源码检出运行，使用的是本实例构建时的本地源码" %>
+            </p>
+          <% else %>
+            <!-- Bottom-right action row (only a map status renders buttons —
+                 loading / nil / {:unavailable, _} states show none) -->
+            <div class="mt-auto pt-3 flex justify-end gap-2">
+              <%= if @source_status.exists do %>
+                <button
+                  id="update-source"
+                  type="button"
+                  phx-click="update_source"
+                  class="btn btn-primary btn-sm rounded-md gap-2 shrink-0"
+                  disabled={@source_busy != nil}
+                >
+                  <.icon
+                    name="hero-arrow-path"
+                    class={"size-4 #{if @source_busy == :update, do: "animate-spin"}"}
+                  />
+                  {if @source_busy == :update,
+                    do: gettext("Updating…"),
+                    else: gettext("Update")} <% # zh_CN: "更新" %>
+                </button>
+              <% else %>
+                <button
+                  id="clone-source"
+                  type="button"
+                  phx-click="clone_source"
+                  class="btn btn-primary btn-sm rounded-md gap-2 shrink-0"
+                  disabled={@source_busy != nil}
+                >
+                  <.icon
+                    name="hero-arrow-path"
+                    class={"size-4 #{if @source_busy == :clone, do: "animate-spin"}"}
+                  />
+                  {if @source_busy == :clone,
+                    do: gettext("Cloning…"),
+                    else: gettext("Clone")} <% # zh_CN: "克隆" %>
+                </button>
+              <% end %>
+            </div>
+          <% end %>
         <% end %>
       </div>
     </div>
@@ -225,6 +247,20 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
   def override_in_effect?(status) do
     status.reference != nil and status.reference != status.dir
   end
+
+  @doc """
+  Whether this instance runs from a source checkout (a `mix run` / `iex -S mix`
+  dev run), where the self-reflective agent reads the running checkout itself and
+  the managed clone/update flow is not in use.
+  """
+  def running_from_source?(status) when is_map(status) do
+    Map.get(status, :source_mode) == :source or
+      Map.get(status, "source_mode") == "source" or
+      Map.get(status, :running_from_source) == true or
+      Map.get(status, "running_from_source") == true
+  end
+
+  def running_from_source?(_status), do: false
 
   # Reads the reserved VCT mount point DEFENSIVELY: the status map may be
   # atom- or string-keyed, and an older backend (or a test stub) carries no

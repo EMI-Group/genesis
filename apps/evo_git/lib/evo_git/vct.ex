@@ -254,6 +254,12 @@ defmodule EvoGit.VCT do
   is persisted ONLY when it actually changed, and a successful change broadcasts
   exactly ONE `{:vct_updated, node()}`. A persist failure is logged and leaves
   the LOADED table in state, so memory and the database never disagree.
+
+  ONE carve-out, for the path a user also opens as a project: a system mount
+  NEVER takes over an OS path owned by a PROJECT mount. Such an entry is skipped
+  (logged at info, not a warning — it is expected host state), leaving both the
+  project row and the entry's own point binding exactly as they were; a
+  reserved→reserved move is still performed.
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -320,6 +326,13 @@ defmodule EvoGit.VCT do
     * the path mounted at ANOTHER point is MOVED to `point` (path, name and
       `last_opened_at` preserved) so one OS path never has two rows;
     * otherwise a new mount is inserted at `point`.
+
+  This is the DELIBERATE point-first override path, so it has NO no-steal guard: a
+  caller that names a point (such as
+  `EvoGit.SelfReflectiveSource.ensure_mount/0`) re-points the path as asked. The
+  single exception lives in the boot-time `:system_mounts` merge
+  (`EvoGit.VCT.Mounts.merge_system_mounts/2`), which refuses to move an OS path
+  owned by a PROJECT mount onto a system mount's point.
 
   Only a real change persists the whole table and broadcasts
   `{:vct_updated, node()}`. Returns `{:ok, mount}` or `{:error, reason}` (the
