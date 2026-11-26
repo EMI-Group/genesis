@@ -61,7 +61,7 @@ Status enumerations live ONE place each with a `@doc false` accessor so a table-
 | `task_registry.ex` | `killable_statuses/0` | `[:running, :awaiting_input, :cancelling, :pausing, :paused]` | `force_kill_task/1` accepts these |
 | `task_registry.ex` | `gracefully_cancellable_statuses/0` | `[:running, :awaiting_input, :pausing, :paused]` | `cancel_task/1` accepts these (`:running` → `:cancelling` grace; `:awaiting_input`/`:paused` → immediate `:cancelled`; `:pausing` abandons the pause first) |
 | `task_registry.ex` | `unstartable_statuses/0` | `[:cancelled, :cancelling, :awaiting_input, :pausing, :paused]` | `start_task/2` refuses these ids (a paused row owns its id for `resume_task/1`) |
-| `task_registry.ex` | `finalizing_ignored_statuses/0` | `[:completed, :cancelled, :cancelling, :pausing, :paused]` | a `:finalizing` broadcast is ignored (`:awaiting_input` and `:failed` deliberately ABSENT — see Known Issues) |
+| `task_registry.ex` | `finalizing_ignored_statuses/0` | `[:completed, :cancelled, :cancelling, :pausing, :paused]` | a `:finalizing` broadcast is ignored (`:awaiting_input` and `:failed` deliberately ABSENT — see this file's Local section (§Known Issues)) |
 | `task_registry.ex` | `active_statuses/0` | `[:running, :pending, :finalizing, :cancelling, :awaiting_input, :pausing, :paused]` | "a live task whose wrapper exists" — the in-flight set, NOT the busy set |
 
 Store-side halves (not owned here): `Store.Codec.@known_statuses`, `Store.Types.Status`, `TaskInfo.status`, and `Store.Operations.Lightweight`'s `@live_statuses` (else `clear_finished_tasks` deletes a waiting session) and `@lease_statuses` (else init reconciliation and the sweep never see it).
@@ -165,7 +165,7 @@ Ordering is **persist-then-broadcast**: `handle_update_status/6` writes via `Sto
 | `{:task_updated, id, :paused, node()}` | `handle_wrapper_result/3` `{:paused, info}` arm (clean); `init/1` reconciliation and `:lease_sweep` (dirty) — write → broadcast, exactly one per transition |
 | `{:task_updated, id, :cancelling, node()}` | `cancel_task/1` `:running` and `:pausing` arms |
 | `{:task_updated, id, :cancelled, node()}` | `cancel_task/1` `:pending` / `:awaiting_input` / `:paused` arms |
-| `{:task_updated, id, :failed, node()}` | `force_kill_task/1`; `:lease_sweep`; recheck resolution; watchdog/startup reconcile (force-kill fires unconditionally — see Known Issues) |
+| `{:task_updated, id, :failed, node()}` | `force_kill_task/1`; `:lease_sweep`; recheck resolution; watchdog/startup reconcile (force-kill fires unconditionally — see this file's Local section (§Known Issues)) |
 | `{:task_updated, id, nil, node()}` | `set_review_status` / `set_review_metadata` casts, only after a SUCCESSFUL write |
 | `{:task_deleted, id, node()}` | `clear_finished_tasks` (one per id), `delete_task`, only on the successful write |
 
