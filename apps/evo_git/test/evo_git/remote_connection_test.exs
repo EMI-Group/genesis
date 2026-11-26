@@ -11,9 +11,15 @@ defmodule EvoGit.RemoteConnectionTest do
   sits outside the test's `$callers` chain and cannot see the per-process
   config-dir seam (`EvoGit.TestSupport.ConfigDir`) — it reads `config.toml`
   with `EvoGit.Config.resolve/0` inside its own process.
+
+  The file keeps the bootstrap scenarios and their shared fake SSH/SCP harness
+  together. Only the connect smoke uses a bare peer; the suite VM never starts
+  distribution.
   """
 
   use ExUnit.Case, async: false
+
+  alias EvoGit.RemoteConnection
 
   # Mirrors `EvoGit.RemoteConnection`'s private accent palette (which in turn
   # mirrors the `[appearance] accent_color` `in:` list in the config schema —
@@ -36,13 +42,6 @@ defmodule EvoGit.RemoteConnectionTest do
     File.mkdir_p!(tmp_xdg)
     System.put_env("XDG_CONFIG_HOME", tmp_xdg)
 
-    # The connect worker's tunnel-readiness poll: the production cadence is
-    # 100ms, which a test that only needs one extra probe (its fake ssh
-    # publishes the forwarded port a few ms after the first probe fails) would
-    # otherwise pay in full. `async: false`, so the BEAM-global app-env
-    # write is safe.
-    test_envs = put_test_env(remote_tunnel_poll_interval_ms: 5)
-
     on_exit(fn ->
       # Terminate any connection managers started during this test so they
       # don't leak into sibling tests (the DynamicSupervisor is app-level).
@@ -57,8 +56,6 @@ defmodule EvoGit.RemoteConnectionTest do
       end
 
       File.rm_rf!(tmp_xdg)
-
-      restore_test_env(test_envs)
     end)
 
     :ok
@@ -171,377 +168,182 @@ defmodule EvoGit.RemoteConnectionTest do
     end
   end
 
-  describe "connect/1 (async, event-driven)" do
-    test "returns a prompt {:ok, :connecting} reply and never :local_node_not_distributed (auto-enables distribution on demand)" do
-      ensure_registry_and_supervisor()
-      target_id = save_test_target()
+  @tag skip: match?({:win32, _}, :os.type())
+  test "connect drives the asynchronous SSH lifecycle without distributing the suite VM" do
+    apps = [:elixir, :ex_unit, :logger, :evo_git, :phoenix_pubsub, :toml_elixir, :ecto, :decimal]
+    paths = for app <- apps, do: app |> Application.app_dir("ebin") |> String.to_charlist()
+    args = [~c"+S", ~c"1:1", ~c"-start_epmd", ~c"false", ~c"-pa" | paths]
 
-      # Auto-enable distribution only applies when node() == :nonode@nohost;
-      # if an earlier test in this VM already started distribution the worker
-      # takes the already-distributed branch — both end in a terminal :error
-      # broadcast (the fake ssh exits before the tunnel is ready).
-      if not match?({:win32, _}, :os.type()) do
-        original_epmd = Application.get_env(:kernel, :epmd_module)
-        original_min = Application.get_env(:kernel, :inet_dist_listen_min)
-        original_max = Application.get_env(:kernel, :inet_dist_listen_max)
-        was_distributed = node() != :nonode@nohost
+    # Only these three connection services run in the peer, not the Genesis
+    # application. The stdio channel survives the worker enabling distribution.
+    assert {:ok, peer, :nonode@nohost} =
+             :peer.start_link(%{connection: :standard_io, args: args, wait_boot: 10_000})
 
-        on_exit(fn ->
-          # The worker auto-enables distribution on demand; stop it again when
-          # THIS test's connect caused the start so it doesn't leak VM-wide.
-          if not was_distributed and node() != :nonode@nohost do
-            :net_kernel.stop()
-          end
+    try do
+      assert {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:ex_unit])
+      assert {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:phoenix_pubsub])
+      tmp_xdg = System.fetch_env!("XDG_CONFIG_HOME")
 
-          if not was_distributed and
-               :persistent_term.get({:evogit_epmd, :genesis}, :absent) != :absent do
-            :persistent_term.erase({:evogit_epmd, :genesis})
-          end
+      eval_connect_peer(
+        peer,
+        quote bind_quoted: [tmp_xdg: tmp_xdg] do
+          Logger.configure(level: :emergency)
+          Application.put_env(:evo_git, :config_dir_fun, fn -> tmp_xdg end)
+          Application.put_env(:evo_git, :remote_tunnel_poll_interval_ms, 5)
+          Application.put_env(:kernel, :inet_dist_use_interface, {127, 0, 0, 1})
+          Application.put_env(:kernel, :inet_dist_listen_min, 0)
+          Application.put_env(:kernel, :inet_dist_listen_max, 0)
 
-          restore_env(:kernel, :epmd_module, original_epmd)
-          restore_env(:kernel, :inet_dist_listen_min, original_min)
-          restore_env(:kernel, :inet_dist_listen_max, original_max)
-        end)
+          children = [
+            {Phoenix.PubSub, name: EvoGit.PubSub},
+            {Registry, keys: :unique, name: RemoteConnection.Registry},
+            {DynamicSupervisor, name: RemoteConnection.Supervisor, strategy: :one_for_one}
+          ]
 
-        Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+          assert {:ok, sup} = Supervisor.start_link(children, strategy: :one_for_one)
+          Process.unlink(sup)
 
-        with_fake_ssh_connect([mode: :exit], fn _log ->
-          {elapsed, result} = :timer.tc(fn -> EvoGit.RemoteConnection.connect(target_id) end)
-
-          # Old synchronous connect blocked for the full ~25s budget; the async
-          # connect must ack immediately with :connecting (never the historical
-          # :local_node_not_distributed error — auto-enable is now internal to
-          # the connect worker).
-          assert result == {:ok, :connecting}
-          assert elapsed < 5_000_000
-
-          # :connecting is broadcast when the connect starts.
-          assert_receive {:remote_connection_status, ^target_id, %{phase: :connecting}}
-
-          # Terminal outcome arrives as a broadcast — the fake ssh exits, so the
-          # worker reports a failure and the manager broadcasts :error with the
-          # detail populated (successful auto-enable reaches the tunnel; a
-          # distribution-start failure reports distribution_failed — both are
-          # :error phases, neither is :local_node_not_distributed).
-          assert_receive {:remote_connection_status, ^target_id, %{phase: phase, last_error: le}},
-                         10_000
-
-          assert phase == :error
-          assert is_binary(le) and le != ""
-        end)
-
-        cleanup_connections()
-      end
-    end
-
-    test "on an already-distributed node, flips epmd_module to EpmdDist before connecting (regression: 490958058)" do
-      ensure_registry_and_supervisor()
-
-      original_epmd = Application.get_env(:kernel, :epmd_module)
-      original_min = Application.get_env(:kernel, :inet_dist_listen_min)
-      original_max = Application.get_env(:kernel, :inet_dist_listen_max)
-      was_distributed = node() != :nonode@nohost
-
-      # The connect path that hit the bug — connect taking the already-
-      # distributed branch into the tunnel flow — requires node() !=
-      # :nonode@nohost. The test BEAM boots non-distributed and cannot start
-      # distribution with the default erl_epmd (no epmd daemon is running), so
-      # start an EPMD-less distribution the same way the app does: listen range
-      # + EpmdDist epmd_module, then :net_kernel.start. `started` is true only
-      # when THIS test actually started distribution (a node already
-      # distributed on entry is not ours to stop).
-      started =
-        if was_distributed do
-          false
-        else
-          Application.put_env(:kernel, :inet_dist_listen_min, 9100)
-          Application.put_env(:kernel, :inet_dist_listen_max, 9200)
-          Application.put_env(:kernel, :epmd_module, Elixir.EvoGit.EpmdDist)
-
-          case :net_kernel.start([:"genesis@127.0.0.1", :longnames]) do
-            {:ok, _pid} -> true
-            # Environment cannot run distribution — the distributed connect
-            # path is unreachable; skip the assertions below (mirrors the
-            # existing non-distributed connect test's tolerance).
-            _other -> false
+          for id <- ["peer", "peer-failure"] do
+            assert {:ok, %{id: ^id}} =
+                     EvoGit.RemoteConnections.save(%{
+                       id: id,
+                       ssh_target: "fake@example.com",
+                       dist_port: 9999
+                     })
           end
         end
+      )
 
-      on_exit(fn ->
-        if started and node() != :nonode@nohost do
-          :net_kernel.stop()
+      port_file = Path.join(tmp_xdg, "tunnel-port")
+
+      with_fake_ssh_connect([mode: :sleep, write_port_to: port_file], fn log ->
+        assert :ok = :peer.call(peer, System, :put_env, ["PATH", System.fetch_env!("PATH")])
+
+        eval_connect_peer(
+          peer,
+          quote do
+            assert node() == :nonode@nohost
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+            {elapsed, result} = :timer.tc(fn -> RemoteConnection.connect("peer") end)
+            assert result == {:ok, :connecting}
+            assert elapsed < 5_000_000
+            assert_receive {:remote_connection_status, "peer", %{phase: :connecting}}
+          end
+        )
+
+        assert await_ssh_argv_line(log) =~ "-o ConnectTimeout=8"
+        assert await_tunnel_port_file(port_file) > 0
+
+        eval_connect_peer(
+          peer,
+          quote do
+            assert node() == :"genesis@127.0.0.1"
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+            assert [{manager, _}] = Registry.lookup(RemoteConnection.Registry, "peer")
+            assert %{connect_worker: {worker, ref}} = :sys.get_state(manager)
+
+            assert {:ok, :connecting} = RemoteConnection.connect("peer")
+            assert %{connect_worker: {^worker, ^ref}} = :sys.get_state(manager)
+
+            assert {elapsed, %{phase: :connecting}} =
+                     :timer.tc(fn -> RemoteConnection.status("peer") end)
+
+            assert elapsed < 5_000_000
+            refute RemoteConnection.connected?("peer")
+            assert %{"peer" => %{phase: :connecting}} = RemoteConnection.list_connections()
+
+            worker_ref = Process.monitor(worker)
+            manager_ref = Process.monitor(manager)
+            assert {elapsed, :ok} = :timer.tc(fn -> RemoteConnection.disconnect("peer") end)
+            assert elapsed < 5_000_000
+            assert_receive {:remote_connection_status, "peer", %{phase: :disconnected}}
+            assert_receive {:DOWN, ^worker_ref, :process, ^worker, :killed}
+            assert_receive {:DOWN, ^manager_ref, :process, ^manager, :normal}
+            assert RemoteConnection.status("peer").phase == :disconnected
+            refute Map.has_key?(RemoteConnection.list_connections(), "peer")
+          end
+        )
+
+        assert ssh_invocation_count(log) == 1
+        File.rm!(port_file)
+
+        # Let the TCP readiness probe through, then close the actual Erlang
+        # handshake. Assert the manager reports the resulting Node.connect error.
+        pending =
+          Task.async(fn ->
+            eval_connect_peer(
+              peer,
+              quote do
+                Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+                assert {:ok, :connecting} = RemoteConnection.connect("peer-failure")
+                assert_receive {:remote_connection_status, "peer-failure", %{phase: :connecting}}
+
+                assert_receive {:remote_connection_status, "peer-failure",
+                                %{phase: :error, last_error: error}},
+                               10_000
+
+                assert error =~ "Could not connect"
+
+                assert %{phase: :error, last_error: ^error} =
+                         RemoteConnection.status("peer-failure")
+
+                :ok
+              end
+            )
+          end)
+
+        assert {:ok, listener} = port_file |> await_tunnel_port_file() |> listen_with_retry()
+
+        try do
+          for _ <- 1..2 do
+            assert {:ok, socket} = :gen_tcp.accept(listener, 5_000)
+            assert :ok = :gen_tcp.close(socket)
+          end
+
+          assert :ok = Task.await(pending, 12_000)
+        after
+          :gen_tcp.close(listener)
         end
-
-        # EpmdDist.register_node/3 persists the local name in its
-        # persistent-term registry at net_kernel start; erase the entry this
-        # test created (erase/1 raises on a missing key, hence the guard).
-        if started and :persistent_term.get({:evogit_epmd, :genesis}, :absent) != :absent do
-          :persistent_term.erase({:evogit_epmd, :genesis})
-        end
-
-        restore_env(:kernel, :epmd_module, original_epmd)
-        restore_env(:kernel, :inet_dist_listen_min, original_min)
-        restore_env(:kernel, :inet_dist_listen_max, original_max)
       end)
 
-      if node() != :nonode@nohost and not match?({:win32, _}, :os.type()) do
-        # Deliberately reset the env to the default erl_epmd first, so the
-        # assertion below proves the connect worker (not our setup) performed
-        # the flip back to EpmdDist before the tunnel/Node.connect.
-        Application.put_env(:kernel, :epmd_module, :erl_epmd)
+      with_fake_ssh_connect([mode: :exit], fn _log ->
+        assert :ok = :peer.call(peer, System, :put_env, ["PATH", System.fetch_env!("PATH")])
 
-        # Fake `ssh` exits immediately instead of hanging on a real network
-        # connect — the tunnel dies fast and deterministically (real ssh to
-        # example.com can hang for the full 10s tunnel budget offline).
-        with_fake_ssh_connect([mode: :exit], fn _log ->
-          target_id = save_test_target()
-          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+        eval_connect_peer(
+          peer,
+          quote do
+            # On an already-distributed node the worker (not setup) must
+            # switch the EPMD module even if the tunnel fails (490958058).
+            Application.put_env(:kernel, :epmd_module, :erl_epmd)
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+            assert {:ok, :connecting} = RemoteConnection.connect("peer-failure")
+            assert_receive {:remote_connection_status, "peer-failure", %{phase: :connecting}}
 
-          assert {:ok, :connecting} = EvoGit.RemoteConnection.connect(target_id)
+            assert_receive {:remote_connection_status, "peer-failure",
+                            %{phase: :error, last_error: error}},
+                           5_000
 
-          # :connecting start broadcast, then the terminal broadcast.
-          assert_receive {:remote_connection_status, ^target_id, %{phase: :connecting}}
-
-          # The fake ssh exits before the tunnel opens, so connect errors with
-          # a tunnel_not_ready failure broadcast — but NOT distribution_failed
-          # (that would mean the worker never reached the already-distributed
-          # branch).
-          assert_receive {:remote_connection_status, ^target_id,
-                          %{phase: :error, last_error: le}},
-                         5_000
-
-          assert is_binary(le) and le != ""
-          # `last_error` is the READABLE message (format_reason/1), not the raw
-          # `{:tunnel_not_ready, _}` tag.
-          assert le =~ "SSH tunnel did not become ready"
-
-          # The worker runs ensure_epmd_module() before opening the tunnel, so
-          # even a failed connect must leave the env at EpmdDist.
-          assert Application.get_env(:kernel, :epmd_module) == EvoGit.EpmdDist
-        end)
-
-        cleanup_connections()
-      end
+            assert error =~ "SSH tunnel did not become ready"
+            assert %{phase: :error, last_error: ^error} = RemoteConnection.status("peer-failure")
+            assert Application.get_env(:kernel, :epmd_module) == EvoGit.EpmdDist
+          end
+        )
+      end)
+    after
+      :peer.stop(peer)
     end
+  end
 
-    test "connect/1 replies promptly (does not block ~25s) and broadcasts :connecting on start" do
-      ensure_registry_and_supervisor()
-
-      # Deterministic async-contract tests need a distributed test node so the
-      # connect worker reaches the tunnel flow; start one (EPMD-less, like the
-      # app does) and skip when the environment cannot run distribution.
-      if not match?({:win32, _}, :os.type()) and start_distributed_test_node() == :ok do
-        with_fake_ssh_connect([mode: :sleep], fn _log ->
-          target_id = save_test_target()
-          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
-
-          {elapsed, result} = :timer.tc(fn -> EvoGit.RemoteConnection.connect(target_id) end)
-
-          # The fake ssh sleeps 30s; under the old synchronous behavior this
-          # call blocked for the full tunnel budget (~10s+) — now it acks
-          # immediately with :connecting.
-          assert result == {:ok, :connecting}
-          assert elapsed < 5_000_000
-
-          # :connecting is broadcast when the connect starts (fired in
-          # handle_call before the worker is spawned).
-          assert_receive {:remote_connection_status, ^target_id, %{phase: :connecting}}
-
-          cleanup_connections()
-        end)
+  defp eval_connect_peer(peer, code) do
+    code =
+      quote do
+        import ExUnit.Assertions
+        unquote(code)
       end
-    end
 
-    test "GenServer stays responsive while a connect is in flight (status/connected?/list_connections/disconnect)" do
-      ensure_registry_and_supervisor()
-
-      if not match?({:win32, _}, :os.type()) and start_distributed_test_node() == :ok do
-        with_fake_ssh_connect([mode: :sleep], fn _log ->
-          target_id = save_test_target()
-          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
-
-          assert {:ok, :connecting} = EvoGit.RemoteConnection.connect(target_id)
-          assert_receive {:remote_connection_status, ^target_id, %{phase: :connecting}}
-
-          # The tunnel fake sleeps 30s, so the manager would be busy for the
-          # whole wait budget under the old in-process connect; now status/1
-          # must answer promptly with the in-flight phase.
-          {elapsed, status} = :timer.tc(fn -> EvoGit.RemoteConnection.status(target_id) end)
-          assert status.phase == :connecting
-          assert elapsed < 5_000_000
-
-          refute EvoGit.RemoteConnection.connected?(target_id)
-
-          assert %{^target_id => %{phase: :connecting}} =
-                   EvoGit.RemoteConnection.list_connections()
-
-          # disconnect/1 during the in-flight connect: prompt, kills the worker
-          # (closing its ssh port) and ends with a terminal :disconnected
-          # broadcast reflecting the intent.
-          {elapsed_disc, disc} =
-            :timer.tc(fn -> EvoGit.RemoteConnection.disconnect(target_id) end)
-
-          assert disc == :ok
-          assert elapsed_disc < 5_000_000
-
-          assert_receive {:remote_connection_status, ^target_id, %{phase: :disconnected}}
-
-          # The manager is stopped with :normal + restart: :transient → NOT
-          # restarted: no stale state, no live manager child, no worker left.
-          assert EvoGit.RemoteConnection.status(target_id).phase == :disconnected
-
-          # Load-robust leak check scoped to THIS target. The Registry and
-          # DynamicSupervisor are app-level (started by EvoGit.Application) and
-          # shared with sibling tests, so a hard
-          # `DynamicSupervisor.which_children(sup) == []` flakes when another
-          # test's manager is still winding down under parallel full-suite
-          # load. Instead wait (bounded) for THIS target's Registry entry — and
-          # with it its manager + linked connect worker — to disappear, which
-          # proves this test leaked no manager/worker for its own target_id.
-          wait_until(
-            fn ->
-              if Map.has_key?(EvoGit.RemoteConnection.list_connections(), target_id),
-                do: :retry,
-                else: {:ok, :drained}
-            end,
-            2_000,
-            "connection manager for #{target_id} was left behind after disconnect"
-          )
-        end)
-      end
-    end
-
-    test "duplicate connect while :connecting is an idempotent no-op (one tunnel only)" do
-      ensure_registry_and_supervisor()
-
-      if not match?({:win32, _}, :os.type()) and start_distributed_test_node() == :ok do
-        with_fake_ssh_connect([mode: :sleep], fn log ->
-          target_id = save_test_target()
-          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
-
-          assert {:ok, :connecting} = EvoGit.RemoteConnection.connect(target_id)
-          assert_receive {:remote_connection_status, ^target_id, %{phase: :connecting}}
-
-          # Second connect while the first is in flight: prompt ack of the
-          # CURRENT phase, no second worker/tunnel spawned, no state clobber.
-          assert {:ok, :connecting} = EvoGit.RemoteConnection.connect(target_id)
-
-          # Wait (bounded) for the single worker to log its ssh invocation,
-          # then prove no second tunnel was spawned: the duplicate connect hit
-          # the idempotent :connecting guard and returned WITHOUT spawning a
-          # worker. Polling the log is equivalent to the old blind
-          # Process.sleep(300) but returns as soon as the invocation lands.
-          assert wait_for_ssh_invocation(log) >= 1
-          assert ssh_invocation_count(log) == 1
-
-          cleanup_connections()
-        end)
-      end
-    end
-
-    test "connect failure (ssh exits before the tunnel is ready) broadcasts :error with last_error populated" do
-      ensure_registry_and_supervisor()
-
-      if not match?({:win32, _}, :os.type()) and start_distributed_test_node() == :ok do
-        with_fake_ssh_connect([mode: :exit], fn _log ->
-          target_id = save_test_target()
-          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
-
-          assert {:ok, :connecting} = EvoGit.RemoteConnection.connect(target_id)
-          assert_receive {:remote_connection_status, ^target_id, %{phase: :connecting}}
-
-          # The fake ssh exits immediately → wait_for_tunnel fails fast → the
-          # worker reports the failure → the manager BROADCASTS :error with the
-          # detail populated (this failure arm was silent before the refactor).
-          assert_receive {:remote_connection_status, ^target_id,
-                          %{phase: :error, last_error: le}},
-                         5_000
-
-          assert is_binary(le) and le != ""
-          # `last_error` is the READABLE message (format_reason/1), not the raw
-          # `{:tunnel_not_ready, _}` tag.
-          assert le =~ "SSH tunnel did not become ready"
-
-          # The manager survives in :error phase (no crash/restart) and a
-          # status read exposes the failure.
-          assert %{phase: :error, last_error: ^le} = EvoGit.RemoteConnection.status(target_id)
-
-          cleanup_connections()
-        end)
-      end
-    end
-
-    test "node-connect failure broadcasts :error with last_error populated" do
-      ensure_registry_and_supervisor()
-
-      if not match?({:win32, _}, :os.type()) and start_distributed_test_node() == :ok do
-        port_file =
-          Path.join(
-            System.tmp_dir!(),
-            "evogit-test-tunnel-port-#{System.unique_integer([:positive])}"
-          )
-
-        # `System.unique_integer/1` restarts low in every fresh BEAM run, so
-        # this name RECURS across runs — and a LEFTOVER port file from an
-        # earlier run (nothing ever removed them; the shared temp dir is not
-        # per-run) would satisfy `await_tunnel_port_file/2` BEFORE this run's
-        # fake ssh writes its port. The listener below would then bind the
-        # PREVIOUS run's tunnel port, the worker would poll its own (unserved)
-        # port until the whole `@tunnel_wait_timeout_ms` budget expired, and the
-        # terminal `:error` would arrive as `tunnel_not_ready` long after this
-        # test's 10s wait. Removing the file up front makes the write → read
-        # handshake deterministic: the wait now provably blocks until THIS
-        # run's fake ssh reports its port.
-        File.rm_rf!(port_file)
-        on_exit(fn -> File.rm_rf!(port_file) end)
-
-        with_fake_ssh_connect([mode: :sleep, write_port_to: port_file], fn _log ->
-          target_id = save_test_target()
-          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
-
-          assert {:ok, :connecting} = EvoGit.RemoteConnection.connect(target_id)
-          assert_receive {:remote_connection_status, ^target_id, %{phase: :connecting}}
-
-          # The fake ssh keeps running but never forwards: it reports the
-          # tunnel's local port, which this test then serves with an
-          # accept-and-close listener — wait_for_tunnel passes and Node.connect
-          # runs against a peer that closes the handshake → node_connect_failed.
-          local_port = await_tunnel_port_file(port_file)
-          listener_pid = spawn_link(fn -> accept_close_loop(open_listener(local_port)) end)
-          on_exit(fn -> send(listener_pid, :stop) end)
-
-          assert_receive {:remote_connection_status, ^target_id,
-                          %{phase: :error, last_error: le}},
-                         10_000
-
-          assert is_binary(le) and le != ""
-          assert le =~ "Could not connect"
-
-          cleanup_connections()
-        end)
-      end
-    end
-
-    test "the ssh tunnel command carries -o ConnectTimeout (bounded ssh connect)" do
-      ensure_registry_and_supervisor()
-
-      if not match?({:win32, _}, :os.type()) and start_distributed_test_node() == :ok do
-        with_fake_ssh_connect([mode: :sleep], fn log ->
-          target_id = save_test_target()
-
-          assert {:ok, :connecting} = EvoGit.RemoteConnection.connect(target_id)
-
-          # The fake ssh logs its full argv; the tunnel command must include
-          # the bounded ConnectTimeout so an unreachable/dead host fails inside
-          # the @tunnel_wait_timeout_ms budget instead of hanging on the OS TCP
-          # timeout.
-          argv = await_ssh_argv_line(log)
-          assert argv =~ "-o ConnectTimeout=8"
-
-          cleanup_connections()
-        end)
-      end
-    end
+    {result, _bindings} = :peer.call(peer, Code, :eval_quoted, [code], 15_000)
+    result
   end
 
   describe "find_free_port/0" do
@@ -778,6 +580,21 @@ defmodule EvoGit.RemoteConnectionTest do
     end
   end
 
+  # The port was reserved-then-closed right before, so a sibling may briefly grab it.
+  defp listen_with_retry(local_port, attempts \\ 50) do
+    case :gen_tcp.listen(local_port, [:inet, {:ip, {127, 0, 0, 1}}, {:reuseaddr, true}]) do
+      {:ok, socket} ->
+        {:ok, socket}
+
+      {:error, :eaddrinuse} when attempts > 0 ->
+        Process.sleep(20)
+        listen_with_retry(local_port, attempts - 1)
+
+      {:error, reason} ->
+        flunk("could not bind listener on 127.0.0.1:#{local_port}: #{inspect(reason)}")
+    end
+  end
+
   # The dummy live/dying Port commands (`sleep`, `false`) are POSIX — Windows
   # has no equivalent `sh -c` builtins, so these unit tests of the tunnel
   # readiness helper are skipped there.
@@ -788,23 +605,6 @@ defmodule EvoGit.RemoteConnectionTest do
         port = Port.open({:spawn, "sleep 30"}, [:binary, :exit_status, :stream])
         on_exit(fn -> if Port.info(port) != nil, do: Port.close(port) end)
         port
-      end
-
-      # Opens a TCP listener on the given 127.0.0.1 port, retrying briefly —
-      # the port was reserved-then-closed right before, so a sibling test
-      # could in theory have grabbed it.
-      defp listen_with_retry(local_port, attempts \\ 50) do
-        case :gen_tcp.listen(local_port, [:inet, {:ip, {127, 0, 0, 1}}, {:reuseaddr, true}]) do
-          {:ok, socket} ->
-            {:ok, socket}
-
-          {:error, :eaddrinuse} when attempts > 0 ->
-            Process.sleep(20)
-            listen_with_retry(local_port, attempts - 1)
-
-          {:error, reason} ->
-            flunk("could not bind listener on 127.0.0.1:#{local_port}: #{inspect(reason)}")
-        end
       end
 
       test "returns :ok when the local port is TCP-ready" do
@@ -2790,59 +2590,6 @@ defmodule EvoGit.RemoteConnectionTest do
     fun.(log)
   end
 
-  # Starts an EPMD-less distributed test node (`genesis@127.0.0.1`, longnames,
-  # listen 9100–9200, EpmdDist epmd_module — mirroring how the app enables
-  # distribution on demand) so connect workers take the already-distributed
-  # branch and reach the tunnel flow. Returns :ok when distribution is
-  # available — either already running on this VM (not ours to stop), or
-  # successfully started here, in which case an on_exit stops it again and
-  # restores the kernel env — or :error when the environment cannot run
-  # distribution (callers skip their distributed-connect assertions).
-  defp start_distributed_test_node do
-    if node() != :nonode@nohost do
-      :ok
-    else
-      original_epmd = Application.get_env(:kernel, :epmd_module)
-      original_min = Application.get_env(:kernel, :inet_dist_listen_min)
-      original_max = Application.get_env(:kernel, :inet_dist_listen_max)
-
-      Application.put_env(:kernel, :inet_dist_listen_min, 9100)
-      Application.put_env(:kernel, :inet_dist_listen_max, 9200)
-      Application.put_env(:kernel, :epmd_module, Elixir.EvoGit.EpmdDist)
-
-      case :net_kernel.start([:"genesis@127.0.0.1", :longnames]) do
-        {:ok, _pid} ->
-          on_exit(fn ->
-            if node() != :nonode@nohost do
-              :net_kernel.stop()
-            end
-
-            # EpmdDist.register_node/3 persists the local name in its
-            # persistent-term registry at net_kernel start; erase the entry
-            # this helper created (erase/1 raises on a missing key, hence the
-            # guard).
-            if :persistent_term.get({:evogit_epmd, :genesis}, :absent) != :absent do
-              :persistent_term.erase({:evogit_epmd, :genesis})
-            end
-
-            restore_env(:kernel, :epmd_module, original_epmd)
-            restore_env(:kernel, :inet_dist_listen_min, original_min)
-            restore_env(:kernel, :inet_dist_listen_max, original_max)
-          end)
-
-          :ok
-
-        _other ->
-          # Environment cannot run distribution — put the kernel env back so
-          # nothing leaks into sibling tests, and report :error.
-          restore_env(:kernel, :epmd_module, original_epmd)
-          restore_env(:kernel, :inet_dist_listen_min, original_min)
-          restore_env(:kernel, :inet_dist_listen_max, original_max)
-          :error
-      end
-    end
-  end
-
   # Number of ssh invocations recorded in the fake ssh's log (one line per
   # invocation) — used to prove duplicate connects spawn no second tunnel.
   defp ssh_invocation_count(log) do
@@ -2850,24 +2597,6 @@ defmodule EvoGit.RemoteConnectionTest do
       {:ok, contents} -> contents |> String.split("\n", trim: true) |> length()
       {:error, _} -> 0
     end
-  end
-
-  # Waits (bounded) for the fake ssh to log its first invocation, returning the
-  # count seen (>= 1). Replaces the old blind `Process.sleep(300)` with a
-  # load-independent poll that returns as soon as the invocation lands while
-  # still allowing a (wrongly-spawned) second worker to log — the subsequent
-  # `ssh_invocation_count(log) == 1` assertion proves none did.
-  defp wait_for_ssh_invocation(log, timeout \\ 2_000) do
-    wait_until(
-      fn ->
-        case ssh_invocation_count(log) do
-          n when n >= 1 -> {:ok, n}
-          _ -> :retry
-        end
-      end,
-      timeout,
-      "fake ssh never logged an invocation"
-    )
   end
 
   # Waits (bounded) for the fake ssh's log to contain its first argv line and
@@ -2936,53 +2665,6 @@ defmodule EvoGit.RemoteConnectionTest do
           Process.sleep(@poll_interval_ms)
           do_wait_until(fun, deadline, timeout, label)
         end
-    end
-  end
-
-  # Opens a TCP listener on 127.0.0.1:<port> — standing in for the remote
-  # daemon's distribution port in the node-connect-failure test.
-  defp open_listener(local_port) do
-    case :gen_tcp.listen(local_port, [
-           :inet,
-           {:ip, {127, 0, 0, 1}},
-           {:active, false},
-           {:reuseaddr, true}
-         ]) do
-      {:ok, socket} ->
-        socket
-
-      {:error, reason} ->
-        flunk(
-          "could not bind accept-close listener on 127.0.0.1:#{local_port}: " <>
-            inspect(reason)
-        )
-    end
-  end
-
-  # Accepts-and-closes every inbound connection in a loop (an absent remote
-  # daemon: TCP connects succeed, so the tunnel-readiness probe passes, but the
-  # Erlang distribution handshake that follows cannot complete). The 500ms
-  # accept timeout lets a :stop message interrupt the blocking accept, so the
-  # test's on_exit can shut the listener down cleanly.
-  defp accept_close_loop(listener) do
-    case :gen_tcp.accept(listener, 500) do
-      {:ok, socket} ->
-        :gen_tcp.close(socket)
-        accept_close_loop(listener)
-
-      {:error, :timeout} ->
-        receive do
-          :stop ->
-            :gen_tcp.close(listener)
-            :ok
-        after
-          0 ->
-            accept_close_loop(listener)
-        end
-
-      {:error, _reason} ->
-        # Listener closed underneath us (process shutdown) — bail out.
-        :ok
     end
   end
 end
