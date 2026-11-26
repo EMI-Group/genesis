@@ -101,6 +101,7 @@ defmodule EvoGit.Agents.Architect do
       PromptFragments.standard_sections_enum() <>
       " are required; keep files concise — no sub-file details like docstrings or inline comments. " <>
       PromptFragments.context_current_state_clause() <>
+      " The CONTEXT.md you write documents the directory for itself and its descendants, so write it all as Shared — no divider is needed unless you are recording material only an agent assigned to this directory should see." <>
       "\n" <>
       ~S"""
       - **Focus on your level**: Agents inherit context top-down — a subagent at `./src/auth/oauth/` automatically sees the

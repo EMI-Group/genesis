@@ -340,9 +340,19 @@ Genesis models the codebase as a **Context Tree**: every directory node has a `C
   new content, write one sentence per line (granular git diffs), write
   findings at the best-fit child/descendant node (with a routing-table entry
   at the current level) instead of hoarding them in the parent, and extract
-  oversized sections into skills; and treat the
-  `... [Content Truncated] ...` marker in a read CONTEXT.md as a signal the
-  file exceeded the per-file limit.
+  oversized sections into skills.
+
+  It also teaches the TWO-SCOPE model of a single CONTEXT.md file: everything
+  before a lone `<!-- genesis:local -->` line is **Shared** (applies to the
+  node and all its descendants), everything after it is **Local** (read only
+  by agents ASSIGNED to that directory, never by descendants), and a file with
+  no divider is entirely Shared. Design rationale and renderer semantics:
+  `docs/context-scopes.md`.
+
+  It closes with the truncation advice, which is PER RENDERED STAGE: a file
+  showing `... [Content Truncated] ...` exceeded the per-stage limit (~64 KB
+  of the SELECTED scope as rendered — the Shared part as a descendant sees it,
+  or the whole file for an agent assigned to that directory), not the chain.
 
   Used by: Manager (standalone paragraph after the "CONTEXT.md is your
   long-term memory" bullet), Architect (continuation sentence at the end of
@@ -352,7 +362,7 @@ Genesis models the codebase as a **Context Tree**: every directory node has a `C
   Documentation section list, before the Routing Table item).
   """
   def context_current_state_clause do
-    "CONTEXT.md documents the **current state** — what is true now (intent, API surface, constraints, known issues, design decisions) — not a change log. Record no history: no past behaviors, no \"was X, now Y\", no \"bug fixed\"/\"FIXED\" annotations, no dated changelog entries. A bug that exists now may be recorded (e.g. `## Known Issues`); once it is fixed, delete the text (`edit_context`) instead of marking it fixed. For history use git (`git log -p -- <path>`, `search_history`) — git is the change log. Maintain the file actively: prune or condense stale and redundant text in the same pass as adding new content (git preserves what you remove). Write one sentence per line so git diffs stay granular. Put each finding at the level it belongs: child and descendant findings go in that node's CONTEXT.md plus a routing-table entry here, not hoarded in the parent. A section that keeps growing despite pruning is a candidate for extraction into a skill (`.agents/skills/`, `skill_add`/`skill_enable`), with a pointer left behind. A read CONTEXT.md that shows `... [Content Truncated] ...` exceeded the per-file limit (~64 KB each, not the chain) — prune it to essentials and push detail down to child nodes or a skill."
+    "CONTEXT.md documents the **current state** — what is true now (intent, API surface, constraints, known issues, design decisions) — not a change log. Record no history: no past behaviors, no \"was X, now Y\", no \"bug fixed\"/\"FIXED\" annotations, no dated changelog entries. A bug that exists now may be recorded (e.g. `## Known Issues`); once it is fixed, delete the text (`edit_context`) instead of marking it fixed. For history use git (`git log -p -- <path>`, `search_history`) — git is the change log. Maintain the file actively: prune or condense stale and redundant text in the same pass as adding new content (git preserves what you remove). Write one sentence per line so git diffs stay granular. Put each finding at the level it belongs: child and descendant findings go in that node's CONTEXT.md plus a routing-table entry here, not hoarded in the parent. A section that keeps growing despite pruning is a candidate for extraction into a skill (`.agents/skills/`, `skill_add`/`skill_enable`), with a pointer left behind. A CONTEXT.md has two scopes in one file: write the Shared part first, then put the line `<!-- genesis:local -->` on its own line where the Local part begins. Shared text applies to this node and every descendant — the everyday test commands, design principles and short routing table that ordinary work needs. Local text is read only by agents assigned to this directory (release procedures, full-suite testing, benchmarking) and never reaches descendant agents. A file with no divider is entirely Shared. A read CONTEXT.md that shows `... [Content Truncated] ...` exceeded the per-stage limit (~64 KB of the selected scope as rendered — the Shared part as a descendant sees it, or the whole file for an agent assigned to that directory — not the chain) — prune it to essentials and push detail down to child nodes or a skill."
   end
 
   # ── Foreign repositories (Architect + ContextExtractor) ──────────────────
