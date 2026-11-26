@@ -4648,9 +4648,13 @@ defmodule EvoDashWeb.HomeLiveTest do
         ])
 
       {:ok, view, _} = live(conn, "/assistant")
+      title = ".workbench-tab-rail > .workbench-context-title"
+      assert has_element?(view, title, "Assistant")
+
       open_picker(view, workspace.point)
       render_click(view, "workspace_pick", %{"point" => workspace.point})
       wait_until(fn -> match?(%{kind: :workspace}, assigns(view).workspace) end)
+      assert has_element?(view, title, workspace.name)
 
       selection = assigns(view).workspace
       # Scope identity is the WORKSPACE point…

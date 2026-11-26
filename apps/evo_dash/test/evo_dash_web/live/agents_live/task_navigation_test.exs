@@ -39,6 +39,13 @@ defmodule EvoDashWeb.AgentsLive.TaskNavigationTest do
     settle_agents(view)
     assert_agent_cards(view, [root, child])
     assert_task_shell(view, first)
+    project_name = Path.basename(project)
+
+    assert has_element?(
+             view,
+             ~s(.workbench-tab-rail > .workbench-context-title[title="#{project_name}"]),
+             project_name
+           )
 
     render_patch(view, task_agents_path(second))
     settle_agents(view)
@@ -128,6 +135,12 @@ defmodule EvoDashWeb.AgentsLive.TaskNavigationTest do
   defp assert_generic_shell(view) do
     assert has_element?(view, ~s(#app-layout[data-workbench-page="agents"]))
     refute has_element?(view, ~s|#app-layout[data-workbench-task]:not([data-workbench-task=""])|)
+
+    assert has_element?(
+             view,
+             ~s(.workbench-tab-rail > .workbench-context-title:first-child[title="Agents"]),
+             "Agents"
+           )
   end
 
   defp assert_agent_cards(view, ids) do

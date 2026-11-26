@@ -216,6 +216,7 @@ defmodule EvoDashWeb.ProjectsWorkbenchTest do
       missing = Path.join(second, "not-a-directory")
       render_patch(view, ~p"/projects?#{%{project: missing, wb_home: "1"}}")
 
+      assert has_element?(view, ".workbench-tab-rail > .workbench-context-title", "Projects")
       assert has_element?(view, ~s(#app-layout[data-workbench-project=""]))
 
       assert has_element?(
@@ -846,7 +847,9 @@ defmodule EvoDashWeb.ProjectsWorkbenchVctTest do
       conn: conn,
       tmp_dir: root
     } do
-      path = Path.join(root, "project with spaces")
+      name = "project with spaces"
+      path = Path.join(root, name)
+      title = ~s(.workbench-tab-rail > .workbench-context-title[title="#{name}"])
       File.mkdir!(path)
       point = register_project!(path)
       task_id = seed_task!(path: path, objective: unique_phrase("empty-tabs"), status: :completed)
@@ -857,6 +860,7 @@ defmodule EvoDashWeb.ProjectsWorkbenchVctTest do
       await_confirmed_overview(view, point, task_id)
 
       assert_scoped_default_draft(view, path)
+      assert has_element?(view, title, name)
 
       # This is the URL reached after the client closes the last open tab; no
       # client hook has to fix an incorrect server scope or display state.
@@ -864,9 +868,11 @@ defmodule EvoDashWeb.ProjectsWorkbenchVctTest do
 
       assert_empty_project_view(view, path)
       assert has_element?(view, row_selector(task_id))
+      assert has_element?(view, title, name)
 
       render_patch(view, ~p"/projects?#{%{project: path, wb_task: "1"}}")
       assert has_element?(view, "#dashboard-root[data-workbench-compose=true] #task-form")
+      assert has_element?(view, title, name)
       refute has_element?(view, "#workbench-project-overview")
       assert_no_default_draft(view)
     end

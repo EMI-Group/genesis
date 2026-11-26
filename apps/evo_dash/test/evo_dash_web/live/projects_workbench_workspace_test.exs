@@ -43,6 +43,8 @@ defmodule EvoDashWeb.ProjectsWorkbenchWorkspaceTest do
 
     assert has_element?(view, "#workbench-project-overview[data-overview-kind=workspace]")
     assert has_element?(view, "[data-overview-point]", workspace.point)
+    title = ~s(.workbench-tab-rail > .workbench-context-title[title="#{workspace.name}"])
+    assert has_element?(view, title, workspace.name)
     assert_member_scope(view, workspace.point, first.path)
     assert_workspace_default_draft(view, workspace.point)
 
@@ -51,6 +53,7 @@ defmodule EvoDashWeb.ProjectsWorkbenchWorkspaceTest do
     |> render_change()
 
     assert has_element?(view, "[data-overview-execution-member]", second.path)
+    assert has_element?(view, title, workspace.name)
     assert_member_scope(view, workspace.point, second.path)
     assert_workspace_default_draft(view, workspace.point)
 
