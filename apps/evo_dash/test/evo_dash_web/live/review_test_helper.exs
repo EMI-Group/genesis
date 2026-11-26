@@ -82,9 +82,7 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
 
   def setup_review_templates!(shapes) do
     install_canonical_merge_check_runner()
-    templates = build_templates!(shapes)
-    on_exit(fn -> rm_templates!(templates) end)
-    {:ok, review_templates: templates}
+    {:ok, review_templates: build_templates!(shapes)}
   end
 
   def setup_async_review(%{review_templates: templates}) do
@@ -110,20 +108,16 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
   # must not key anything on `__MODULE__`.
   def build_templates!(shapes) do
     for {primary, secondary} <- shapes, into: %{} do
-      dir =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit_review_template_" <> to_string(System.unique_integer([:positive]))
-        )
+      dir = review_tmp_path("evogit_review_template_")
+      on_exit(fn -> File.rm_rf!(dir) end)
 
       {change_sha, _primary, base_sha} = build_repo_with_task_branch!(dir, primary, secondary)
       {{primary, secondary}, %{dir: dir, change_sha: change_sha, base_sha: base_sha}}
     end
   end
 
-  # Removes every template dir. Call from an `on_exit` closure that CAPTURED the
-  # map (never from a `Process.get/1` read — on_exit runs outside the test
-  # process).
+  # Legacy teardown for callers that still capture the template map.
+  # build_templates!/1 already registers each directory before building it.
   def rm_templates!(templates) do
     Enum.each(templates, fn {_pair, %{dir: dir}} -> rm_rf_retry(dir) end)
   end
@@ -177,22 +171,39 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
   # A single budget for review helpers and suite assertions.
   def async_wait_budget, do: @async_wait_budget_ms
 
-  # Runs a git command in `repo`, asserting it succeeds.
+  # Allocates a name only. The OS pid separates concurrent VMs, and the
+  # random suffix also protects against stale paths after a pid is reused.
+  def review_tmp_path(prefix) do
+    random = Integer.to_string(:rand.uniform(4_294_967_296) - 1, 16)
+
+    Path.join(
+      System.tmp_dir!(),
+      "#{prefix}#{System.pid()}-#{System.unique_integer([:positive])}-#{random}"
+    )
+  end
+
+  # Returns command output, including stderr diagnostics when Git fails.
   def git!(repo, args) do
-    {output, status} = System.cmd("git", args, cd: repo, stderr_to_stdout: true)
-    assert status == 0, "git #{Enum.join(args, " ")} failed: #{output}"
+    {output, status} =
+      System.cmd(EvoGit.Executable.resolve("git"), args, cd: repo, stderr_to_stdout: true)
+
+    assert status == 0,
+           "git #{inspect(args)} in #{inspect(repo)} failed with exit status #{status}:\n#{output}"
+
+    output
   end
 
   # Hands out a FRESH, independent copy of the pre-built template for the given
   # (primary, secondary) branch shape. Returns {copy_dir, change_sha, base_sha};
   # the SHAs are the template's (the copy is byte-identical). The copy is never
-  # hard-linked, so it is always safe to mutate.
+  # hard-linked, so it is always safe to mutate. Register cleanup before copying
+  # so a partial copy is removed even when File.cp_r!/2 raises.
   def copy_review_template!(prefix, primary, secondary) do
     %{dir: template_dir, change_sha: change_sha, base_sha: base_sha} =
       review_template!(primary, secondary)
 
-    copy_dir =
-      Path.join(System.tmp_dir!(), prefix <> to_string(System.unique_integer([:positive])))
+    copy_dir = review_tmp_path(prefix)
+    on_exit(fn -> rm_rf_retry(copy_dir) end)
 
     File.cp_r!(template_dir, copy_dir)
     {copy_dir, change_sha, base_sha}
@@ -225,11 +236,6 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
       copy_review_template!("evogit_review_merge_test_", primary, secondary)
 
     task_id = seed_review_task!(tmp_dir, change_sha, base_sha)
-
-    on_exit(fn ->
-      rm_rf_retry(tmp_dir)
-    end)
-
     {tmp_dir, task_id, change_sha}
   end
 
@@ -239,26 +245,29 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
   # primary branch. Returns {change_sha, primary_branch, base_sha}.
   def build_repo_with_task_branch!(tmp_dir, primary, secondary) do
     File.mkdir_p!(tmp_dir)
-    # `--template=` (EMPTY template dir) skips the sample hooks / description /
-    # info files `git init` otherwise seeds: the template repo is COPIED once per
-    # test (`copy_review_template!/3`), and a byte copy pays per FILE, not per
-    # byte — 34 files → 18 (and with no hooks at all). The repo is fully
-    # functional: git creates `objects/` and `refs/` on demand. Nothing in this
-    # suite reads a hook, `info/exclude` or `description`.
-    git!(tmp_dir, ["init", "--template="])
-    git!(tmp_dir, ["config", "user.email", "test@example.com"])
-    git!(tmp_dir, ["config", "user.name", "Test User"])
+    # Skip sample hooks and auxiliary files so the template is cheap to copy.
+    git!(tmp_dir, ["init", "--template=", "-b", primary])
 
-    # Base commit, then rename the branch to the primary name (the machine's
-    # init.defaultBranch may vary).
+    # Keep these settings in the copied repo for later commits too, without
+    # spawning a separate `git config` process for each fixed key.
+    File.write!(
+      Path.join(tmp_dir, ".git/config"),
+      """
+
+      [user]
+        name = Test User
+        email = test@example.com
+      [commit]
+        gpgSign = false
+      [core]
+        hooksPath = .git/hooks
+      """,
+      [:append]
+    )
+
     File.write!(Path.join(tmp_dir, "base.txt"), "base\n")
     git!(tmp_dir, ["add", "base.txt"])
     git!(tmp_dir, ["commit", "-m", "Initial commit"])
-    {current, 0} = System.cmd("git", ["rev-parse", "--abbrev-ref", "HEAD"], cd: tmp_dir)
-
-    if String.trim(current) != primary do
-      git!(tmp_dir, ["branch", "-m", primary])
-    end
 
     if secondary do
       git!(tmp_dir, ["branch", secondary])
@@ -269,11 +278,15 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
     File.write!(Path.join(tmp_dir, "feature.txt"), "feature change\n")
     git!(tmp_dir, ["add", "feature.txt"])
     git!(tmp_dir, ["commit", "-m", "Agent change commit"])
-    {change_sha, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: tmp_dir)
-    {base_sha, 0} = System.cmd("git", ["rev-parse", primary], cd: tmp_dir)
+
+    [change_sha, base_sha] =
+      tmp_dir
+      |> git!(["rev-parse", "HEAD", "refs/heads/#{primary}"])
+      |> String.split()
+
     git!(tmp_dir, ["checkout", primary])
 
-    {String.trim(change_sha), primary, String.trim(base_sha)}
+    {change_sha, primary, base_sha}
   end
 
   # Seeds a completed review task with per-repo result data: `foreign_repos`
@@ -307,9 +320,8 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
          }}
     }
 
-    EvoGit.Store.put_task(EvoGit.Store, task)
-
     on_exit(fn -> delete_seeded_task!(task_id) end)
+    EvoGit.Store.put_task(EvoGit.Store, task)
 
     task_id
   end
@@ -360,9 +372,8 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
          }}
     }
 
-    EvoGit.Store.put_task(EvoGit.Store, task)
-
     on_exit(fn -> delete_seeded_task!(task_id) end)
+    EvoGit.Store.put_task(EvoGit.Store, task)
 
     task_id
   end
@@ -395,9 +406,8 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
          }}
     }
 
-    EvoGit.Store.put_task(EvoGit.Store, task)
-
     on_exit(fn -> delete_seeded_task!(task_id) end)
+    EvoGit.Store.put_task(EvoGit.Store, task)
 
     task_id
   end
