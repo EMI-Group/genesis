@@ -14,7 +14,11 @@ defmodule EvoGit.VCT.Table do
       compared separator-insensitively, so Windows `\\` paths and POSIX `/` paths
       both work;
     * registering an already-mounted OS path is idempotent and keeps the existing
-      VCT point (a point never churns under a stable path);
+      VCT point (a point never churns under a stable path) — EXCEPT when that
+      point is RESERVED (a system mount): the row is then re-pointed onto a
+      fresh unique `vct:///projects/<basename>[-N]` point, so opening the OS path
+      a system mount happens to hold yields a real, listable project instead of
+      one that silently never appears;
     * registering a NEW OS path whose display name and basename match a mount
       whose recorded OS path no longer EXISTS re-points that mount instead of
       accumulating a second point (portability across machines) — this is the
@@ -32,6 +36,12 @@ defmodule EvoGit.VCT.Table do
   other top-level namespace such as `vct:///genesis-source` — is a RESERVED
   (system) mount: it is not part of the user's project list, it is never
   forgotten through `EvoGit.VCT.forget/1`, and `enforce_cap/2` never evicts it.
+
+  A project mount's OS path is never taken over by a system mount: the boot-time
+  `:system_mounts` merge (`EvoGit.VCT.Mounts.merge_system_mounts/2`) refuses to
+  move a path a project mount owns, while `ensure_mount/4` itself stays
+  point-first (the DELIBERATE runtime override path) and `register/4` re-points a
+  RESERVED row to a project point when a user opens that path.
 
   ## Workspace mounts
 
@@ -571,7 +581,10 @@ defmodule EvoGit.VCT.Table do
   mount. The rules, in order:
 
     1. the same normalized OS path already mounted → refresh `last_opened_at`,
-       update `name` only when a non-blank name is supplied, KEEP the point;
+       update `name` only when a non-blank name is supplied, and KEEP the point —
+       unless that point is RESERVED (a system mount), in which case the row is
+       re-pointed onto a fresh unique project point so the project becomes
+       listable;
     2. a mount with the same display name and point basename whose recorded OS
        path no longer exists → RE-POINT it (replace path/timestamp, keep the
        point stable);
@@ -590,7 +603,8 @@ defmodule EvoGit.VCT.Table do
       %Mount{} = existing ->
         updated = %{
           existing
-          | path: normalized,
+          | point: takeover_point(mounts, existing.point, normalized),
+            path: normalized,
             name: name || existing.name,
             last_opened_at: now
         }
@@ -626,6 +640,19 @@ defmodule EvoGit.VCT.Table do
     end)
   end
 
+  # A RESERVED (system) row is not a user's project: when a user OPENS the OS
+  # path a system mount happens to hold (e.g. the dev checkout behind
+  # `vct:///genesis-source`), that row is RE-POINTED onto a fresh unique PROJECT
+  # point so `EvoGit.VCT.projects/1` lists it. A non-reserved point never churns
+  # under a stable path.
+  defp takeover_point(mounts, point, normalized) do
+    if reserved?(point) do
+      unique_point(mounts, point_for_basename(path_basename(normalized)))
+    else
+      point
+    end
+  end
+
   @doc """
   Ensures `os_path` is mounted at exactly `point` — the POINT-first rule used by
   reserved (system) mounts.
@@ -649,6 +676,13 @@ defmodule EvoGit.VCT.Table do
        supplied name winning when non-blank);
     4. otherwise INSERT a new mount at `point` with `last_opened_at: nil`
        (a system mount is not "opened", so it sorts last among projects).
+
+  Rule 3 is the DELIBERATE point-first override path (the caller names the point,
+  so the point wins) — this function has NO no-steal guard. The boot-time
+  `:system_mounts` merge is the one caller that adds one:
+  `EvoGit.VCT.Mounts.merge_system_mounts/2` additionally refuses to move an OS path
+  owned by a PROJECT mount, so a host-declared system mount can never carry a
+  user's project row onto a reserved point (see `EvoGit.VCT.ensure_mount/3`).
 
   Points stay unique: a row at `point` is never duplicated.
 
