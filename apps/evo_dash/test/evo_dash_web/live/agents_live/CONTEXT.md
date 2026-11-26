@@ -14,6 +14,7 @@ Most stateful AgentsLive page integration tests live in `../agents_live_test.exs
 - `runtime_stream_test.exs` → pure reducer initialization, call identity, transition and retention contracts.
 - `stream_watch_test.exs` → async transport, atomic snapshot barrier and worker-command boundary contracts.
 - `task_navigation_test.exs` → mounted task filtering on one project, unscoped Agents, pending tasks without agents, and task identity plus exact URLs across local/pending-node switches.
+  The page renders NO in-canvas title (the workbench tab rail owns the page name), so a task-scoped mount pins its identity through the non-scrolling `#agents-task-scope` strip — `#agents-task-scope p` reading `Task: <id>` plus the `#agents-clear-task-scope` "All agents" link — and the strip is absent entirely without a task scope.
 - `../agents_stream_integration_test.exs`, `../agents_stream_render_test.exs` and `../agents_stream_watch_lifecycle_test.exs` → mounted/render/actual-worker coverage (siblings — read-only, escalate writes to parent).
 
 ## API Surface
