@@ -8594,6 +8594,9 @@ msgstr "连接中…"
 msgid "Could not read this directory on the selected server."
 msgstr "无法读取所选服务器上的目录。"
 
+msgid "Drives"
+msgstr "磁盘"
+
 msgid "Enter a path"
 msgstr "输入路径"
 

@@ -650,6 +650,33 @@ defmodule EvoDashWeb.ProjectsWorkbenchVctTest do
   end
 
   describe "palette project window" do
+    test "Windows drive roots are browsable from the project picker", %{conn: conn, tmp_dir: root} do
+      path = Path.expand(root)
+      view = browse_project_window(conn, "open", "Open Project by Path", path)
+      picker = "#workbench-project-window"
+
+      if match?({:win32, _}, :os.type()) do
+        [drive | _] = Path.split(path)
+        drive = String.downcase(drive)
+        drive_button = ~s(#{picker} .project-picker-list button[phx-value-path="#{drive}"])
+
+        view |> element("#project-picker-drives") |> render_click()
+        render_async(view, @async_wait_budget_ms)
+        assert has_element?(view, "#{picker} button[phx-click=open][disabled]")
+
+        view |> element(drive_button) |> render_click()
+        render_async(view, @async_wait_budget_ms)
+        assert has_element?(view, ~s(#{picker} .project-picker-path span[title="#{drive}"]))
+        assert has_element?(view, "#{picker} button[phx-click=open]:not([disabled])")
+
+        view |> element("#{picker} button[phx-click=up]") |> render_click()
+        render_async(view, @async_wait_budget_ms)
+        assert has_element?(view, drive_button)
+      else
+        refute has_element?(view, "#project-picker-drives")
+      end
+    end
+
     test "Open Project by Path lands on the registered project's overview", %{
       conn: conn,
       tmp_dir: root

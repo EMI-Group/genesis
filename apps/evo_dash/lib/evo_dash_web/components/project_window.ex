@@ -39,7 +39,8 @@ defmodule EvoDashWeb.ProjectWindow do
       assign(assigns,
         project_form: to_form(%{"name" => assigns.name}),
         location_form: to_form(%{"location" => assigns.location}),
-        path_form: to_form(%{"path" => ""})
+        path_form: to_form(%{"path" => ""}),
+        selected_directory?: is_binary(get_in(assigns, [:directory, :path]))
       )
 
     ~H"""
@@ -146,9 +147,23 @@ defmodule EvoDashWeb.ProjectWindow do
               >
                 <.icon name="hero-arrow-up" class="size-4" />
               </button>
+              <button
+                :if={@selected_directory? && @directory.windows?}
+                type="button"
+                id="project-picker-drives"
+                phx-click="drives"
+                phx-target={@myself}
+                class="workbench-icon-button"
+                title={gettext("Drives")}
+                aria-label={gettext("Drives")}
+                disabled={@busy || @loading}
+              >
+                <.icon name="hero-computer-desktop" class="size-4" />
+              </button>
               <span class="truncate text-xs font-mono" title={@directory && @directory.path}>
                 {cond do
-                  @directory -> @directory.path
+                  @selected_directory? -> @directory.path
+                  @directory -> gettext("Drives")
                   @loading -> gettext("Loading…")
                   true -> gettext("No directory selected")
                 end}
@@ -209,7 +224,7 @@ defmodule EvoDashWeb.ProjectWindow do
               form="workbench-project-form"
               type="submit"
               class="btn btn-primary"
-              disabled={!@directory || @busy || @loading}
+              disabled={!@selected_directory? || @busy || @loading}
             >
               {if @busy, do: gettext("Working…"), else: gettext("Create")}
             </button>
@@ -219,7 +234,7 @@ defmodule EvoDashWeb.ProjectWindow do
               phx-click="open"
               phx-target={@myself}
               class="btn btn-primary"
-              disabled={!@directory || @busy || @loading}
+              disabled={!@selected_directory? || @busy || @loading}
             >
               {if @busy, do: gettext("Working…"), else: gettext("Open project")}
             </button>
@@ -276,10 +291,16 @@ defmodule EvoDashWeb.ProjectWindow do
 
   def handle_event("home", _, socket), do: {:noreply, browse(socket, :home)}
 
+  def handle_event("drives", _, %{assigns: %{directory: %{windows?: true}}} = socket),
+    do: {:noreply, browse(socket, :drives)}
+
   def handle_event("up", _, socket) do
     case socket.assigns.directory do
-      %{parent: parent} when is_binary(parent) -> {:noreply, browse(socket, parent)}
-      _ -> {:noreply, socket}
+      %{parent: parent} when is_binary(parent) or parent == :drives ->
+        {:noreply, browse(socket, parent)}
+
+      _ ->
+        {:noreply, socket}
     end
   end
 
@@ -361,7 +382,7 @@ defmodule EvoDashWeb.ProjectWindow do
          } = socket,
          name
        )
-       when not is_nil(target) do
+       when not is_nil(target) and is_binary(path) do
     socket
     |> assign(busy: true, error: nil, name: name)
     |> start_async(:project, fn ->
