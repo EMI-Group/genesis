@@ -13,9 +13,9 @@
 //!
 //! **The failure mode of this rule is SAFE:** an older or broken dashboard that
 //! never asks for frameless chrome simply keeps the native OS title bar, so the
-//! window stays movable / minimizable / closable. (The previous rule — removing
-//! the OS title bar from the page-load hook — left a window with NO title bar
-//! at all whenever the dashboard strip was missing or hidden.)
+//! window stays movable / minimizable / closable. The shell must never create
+//! the frameless state on its own initiative precisely because the dashboard
+//! strip is then the ONLY title bar.
 //!
 //! Platform matrix — two different mechanisms, because the two platforms let us
 //! draw our own title bar in fundamentally different ways:
