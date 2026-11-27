@@ -30,7 +30,7 @@
 /* === Desktop custom title bar ===
    The strip is the first child of `#app-layout` (a flex column in a desktop
    window) and is that window's CHROME: the brand, the flexible grab gutter and —
-   on Windows/Linux — the window controls. The `DesktopTitlebar` JS hook starts
+   on every OS except macOS — the window controls. The `DesktopTitlebar` JS hook starts
    the window drag on primary-button `pointerdown` anywhere on the strip and
    toggles maximize on title-bar double-click, so the strip itself is the drag
    surface. It is LAYER 0 chrome: the top bar's shell tone plus one hairline, no
