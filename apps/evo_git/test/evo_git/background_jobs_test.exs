@@ -857,6 +857,35 @@ defmodule EvoGit.BackgroundJobsTest do
 
   describe "per-owner job cap" do
     test "refuses an 11th live job and reports the limit", %{tmp_dir: tmp_dir} do
+      # Forcing GLOBAL: the app-global `EvoGit.AgentScheduler`'s tool-permit pool.
+      # Every start below acquires a REAL tool permit (`BackgroundJobs`'
+      # `start_with_permit/2` → `AgentScheduler.acquire_tool_permit/1`), and that
+      # pool defaults to the detected CPU thread count
+      # (`[:scheduler, :max_tool_concurrency]`), so on a 4-core host the fifth
+      # acquisition would block forever — the test would time out instead of
+      # proving the per-OWNER job cap. The pool is therefore raised for the
+      # duration of this test only and restored in `on_exit`, so a failing test
+      # cannot leave it inflated. `max/2` keeps an already larger pool untouched.
+      # The module is `async: false` (ExUnit drains async modules before sync
+      # ones), so no sibling module can observe the raise.
+      #
+      # Capacity is the cap PLUS ONE: the eleven starts below all acquire a permit
+      # BEFORE the registry applies its per-owner cap, so the REFUSED eleventh one
+      # needs a free permit too (its refusal releases it again). At exactly ten,
+      # that eleventh acquisition would block until the real `sleep 30` job exited
+      # and the pool freed a slot.
+      previous_tool_concurrency = EvoGit.AgentScheduler.get_config(:max_tool_concurrency)
+      required_tool_concurrency = BackgroundJobs.max_jobs_per_owner() + 1
+
+      :ok =
+        EvoGit.AgentScheduler.update_config(
+          max_tool_concurrency: max(previous_tool_concurrency, required_tool_concurrency)
+        )
+
+      on_exit(fn ->
+        EvoGit.AgentScheduler.update_config(max_tool_concurrency: previous_tool_concurrency)
+      end)
+
       # ONE real detached OS job pins that a real child counts toward the cap; the
       # remaining slots are filled with live `:unit`-handle records (the systemd
       # handle shape, no local child). Releasing capacity through a `:unit` kill is
