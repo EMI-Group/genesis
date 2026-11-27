@@ -22,9 +22,9 @@
 //!
 //! - **Windows / Linux**: the window toggles [`tauri::WebviewWindow::set_decorations`]
 //!   at RUNTIME. It is frameless only while the dashboard has explicitly asked
-//!   for it (the dashboard renders its own `#desktop-titlebar` strip, carrying
-//!   `data-tauri-drag-region` on the strip root and on its drag spacer — that
-//!   markup is owned by the dashboard app and only rendered in desktop mode)
+//!   for it (the dashboard renders its own `#desktop-titlebar` strip, and its
+//!   own JS hook owns the dragging — the markup and the drag behaviour both
+//!   live in the dashboard app, and the strip is only rendered in desktop mode)
 //!   and native again while a shell-rendered `data:` page (loading / error /
 //!   startup) or any just-started navigation is showing, because those pages
 //!   cannot host a drag region at all (a `data:` origin classifies as
@@ -38,10 +38,12 @@
 //!   strip, so [`apply`] is a no-op there.
 //!
 //! The shell never injects a drag region into the dashboard: the dashboard
-//! renders its own `#desktop-titlebar` strip in desktop mode, carrying
-//! `data-tauri-drag-region` on the strip root and on its drag spacer. The shell
-//! only toggles decorations and grants the `core:window:allow-*` permissions
-//! (`capabilities/default.json`) that make that strip work.
+//! renders its own `#desktop-titlebar` strip in desktop mode and its own JS hook
+//! starts the window drag on a primary-button `pointerdown` via
+//! `startDragging()` (skipping interactive targets) and toggles maximize on a
+//! `dblclick`. The shell only toggles decorations and grants the
+//! `core:window:allow-*` permissions (`capabilities/default.json`) that make
+//! that strip work.
 //!
 //! The chrome still follows the CONTENT, never a timer: a navigation START
 //! restores native chrome, and framing comes back only when the freshly loaded
