@@ -2,6 +2,76 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.0] - 2026-11-27
+
+### Added
+
+- Add a custom frameless desktop title bar with per-OS window controls and drag region, while keeping native OS chrome by default unless the dashboard requests it.
+- Add Sign in with ChatGPT in the browser, shared across the dashboard, setup wizards, welcome page and CLI, including a manual paste-the-redirect-URL fallback for remote hosts and cancel-on-leave/close handling; sign-in can also be started from existing provider accounts on the settings page.
+- Add first-class VCT workspace mounts for creating, listing and inspecting workspace groupings, surfaced in the Projects palette with a New Workspace form.
+- Add Shared/Local scopes for CONTEXT.md so agents render ancestor context Shared-only while the assigned node shows the full file, with a scope option on read/edit tools to keep local notes out of prompts.
+- Add collapsed gap rows with Expand/Collapse controls for folded agent commit history in the commit graph, with persistent fold state and keyboard toggling.
+- Add an `off_peak_holidays` schedule option for LLM provider accounts and legacy model profiles, with holiday-aware peak-hours scheduling backed by a static China public-holiday and make-up workday calendar (2025–2027).
+- Add canonical reasoning-effort levels and a provider schedule preset registry for pre-filling peak/off-peak windows.
+- Add Keenable as an opt-in keyless web search provider.
+- Add a task-scoped Agents page with a shared composer and inline task options, plus a redesigned workbench rail, inspector navigation and history controls.
+- Add a needs-review filter and status options on the tasks page, with URL-reflected filters and review affordances on failed task cards and in the sidebar.
+- Add recent projects and folder browsing to the assistant composer, and expand the assistant picker to list VCT workspaces alongside projects.
+- Add a project overview on the Projects page (identity, facts, workspace member picker, entry points and recent activity) when no compose/resume intent is present.
+- Add Source Control history and diff portal support for mounted repositories.
+- Add a dashboard density and typography token layer, applying a unified scale across panels, cards, forms, controls, workbench shells and pages, with larger touch targets on coarse-pointer devices.
+- Add a shared disclosure motion hook with outside-click/Escape dismissal, and symmetric open/close animations for dashboard panels, modals, submenus, tooltips and workbench rails.
+- Stream the tasks list and the /processes table body as keyed LiveView streams for smoother, targeted rendering.
+
+### Changed
+
+- Background job ids are now globally unique short base36 tokens that also name the job log file, with logs written into the calling task's per-task tmpdir and per-registry filenames preventing collisions between sibling registries; job retention now protects live-owner jobs and surfaces tombstones instead of reporting unknown ids.
+- Rework the workbench tab strip around a pure tab store with preview/pin semantics, middle-click keep-open, Alt+Arrow cycling and a rail-end overflow menu; the tab rail is now the single open-view list showing page titles.
+- Redesign the workbench sidebar and history panel with Active Tasks as a first-class section, a needs-review section, server-side history search and filters, and a Git pane with branch chip, ahead/behind deltas and dense file rows.
+- Redesign the /welcome and /settings LLM setup as step-by-step provider-account wizards with provider-derived identity, canonical reasoning chips and schedule presets.
+- Task pause now freezes the whole agent tree in place and resume thaws it under the same agent ids, replacing the old drain-at-next-turn-boundary behaviour.
+- Agents now automatically commit their work when the primary commit step doesn't complete, preventing uncommitted changes from being lost.
+- Git adapter merge commits (subagent merges, final task merge, phylo-graph merges) now include the Co-Authored-By trailer when co-authoring is enabled.
+- The Review page now shows an honest terminal-outcome banner for failed, cancelled or no-report tasks, hides inapplicable stats and actions, relabels the action to "Prepare follow-up task", and notes when a repository has no code changes.
+- Quit and stop confirmations now use plain language instead of Erlang VM jargon.
+- ChatGPT subscription requests now send usage-attribution and prompt-cache identity headers, and custom model accounts route through OpenAI Chat Completions.
+- Context commit tooling now squashes consecutive CONTEXT.md edits across multiple paths into a single amendable commit, and internal agent-state checkpoint refs no longer block amending while other branches, remote-tracking refs and tags still do.
+- Assistant chat send/stop are now asynchronous with optimistic queued message bubbles and rollback on refusal, and assistant messages are scoped to consistent block wrappers.
+- Projects, dashboard and workbench loads are faster and more responsive: batched workspace roster calls, async task attachments and launches, async settings/processes loading with skeletons, faster task paging and lighter home-live streaming work.
+
+### Fixed
+
+- Fix Settings saves writing to the wrong node when the local node identity changes at runtime, returning an explicit node-identity-changed error instead.
+- Fix remote node-context and sidebar task loads being silently dropped when a supervisor fails to spawn, now retrying once and settling with explicit errors while preserving last-known targets, statuses and task lists.
+- Fix agent scheduler crash-looping on a partially saved provider account, falling back to the default model selection with a warning instead; also fix a crash on custom-agent root sessions during initial state construction.
+- Fix provider profile reloads so config changes are picked up by the workbench and dashboards: Projects reload their model picker, and completing Sign in with ChatGPT refreshes the config snapshot instead of showing a stale provider profile.
+- Fix the connection status dropping existing query parameters, and preserve task filters when switching nodes.
+- Fix the project palette being closed and reset by a late auto-activation of the newest project, and fix opening remote projects so explicit selection goes to the overview while reusing an activation dismisses the palette; Assistant drafts are now pinned to the correct scope after activating a project.
+- Fix dashboard draft persistence so saved non-text form fields are restored once async project loading finishes, with drafts keyed on project identity and scoped to the active project to prevent leaking between projects.
+- Fix review/comment location being lost when switching nodes in the review view, and keep review history accessible while a project's scope is resolving.
+- Fix scoped History conversations and sidebar state being lost across same-transport navigation, correctly resolving pending scopes in Tasks, Review and Agents.
+- Fix a live tool call rendering its response, thinking and tool details twice after a checkpoint, showing only its name and status in the live tail.
+- Fix chat history persistence during streaming so lifecycle changes are written immediately, preventing mid-run remounts from restoring an idle state.
+- Fix dead archive-result and commit-graph fold buttons, task archive controls failing on real browser clicks, and superseded update checks failing newer ones.
+- Fix ChatGPT sign-in paste submission failing with a retryable "no code" error.
+- Fix valid IANA timezones being wrongly rejected during config snapshot validation.
+- Fix the Settings window server picker overflowing and adding horizontal scroll, excess vertical spacing under window-less recent-project rows, and merging recent-project title and window pills.
+- Fix the workbench right panel opening so it animates symmetrically with closing, and fix exit animations for dashboard elements that previously animated in one direction only.
+- Fix folded commit-graph runs so a single interior commit stays visible as a normal row and only runs of two or more collapse, and fix the Commit History view being vertically truncated.
+- Fix unbounded memory growth in the background-job registry for long-lived agents, and fix background job records disappearing from /processes for still-running agents.
+- Fix dashboard duration formatting showing scientific notation for values over one hour, and fix excess spacing and typography issues in the Git diff viewer.
+- Fix the //agents LiveView's unbounded inspector history and reduce redundant DOM work across DiffViewer, CommitGraph, sidebar collapse, review and process views.
+
+### Removed
+
+- Remove retired page-level entrance animations and node-switch fade transitions from the dashboard, Agents and Projects views.
+- Remove the obsolete sidebar open-view list now that the workbench tab rail is the single open-view list.
+
+### Security
+
+- Update Phoenix, Phoenix LiveView, Bandit, idna, jsv and related dependencies to security-fixed releases, addressing a hex.audit advisory and the db_connection CVE.
+- Harden the Assistant workbench and ChatGPT subscription handling: verify project ownership for Git operations and redact provider API keys from event logs.
+
 ## [0.14.3] - 2026-11-19
 
 ### Added
