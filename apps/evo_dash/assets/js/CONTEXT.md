@@ -22,7 +22,7 @@ Client-side JavaScript for the EvoDash dashboard: `app.js` (a thin entry — the
 - `./hooks/state_persistence.js` → `StatePersistence` — the scoped `sessionStorage` draft save/restore plus the debounced form watcher; storage-key contract below.
 - `./hooks/agent_history_scroll.js` → `AgentHistoryAutoScroll` plus the named pure exports `shouldFollowLatest` and `STICK_TO_BOTTOM_THRESHOLD_PX`.
 - `./hooks/desktop_quit.js` → `DesktopQuit` + `DesktopQuitConfirm` (the Tauri quit bridge).
-- `./hooks/desktop_titlebar.js` → `DesktopTitlebar` + the pure `chromeState` — the desktop title bar's window controls and maximized reflection, hidden outside the Tauri shell (`hooks/CONTEXT.md`).
+- `./hooks/desktop_titlebar.js` → `DesktopTitlebar` + the pure `chromeState`/`isDragTarget` — the desktop title bar's window controls on every non-macOS OS, its hook-owned `pointerdown` drag (`startDragging()`) and `dblclick` maximize, the maximized reflection, and the `set_custom_titlebar` frameless request (`{active: true}` once the strip is live, `{active: false}` on `pagehide`/`beforeunload`/teardown); the strip is never hidden, a missing Tauri handle leaves it visible and inert (`hooks/CONTEXT.md`).
 - `./hooks/update_status.js` → `UpdateStatus` — the once-bound module-level listener/timer pattern and its `invokeUpdate*` helpers.
 - `./hooks/guide.js` → `Guide` plus the named export `guideClientId` (the stable per-tab id `app.js` passes in the connect params).
 - `./hooks/list_enter.js` → `ListEnter` plus the named pure exports `planListEnter`/`LIST_ENTER_CLASS` — the shared list entry animation.
