@@ -79,6 +79,7 @@ import FilePicker from "./hooks/file_picker.js"
 import StatePersistence from "./hooks/state_persistence.js"
 import AgentHistoryAutoScroll from "./hooks/agent_history_scroll.js"
 import {DesktopQuit, DesktopQuitConfirm} from "./hooks/desktop_quit.js"
+import DesktopTitlebar from "./hooks/desktop_titlebar.js"
 import UpdateStatus from "./hooks/update_status.js"
 import Guide, {guideClientId} from "./hooks/guide.js"
 
@@ -381,7 +382,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken, guide_client_id: guideClientId},
-  hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, UpdateStatus, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, Guide, StatePersistence, BrowserNotifications, AutoClearFlash, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, Workbench, WorkbenchSection, WorkbenchWindow, AdaptiveInput, LegendTooltip, FocusInput, PaletteList, DiffViewer, CommitGraph, CapsulePanel, InspectorMessages, AssistantComposer, DisclosureMotion, ListEnter, MotionPanel},
+  hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, DesktopTitlebar, UpdateStatus, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, Guide, StatePersistence, BrowserNotifications, AutoClearFlash, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, Workbench, WorkbenchSection, WorkbenchWindow, AdaptiveInput, LegendTooltip, FocusInput, PaletteList, DiffViewer, CommitGraph, CapsulePanel, InspectorMessages, AssistantComposer, DisclosureMotion, ListEnter, MotionPanel},
 })
 
 // Show progress bar on live navigation and form submits
