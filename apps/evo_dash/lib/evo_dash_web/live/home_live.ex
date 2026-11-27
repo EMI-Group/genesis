@@ -99,6 +99,7 @@ defmodule EvoDashWeb.HomeLive do
       session_list_loading={@session_list_loading}
       session_list_error={@session_list_error}
       current_session_id={@current_session_id}
+      assistant_project_context={Workspace.picker_context(assigns)}
       desktop_quit_confirm={@desktop_quit_confirm}
       update_status={@update_status}
       guide={@guide}
@@ -585,6 +586,9 @@ defmodule EvoDashWeb.HomeLive do
 
   def handle_info({:directory_picker_result, _picker_id, _result} = msg, socket),
     do: AttachmentPipeline.handle_info(socket, msg)
+
+  def handle_info({:assistant_project_browsed, context, target, path}, socket),
+    do: WorkbenchScope.workspace_browsed(socket, context, target, path)
 
   # Watch owns sequence gating, registration-time buffering and failed watches.
   def handle_info({:agent_delta, _agent_id, _seq, _batch} = msg, socket),

@@ -217,7 +217,9 @@ defmodule EvoDashWeb.HomeLive.ComposerRenderTest do
     # could only ever fire at mount (where the panel is still hidden), so a
     # later open never focused anything.
     refute Map.has_key?(open_attrs, "phx-mounted")
-    assert Enum.count(LazyHTML.query(open, "#workspace-path[data-motion-focus]")) == 1
+    focus = ~s(#workspace-recent[tabindex="-1"][data-motion-focus])
+    assert Enum.count(LazyHTML.query(open, focus)) == 1
+    assert Enum.empty?(LazyHTML.query(open, "#workspace-path[data-motion-focus]"))
     # The toggle keeps its expanded/controls contract pointing at that node.
     assert Enum.count(
              LazyHTML.query(

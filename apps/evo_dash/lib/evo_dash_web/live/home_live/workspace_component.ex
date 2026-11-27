@@ -53,10 +53,53 @@ defmodule EvoDashWeb.HomeLive.WorkspaceComponent do
         data-motion-want={to_string(@workspace_open)}
         hidden={!@workspace_open}
         phx-click-away={JS.push("workspace_close") |> JS.focus(to: "#workspace-toggle")}
-        phx-window-keydown={JS.push("workspace_close") |> JS.focus(to: "#workspace-toggle")}
+        phx-window-keydown={
+          if @workspace_open, do: JS.push("workspace_close") |> JS.focus(to: "#workspace-toggle")
+        }
         phx-key="Escape"
         class="motion-panel assistant-menu-panel assistant-project-panel"
       >
+        <div
+          id="workspace-recent"
+          class="assistant-project-recent"
+          tabindex="-1"
+          data-motion-focus="true"
+        >
+          <p class="assistant-menu-label">{gettext("Recent projects")}</p>
+          <p :if={@workspace_loading && @workspace_projects == []} class="assistant-project-path">
+            {gettext("Loading…")}
+          </p>
+          <p
+            :if={!@workspace_loading && @workspace_projects == [] && !@workspace_error}
+            class="assistant-project-path"
+          >
+            {gettext("No recent projects")}
+          </p>
+          <div :if={@workspace_projects != []} class="assistant-project-recent-list">
+            <button
+              :for={project <- @workspace_projects}
+              type="button"
+              phx-click="workspace_select"
+              phx-value-path={project.path}
+              disabled={@workspace_locked or @workspace_loading}
+              title={project.path}
+              class="assistant-menu-item"
+            >
+              <.icon name="hero-folder" class="size-4" />
+              <span class="truncate">{project.name || project.path}</span>
+            </button>
+          </div>
+        </div>
+        <button
+          id="workspace-browse"
+          type="button"
+          data-workbench-project-window="select"
+          disabled={@workspace_locked or @workspace_loading}
+          class="assistant-menu-item"
+        >
+          <.icon name="hero-folder-open" class="size-4" />
+          {gettext("Browse folders")}
+        </button>
         <div :if={@workspace} id="workspace-current" class="assistant-project-current">
           <p class="assistant-menu-label">{current_label(@workspace)}</p>
           <p id="workspace-current-path" class="assistant-project-path">{@workspace.path}</p>
@@ -76,21 +119,6 @@ defmodule EvoDashWeb.HomeLive.WorkspaceComponent do
             disabled={@workspace_locked or @workspace_loading}
             class="assistant-menu-item"
           >{gettext("Clear project")}</button>
-        </div>
-        <div :if={@workspace_projects != []} id="workspace-recent" class="assistant-project-recent">
-          <p class="assistant-menu-label">{gettext("Projects")}</p>
-          <button
-            :for={project <- @workspace_projects}
-            type="button"
-            phx-click="workspace_select"
-            phx-value-path={project.path}
-            disabled={@workspace_locked or @workspace_loading}
-            title={project.path}
-            class="assistant-menu-item"
-          >
-            <.icon name="hero-folder" class="size-4" /><span class="truncate">{project.name ||
-              project.path}</span>
-          </button>
         </div>
         <div
           :if={@workspace_workspaces != []}
@@ -167,30 +195,36 @@ defmodule EvoDashWeb.HomeLive.WorkspaceComponent do
             </ul>
           </div>
         </div>
-        <.form
-          for={@workspace_form}
-          id="workspace-form"
-          phx-change="workspace_path"
-          phx-submit="workspace_open"
-          class="assistant-project-form"
+        <details
+          id="workspace-manual"
+          phx-mounted={JS.ignore_attributes("open")}
+          class="assistant-project-manual"
         >
-          <.input
-            field={@workspace_form[:path]}
-            id="workspace-path"
-            type="text"
-            data-motion-focus="true"
-            placeholder={gettext("Full directory path")}
-            aria-label={gettext("Project directory")}
-            disabled={@workspace_locked or @workspace_loading}
-            class="assistant-path-input"
-          />
-          <button
-            id="workspace-open"
-            type="submit"
-            disabled={@workspace_locked or @workspace_loading}
-            class="assistant-menu-submit"
-          >{if @workspace_loading, do: gettext("Loading…"), else: gettext("Select project")}</button>
-        </.form>
+          <summary>{gettext("Enter a path")}</summary>
+          <.form
+            for={@workspace_form}
+            id="workspace-form"
+            phx-change="workspace_path"
+            phx-submit="workspace_open"
+            class="assistant-project-form"
+          >
+            <.input
+              field={@workspace_form[:path]}
+              id="workspace-path"
+              type="text"
+              placeholder={gettext("Full directory path")}
+              aria-label={gettext("Project directory")}
+              disabled={@workspace_locked or @workspace_loading}
+              class="assistant-path-input"
+            />
+            <button
+              id="workspace-open"
+              type="submit"
+              disabled={@workspace_locked or @workspace_loading}
+              class="assistant-menu-submit"
+            >{if @workspace_loading, do: gettext("Loading…"), else: gettext("Select project")}</button>
+          </.form>
+        </details>
         <p :if={@workspace_error} id="workspace-error" role="alert" class="assistant-compose-error">
           {@workspace_error}
         </p>

@@ -315,6 +315,9 @@ const Workbench = {
       }
     }
     this.settingsWindow?.addEventListener("close", this.onSettingsClose)
+    this.handleEvent("workbench_project_window_close", () => {
+      this.closeWindow(this.el.querySelector("#workbench-project-window"))
+    })
     window.addEventListener("message", this.onWindowMessage)
     this.el.addEventListener("click", this.onClick)
     this.el.addEventListener("mousedown", this.onTabMouseDown)
@@ -649,11 +652,16 @@ const Workbench = {
 
   openProjectWindow(trigger) {
     const dialog = this.el.querySelector("#workbench-project-window")
+    const mode = trigger.dataset.workbenchProjectWindow
     this.pushEventTo("#workbench-project-window-component", "prepare",
-      {mode: trigger.dataset.workbenchProjectWindow},
+      {mode},
       () => {
         if (!dialog?.isConnected || dialog.open) return
         if (trigger.closest("#project-omnibox")) this.pushEvent("close_project_palette", {})
+        if (mode === "select") {
+          this.el.querySelector("#workspace-toggle")?.focus({preventScroll: true})
+          this.pushEvent("workspace_close", {})
+        }
         dialog.showModal()
       })
   },
