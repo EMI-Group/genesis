@@ -46,7 +46,7 @@ defmodule EvoGit.Adapters.Git do
   `-m`-style argv.
   """
 
-  @co_author_trailer "\n\nCo-Authored-By: Genesis <noreply@evogit.ai>"
+  require Logger
 
   # Process-dictionary key for the default-inert call recorder behind
   # `record_calls/0` / `recorded_calls/0`. See `record_calls/0`.
@@ -260,10 +260,7 @@ defmodule EvoGit.Adapters.Git do
   failure.
   """
   def commit(path, message) when is_binary(path) and is_binary(message) do
-    trailer =
-      if EvoGit.Config.resolve([:git, :co_authored_by_enabled]) != false,
-        do: @co_author_trailer,
-        else: ""
+    trailer = EvoGit.GitEnv.commit_trailer()
 
     with_temp_msg_file(".txt", message <> trailer, fn temp_path ->
       run(["commit", "-F", normalize_temp_path(temp_path)], path)
@@ -272,6 +269,12 @@ defmodule EvoGit.Adapters.Git do
 
   @doc """
   Merges a commit into the current branch.
+
+  When the merge CREATES a merge commit and
+  `[:git, :co_authored_by_enabled]` is not `false`, git's own merge message
+  keeps its default subject and gets the co-author trailer appended (see
+  `append_co_author_trailer/3`). A fast-forward merge and a no-op merge create
+  no commit, so nothing is appended.
 
   Returns `{:ok, output}` on success or `{:error, {:conflict, output}}` on a
   merge conflict (see the module "## Return contract" section).
@@ -283,6 +286,9 @@ defmodule EvoGit.Adapters.Git do
   @doc """
   Merges multiple commits into the current branch (octopus merge).
 
+  The co-author trailer is applied to the resulting merge commit exactly like
+  `merge/2`.
+
   Returns `{:ok, output}` on success or `{:error, {:conflict, output}}` on a
   merge conflict (see the module "## Return contract" section).
   """
@@ -290,7 +296,105 @@ defmodule EvoGit.Adapters.Git do
     do_merge(path, ["merge" | commit_shas])
   end
 
-  defp do_merge(path, args), do: run(args, path)
+  # Runs the merge as git itself would (default message, default fast-forward
+  # behavior) and, only when the co-author trailer is enabled, decorates the
+  # merge commit git just created. The disabled path stays a single bare
+  # `run/2` — byte-identical to the pre-trailer implementation.
+  defp do_merge(path, args) do
+    case EvoGit.GitEnv.commit_trailer() do
+      "" ->
+        run(args, path)
+
+      trailer ->
+        merge_and_append_trailer(path, args, trailer)
+    end
+  end
+
+  defp merge_and_append_trailer(path, args, trailer) do
+    case rev_parse(path, "HEAD") do
+      {:ok, head_before} ->
+        case run(args, path) do
+          {:ok, output} ->
+            append_co_author_trailer(path, head_before, trailer)
+            # A failed amendment never demotes a successful merge: it is logged
+            # and the merge's own output is returned untouched.
+            {:ok, output}
+
+          error ->
+            error
+        end
+
+      # Unborn HEAD (no commits yet): there is no "before" to compare against,
+      # so run the merge unchanged.
+      {:error, _reason} ->
+        run(args, path)
+    end
+  end
+
+  # Best-effort decoration of the merge commit that just landed on HEAD. HEAD
+  # unchanged ⇒ no-op merge; a new HEAD with a single parent ⇒ fast-forward
+  # (no commit created by the merge). Only a new HEAD with 2+ parents is a merge
+  # commit, and only then is its message amended (message via `-F`, never `-m`
+  # — see "## Notes for agents").
+  defp append_co_author_trailer(path, head_before, trailer) do
+    case merge_commit_head(path, head_before) do
+      {:ok, _head_after} ->
+        amend_head_message(path, trailer)
+
+      :no_merge_commit ->
+        :ok
+
+      {:error, reason} ->
+        log_trailer_failure(reason)
+    end
+  end
+
+  defp merge_commit_head(path, head_before) do
+    case rev_parse(path, "HEAD") do
+      {:ok, ^head_before} ->
+        :no_merge_commit
+
+      {:ok, head_after} ->
+        # "sha parent1 parent2 ..." — 3+ fields means 2+ parents.
+        case run(["rev-list", "--parents", "-n", "1", head_after], path) do
+          {:ok, line} ->
+            if length(String.split(line)) > 2, do: {:ok, head_after}, else: :no_merge_commit
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp amend_head_message(path, trailer) do
+    case log(path, ["-1", "--pretty=%B"]) do
+      {:ok, message} ->
+        result =
+          with_temp_msg_file(".txt", message <> trailer, fn temp_path ->
+            run(["commit", "--amend", "-F", normalize_temp_path(temp_path)], path)
+          end)
+
+        case result do
+          {:ok, _output} -> :ok
+          {:error, reason} -> log_trailer_failure(reason)
+        end
+
+      {:error, reason} ->
+        log_trailer_failure(reason)
+    end
+  end
+
+  defp log_trailer_failure(reason) do
+    Logger.warning(
+      "git merge created a merge commit but the co-author trailer could not be appended: " <>
+        inspect(reason)
+    )
+
+    :ok
+  end
 
   def merge_base(path, commit_a, commit_b)
       when is_binary(path) and is_binary(commit_a) and is_binary(commit_b) do
