@@ -925,9 +925,9 @@ fn run_gui() {
             //    config window entry and `build.devUrl` were removed — a
             //    duplicate "main" label would conflict with a config-built
             //    window). Properties mirror the removed config entry: title,
-            //    1280x800 (with a 900x600 minimum, so the dashboard top bar
-            //    that doubles as the drag strip can never be squeezed below a
-            //    usable workbench size), resizable, centered. The window is
+            //    1280x800 (with a 900x600 minimum, so the dashboard's own
+            //    title bar can never be squeezed below a usable workbench
+            //    size), resizable, centered. The window is
             //    created BEFORE the readiness wait so the watchdog's
             //    `show_backend` retry loop (which waits for the window)
             //    behaves as before.
@@ -1030,9 +1030,10 @@ fn run_gui() {
                         // page navigates back to native chrome, this rule is
                         // self-healing: after a crash the error page restores
                         // the OS title bar and the recovery reload turns
-                        // frameless chrome back on.
+                        // frameless chrome back on. The drag region itself is
+                        // dashboard markup (`#desktop-titlebar` + its drag
+                        // spacer), so the shell injects nothing here.
                         window_chrome::apply(&window, window_chrome::ChromeState::Dashboard);
-                        window_chrome::install_drag_strip(&window);
                     }
                 })
                 .build()?;
