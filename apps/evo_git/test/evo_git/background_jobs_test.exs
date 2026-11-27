@@ -3,17 +3,22 @@ defmodule EvoGit.BackgroundJobsTest do
   # disabled in the test env, so each job is a plain `Port.open/2` child through
   # the platform shell; where only registry bookkeeping is under test, a job is
   # registered through the same production start path with a systemd `:unit`
-  # stand-in handle instead) and they all share the ONE process-wide scratch
-  # directory (`<sandbox tmpdir>`), where each job writes
-  # `genesis_job_<os-pid>-<vm-unique>_<id>.log` — the FILE name carries a
+  # stand-in handle instead). Each job writes
+  # `genesis_job_<os-pid>-<vm-unique>_<id>.log` into a scratch directory that is
+  # resolved in the CALLING process through the per-task tmpdir seam
+  # (`EvoGit.TaskTmpdir.put_current/1` → `EvoGit.Sandbox.resolve_tmpdir/0`), and
+  # the detached child inherits that same `TMPDIR`: a job started from an agent
+  # tool task lands inside that task's managed scratch dir, so foreground and
+  # background execution of one task agree on `TMPDIR`; with no seam installed
+  # the host system tmpdir is used. The FILE name still carries a
   # per-REGISTRY-instance token because ids restart at `bash-1` in every registry
-  # while the scratch dir is host-wide, so an id alone is not a unique file
-  # address (a sibling registry, or a concurrent `mix test` VM, would otherwise
-  # truncate/delete a live job's log).
+  # and several registries (another BEAM, or a concurrent `mix test` VM) can
+  # share one scratch dir, so an id alone would not be a unique file address
+  # (both would otherwise truncate/delete a live job's log).
   # File hygiene is per JOB, not per directory window: the registry returns the
   # exact `:output_path` it created, so every job start registers an `on_exit`
-  # that removes that ONE file — never a `File.ls` of a scratch directory the
-  # whole host shares (thousands of entries = milliseconds per listing). The
+  # that removes that ONE file — never a `File.ls` of a scratch directory other
+  # registries share (thousands of entries = milliseconds per listing). The
   # liveness probes (`kill -0`, real `sleep` children) are host-process global,
   # which is why this module must stay in the sync phase.
   #
@@ -765,6 +770,106 @@ defmodule EvoGit.BackgroundJobsTest do
         assert {:error, message} = BackgroundJobs.read(job.id, max_bytes: bad)
         assert message =~ "max_bytes"
       end
+    end
+  end
+
+  describe "per-task tmpdir scoping" do
+    test "a job started with a per-task tmpdir writes its log there and the child sees that TMPDIR",
+         %{tmp_dir: tmp_dir} do
+      # `EvoGit.ToolRuntime` installs this exact seam in every tool task
+      # (`EvoGit.TaskTmpdir.put_current/1`), so this is the shape a real
+      # background launch from an agent sees.
+      put_task_tmpdir(tmp_dir)
+
+      job = start_job!(%{command: "echo \"TMPDIR=$TMPDIR\"", cwd: tmp_dir})
+
+      # The scratch dir is resolved in the CALLING process, so the log lives in
+      # THIS task's managed dir — never the host system tmpdir.
+      assert Path.dirname(job.output_path) == tmp_dir
+      assert String.starts_with?(job.output_path, tmp_dir <> "/")
+      assert File.exists?(job.output_path)
+
+      completed = await_status!(job.id, :completed)
+      assert Path.dirname(completed.output_path) == tmp_dir
+      assert File.exists?(completed.output_path)
+
+      # The detached child inherits the same TMPDIR: the seam is threaded into
+      # the spawn, it is not merely the log's directory.
+      assert {:ok, %{text: text}} = BackgroundJobs.read(job.id)
+      assert text =~ "TMPDIR=#{tmp_dir}"
+      assert File.exists?(job.output_path)
+      assert String.starts_with?(job.output_path, tmp_dir)
+    end
+
+    test "a job started with no per-task tmpdir uses the system tmpdir", %{tmp_dir: tmp_dir} do
+      # No seam on the test process: the production path resolves the host
+      # system tmpdir, exactly as `EvoGit.Sandbox.resolve_tmpdir/0` does.
+      assert EvoGit.TaskTmpdir.current() == nil
+      system_tmpdir = EvoGit.Sandbox.resolve_tmpdir()
+
+      job = start_job!(%{command: "echo hello", cwd: tmp_dir})
+
+      assert String.starts_with?(job.output_path, system_tmpdir)
+      assert Path.dirname(job.output_path) == system_tmpdir
+      assert File.exists?(job.output_path)
+    end
+
+    test "foreground and background of one task agree on TMPDIR", %{tmp_dir: tmp_dir} do
+      put_task_tmpdir(tmp_dir)
+
+      # Foreground through the normal tool entry point: in the test env the
+      # backend is disabled, so this is the plain `bash -c` path with the
+      # per-task `TMPDIR`/`TMP`/`TEMP` env injection.
+      {foreground, exit_code} =
+        EvoGit.sandbox_run(tmp_dir, "bash", ["-c", "echo \"TMPDIR=$TMPDIR\""])
+
+      assert exit_code == 0
+      assert String.trim(foreground) == "TMPDIR=#{tmp_dir}"
+
+      job = start_job!(%{command: "echo \"TMPDIR=$TMPDIR\"", cwd: tmp_dir})
+      completed = await_status!(job.id, :completed)
+      assert Path.dirname(completed.output_path) == tmp_dir
+
+      assert {:ok, %{text: background}} = BackgroundJobs.read(job.id)
+      assert String.trim(background) == String.trim(foreground)
+      assert background =~ "TMPDIR=#{tmp_dir}"
+    end
+
+    test "a reclaimed per-task tmpdir keeps the real terminal status and read names the reclaim",
+         %{tmp_dir: tmp_dir} do
+      put_task_tmpdir(tmp_dir)
+
+      job = start_job!(%{command: "echo reclaimed", cwd: tmp_dir})
+      completed = await_status!(job.id, :completed)
+      assert Path.dirname(completed.output_path) == tmp_dir
+
+      # The task ended: its managed scratch dir (holding this job's log) is
+      # reclaimed. The RECORD must stay honest about the job that ran.
+      assert {:ok, _removed} = File.rm_rf(tmp_dir)
+      refute File.exists?(completed.output_path)
+
+      assert {:ok, after_reclaim} = BackgroundJobs.job(job.id)
+      assert after_reclaim.id == job.id
+      assert after_reclaim.status == :completed
+      assert after_reclaim.exit_code == 0
+      assert after_reclaim.output_path == completed.output_path
+
+      # One actionable prose answer naming the vanished path and the reason —
+      # never a crash, and never the "unknown id" prose reserved for an id the
+      # registry never issued.
+      assert {:error, message} = BackgroundJobs.read(job.id)
+      assert is_binary(message)
+      assert message =~ completed.output_path
+      assert message =~ ~r/reclaim/i
+
+      # The registry survived the vanished log: it still starts and completes
+      # jobs (re-create the reclaimed cwd first — the job validates it).
+      File.mkdir_p!(tmp_dir)
+      again = start_job!(%{command: "echo alive", cwd: tmp_dir})
+      await_status!(again.id, :completed)
+
+      assert {:ok, %{text: text}} = BackgroundJobs.read(again.id)
+      assert text =~ "alive"
     end
   end
 
@@ -1975,6 +2080,17 @@ defmodule EvoGit.BackgroundJobsTest do
     end)
   end
 
+  # Installs the per-task tmpdir seam on the TEST process — the same
+  # process-dictionary seam `EvoGit.ToolRuntime` installs in every tool task —
+  # so `BackgroundJobs.start_job/1` resolves the scratch dir and the child's
+  # `TMPDIR` from it. The test process's dictionary dies with the test; the
+  # `on_exit` clear is the documented restore contract (it runs in a different
+  # process, so it is belt-and-braces only).
+  defp put_task_tmpdir(dir) do
+    assert :ok = EvoGit.TaskTmpdir.put_current(dir)
+    on_exit(fn -> EvoGit.TaskTmpdir.put_current(nil) end)
+  end
+
   # Polls `job/2` until the job's status is `expected`, then returns the returned
   # (reconciled) record. Completion of a `:port` job arrives as a port message, so
   # this is the only sound way to observe it — a one-shot read could still see
@@ -2073,7 +2189,7 @@ defmodule EvoGit.BackgroundJobsTest do
 
   # Per-JOB output-file hygiene: the registry decides `output_path` at spawn time
   # and returns it on the record, so the cleanup is EXACT (one `File.rm`) and
-  # never lists the scratch directory, which the whole host shares. Registered
+  # never lists the scratch directory, which other registries may share. Registered
   # when the job starts, so it also covers a test that flunks before its own
   # final assertions.
   defp track_log!(%{output_path: path}) when is_binary(path) do
