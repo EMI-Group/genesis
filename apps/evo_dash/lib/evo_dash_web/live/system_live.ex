@@ -620,18 +620,14 @@ defmodule EvoDashWeb.SystemLive do
               <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
                 <%= if @remote? do %>
                   {gettext(
-                    "This will gracefully shut down the remote node's Erlang VM. All applications on the remote node will be stopped in order."
+                    "This will shut down Genesis on the remote node. Running tasks there will be interrupted."
                   )}
                 <% else %>
-                  {gettext(
-                    "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
-                  )}
+                  {gettext("This will shut down Genesis. Running tasks will be interrupted.")}
                 <% end %>
               </p>
               <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
-                {gettext(
-                  "The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
-                )}
+                {gettext("You will need to start Genesis manually afterwards.")}
               </p>
 
               <div class="flex justify-end gap-3 pt-2">

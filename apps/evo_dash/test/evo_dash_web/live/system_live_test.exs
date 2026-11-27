@@ -888,8 +888,12 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert render_click(view, "request_restart") =~ "Restart System?"
       refute render_click(view, "cancel_restart") =~ "Restart System?"
 
-      # Stop: open, then close.
-      assert render_click(view, "request_stop") =~ "Stop System?"
+      # Stop: open, then close. The open render carries the plain-language
+      # shut-down copy (no "Erlang VM" jargon).
+      stop_html = render_click(view, "request_stop")
+      assert stop_html =~ "Stop System?"
+      assert stop_html =~ "This will shut down Genesis. Running tasks will be interrupted."
+      assert stop_html =~ "You will need to start Genesis manually afterwards."
       refute render_click(view, "cancel_stop") =~ "Stop System?"
     end
 
