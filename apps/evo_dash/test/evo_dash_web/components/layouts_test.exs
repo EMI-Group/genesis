@@ -659,7 +659,169 @@ defmodule EvoDashWeb.LayoutsTest do
     end
   end
 
+  describe "app/1 — desktop custom title bar" do
+    # The browser shell must stay byte-identical: the dashboard renders its own
+    # strip ONLY when the Tauri shell seeded `desktop?: true` (there is no
+    # window frame to drag, no window controls to draw and no `data-desktop`
+    # marker for the CSS/hooks to key off).
+    test "the default (browser) render ships no title bar at all" do
+      tree = render_app(current_page: :dashboard) |> parse()
+
+      assert [layout] = Floki.find(tree, "#app-layout")
+      assert Floki.attribute(layout, "data-desktop") == []
+
+      assert Floki.find(tree, "#desktop-titlebar") == []
+      assert Floki.find(tree, "[data-tauri-drag-region]") == []
+      assert Floki.find(tree, "[id^='desktop-titlebar']") == []
+    end
+
+    # Desktop mode turns `#app-layout` into a column: the strip is layer 0 and
+    # EVERYTHING else moves into `#shell-row` as one flex row.
+    test "desktop mode makes the strip the FIRST row of the column shell" do
+      tree = render_app(desktop?: true, os: :windows) |> parse()
+
+      assert [layout] = Floki.find(tree, "#app-layout")
+      assert Floki.attribute(layout, "data-desktop") == ["true"]
+      assert_classes(layout, ~w(flex h-dvh overflow-hidden flex-col))
+
+      assert [strip, shell_row | _rest] = element_children(layout)
+      assert has_id?(strip, "desktop-titlebar")
+
+      assert Floki.attribute(strip, "phx-hook") == ["DesktopTitlebar"]
+      assert Floki.attribute(strip, "data-os") == ["windows"]
+      assert Floki.attribute(strip, "role") == ["group"]
+      assert [label] = Floki.attribute(strip, "aria-label")
+      assert String.trim(label) != ""
+
+      # The strip's NEXT element sibling is the shell row. The sidebar, its
+      # resize handle and the main area are now siblings INSIDE it, which is
+      # what keeps `#sidebar + #workbench-left-resize` and
+      # `#sidebar ~ .workbench-main` resolving in workbench.css.
+      assert has_id?(shell_row, "shell-row")
+      assert_classes(shell_row, ~w(flex flex-1 min-h-0 min-w-0))
+
+      assert [_sidebar] = Floki.find(shell_row, "#sidebar")
+      assert [_resize] = Floki.find(shell_row, "#workbench-left-resize")
+      assert [_main] = Floki.find(shell_row, ".workbench-main")
+
+      # … and none of them is a DIRECT child of `#app-layout` any more.
+      refute Enum.any?(element_children(layout), &has_id?(&1, "sidebar"))
+      refute Enum.any?(element_children(layout), &has_class?(&1, "workbench-main"))
+    end
+
+    test "Windows and Linux render exactly the minimize/maximize/close controls" do
+      for os <- [:windows, :linux] do
+        tree = render_app(desktop?: true, os: os) |> parse()
+        strip = titlebar(tree)
+
+        assert [controls] = Floki.find(strip, ".desktop-titlebar-controls")
+        assert [minimize, maximize, close] = element_children(controls)
+
+        assert [
+                 {minimize, "desktop-titlebar-minimize"},
+                 {maximize, "desktop-titlebar-maximize"},
+                 {close, "desktop-titlebar-close"}
+               ]
+               |> Enum.each(fn {button, id} ->
+                 assert has_id?(button, id)
+                 assert Floki.attribute(button, "type") == ["button"]
+
+                 assert [label] = Floki.attribute(button, "aria-label")
+                 assert String.trim(label) != ""
+               end)
+
+        # The maximize button ships BOTH glyphs; the hook toggles the `hidden`
+        # CLASS because an SVG element ignores the `hidden` attribute.
+        assert Floki.attribute(maximize, "data-maximized") == ["false"]
+
+        assert [glyph_max] = Floki.find(maximize, ".desktop-titlebar-glyph-maximize")
+        assert [glyph_restore] = Floki.find(maximize, ".desktop-titlebar-glyph-restore")
+        refute has_class?(glyph_max, "hidden")
+        assert has_class?(glyph_restore, "hidden")
+
+        assert has_class?(close, "desktop-titlebar-control")
+        assert has_class?(close, "desktop-titlebar-control-close")
+        assert Floki.attribute(strip, "data-os") == [to_string(os)]
+      end
+    end
+
+    # macOS draws native traffic lights OVER the strip (which reserves that
+    # space in CSS) and an unknown host has no control vocabulary at all.
+    test "macOS and an unknown OS render no window controls" do
+      for os <- [:macos, :unknown] do
+        tree = render_app(desktop?: true, os: os) |> parse()
+
+        # The strip itself still renders — only the controls are absent.
+        strip = titlebar(tree)
+        assert Floki.find(strip, ".desktop-titlebar-controls") == []
+
+        for id <- ~w(desktop-titlebar-minimize desktop-titlebar-maximize desktop-titlebar-close) do
+          assert Floki.find(strip, "[id='#{id}']") == []
+        end
+      end
+    end
+
+    # Tauri starts a window drag only when the event TARGET itself carries the
+    # attribute, so it sits on the strip root and the flex spacer — never on
+    # the brand link or a control button.
+    test "the drag region is the strip root plus the spacer, never an interactive child" do
+      for os <- [:macos, :windows] do
+        strip = render_app(desktop?: true, os: os) |> parse() |> titlebar()
+
+        assert Floki.attribute(strip, "data-tauri-drag-region") != []
+
+        assert [drag] = Floki.find(strip, ".desktop-titlebar-drag")
+        assert Floki.attribute(drag, "data-tauri-drag-region") != []
+        assert Floki.attribute(drag, "aria-hidden") == ["true"]
+
+        assert [brand] = Floki.find(strip, "a")
+        assert Floki.attribute(brand, "data-tauri-drag-region") == []
+        assert Floki.find(strip, "a[data-tauri-drag-region]") == []
+        assert Floki.find(strip, "button[data-tauri-drag-region]") == []
+      end
+    end
+
+    test "the strip carries the shared brand link and the sidebar keeps only its drawer close" do
+      tree = render_app(desktop?: true, os: :windows) |> parse()
+      strip = titlebar(tree)
+
+      assert [brand] = Floki.find(strip, "a.desktop-titlebar-brand")
+      assert Floki.attribute(brand, "href") == ["/"]
+      assert [_logo] = Floki.find(brand, "img[src='/images/logo.svg']")
+      assert [_logo_alt] = Floki.find(brand, "img[src='/images/logo-alt.svg']")
+      assert Floki.attribute(brand, "img", "alt") == ["EvoX Genesis", "EvoX Genesis"]
+      assert Floki.text(brand) =~ "EvoX Genesis"
+
+      # The wordmark moved into the strip, so the sidebar brand row is gone …
+      [sidebar] = Floki.find(tree, "#sidebar")
+      assert Floki.find(sidebar, "img[src='/images/logo.svg']") == []
+      refute Floki.text(sidebar) =~ "EvoX Genesis"
+
+      # … but the drawer close stays INSIDE `#sidebar`, inside a `lg:hidden`
+      # header, because the SidebarCollapse hook focuses it by id.
+      assert [_close] = Floki.find(sidebar, "button#sidebar-mobile-close")
+
+      ancestors = ancestors_where(tree, &has_id?(&1, "sidebar-mobile-close"))
+      assert Enum.any?(ancestors, &has_class?(&1, "lg:hidden"))
+    end
+
+    test "in the browser render the sidebar keeps its brand row and drawer close" do
+      tree = render_app(current_page: :dashboard) |> parse()
+      [sidebar] = Floki.find(tree, "#sidebar")
+
+      assert [_logo] = Floki.find(sidebar, "img[src='/images/logo.svg']")
+      assert Floki.text(sidebar) =~ "EvoX Genesis"
+      assert [_close] = Floki.find(sidebar, "button#sidebar-mobile-close")
+    end
+  end
+
   # --- helpers ---
+
+  # The ONE desktop title bar strip of a parsed tree.
+  defp titlebar(tree) do
+    assert [strip] = Floki.find(tree, "#desktop-titlebar")
+    strip
+  end
 
   defp config_warning(tree), do: Floki.find(tree, "div.fixed:has(a[href^='/settings'])")
 

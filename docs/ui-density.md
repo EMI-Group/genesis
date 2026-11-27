@@ -128,6 +128,7 @@ A scroller never gets `scroll-behavior: smooth`, and it keeps `overscroll-behavi
 | `/tasks` | No page `h1` (the rail names the page); filter bar `p-3 sm:p-4`; card `p-4 gap-4`; title `text-base`; meta `text-xs` (never smaller); actions `btn-sm`, coarse 44 px. |
 | `/agents` | No page `h1` (the rail names the page); tree rows 32–36 px, lane chips `text-2xs`, commit rows keep 44 px; inspector body 14 px, mono 13 px; panels `p-4`; coarse-pointer rows 44 px. |
 | `/processes` | No page `h1` (the rail names the page); row min-height 40 px desktop / 44 px coarse; command `text-sm`, meta `text-xs`; expand control and square actions ≥ 36 px (44 px coarse). |
+| Desktop title bar | Desktop mode puts `#desktop-titlebar` above `header.workbench-top`: `--shell-titlebar-h` is `var(--row-h)` and `--shell-topbar-h` keeps the workbench rail height, so both heights come from existing density tokens (a browser renders the strip at `0px`). |
 | Workbench rail | `--shell-topbar-h` derives from the control and padding tokens, with a touch-target override for narrow screens or coarse pointers; tabs scroll horizontally without squeezing the rail controls. |
 | `/projects` workbench | Shared composer surface (`text-base`, 16 px radius) with flat toolbar triggers; preserve the coarse-pointer floor and the 36 px file-tree/picker row target (`--row-h-sm`). |
 | `/assistant` | Reading body stays 15 px / 1.6; sidebar rows 40 px (`--row-h`), 44 px coarse; composer 16 px; actions 32 px desktop / 44 px coarse; no `btn-xs` for interrupt/approve. |

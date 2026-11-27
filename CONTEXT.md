@@ -31,7 +31,7 @@ One line per direct child area; the child's own CONTEXT.md is the contract for t
 - `./config/` → Environment-based Elixir configuration — `config/CONTEXT.md`
 - `./rel/` → Mix release templates + `rel/overlays/bin/genesis`, the `genesis_server` CLI (serve/start/stop/status/logs, remote, update) — `rel/CONTEXT.md`
 - `./scripts/` → Headless-server installer `install.sh` and its smoke test — `scripts/CONTEXT.md`
-- `./desktop/` → Tauri desktop shell (native WebView wrapper, sidecar lifecycle management) — `desktop/CONTEXT.md`
+- `./desktop/` → Tauri desktop shell (native WebView wrapper, sidecar lifecycle management, custom title bar — frameless on Windows/Linux, macOS overlay title bar with the native traffic lights over the dashboard's `#desktop-titlebar` strip; native OS chrome is restored while a shell boot/error page shows) — `desktop/CONTEXT.md`
 - `./nix/` → NixOS build support (vendor bundling helper for local desktop builds) — `nix/CONTEXT.md`
 - `./.github/workflows/` → CI/CD pipelines (desktop app build on release; publishes `genesis_server_*.tar.xz` + `.sha256`, `install.sh` and `latest.json`) — `.github/workflows/CONTEXT.md`
 

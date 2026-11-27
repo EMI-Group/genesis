@@ -63,12 +63,15 @@ Three layers, expressed as tokens in `apps/evo_dash/assets/css/surfaces.css`:
 
 | Layer | Surfaces | Treatment |
 |---|---|---|
-| 0 chrome/shell | sidebar, tab strip background, right dock | recessed and unshadowed: Project History shares the sidebar's theme-aware fill without a divider; Source Control keeps its own tint and leading hairline |
+| 0 chrome/shell | desktop title bar, sidebar, tab strip background, right dock | recessed and unshadowed: Project History shares the sidebar's theme-aware fill without a divider; Source Control keeps its own tint and leading hairline |
 | 1 content canvas | page canvas, active tab, lists | inset, rounded canvas with density-derived gutters, subtle tone and a hairline; no elevation shadow |
 | 2 overlay | menus, command palette, modals, popovers | the only floating, shadowed layer (`--elev-1/2/3`) |
 
 Rules that keep it coherent:
 
+- **The desktop title bar is desktop-only layer-0 chrome.** `#desktop-titlebar` is the full-width strip above `header.workbench-top`, rendered only when the shell marks the page as desktop (`--shell-titlebar-h` is `0px` in a browser, so browser rendering is unchanged).
+It names the app with the shared brand and carries the window drag region; the rail's leading label still names the page, and the in-shell pages still carry no `h1`.
+Window controls (minimize / maximize / close) exist only in the strip, and only on Windows and Linux — macOS leaves that space to the native traffic lights.
 - The sidebar and right dock frame the canvas rather than competing with it. The sidebar uses spacing and hover/selected fills instead of repeated dividers. The canvas frame serves both the page and the Git-diff portal without adding another scroll container.
 - Lists use flat rows. History uses spacing instead of rules; task cards on `/tasks` default to a flat row with a hairline. A card (`data-variant="raised"`) is an opt-in for content read or decided as one unit (a review repo block, a submit confirm), not a treatment for the canvas or docks.
 - Hover, selected and focus are three different treatments; reserve accent for primary actions, the current object and the separate pending-navigation cue.

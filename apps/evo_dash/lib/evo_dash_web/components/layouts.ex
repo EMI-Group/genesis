@@ -125,6 +125,20 @@ defmodule EvoDashWeb.Layouts do
         "so the app.css [data-accent-color] override rules retarget --color-primary/--color-accent for the shell"
   )
 
+  attr(:desktop?, :boolean,
+    default: false,
+    doc:
+      "true only inside the Tauri desktop shell (seeded by EvoDashWeb.LiveHooks.UpdateStatus); " <>
+        "renders the custom window title bar and absorbs the sidebar brand row into it"
+  )
+
+  attr(:os, :atom,
+    default: :unknown,
+    doc:
+      "the host OS from EvoGit.Platform.os/0 (:linux | :macos | :windows | :unknown); " <>
+        "the title bar renders window controls on Windows/Linux only and reserves the macOS traffic-light inset"
+  )
+
   slot(:inner_block, required: true)
 
   def app(%{workbench_window: true} = assigns) do
@@ -156,8 +170,9 @@ defmodule EvoDashWeb.Layouts do
 
     ~H"""
     <div
-      class="flex h-dvh overflow-hidden bg-base-200 transition-colors duration-300"
+      class="flex h-dvh overflow-hidden flex-col bg-base-200 transition-colors duration-300"
       id="app-layout"
+      data-desktop={if @desktop?, do: "true"}
       data-accent-color={@accent_color}
       data-workbench-accent-default={@accent_color}
       phx-hook={unless @simple_nav, do: "Workbench"}
@@ -182,30 +197,49 @@ defmodule EvoDashWeb.Layouts do
       data-workbench-prev-tab={gettext("Previous tab (Alt+Left)")}
       data-workbench-chats={gettext("Conversations")}
     >
-      <%!-- Mobile hamburger button (visible on < lg screens) --%>
-      <div :if={!@simple_nav} class="lg:hidden fixed top-0 left-0 z-50 p-1.5">
-        <button
-          id="sidebar-mobile-toggle"
-          type="button"
-          aria-controls="sidebar"
-          aria-expanded="false"
-          class="grid size-11 place-items-center rounded-lg bg-base-200 border border-base-300 text-base-content/70 hover:text-base-content transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
-          aria-label={gettext("Toggle navigation")}
+      <%!-- Desktop-only layer-0 chrome: the custom window title bar rendered
+           INSIDE the Tauri shell (frameless window on Windows/Linux, overlay
+           title bar on macOS). It is the first row of the #app-layout flex
+           column, so the strip and the shell row below it share the viewport
+           height without any position: fixed. --%>
+      <EvoDashWeb.DesktopTitlebar.titlebar
+        :if={@desktop?}
+        os={@os}
+        current_node_id={@current_node_id}
+      />
+
+      <%!-- The shell row holds the sidebar and the main workbench area as
+           siblings: `workbench.css` relies on `#sidebar + #workbench-left-resize`
+           and `#sidebar ~ .workbench-main`. --%>
+      <div id="shell-row" class="flex flex-1 min-h-0 min-w-0">
+        <%!-- Mobile hamburger button (visible on < lg screens) --%>
+        <div
+          :if={!@simple_nav}
+          id="sidebar-mobile-toggle-wrap"
+          class="lg:hidden fixed top-0 left-0 z-50 p-1.5"
         >
-          <.icon name="hero-bars-3" class="size-5" />
-        </button>
-      </div>
+          <button
+            id="sidebar-mobile-toggle"
+            type="button"
+            aria-controls="sidebar"
+            aria-expanded="false"
+            class="grid size-11 place-items-center rounded-lg bg-base-200 border border-base-300 text-base-content/70 hover:text-base-content transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
+            aria-label={gettext("Toggle navigation")}
+          >
+            <.icon name="hero-bars-3" class="size-5" />
+          </button>
+        </div>
 
-      <%!-- Mobile overlay (hidden by default, JS-controlled) --%>
-      <div
-        :if={!@simple_nav}
-        id="sidebar-overlay"
-        class="fixed inset-0 z-40 bg-black/35 opacity-0 pointer-events-none transition-opacity duration-200 motion-reduce:transition-none lg:hidden"
-        aria-hidden="true"
-      >
-      </div>
+        <%!-- Mobile overlay (hidden by default, JS-controlled) --%>
+        <div
+          :if={!@simple_nav}
+          id="sidebar-overlay"
+          class="fixed inset-0 z-40 bg-black/35 opacity-0 pointer-events-none transition-opacity duration-200 motion-reduce:transition-none lg:hidden"
+          aria-hidden="true"
+        >
+        </div>
 
-      <%!-- Sidebar
+        <%!-- Sidebar
         NOTE: `overflow-visible!` (important) is deliberate defense-in-depth so
         the sidebar's overflowing <details> dropdown panels (SSH node selector
         w-72 = 288px, language, theme) are never clipped at the sidebar edge
@@ -217,386 +251,376 @@ defmodule EvoDashWeb.Layouts do
         content (z-0), so overflowing menus paint above the main body. The
         node selector lives in the sidebar's bottom bar, leftmost, with its
         dropdown opening upward. --%>
-      <aside
-        :if={!@simple_nav}
-        id="sidebar"
-        data-sidebar-collapsed="false"
-        phx-hook="SidebarCollapse"
-        class="fixed lg:relative z-50 h-dvh flex flex-col bg-base-200 border-r border-base-300 shadow-sm lg:shadow-none transition-[translate,width] duration-200 ease-out motion-reduce:transition-none w-60 -translate-x-full lg:translate-x-0 overflow-visible!"
-      >
-        <%!-- Branding --%>
-        <div class="flex items-center justify-between gap-2 h-14 px-4 shrink-0">
-          <.link
-            navigate={with_node_param(~p"/", @current_node_id)}
-            class="flex items-center gap-2 rounded-md hover:opacity-80 transition-opacity min-w-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
-          >
-            <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
-            <img
-              src={~p"/images/logo.svg"}
-              class="h-6 w-auto block dark:hidden shrink-0"
-              alt={gettext("EvoX Genesis")}
-            />
-            <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
-            <img
-              src={~p"/images/logo-alt.svg"}
-              class="h-6 w-auto hidden dark:block shrink-0"
-              alt={gettext("EvoX Genesis")}
-            />
-            <span class="text-base font-semibold tracking-tight text-base-content truncate sidebar-label">
-              <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
-              {gettext("EvoX Genesis")}
-            </span>
-          </.link>
-          <button
-            id="sidebar-mobile-close"
-            type="button"
-            class="workbench-icon-button shrink-0"
-            aria-label={gettext("Close")}
-          >
-            <.icon name="hero-x-mark" class="size-5" />
-          </button>
-        </div>
+        <aside
+          :if={!@simple_nav}
+          id="sidebar"
+          data-sidebar-collapsed="false"
+          phx-hook="SidebarCollapse"
+          class="fixed lg:relative z-50 h-dvh lg:h-full flex flex-col bg-base-200 border-r border-base-300 shadow-sm lg:shadow-none transition-[translate,width] duration-200 ease-out motion-reduce:transition-none w-60 -translate-x-full lg:translate-x-0 overflow-visible!"
+        >
+          <%!-- Branding — in desktop mode the window title bar carries the brand,
+             so the sidebar keeps only the mobile drawer's close control (whose
+             id the SidebarCollapse hook focuses and delegates clicks to). --%>
+          <%= if @desktop? do %>
+            <div class="flex items-center justify-end px-4 py-2 shrink-0 lg:hidden">
+              <.sidebar_mobile_close />
+            </div>
+          <% else %>
+            <div class="flex items-center justify-between gap-2 h-14 px-4 shrink-0">
+              <EvoDashWeb.DesktopTitlebar.brand
+                current_node_id={@current_node_id}
+                class="h-6 w-auto"
+                label_class="text-base sidebar-label"
+              />
+              <.sidebar_mobile_close />
+            </div>
+          <% end %>
 
-        <%!-- Navigation Links --%>
-        <nav class="workbench-sidebar-nav flex-1 px-2 py-2 overflow-y-auto">
-          <%!-- Active Tasks — a first-class section, never nested in a
+          <%!-- Navigation Links --%>
+          <nav class="workbench-sidebar-nav flex-1 px-2 py-2 overflow-y-auto">
+            <%!-- Active Tasks — a first-class section, never nested in a
              disclosure, so a running task stays reachable from every sidebar
              page. --%>
-          <EvoDashWeb.WorkbenchActiveTasks.active_tasks
-            running_tasks={@running_tasks}
-            pending_tasks={@pending_tasks}
-            current_node_id={@current_node_id}
-          />
-          <.sidebar_nav_link
-            navigate={with_node_param(~p"/assistant", @current_node_id)}
-            current={@current_page == :assistant}
-            icon="hero-sparkles"
-          >{WorkbenchContextTitle.page_label(:assistant)}</.sidebar_nav_link>
-          <.live_component
-            module={EvoDashWeb.WorkbenchComponent}
-            id="workbench-projects"
-            mode={:projects}
-            patch_links={@current_page == :dashboard}
-            node_id={@current_node_id}
-            targets={@remote_targets}
-            statuses={@connection_statuses}
-            project={@workbench_project}
-          />
-          <div class="workbench-sidebar-utilities">
-            <%!-- The four destinations are always visible: four rows do not earn
+            <EvoDashWeb.WorkbenchActiveTasks.active_tasks
+              running_tasks={@running_tasks}
+              pending_tasks={@pending_tasks}
+              current_node_id={@current_node_id}
+            />
+            <.sidebar_nav_link
+              navigate={with_node_param(~p"/assistant", @current_node_id)}
+              current={@current_page == :assistant}
+              icon="hero-sparkles"
+            >{WorkbenchContextTitle.page_label(:assistant)}</.sidebar_nav_link>
+            <.live_component
+              module={EvoDashWeb.WorkbenchComponent}
+              id="workbench-projects"
+              mode={:projects}
+              patch_links={@current_page == :dashboard}
+              node_id={@current_node_id}
+              targets={@remote_targets}
+              statuses={@connection_statuses}
+              project={@workbench_project}
+            />
+            <div class="workbench-sidebar-utilities">
+              <%!-- The four destinations are always visible: four rows do not earn
                a disclosure, and a collapsed disclosure would hide the only route
                to Tasks/Processes/System. The label hides in the collapsed rail
                (`.sidebar-label`), the icons stay. --%>
-            <.sidebar_nav_link
-              navigate={with_node_param(~p"/agents", @current_node_id)}
-              current={@current_page == :agents}
-              icon="hero-server"
-            >{WorkbenchContextTitle.page_label(:agents)}</.sidebar_nav_link>
-            <.sidebar_nav_link
-              navigate={with_node_param(~p"/tasks", @current_node_id)}
-              current={@current_page == :tasks}
-              icon="hero-clipboard-document-list"
-            >{WorkbenchContextTitle.page_label(:tasks)}</.sidebar_nav_link>
-            <.sidebar_nav_link
-              navigate={with_node_param(current_page(:processes), @current_node_id)}
-              current={@current_page == :processes}
-              icon="hero-cpu-chip"
-              data_nav="processes"
-            ><span class="sidebar-label">{WorkbenchContextTitle.page_label(:processes)}</span></.sidebar_nav_link>
-            <.sidebar_nav_link
-              navigate={with_node_param(~p"/system", @current_node_id)}
-              current={@current_page == :system}
-              icon="hero-server-stack"
-              notification={update_status_notification(@update_status)}
-            >{WorkbenchContextTitle.page_label(:system)}</.sidebar_nav_link>
-            <%!-- `motion-disclosure` + the DisclosureMotion hook smooth BOTH
+              <.sidebar_nav_link
+                navigate={with_node_param(~p"/agents", @current_node_id)}
+                current={@current_page == :agents}
+                icon="hero-server"
+              >{WorkbenchContextTitle.page_label(:agents)}</.sidebar_nav_link>
+              <.sidebar_nav_link
+                navigate={with_node_param(~p"/tasks", @current_node_id)}
+                current={@current_page == :tasks}
+                icon="hero-clipboard-document-list"
+              >{WorkbenchContextTitle.page_label(:tasks)}</.sidebar_nav_link>
+              <.sidebar_nav_link
+                navigate={with_node_param(current_page(:processes), @current_node_id)}
+                current={@current_page == :processes}
+                icon="hero-cpu-chip"
+                data_nav="processes"
+              ><span class="sidebar-label">{WorkbenchContextTitle.page_label(:processes)}</span></.sidebar_nav_link>
+              <.sidebar_nav_link
+                navigate={with_node_param(~p"/system", @current_node_id)}
+                current={@current_page == :system}
+                icon="hero-server-stack"
+                notification={update_status_notification(@update_status)}
+              >{WorkbenchContextTitle.page_label(:system)}</.sidebar_nav_link>
+              <%!-- `motion-disclosure` + the DisclosureMotion hook smooth BOTH
                directions: a native <details> snaps open and shut, and the hook
                only defers the `open` removal so motion.css can play the exit.
                `group` exists solely for the summary caret's `group-open:`
                rotation (motion.css has no rule for it, and the global
                reduced-motion backstop already neutralizes the transition).
                The id is required by LiveView on any element carrying phx-hook. --%>
-            <details
-              id="workbench-conversations"
-              class="workbench-tools motion-disclosure group"
-              phx-hook="DisclosureMotion"
-              open={@current_page == :assistant}
-            >
-              <summary class="workbench-row">
-                <.icon name="hero-chat-bubble-left-right" class="size-5 shrink-0" />
-                <span class="sidebar-label text-sm font-medium">{gettext("Conversations")}</span>
-                <.icon
-                  name="hero-chevron-right"
-                  class="ml-auto size-3.5 shrink-0 text-base-content/50 transition-transform duration-[var(--motion-base)] ease-[var(--motion-ease-out)] group-open:rotate-90"
-                />
-              </summary>
-              {EvoDashWeb.HomeLive.SessionList.session_list(assigns)}
-            </details>
-          </div>
-        </nav>
-
-        <div class="px-3 py-3 border-t border-base-300 shrink-0">
-          <div data-sidebar-bottom-bar class="flex items-center justify-between gap-1">
-            <div data-sidebar-bottom-group class="flex items-center gap-1">
-              <button
-                type="button"
-                id="workbench-settings"
-                class="workbench-row workbench-settings-button"
-                data-workbench-settings={~p"/settings/window"}
-                aria-label={gettext("Settings")}
-                title={gettext("Settings")}
+              <details
+                id="workbench-conversations"
+                class="workbench-tools motion-disclosure group"
+                phx-hook="DisclosureMotion"
+                open={@current_page == :assistant}
               >
-                <.icon name="hero-cog-6-tooth" class="size-5 shrink-0" />
-                <span class="sidebar-label text-sm font-medium">{gettext("Settings")}</span>
-                <span
-                  :if={@config_status && !@config_status.ok?}
-                  class="workbench-settings-indicator"
-                  title={gettext("Missing Configuration")}
-                  aria-label={gettext("Missing Configuration")}
-                ></span>
-              </button>
+                <summary class="workbench-row">
+                  <.icon name="hero-chat-bubble-left-right" class="size-5 shrink-0" />
+                  <span class="sidebar-label text-sm font-medium">{gettext("Conversations")}</span>
+                  <.icon
+                    name="hero-chevron-right"
+                    class="ml-auto size-3.5 shrink-0 text-base-content/50 transition-transform duration-[var(--motion-base)] ease-[var(--motion-ease-out)] group-open:rotate-90"
+                  />
+                </summary>
+                {EvoDashWeb.HomeLive.SessionList.session_list(assigns)}
+              </details>
             </div>
-            <div data-sidebar-bottom-group class="flex items-center gap-1">
-              <button
-                id="sidebar-collapse-toggle"
-                class="p-1.5 rounded-lg text-base-content/70 hover:text-base-content hover:bg-base-300 transition-colors hidden lg:flex focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
-                title={gettext("Collapse sidebar")}
-              >
-                <.icon name="hero-chevron-double-left" class="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        </div>
-      </aside>
-      <div
-        :if={!@simple_nav}
-        id="workbench-left-resize"
-        class="workbench-resizer"
-        data-workbench-resize="left"
-        role="separator"
-        tabindex="0"
-        aria-orientation="vertical"
-        aria-controls="sidebar"
-        aria-label={gettext("Resize project sidebar")}
-      >
-      </div>
+          </nav>
 
-      <div class="workbench-main">
-        <div class="workbench-center">
-          <header :if={!@simple_nav} class="workbench-top">
-            <div class="workbench-tab-rail">
-              <span
-                :if={@workbench_context_title}
-                class="workbench-context-title min-w-0 max-w-1/3 truncate text-sm font-semibold"
-                title={@workbench_context_title}
-              >{@workbench_context_title}</span>
-              <div
-                id="workbench-tabs"
-                class="workbench-tabs"
-                phx-update="ignore"
-                role="navigation"
-                aria-label={gettext("Open tabs — Alt+Left / Alt+Right cycles tabs")}
-              >
+          <div class="px-3 py-3 border-t border-base-300 shrink-0">
+            <div data-sidebar-bottom-bar class="flex items-center justify-between gap-1">
+              <div data-sidebar-bottom-group class="flex items-center gap-1">
+                <button
+                  type="button"
+                  id="workbench-settings"
+                  class="workbench-row workbench-settings-button"
+                  data-workbench-settings={~p"/settings/window"}
+                  aria-label={gettext("Settings")}
+                  title={gettext("Settings")}
+                >
+                  <.icon name="hero-cog-6-tooth" class="size-5 shrink-0" />
+                  <span class="sidebar-label text-sm font-medium">{gettext("Settings")}</span>
+                  <span
+                    :if={@config_status && !@config_status.ok?}
+                    class="workbench-settings-indicator"
+                    title={gettext("Missing Configuration")}
+                    aria-label={gettext("Missing Configuration")}
+                  ></span>
+                </button>
               </div>
-              <details
-                id="workbench-create"
-                class="workbench-create"
-                phx-mounted={JS.ignore_attributes("open")}
-              >
-                <summary
-                  id="workbench-create-toggle"
-                  class="workbench-icon-button"
-                  aria-label={gettext("Create")}
-                  title={gettext("Create")}
+              <div data-sidebar-bottom-group class="flex items-center gap-1">
+                <button
+                  id="sidebar-collapse-toggle"
+                  class="p-1.5 rounded-lg text-base-content/70 hover:text-base-content hover:bg-base-300 transition-colors hidden lg:flex focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
+                  title={gettext("Collapse sidebar")}
                 >
-                  <.icon name="hero-plus" class="size-5" />
-                </summary>
-                <div class="workbench-create-menu">
-                  <%= if @workbench_project && @workbench_target do %>
-                    <.link
-                      navigate={
-                        EvoDashWeb.WorkbenchComponent.navigation_path("/projects", @current_node_id,
-                          project: @workbench_project,
-                          wb_task: "1"
-                        )
-                      }
-                      class="workbench-row"
-                      data-workbench-new-task
-                    >
-                      <.icon name="hero-clipboard-document" class="size-4 shrink-0" />
-                      {gettext("New task")}
-                    </.link>
-                    <button
-                      :if={@workbench_new_conversation?}
-                      type="button"
-                      class="workbench-row"
-                      data-workbench-new-conversation
-                    >
-                      <.icon name="hero-chat-bubble-left" class="size-4 shrink-0" />
-                      {gettext("New conversation")}
-                    </button>
-                  <% else %>
-                    <button type="button" class="workbench-row" data-workbench-project-window="create">
-                      <.icon name="hero-plus" class="size-4 shrink-0" />
-                      {gettext("Create New Project")}
-                    </button>
-                    <button type="button" class="workbench-row" data-workbench-project-window="open">
-                      <.icon name="hero-folder-open" class="size-4 shrink-0" />
-                      {gettext("Open Existing Project")}
-                    </button>
-                  <% end %>
-                </div>
-              </details>
-              <details
-                id="workbench-tabs-overflow"
-                class="workbench-tab-overflow"
-                phx-update="ignore"
-                hidden
-              >
-                <summary
-                  class="workbench-icon-button"
-                  aria-label={gettext("All open tabs")}
-                  title={gettext("All open tabs")}
-                >
-                  <.icon name="hero-ellipsis-horizontal" class="size-5" />
-                </summary>
-                <div id="workbench-tabs-overflow-list" class="workbench-create-menu"></div>
-              </details>
+                  <.icon name="hero-chevron-double-left" class="w-4 h-4" />
+                </button>
+              </div>
             </div>
-            <button
-              :if={@workbench_git_available?}
-              id="workbench-git-toggle"
-              type="button"
-              class="workbench-icon-button workbench-git-toggle"
-              aria-controls="workbench-git"
-              aria-expanded="false"
-              title={gettext("Project Git")}
-              aria-label={gettext("Project Git")}
-            >
-              <.icon name="hero-code-bracket" class="size-4 shrink-0" />
-              <span id="workbench-git-toggle-label" phx-update="ignore">Git</span>
-              <.icon name="hero-chevron-down" class="size-3 shrink-0" />
-            </button>
-            <button
-              :if={@workbench_project || @workbench_history_scope_pending?}
-              id="workbench-history-toggle"
-              type="button"
-              class="workbench-icon-button"
-              aria-controls="workbench-history"
-              aria-expanded="false"
-              title={gettext("Project history")}
-              aria-label={gettext("Project history")}
-            >
-              <.icon name="hero-clock" class="size-5" />
-            </button>
-          </header>
-          <%!-- Main Content Area --%>
-          <div class="workbench-content-stack">
-            <div id="main-scroll" class="flex-1 flex flex-col overflow-auto min-w-0 z-0 bg-base-100">
-              <%!-- The DesktopQuit hook wrapper listens for the Tauri shell's
+          </div>
+        </aside>
+        <div
+          :if={!@simple_nav}
+          id="workbench-left-resize"
+          class="workbench-resizer"
+          data-workbench-resize="left"
+          role="separator"
+          tabindex="0"
+          aria-orientation="vertical"
+          aria-controls="sidebar"
+          aria-label={gettext("Resize project sidebar")}
+        >
+        </div>
+
+        <div class="workbench-main">
+          <div class="workbench-center">
+            <header :if={!@simple_nav} class="workbench-top">
+              <div class="workbench-tab-rail">
+                <span
+                  :if={@workbench_context_title}
+                  class="workbench-context-title min-w-0 max-w-1/3 truncate text-sm font-semibold"
+                  title={@workbench_context_title}
+                >{@workbench_context_title}</span>
+                <div
+                  id="workbench-tabs"
+                  class="workbench-tabs"
+                  phx-update="ignore"
+                  role="navigation"
+                  aria-label={gettext("Open tabs — Alt+Left / Alt+Right cycles tabs")}
+                >
+                </div>
+                <details
+                  id="workbench-create"
+                  class="workbench-create"
+                  phx-mounted={JS.ignore_attributes("open")}
+                >
+                  <summary
+                    id="workbench-create-toggle"
+                    class="workbench-icon-button"
+                    aria-label={gettext("Create")}
+                    title={gettext("Create")}
+                  >
+                    <.icon name="hero-plus" class="size-5" />
+                  </summary>
+                  <div class="workbench-create-menu">
+                    <%= if @workbench_project && @workbench_target do %>
+                      <.link
+                        navigate={
+                          EvoDashWeb.WorkbenchComponent.navigation_path("/projects", @current_node_id,
+                            project: @workbench_project,
+                            wb_task: "1"
+                          )
+                        }
+                        class="workbench-row"
+                        data-workbench-new-task
+                      >
+                        <.icon name="hero-clipboard-document" class="size-4 shrink-0" />
+                        {gettext("New task")}
+                      </.link>
+                      <button
+                        :if={@workbench_new_conversation?}
+                        type="button"
+                        class="workbench-row"
+                        data-workbench-new-conversation
+                      >
+                        <.icon name="hero-chat-bubble-left" class="size-4 shrink-0" />
+                        {gettext("New conversation")}
+                      </button>
+                    <% else %>
+                      <button
+                        type="button"
+                        class="workbench-row"
+                        data-workbench-project-window="create"
+                      >
+                        <.icon name="hero-plus" class="size-4 shrink-0" />
+                        {gettext("Create New Project")}
+                      </button>
+                      <button type="button" class="workbench-row" data-workbench-project-window="open">
+                        <.icon name="hero-folder-open" class="size-4 shrink-0" />
+                        {gettext("Open Existing Project")}
+                      </button>
+                    <% end %>
+                  </div>
+                </details>
+                <details
+                  id="workbench-tabs-overflow"
+                  class="workbench-tab-overflow"
+                  phx-update="ignore"
+                  hidden
+                >
+                  <summary
+                    class="workbench-icon-button"
+                    aria-label={gettext("All open tabs")}
+                    title={gettext("All open tabs")}
+                  >
+                    <.icon name="hero-ellipsis-horizontal" class="size-5" />
+                  </summary>
+                  <div id="workbench-tabs-overflow-list" class="workbench-create-menu"></div>
+                </details>
+              </div>
+              <button
+                :if={@workbench_git_available?}
+                id="workbench-git-toggle"
+                type="button"
+                class="workbench-icon-button workbench-git-toggle"
+                aria-controls="workbench-git"
+                aria-expanded="false"
+                title={gettext("Project Git")}
+                aria-label={gettext("Project Git")}
+              >
+                <.icon name="hero-code-bracket" class="size-4 shrink-0" />
+                <span id="workbench-git-toggle-label" phx-update="ignore">Git</span>
+                <.icon name="hero-chevron-down" class="size-3 shrink-0" />
+              </button>
+              <button
+                :if={@workbench_project || @workbench_history_scope_pending?}
+                id="workbench-history-toggle"
+                type="button"
+                class="workbench-icon-button"
+                aria-controls="workbench-history"
+                aria-expanded="false"
+                title={gettext("Project history")}
+                aria-label={gettext("Project history")}
+              >
+                <.icon name="hero-clock" class="size-5" />
+              </button>
+            </header>
+            <%!-- Main Content Area --%>
+            <div class="workbench-content-stack">
+              <div id="main-scroll" class="flex-1 flex flex-col overflow-auto min-w-0 z-0 bg-base-100">
+                <%!-- The DesktopQuit hook wrapper listens for the Tauri shell's
              "quit-requested" tray event on every page: hooks only mount on
              elements inside the LiveView root DOM, and this wrapper is part of
              the shared app layout, so it is re-established on every navigation. --%>
-              <div
-                id="desktop-quit-hook"
-                phx-hook="DesktopQuit"
-                class="flex-1 flex flex-col min-w-0 min-h-0"
-              >
-                <main
-                  id="main-content"
-                  class="flex-1 min-h-0 px-4 sm:px-5 lg:px-6 pt-4 pb-4 w-full bg-base-100"
+                <div
+                  id="desktop-quit-hook"
+                  phx-hook="DesktopQuit"
+                  class="flex-1 flex flex-col min-w-0 min-h-0"
                 >
-                  {render_slot(@inner_block)}
-                </main>
-              </div>
-              <%!-- The UpdateStatus hook wrapper bridges the Tauri updater to the
+                  <main
+                    id="main-content"
+                    class="flex-1 min-h-0 px-4 sm:px-5 lg:px-6 pt-4 pb-4 w-full bg-base-100"
+                  >
+                    {render_slot(@inner_block)}
+                  </main>
+                </div>
+                <%!-- The UpdateStatus hook wrapper bridges the Tauri updater to the
              server (startup + periodic checks, phx:update_* event listeners).
              Hooks only mount on elements inside the LiveView root DOM, and
              this wrapper is part of the shared app layout, so it is
              re-established on every page navigation. A no-op outside the
              Tauri desktop shell. --%>
-              <div id="update-status-hook" phx-hook="UpdateStatus" />
-              <%!-- The Guide hook wrapper bridges the core guide_user tool broadcasts
+                <div id="update-status-hook" phx-hook="UpdateStatus" />
+                <%!-- The Guide hook wrapper bridges the core guide_user tool broadcasts
              to the floating Genesis Guide panel. Hooks only mount on elements
              inside the LiveView root DOM, and this wrapper is part of the
              shared app layout, so it is re-established on every page
              navigation. --%>
-              <div id="guide-hook" phx-hook="Guide" />
+                <div id="guide-hook" phx-hook="Guide" />
+              </div>
+              <div :if={!@simple_nav && @workbench_git_available?} id="workbench-git-diff-host" />
             </div>
-            <div :if={!@simple_nav && @workbench_git_available?} id="workbench-git-diff-host" />
           </div>
-        </div>
 
-        <button
-          :if={!@simple_nav}
-          id="workbench-history-overlay"
-          type="button"
-          tabindex="-1"
-          aria-hidden="true"
-          hidden
-        ></button>
-        <div
-          :if={!@simple_nav}
-          id="workbench-right-resize"
-          class="workbench-resizer"
-          data-workbench-resize="right"
-          role="separator"
-          tabindex="0"
-          aria-orientation="vertical"
-          aria-controls="workbench-history workbench-git"
-          aria-label={gettext("Resize right sidebar")}
-          hidden
-        >
-        </div>
-        <aside
-          :if={!@simple_nav}
-          id="workbench-history"
-          class="workbench-history"
-          aria-label={gettext("Project history")}
-          data-panel-state="closed"
-          hidden
-        >
-          <div class="workbench-section-heading">
-            <div class="text-sm font-semibold">{gettext("Project history")}</div>
-            <div class="flex items-center gap-1">
-              <button
-                type="button"
-                data-workbench-close-history
-                class="workbench-icon-button"
-                aria-label={gettext("Close history")}
-              >
-                <.icon name="hero-x-mark" class="size-4" />
-              </button>
-            </div>
+          <button
+            :if={!@simple_nav}
+            id="workbench-history-overlay"
+            type="button"
+            tabindex="-1"
+            aria-hidden="true"
+            hidden
+          ></button>
+          <div
+            :if={!@simple_nav}
+            id="workbench-right-resize"
+            class="workbench-resizer"
+            data-workbench-resize="right"
+            role="separator"
+            tabindex="0"
+            aria-orientation="vertical"
+            aria-controls="workbench-history workbench-git"
+            aria-label={gettext("Resize right sidebar")}
+            hidden
+          >
           </div>
-          <.live_component
-            module={EvoDashWeb.WorkbenchComponent}
-            id="workbench-history-content"
-            mode={:history}
-            node_id={@current_node_id}
-            target={@workbench_target}
-            project={@workbench_project}
-            scope_pending?={@workbench_history_scope_pending?}
-          />
-        </aside>
-        <aside
-          :if={!@simple_nav && @workbench_project}
-          id="workbench-git"
-          class="workbench-history workbench-git"
-          aria-label={gettext("Project Git")}
-          data-panel-state="closed"
-          hidden
-        >
-          <.live_component
-            module={EvoDashWeb.ProjectGit}
-            id="workbench-git-content"
-            node_id={@current_node_id}
-            target={@workbench_target}
-            project={@workbench_git_project}
-            server={workbench_git_server(assigns)}
-            github_status={@github_status}
-          />
-        </aside>
+          <aside
+            :if={!@simple_nav}
+            id="workbench-history"
+            class="workbench-history"
+            aria-label={gettext("Project history")}
+            data-panel-state="closed"
+            hidden
+          >
+            <div class="workbench-section-heading">
+              <div class="text-sm font-semibold">{gettext("Project history")}</div>
+              <div class="flex items-center gap-1">
+                <button
+                  type="button"
+                  data-workbench-close-history
+                  class="workbench-icon-button"
+                  aria-label={gettext("Close history")}
+                >
+                  <.icon name="hero-x-mark" class="size-4" />
+                </button>
+              </div>
+            </div>
+            <.live_component
+              module={EvoDashWeb.WorkbenchComponent}
+              id="workbench-history-content"
+              mode={:history}
+              node_id={@current_node_id}
+              target={@workbench_target}
+              project={@workbench_project}
+              scope_pending?={@workbench_history_scope_pending?}
+            />
+          </aside>
+          <aside
+            :if={!@simple_nav && @workbench_project}
+            id="workbench-git"
+            class="workbench-history workbench-git"
+            aria-label={gettext("Project Git")}
+            data-panel-state="closed"
+            hidden
+          >
+            <.live_component
+              module={EvoDashWeb.ProjectGit}
+              id="workbench-git-content"
+              node_id={@current_node_id}
+              target={@workbench_target}
+              project={@workbench_git_project}
+              server={workbench_git_server(assigns)}
+              github_status={@github_status}
+            />
+          </aside>
+        </div>
       </div>
 
       <.live_component
@@ -720,7 +744,10 @@ defmodule EvoDashWeb.Layouts do
            the guide continues across pages (retention handled by the hook's
            session + the JS highlight re-apply). --%>
       <%= if @guide do %>
-        <div class="fixed top-4 right-4 z-50 w-80 max-w-[calc(100vw-2rem)] bg-base-100 border border-base-300 rounded-xl shadow-lg p-4">
+        <div
+          id="guide-panel"
+          class="fixed top-4 right-4 z-50 w-80 max-w-[calc(100vw-2rem)] bg-base-100 border border-base-300 rounded-xl shadow-lg p-4"
+        >
           <div class="flex items-center gap-2 mb-2">
             <.icon name="hero-sparkles" class="w-4 h-4 text-primary-standalone shrink-0" />
             <%!-- 自省智能体向导 — 由运行中的 reflect 任务推送的引导提示 --%>
@@ -764,6 +791,22 @@ defmodule EvoDashWeb.Layouts do
       nil -> assigns.current_node_id
       target -> target.name
     end
+  end
+
+  # The sidebar drawer's close control. It must stay INSIDE <aside id="sidebar">
+  # and keep its id: the SidebarCollapse hook focuses `#sidebar-mobile-close`
+  # and delegates drawer clicks to the closest match.
+  defp sidebar_mobile_close(assigns) do
+    ~H"""
+    <button
+      id="sidebar-mobile-close"
+      type="button"
+      class="workbench-icon-button shrink-0"
+      aria-label={gettext("Close")}
+    >
+      <.icon name="hero-x-mark" class="size-5" />
+    </button>
+    """
   end
 
   attr(:navigate, :string, required: true)

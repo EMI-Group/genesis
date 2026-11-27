@@ -19,6 +19,14 @@ defmodule EvoDashWeb.LiveHooks.UpdateStatus do
   the shared app layout (`EvoDashWeb.Layouts.app`) renders the notification dot
   on the System sidebar item from it.
 
+  This hook also seeds the shell-chrome assigns `@desktop?` (true only inside the
+  Tauri desktop shell) and `@os` (`EvoGit.Platform.os/0` — `:linux` / `:macos` /
+  `:windows` / `:unknown`), which `EvoDashWeb.Layouts.app` consumes to render the
+  desktop-only custom title-bar strip. Both assigns are set on EVERY mount (dead
+  render included, never gated on `connected?/1`), so the first paint and the
+  connected mount produce the same markup; any render that does not run this hook
+  gets the safe defaults `false` / `:unknown`.
+
   The seed heuristic hides the dot while viewing a remote `genesis_remote` node:
   `@update_status` is only seeded from the hub when `params["node"] == nil`
   (remote-viewing heuristic). Outside the Tauri shell (normal browsers) the
@@ -38,16 +46,20 @@ defmodule EvoDashWeb.LiveHooks.UpdateStatus do
   alias EvoDash.UpdateStatus
 
   @doc """
-  Seeds the `@update_status` assign and attaches the update-status
-  interceptors (PubSub `:handle_info` + event `:handle_event`) when running in
-  the Tauri desktop shell. The interceptors are attached on EVERY page, so the
-  JS hook's pushed events are always consumed.
+  Seeds the shell-chrome assigns `@desktop?` / `@os` (on every mount) and the
+  `@update_status` assign, and attaches the update-status interceptors (PubSub
+  `:handle_info` + event `:handle_event`) when running in the Tauri desktop
+  shell. The interceptors are attached on EVERY page, so the JS hook's pushed
+  events are always consumed.
   """
   def on_mount(:default, params, _session, socket) do
     desktop? = UpdateStatus.desktop?()
+    os = EvoGit.Platform.os()
 
     socket =
       socket
+      |> assign(:desktop?, desktop?)
+      |> assign(:os, os)
       |> assign(:update_status, initial_assign(desktop?, params["node"] != nil))
       |> maybe_attach(desktop?)
 
