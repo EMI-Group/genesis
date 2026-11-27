@@ -418,14 +418,13 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   # `EvoGit.BackgroundJobs.snapshot(owner_pid: self())` resolves to this job's
   # owner. The `:evogit_background_jobs_server` process-dictionary seam points the
   # registry calls at it. Returns `{registry, job}`.
-  defp start_live_job!(repo_path, label, next_id \\ 1) do
+  defp start_live_job!(repo_path, label) do
     registry = :"compression_jobs_#{System.unique_integer([:positive])}"
     # A per-registry child id, so one test can start a SECOND isolated registry.
     start_supervised!({EvoGit.BackgroundJobs, [name: registry]}, id: registry)
-    # Ids are a per-registry MONOTONIC COUNTER (`bash-1`, `bash-2`, …), so two
-    # isolated registries would both hand out `bash-1`; seeding the counter keeps
-    # the jobs of a second registry distinguishable BY ID.
-    :sys.replace_state(registry, fn state -> %{state | next_id: next_id} end)
+    # Job ids are short RANDOM tokens (`bash-<base36>`, `EvoGit.BackgroundJobs.JobId`),
+    # so the jobs of two isolated registries are distinguishable BY ID by
+    # construction — no seeding needed.
     Process.put(:evogit_background_jobs_server, registry)
     Process.put(:evogit_agent_pid, self())
 
@@ -970,7 +969,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       # SECOND snapshot: a FRESH registry holding only job B. A killed/finished
       # job would still be listed by `snapshot/1`, so a fresh registry is what
       # makes "absent from the current snapshot" real.
-      {_registry_b, job_b} = start_live_job!(repo_path, "second job beta", 2)
+      {_registry_b, job_b} = start_live_job!(repo_path, "second job beta")
       assert job_b.id != job_a.id
 
       second =
