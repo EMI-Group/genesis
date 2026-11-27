@@ -4,17 +4,17 @@ defmodule EvoGit.BackgroundJobsTest do
   # the platform shell; where only registry bookkeeping is under test, a job is
   # registered through the same production start path with a systemd `:unit`
   # stand-in handle instead). Each job writes
-  # `genesis_job_<os-pid>-<vm-unique>_<id>.log` into a scratch directory that is
+  # `genesis_job_<id>.log` into a scratch directory that is
   # resolved in the CALLING process through the per-task tmpdir seam
   # (`EvoGit.TaskTmpdir.put_current/1` → `EvoGit.Sandbox.resolve_tmpdir/0`), and
   # the detached child inherits that same `TMPDIR`: a job started from an agent
   # tool task lands inside that task's managed scratch dir, so foreground and
   # background execution of one task agree on `TMPDIR`; with no seam installed
-  # the host system tmpdir is used. The FILE name still carries a
-  # per-REGISTRY-instance token because ids restart at `bash-1` in every registry
-  # and several registries (another BEAM, or a concurrent `mix test` VM) can
-  # share one scratch dir, so an id alone would not be a unique file address
-  # (both would otherwise truncate/delete a live job's log).
+  # the host system tmpdir is used. The job id is a short random base36 token
+  # (`EvoGit.BackgroundJobs.JobId`, e.g. `bash-7f3k2`), so the ID ITSELF is the
+  # file address: two registries (another BEAM, or a concurrent `mix test` VM)
+  # sharing one scratch dir mint distinct ids and therefore distinct paths
+  # (truncation and cleanup are guarded per JOB anyway — see below).
   # File hygiene is per JOB, not per directory window: the registry returns the
   # exact `:output_path` it created, so every job start registers an `on_exit`
   # that removes that ONE file — never a `File.ls` of a scratch directory other
@@ -36,6 +36,7 @@ defmodule EvoGit.BackgroundJobsTest do
   use ExUnit.Case, async: false
 
   alias EvoGit.BackgroundJobs
+  alias EvoGit.BackgroundJobs.JobId
   alias EvoGit.ProcessManager
 
   @moduletag :tmp_dir
@@ -126,9 +127,9 @@ defmodule EvoGit.BackgroundJobsTest do
                  task_id: "42"
                })
 
-      # Short, predictable ids: `@id_prefix` + a per-registry monotonic counter,
-      # so an agent can repeat one without copying 16 random hex chars.
-      assert job.id == "bash-1"
+      # A short random base36 token (`bash-<payload>`), so an agent can repeat
+      # one without copying 16 random hex characters.
+      assert JobId.valid?(job.id), "expected a valid job id, got: #{inspect(job.id)}"
       assert job.kind == "bash"
       assert job.status == :running
       assert job.cursor == 0
@@ -156,39 +157,44 @@ defmodule EvoGit.BackgroundJobsTest do
       assert job.handle.os_pid == nil or is_integer(job.handle.os_pid)
     end
 
-    test "ids are short and sequential, and an id already present is skipped", %{
+    test "ids are short random tokens, and an id already taken is skipped", %{
       tmp_dir: tmp_dir
     } do
       first = start_job!(%{command: "echo one", cwd: tmp_dir})
       second = start_job!(%{command: "echo two", cwd: tmp_dir})
 
-      assert first.id == "bash-1"
-      assert second.id == "bash-2"
+      assert JobId.valid?(first.id), "expected a valid job id, got: #{inspect(first.id)}"
+      assert JobId.valid?(second.id), "expected a valid job id, got: #{inspect(second.id)}"
+      assert first.id != second.id
 
-      # Re-seed the counter to 1: `bash-1` is still held by the first job's
-      # retained record, so the collision loop must advance to the next free id
-      # instead of reusing it.
-      :sys.replace_state(registry(), fn state -> %{state | next_id: 1} end)
+      # Force the NEXT mint to start at the first job's payload: that id is still
+      # held by the first job's retained record, so the collision scan must
+      # advance to the next free candidate instead of reusing it.
+      force_next_id!(registry(), first.id)
 
       third = start_job!(%{command: "echo three", cwd: tmp_dir})
-      assert third.id == "bash-3"
+      assert JobId.valid?(third.id), "expected a valid job id, got: #{inspect(third.id)}"
+      refute third.id in [first.id, second.id]
     end
 
     test "truncates a stale output file at the same per-registry path", %{tmp_dir: tmp_dir} do
-      # The output FILE name carries a per-registry-instance token, so no other
-      # registry on this host can reach this path at all. What still needs
-      # proving is that a job reusing an id INSIDE the same registry truncates
-      # its own leftover file instead of leaking those bytes into the new reads.
+      # Truncation is a PARANOIA guard: ids are random now, so an id can only
+      # repeat inside ONE registry (a collision the scan normally skips, or a
+      # leftover file from a previous run). What needs proving is that a job
+      # reusing an id truncates its own leftover file instead of leaking those
+      # bytes into the new reads.
       first = start_job!(%{command: "echo first", cwd: tmp_dir})
       path = first.output_path
       await_status!(first.id, :completed)
       assert File.read!(path) =~ "first"
       File.write!(path, "STALE OUTPUT\n")
-      # Drop the retained record and rewind the counter so the NEXT job reuses
-      # id `bash-1` — and therefore, in this same registry, this exact path.
-      :sys.replace_state(registry(), fn state -> %{state | jobs: %{}, next_id: 1} end)
+      # Drop the retained records and tombstones, then force the NEXT mint onto
+      # the first job's payload, so the new job reuses that id — and therefore,
+      # in this same registry, this exact path.
+      :sys.replace_state(registry(), fn state -> %{state | jobs: %{}, tombstones: %{}} end)
+      force_next_id!(registry(), first.id)
       job = start_job!(%{command: "echo fresh", cwd: tmp_dir})
-      assert job.id == "bash-1"
+      assert job.id == first.id
       assert job.output_path == path
       # Truncation is deterministic (it happens BEFORE the spawn): the stale
       # bytes are gone even while the child is still writing its own output.
@@ -200,18 +206,21 @@ defmodule EvoGit.BackgroundJobsTest do
       assert text =~ "fresh"
     end
 
-    test "a sibling registry's job with the same id cannot truncate or delete this job's log", %{
-      tmp_dir: tmp_dir,
-      registry: registry_a,
-      process_manager: manager
-    } do
-      # The reported bug: job ids restart at `bash-1` in EVERY registry and the
-      # scratch dir is host-wide, so an id alone used to be a shared file address
-      # — a second registry (another BEAM, or a `mix test` VM) truncated a LIVE
-      # job's log at start and deleted it at cleanup. The per-registry token in
-      # the file name is what makes the two paths disjoint.
+    test "two registries sharing one scratch dir mint distinct ids and never truncate or delete each other's live log",
+         %{
+           tmp_dir: tmp_dir,
+           registry: registry_a,
+           process_manager: manager
+         } do
+      # The reported `enoent` regression: the scratch dir is host-wide, so two
+      # registries (another BEAM, or a `mix test` VM) write into the same
+      # directory — a second registry truncated a LIVE job's log at start and
+      # deleted it at cleanup. Job ids are now short RANDOM tokens, so a same-id
+      # truncate is structurally impossible: distinct ids ⇒ distinct file
+      # addresses (`genesis_job_<id>.log`), and neither registry can even name
+      # the other's path.
       job_a = start_job!(%{command: "echo alpha; sleep 30", cwd: tmp_dir})
-      assert job_a.id == "bash-1"
+      assert JobId.valid?(job_a.id), "expected a valid job id, got: #{inspect(job_a.id)}"
       assert %{kind: :port} = job_a.handle
       assert is_integer(job_a.handle.os_pid)
       path_a = job_a.output_path
@@ -238,10 +247,16 @@ defmodule EvoGit.BackgroundJobsTest do
       # every call below to registry B.
       Process.put(:evogit_background_jobs_server, registry_b)
       job_b = start_job!(%{command: "echo beta", cwd: tmp_dir})
-      assert job_b.id == "bash-1"
+      assert JobId.valid?(job_b.id), "expected a valid job id, got: #{inspect(job_b.id)}"
+      refute job_a.id == job_b.id
       path_b = job_b.output_path
+      # Both registries really share ONE scratch dir, yet the two log paths are
+      # disjoint because each carries its own random id.
+      assert Path.dirname(path_a) == Path.dirname(path_b)
+      assert Path.basename(path_a) == "genesis_job_#{job_a.id}.log"
+      assert Path.basename(path_b) == "genesis_job_#{job_b.id}.log"
       refute path_a == path_b
-      # B's start-time truncation cannot reach A's file.
+      # B's start-time truncation can only reach its OWN file.
       assert File.exists?(path_a)
       assert File.read!(path_a) =~ "alpha"
 
@@ -252,10 +267,10 @@ defmodule EvoGit.BackgroundJobsTest do
       refute File.exists?(path_b)
       Process.put(:evogit_background_jobs_server, registry_a)
       assert File.read!(path_a) =~ "alpha"
-      assert {:ok, %{text: text, job: read_job}} = BackgroundJobs.read("bash-1")
+      assert {:ok, %{text: text, job: read_job}} = BackgroundJobs.read(job_a.id)
       assert text == "alpha\n"
       assert read_job.status == :running
-      assert {:ok, %{status: :running}} = BackgroundJobs.job("bash-1")
+      assert {:ok, %{status: :running}} = BackgroundJobs.job(job_a.id)
       # Clean up registry A's still-running child for real.
       assert {:ok, %{status: :killed}} = BackgroundJobs.kill(job_a.id)
       await_status!(job_a.id, :killed)
@@ -925,6 +940,8 @@ defmodule EvoGit.BackgroundJobsTest do
     end
 
     test "returns :not_found for an unknown id" do
+      # A 16-character payload: `JobId.payload_max/0` is 8, so a random mint can
+      # never produce this shape, while `bash-999` could be minted for real.
       assert {:error, :not_found} = BackgroundJobs.kill("bash-0000000000000000")
       assert {:error, :not_found} = BackgroundJobs.job("bash-0000000000000000")
       assert {:error, :not_found} = BackgroundJobs.job("bash-0000000000000000", owner_pid: self())
@@ -1771,10 +1788,14 @@ defmodule EvoGit.BackgroundJobsTest do
       assert killed.evicted_reason == :retention
 
       # `{:error, :not_found}` is reserved for an id this registry NEVER issued.
-      assert {:error, :not_found} = BackgroundJobs.job("bash-999", owner_pid: self())
+      # The sentinel carries a 16-character payload, while `JobId.payload_max/0`
+      # is 8 — so no random mint can ever produce this shape (`bash-999` could).
+      assert {:error, :not_found} = BackgroundJobs.job("bash-0000000000000000", owner_pid: self())
 
-      # A tombstoned id is never REISSUED, even when the id counter is rewound to it.
-      :sys.replace_state(registry(), fn state -> %{state | next_id: 1} end)
+      # A tombstoned id is never REISSUED: minting consults the live records AND
+      # the tombstones, so forcing the next mint onto the tombstoned payload
+      # still lands on a different id.
+      force_next_id!(registry(), original.id)
       fresh = start_live_unit_job!(tmp_dir, "no-reuse")
       refute fresh.id == original.id
       assert {:ok, plain} = BackgroundJobs.job(fresh.id)
@@ -1813,9 +1834,9 @@ defmodule EvoGit.BackgroundJobsTest do
       assert {:ok, []} = BackgroundJobs.claim_finished_notices(owner_pid: self())
 
       # The claim is also a retention event; the two survivors are now observed
-      # (inside the per-owner observed cap), and the rewound counter still cannot
-      # reissue the tombstoned id.
-      :sys.replace_state(registry(), fn state -> %{state | next_id: 1} end)
+      # (inside the per-owner observed cap), and the tombstoned id still cannot be
+      # reissued even with the next mint forced onto its payload.
+      force_next_id!(registry(), oldest.id)
       fresh = start_live_unit_job!(tmp_dir, "valve-no-reuse")
       refute fresh.id == oldest.id
 
@@ -1924,6 +1945,21 @@ defmodule EvoGit.BackgroundJobsTest do
   end
 
   defp registry, do: Process.get(:evogit_background_jobs_server)
+
+  # Forces the registry's NEXT mint to start at `id`'s payload, through the
+  # registry's own `:job_id_candidate_source` seam (the same 0-arity candidate
+  # source `EvoGit.BackgroundJobs.JobId.mint/2` accepts). Returning `id`'s payload
+  # makes the mint collide with `id` itself when that id is still held, so the
+  # linear scan must advance — and when the id is free, the mint reuses it
+  # verbatim (that is how the stale-log truncation case reaches one exact path).
+  defp force_next_id!(registry, id) do
+    int =
+      id
+      |> String.replace_prefix(JobId.prefix(), "")
+      |> String.to_integer(36)
+
+    :sys.replace_state(registry, fn state -> %{state | job_id_source: fn -> int end} end)
+  end
 
   # `BackgroundJobs.kill/1` for a `:unit`-shaped handle (the systemd stand-ins
   # below), with its console noise captured. `BackgroundJobs` stops such a unit

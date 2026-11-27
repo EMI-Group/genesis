@@ -2,20 +2,21 @@ defmodule EvoGit.BackgroundJobs do
   @moduledoc """
   Registry for detached ("background") shell jobs started by agents.
 
-  `start_job/1` starts a command through `EvoGit.Sandbox.spawn_detached/1` (the ONE detached entry point, answered by every sandbox backend) and records it; the command's stdout/stderr accumulate in a per-job log file under the job's scratch directory (`scratch_dir/0` is only the fallback), so callers poll `job/2` for status and drain the log with `read/2`, which returns only the bytes produced since the previous read. The log directory is resolved in the CALLER (`normalize_start_spec/1`), so an agent-started job inherits the task's managed tmpdir for both its log file and the detached command's `$TMPDIR`; the FILE name still carries a per-registry-instance token (`genesis_job_<os-pid>-<vm-unique>_<id>.log`) because ids are only unique within ONE registry — every instance restarts at `bash-1`, and two registries can still share one scratch dir — so an output path can never collide with another registry's live job.
+  `start_job/1` starts a command through `EvoGit.Sandbox.spawn_detached/1` (the ONE detached entry point, answered by every sandbox backend) and records it; the command's stdout/stderr accumulate in a per-job log file under the job's scratch directory (`scratch_dir/0` is only the fallback), so callers poll `job/2` for status and drain the log with `read/2`, which returns only the bytes produced since the previous read. The log directory is resolved in the CALLER (`normalize_start_spec/1`), so an agent-started job inherits the task's managed tmpdir for both its log file and the detached command's `$TMPDIR`; the log file is named `genesis_job_<id>.log` under that directory, because the short RANDOM id (`EvoGit.BackgroundJobs.JobId`) is globally unique and is therefore its own file address — even when two registries share one scratch dir, neither can truncate or delete the other's live job log.
   Job lifetime — every job is bound to its OWNING AGENT process (`:owner_pid`); `start_job/1` installs ONE `Process.monitor/1` per owner, and when that process dies EVERY job it started is killed and the monitor bookkeeping is dropped. Because agent processes are unlinked `Task.Supervisor.async_nolink` children killed by `Lifecycle.cancel_agent/2`, this single monitor covers every way an agent can end — normal completion, crash, graceful cancel AND force kill — so no hooks are needed at `EvoGit.TaskRegistry`'s terminal-write sites. The monitor is deliberately installed on the AGENT pid, never on the short-lived tool task that calls this module.
   Completion detection — ONE primary mechanism plus two cheap, idempotent fallbacks: the **observer port** (every backend keeps a port on the handle that reports the job's exit — a `:port` job's own child, and a `:unit` job's `systemd-run --wait` client, which exits with the UNIT's status), the **lazy reconcile** (every `read/2` / `list/1` / `job/2` re-checks a live job against the backend via `EvoGit.BackgroundJobs.StatusProbe` and the registry's per-job probe cache) and the **periodic tick** (while at least one live job uses a `:unit` handle, ONE `@tick_interval_ms` timer re-reconciles them so `finished_at` / `exit_code` land promptly even if nobody reads; it is disarmed as soon as no such job remains). `{:unknown, nil}` from the backend is never treated as "running forever": a job that stays unreportable with no live observer port is settled terminally as `:failed` after a bounded `@unknown_grace_ms` grace.
   No handler blocks on the OS — a `:unit` handle's status probe (`systemctl --user show`, one subprocess) NEVER runs inside this GenServer: `StatusProbe.start/2` computes it in its own unlinked task and reports back with `{:probe_result, job_id, result}`, and `reconcile_job/2` applies only the CACHED result of a live `:unit` job (never inventing a status it has not observed). A `:port` handle's probe is `Port.info/2` and stays synchronous. `@probe_min_interval_ms` (call-time seam `:background_probe_min_interval_ms`) bounds how often one job may be re-probed, so a tight poll loop cannot fork a subprocess per call.
   Completion notices — the per-turn `claim_finished_notices/1` is a PURE `:ets` read of the public mirror owned by `EvoGit.BackgroundJobs.NoticeMirror`: it never calls this GenServer, so a busy, blocked or slow registry cannot stall an agent's turn start and the claim cannot time out (there is no reply to wait for, therefore no "timed out means no notices" path). `%{jobs: ...}` here stays AUTHORITATIVE — the mirror is only that read path, kept correct by the ONE state writer `put_job/2` — and after a claim's atomic `:ets.take/2` the caller fires ONE `GenServer.cast/2` (`{:notices_claimed, owner_pid, ids}`) so the registry records the same `announced: true` marks.
   Error vocabulary — an unreachable registry is NEVER reported as a missing record: the ONE transport boundary (`EvoGit.BackgroundJobs.RegistryClient`) turns an exited call into `{:error, :registry_unavailable}`, and every public function maps that to its own documented answer in one visible place. `job/2` and `kill/3` return that atom verbatim (a dead registry is honestly "unavailable", not "no such job"); `start_job/1` and `read/2` keep their `{:error, message}` prose contract, so the availability failure becomes ONE actionable sentence; `list/1` and `snapshot/1` answer `[]` and `reap_under/1` always answers `:ok` (a list/admin-shaped API never raises). The ownership/finished probes in `job/2` and `kill/3` keep the small semantic tuples documented on those functions (`:not_found` is reserved for an id the registry really does not know) so a caller can branch on them before formatting prose. No input is ever converted with `String.to_atom/1`.
   Process registry — every job is ALSO recorded as ONE `:background_job` execution in `EvoGit.ProcessManager` (the single source of truth for what this node runs): the start path `track`s it with the agent-visible identity, `attach`es the normalized OS handle (`EvoGit.Sandbox.Background.normalize_handle/1`) and stores the returned `execution_id` on the job record, and ONE terminal funnel in `put_job/2` `finish`es that execution when the job reaches a terminal status (`:completed` / `:failed` / `:killed`, plus `:killed` on a registry shutdown). The registry resolves its manager ONCE at `start_link/1` (`:process_manager` opt, default `EvoGit.ProcessManager`) and passes it as `server:`; every call is total, so an unavailable manager never affects job bookkeeping. Because the manager routes a `:background_job` kill back to `kill/3`, killing through either door stops the process and settles both records.
-  Retention and tombstones — `EvoGit.BackgroundJobs.Retention` owns the finished-record policy (`prune/1`, run on every accepted start AND after a notice claim): a finished record a LIVE owner has not yet observed is never evicted by an ordinary cap, per-owner caps separate living from dead owners, and a global valve converts (never silently deletes) a still-unobserved record into a TOMBSTONE. A tombstone keeps the id, status, exit code and log path, so `job/2` answers it verbatim, `read/2` serves the surviving log tail, `list/1` includes it and `kill/3` answers `{:error, {:already_finished, tombstone}}` — an id this registry issued is never again reported as unknown, and `generate_id/2` never reuses it.
+  Retention and tombstones — `EvoGit.BackgroundJobs.Retention` owns the finished-record policy (`prune/1`, run on every accepted start AND after a notice claim): a finished record a LIVE owner has not yet observed is never evicted by an ordinary cap, per-owner caps separate living from dead owners, and a global valve converts (never silently deletes) a still-unobserved record into a TOMBSTONE. A tombstone keeps the id, status, exit code and log path, so `job/2` answers it verbatim, `read/2` serves the surviving log tail, `list/1` includes it and `kill/3` answers `{:error, {:already_finished, tombstone}}` — an id this registry issued is never again reported as unknown, and `JobId.mint/2` never reuses it.
   """
 
   use GenServer
 
   require Logger
 
+  alias EvoGit.BackgroundJobs.JobId
   alias EvoGit.BackgroundJobs.Notice
   alias EvoGit.BackgroundJobs.NoticeMirror
   alias EvoGit.BackgroundJobs.RegistryClient
@@ -87,17 +88,14 @@ defmodule EvoGit.BackgroundJobs do
   # integers only; the production default below is unchanged).
   @probe_min_interval_ms 250
 
-  # Job ids are SHORT and predictable — `@id_prefix` plus a per-registry
-  # monotonically increasing counter (`bash-1`, `bash-2`, …) — because an agent
-  # has to repeat one in `job_output`/`job_kill`. The counter lives in the
-  # GenServer state and `generate_id/2` skips any candidate still held by
-  # `state.jobs` OR by a tombstone in `state.tombstones`, so an id is never
-  # reused while ANY answer for it exists. `bash-<n>` is also safe as a
-  # systemd unit-name component (`Sandbox.Background.unit_name/1`).
-  # An id is unique only WITHIN one registry (every instance starts at
-  # `bash-1`), so it is never used as a file address on its own — the output
-  # file name carries a per-instance token as well (`output_file_name/2`).
-  @id_prefix "bash-"
+  # Job ids are SHORT RANDOM base36 tokens — `EvoGit.BackgroundJobs.JobId`
+  # mints `bash-` plus 1..8 characters of `[0-9a-z]` (e.g. `bash-7f3k2`) — so an
+  # agent can repeat one in `job_output`/`job_kill` without copying a long hex
+  # GUID. Minting runs in THIS process against the live `state.jobs` AND the
+  # tombstones, so an id is never reissued while ANY answer for it exists. The
+  # random id is globally unique, which is why it doubles as the log-file address
+  # (`output_file_name/1`), and `bash-<base36>` is safe as a systemd unit-name
+  # component (`Sandbox.Background.unit_name/1`).
 
   @type status :: :running | :stopping | :completed | :killed | :failed
 
@@ -635,12 +633,9 @@ defmodule EvoGit.BackgroundJobs do
        probes: %{},
        tombstones: %{},
        retention: retention_from(opts),
-       next_id: 1,
-       # Per-INSTANCE file-name token (see `instance_token/0` and
-       # `output_file_name/2`): resolved once for the whole lifetime of this
-       # registry, so every job it starts writes a path no other registry can
-       # collide with.
-       path_token: instance_token(),
+       # Test-only `:job_id_candidate_source` START option handed to
+       # `JobId.mint/2`; `nil` means "use the crypto default".
+       job_id_source: job_id_source_from(opts),
        process_manager: process_manager_from(opts),
        notice_table: NoticeMirror.new(server_name_from(opts))
      }}
@@ -662,6 +657,19 @@ defmodule EvoGit.BackgroundJobs do
       if is_list(opts) and Keyword.keyword?(opts), do: Keyword.get(opts, :retention), else: nil
 
     Retention.from_opts(configured)
+  end
+
+  # The TEST-ONLY id candidate source: the `:job_id_candidate_source` start
+  # option is a 0-arity fun handed to `JobId.mint/2`, so a suite can pin the
+  # drawn integers; anything absent or malformed answers `nil`, which makes the
+  # mint take its crypto default.
+  defp job_id_source_from(opts) do
+    configured =
+      if is_list(opts) and Keyword.keyword?(opts),
+        do: Keyword.get(opts, :job_id_candidate_source),
+        else: nil
+
+    if is_function(configured, 0), do: configured, else: nil
   end
 
   # Resolved ONCE per registry (never per job) so every `EvoGit.ProcessManager`
@@ -1073,51 +1081,59 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   defp do_start_job(spec, handle_override, state) do
-    {id, next_id} = generate_id(state, state.next_id)
-    output_path = Path.join(spec.tmpdir || scratch_dir(), output_file_name(state.path_token, id))
+    # Minted against the LIVE jobs AND the tombstones, so an id is never reissued while any answer for it exists. An exhausted space is an ordinary `{:error, message}` start reply — never a crash of this shared registry.
+    case JobId.mint(
+           fn id -> Map.has_key?(state.jobs, id) or Map.has_key?(state.tombstones, id) end,
+           mint_opts(state)
+         ) do
+      {:error, :id_space_exhausted} ->
+        {:error, id_space_exhausted_error()}
 
-    with :ok <- prepare_output_file(output_path),
-         {:ok, handle} <-
-           resolve_handle(handle_override, %{
-             command: spec.command,
-             cwd: spec.cwd,
-             output_path: output_path,
-             job_id: id,
-             tmpdir: spec.tmpdir,
-             task_tmpdir: spec.task_tmpdir
-           }) do
-      state = %{state | next_id: next_id}
-      {ref, state} = ensure_owner_monitor(state, spec.owner_pid)
+      id ->
+        output_path = Path.join(spec.tmpdir || scratch_dir(), output_file_name(id))
 
-      # `spec.repo_root` is accepted for caller context only — the job record has no slot for it (its `cwd` is what `reap_under/1` matches on).
-      job =
-        %{
-          id: id,
-          kind: "bash",
-          label: spec.label,
-          owner_pid: spec.owner_pid,
-          owner_ref: ref,
-          agent_id: spec.agent_id,
-          task_id: spec.task_id,
-          cwd: spec.cwd,
-          output_path: output_path,
-          handle: handle,
-          tool_permit: spec.tool_permit,
-          execution_id: nil,
-          status: :running,
-          exit_code: nil,
-          terminal_reason: nil,
-          detail: nil,
-          started_at: DateTime.utc_now(),
-          finished_at: nil,
-          cursor: 0,
-          lines_read: 0,
-          announced: false
-        }
-        |> track_execution(spec, state.process_manager)
-        |> settle_start_exit()
+        with :ok <- prepare_output_file(output_path),
+             {:ok, handle} <-
+               resolve_handle(handle_override, %{
+                 command: spec.command,
+                 cwd: spec.cwd,
+                 output_path: output_path,
+                 job_id: id,
+                 tmpdir: spec.tmpdir,
+                 task_tmpdir: spec.task_tmpdir
+               }) do
+          {ref, state} = ensure_owner_monitor(state, spec.owner_pid)
 
-      {:ok, job, put_job(state, job)}
+          # `spec.repo_root` is accepted for caller context only — the job record has no slot for it (its `cwd` is what `reap_under/1` matches on).
+          job =
+            %{
+              id: id,
+              kind: "bash",
+              label: spec.label,
+              owner_pid: spec.owner_pid,
+              owner_ref: ref,
+              agent_id: spec.agent_id,
+              task_id: spec.task_id,
+              cwd: spec.cwd,
+              output_path: output_path,
+              handle: handle,
+              tool_permit: spec.tool_permit,
+              execution_id: nil,
+              status: :running,
+              exit_code: nil,
+              terminal_reason: nil,
+              detail: nil,
+              started_at: DateTime.utc_now(),
+              finished_at: nil,
+              cursor: 0,
+              lines_read: 0,
+              announced: false
+            }
+            |> track_execution(spec, state.process_manager)
+            |> settle_start_exit()
+
+          {:ok, job, put_job(state, job)}
+        end
     end
   end
 
@@ -1249,29 +1265,19 @@ defmodule EvoGit.BackgroundJobs do
     EvoGit.Sandbox.resolve_tmpdir()
   end
 
-  # Output file names must be unique per REGISTRY INSTANCE, not merely per job
-  # id: ids restart at `bash-1` in EVERY registry, and two registries can still
-  # share one scratch dir (the legacy system tmpdir reached through the
-  # `scratch_dir/0` fallback) — so an id alone is not a unique file address. A
-  # second registry on the same host (another BEAM, or a `mix test` VM) would
-  # otherwise truncate at start and delete at cleanup the log of a LIVE job that
-  # happens to share the id.
-  # The token is `<os pid>-<vm-unique integer>`: safe in a file name and as a
-  # systemd `StandardOutput=append:<path>` value, distinct across concurrent
-  # OS processes (distinct pids) and across sibling registries inside one VM
-  # (unique integer). The recognizable `genesis_job_` prefix and `.log` suffix
-  # stay; only the file name changes, never the agent-facing id.
-  defp instance_token do
-    "#{System.pid()}-#{System.unique_integer([:positive, :monotonic])}"
-  end
-
-  defp output_file_name(token, id), do: "genesis_job_#{token}_#{id}.log"
+  # The job id IS the log-file address: `EvoGit.BackgroundJobs.JobId` mints a
+  # short RANDOM base36 token, so two registries that share one scratch dir
+  # (the legacy system tmpdir reached through the `scratch_dir/0` fallback)
+  # still never land on the same file. The recognizable `genesis_job_` prefix
+  # and `.log` suffix stay so an operator can find (or clean) job logs at a
+  # glance; `<id>` is what the agent repeats in `job_output`/`job_kill`.
+  defp output_file_name(id), do: "genesis_job_#{id}.log"
 
   # Non-bang on purpose: a permission problem must surface as prose, never as a crash of the shared registry.
-  # The file is CREATED/TRUNCATED to empty (never merely `touch`ed): a reused path
-  # (the per-registry token keeps it fresh, but a restarted registry can land on
-  # the same token/id pair) would otherwise leak a previous job's output into
-  # this job's reads.
+  # The file is CREATED/TRUNCATED to empty (never merely `touch`ed): a random id
+  # makes a collision unreachable in practice, but a registry restart can in
+  # principle draw an id a previous incarnation already used, and a stale file
+  # would then leak that job's output into this job's reads.
   defp prepare_output_file(path) do
     with :ok <- File.mkdir_p(Path.dirname(path)),
          :ok <- File.write(path, "") do
@@ -1306,21 +1312,13 @@ defmodule EvoGit.BackgroundJobs do
        "Could not start the background job (#{kind}: #{describe(reason)}). Retry; if it keeps failing, run the command in the foreground instead."}
   end
 
-  # Returns the next FREE id and the counter value that follows it. The counter is
-  # monotonic per registry, so ids read `bash-1`, `bash-2`, … in start order; a
-  # candidate still present in `jobs` OR kept as a TOMBSTONE is skipped, because an
-  # id is never reused while ANY answer for it exists (a pruned id must not come
-  # back as a DIFFERENT job and silently reset an agent's cursor), and the same
-  # loop finds a free id even if the counter starts at 0.
-  defp generate_id(state, counter) do
-    candidate = @id_prefix <> Integer.to_string(counter)
+  # The `JobId.mint/2` options for THIS registry: the test-only candidate source
+  # when the registry was started with one, else none (the crypto default).
+  defp mint_opts(%{job_id_source: nil}), do: []
+  defp mint_opts(%{job_id_source: source}), do: [candidate_source: source]
 
-    if Map.has_key?(state.jobs, candidate) or
-         Map.has_key?(Map.get(state, :tombstones, %{}), candidate) do
-      generate_id(state, counter + 1)
-    else
-      {candidate, counter + 1}
-    end
+  defp id_space_exhausted_error do
+    "Could not start the background job because the registry found no free job id: every short id in its space is in use (live jobs and kept records). Retry after some jobs are reaped, or run the command in the foreground instead."
   end
 
   ## Owner monitor bookkeeping
