@@ -685,15 +685,8 @@ defmodule EvoDashWeb.Layouts do
               <h3 class="text-lg font-semibold">{gettext("Quit Genesis?")}</h3>
             </div>
 
-            <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
-              {gettext(
-                "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
-              )}
-            </p>
             <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
-              {gettext(
-                "Running tasks will be interrupted and may lose progress. The VM will stop and must be restarted again from the desktop app. This cannot be undone."
-              )}
+              {gettext("This will shut down Genesis. Running tasks will be interrupted.")}
             </p>
 
             <div class="flex justify-end gap-3 pt-2">

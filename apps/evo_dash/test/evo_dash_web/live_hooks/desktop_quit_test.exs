@@ -55,7 +55,7 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuitTest do
       html = render_click(view, "desktop_quit_requested")
 
       assert html =~ "Quit Genesis?"
-      assert html =~ "Running tasks will be interrupted and may lose progress"
+      assert html =~ "This will shut down Genesis. Running tasks will be interrupted."
       assert html =~ ~s(phx-click="desktop_quit_cancelled")
       assert html =~ ~s(phx-hook="DesktopQuitConfirm")
 
