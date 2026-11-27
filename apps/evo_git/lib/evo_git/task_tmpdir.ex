@@ -35,6 +35,10 @@ defmodule EvoGit.TaskTmpdir do
   `current/0` and re-installs it inside each spawned task. `EvoGit.Sandbox.resolve_tmpdir/0`
   prefers `current/0` when set, so every backend's `TMPDIR` injection (and the
   runtime's own temp files) automatically target the per-task directory.
+  A background job started by an agent inherits the task directory too: the
+  starter resolves it in the caller (`EvoGit.BackgroundJobs.normalize_start_spec/1`),
+  so both the job's log file and the detached command's `TMPDIR` land in the
+  managed per-task directory.
 
   ## Constraints
 

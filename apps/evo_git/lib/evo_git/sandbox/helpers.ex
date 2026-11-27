@@ -223,15 +223,29 @@ defmodule EvoGit.Sandbox.Helpers do
   It is the single shared source for the non-sandboxed / disabled execution
   paths — the sandbox-enabled paths inject the same value via their own
   `--setenv`/`env:` mechanism. Derivation delegates to `task_tmpdir_path/0`
-  (no duplication). Pure and unit-testable.
+  (no duplication). The same helper also serves the DETACHED backend with a
+  dir resolved by the caller and threaded through the spawn spec
+  (`temp_env_vars/1`), because that spawn runs in a long-lived registry that
+  carries no per-task tmpdir. Pure and unit-testable.
   """
   @spec temp_env_vars() :: [{String.t(), String.t()}]
-  def temp_env_vars do
-    case task_tmpdir_path() do
-      dir when is_binary(dir) -> [{"TMPDIR", dir}, {"TMP", dir}, {"TEMP", dir}]
-      nil -> []
-    end
+  def temp_env_vars, do: temp_env_vars(task_tmpdir_path())
+
+  @doc """
+  Returns the environment overrides for an explicitly supplied per-task tmpdir
+  (see `temp_env_vars/0`): the same `[{"TMPDIR", dir}, {"TMP", dir},
+  {"TEMP", dir}]` shape for a non-empty binary dir, `[]` for `nil`, a blank or a
+  non-binary value.
+
+  This is the ONE list shape; the detached backend calls it with a dir the
+  CALLER resolved (the long-lived registry carries no per-task tmpdir).
+  """
+  @spec temp_env_vars(String.t() | nil) :: [{String.t(), String.t()}]
+  def temp_env_vars(dir) when is_binary(dir) and dir != "" do
+    [{"TMPDIR", dir}, {"TMP", dir}, {"TEMP", dir}]
   end
+
+  def temp_env_vars(_dir), do: []
 
   @doc """
   Converts an env list into the charlist shape `Port.open/2`'s `{:env, ...}`

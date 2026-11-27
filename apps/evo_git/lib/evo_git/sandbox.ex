@@ -346,6 +346,16 @@ defmodule EvoGit.Sandbox do
     * `:cwd` — the working directory for the command
     * `:output_path` — the file the backend directs stdout/stderr to
     * `:job_id` — stable identifier, used in any unit/process name
+    * `:tmpdir` (optional) — the effective `TMPDIR` value, resolved by the
+      CALLER; absent/`nil` falls back to `EvoGit.Sandbox.resolve_tmpdir/0`
+    * `:task_tmpdir` (optional) — the managed per-task dir to grant writable
+      access, resolved by the CALLER; absent/`nil` means "no grant"
+
+  The two optional values exist because a detached command is spawned by the
+  long-lived `EvoGit.BackgroundJobs` registry, which does not carry the
+  per-task tmpdir seam: the caller resolves them in the per-task process and
+  threads them through, so a background job agrees with its task's foreground
+  executions (`EvoGit.Sandbox.Background` documents the consumption points).
 
   ## Returns
 
@@ -357,10 +367,12 @@ defmodule EvoGit.Sandbox do
     * `{:error, reason}` — the detached process could not be started
   """
   @spec spawn_detached(%{
-          command: String.t(),
-          cwd: String.t(),
-          output_path: String.t(),
-          job_id: String.t()
+          required(:command) => String.t(),
+          required(:cwd) => String.t(),
+          required(:output_path) => String.t(),
+          required(:job_id) => String.t(),
+          optional(:tmpdir) => String.t() | nil,
+          optional(:task_tmpdir) => String.t() | nil
         }) :: {:ok, map()} | {:error, term()}
   def spawn_detached(spec) do
     warn_if_unisolated()

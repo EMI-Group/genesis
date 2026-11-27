@@ -85,7 +85,10 @@ defmodule EvoGit.Sandbox.Background do
   background execution is an entry point layered ON TOP of the backends (it
   reuses their public argv builders, so env vars, isolation and writable-path
   grants match foreground execution exactly), not a fifth execution mode every
-  backend must implement.
+  backend must implement. `spawn/1` is still the ONE detached entry point; the
+  values that must agree with the owning task (`:tmpdir`, `:task_tmpdir`) are
+  resolved by the caller and threaded through the spec, because the registry
+  process carries no per-task tmpdir.
 
   Every function is total: OS failures come back as `{:error, term()}` and never
   raise.
@@ -112,12 +115,21 @@ defmodule EvoGit.Sandbox.Background do
   @typedoc """
   A background job request. `output_path`'s parent directory and the file
   itself are prepared by the caller (the registry) — the job only appends.
+
+  `:tmpdir` / `:task_tmpdir` are OPTIONAL values resolved by the CALLER: this
+  module runs in the long-lived `EvoGit.BackgroundJobs` registry, which never
+  carries the per-task tmpdir seam, so the caller resolves them in the
+  per-task process and threads them through the spawn spec. An absent (or
+  `nil`) `:tmpdir` falls back to `EvoGit.Sandbox.resolve_tmpdir/0`, and a
+  `nil` `:task_tmpdir` means "no grant".
   """
   @type spec :: %{
-          command: String.t(),
-          cwd: String.t(),
-          output_path: String.t(),
-          job_id: String.t()
+          required(:command) => String.t(),
+          required(:cwd) => String.t(),
+          required(:output_path) => String.t(),
+          required(:job_id) => String.t(),
+          optional(:tmpdir) => String.t() | nil,
+          optional(:task_tmpdir) => String.t() | nil
         }
 
   @typedoc """
@@ -358,13 +370,18 @@ defmodule EvoGit.Sandbox.Background do
   defp spawn_unit(spec) do
     unit = unit_name(spec.job_id)
 
+    # The tmpdir / per-task dir were resolved in the CALLER (the registry has no
+    # per-task seam) — threaded so this job agrees with the task's foreground
+    # executions.
     args =
       EvoGit.Sandbox.Linux.detached_args(
         spec.cwd,
         Platform.shell(),
         Platform.shell_args(spec.command),
         spec.output_path,
-        unit
+        unit,
+        tmpdir: Map.get(spec, :tmpdir),
+        task_tmpdir: Map.get(spec, :task_tmpdir)
       )
 
     port =
@@ -505,12 +522,16 @@ defmodule EvoGit.Sandbox.Background do
   defp spawn_bwrap(spec) do
     shell = Platform.shell()
 
+    # Caller-resolved tmpdir / per-task dir, threaded exactly like `spawn_unit/1`
+    # (the registry carries no per-task seam).
     argv =
       EvoGit.Sandbox.Bwrap.args(
         spec.cwd,
         shell,
         Platform.shell_args(spec.command),
-        nil
+        nil,
+        tmpdir: Map.get(spec, :tmpdir),
+        task_tmpdir: Map.get(spec, :task_tmpdir)
       )
 
     # No {:env} option, mirroring bwrap.ex's own port: the sandbox inherits the
@@ -529,13 +550,24 @@ defmodule EvoGit.Sandbox.Background do
   defp spawn_macos(spec) do
     shell = Platform.shell()
 
+    # Caller-resolved values: the profile grants the threaded per-task dir, and
+    # the child env points TMPDIR at the threaded value (falling back to the
+    # live resolution when the caller passed none).
     argv =
-      ["-p", EvoGit.Sandbox.MacOS.effective_profile(spec.cwd, nil), "--", shell] ++
+      [
+        "-p",
+        EvoGit.Sandbox.MacOS.effective_profile(spec.cwd, nil,
+          task_tmpdir: Map.get(spec, :task_tmpdir)
+        ),
+        "--",
+        shell
+      ] ++
         Platform.shell_args(spec.command)
 
     # Same TMPDIR injection shape as `MacOS.run/4`; `Helpers.port_env/1` converts
     # the pairs to the charlists `Port.open/2` demands.
-    env = Helpers.port_env([{"TMPDIR", EvoGit.Sandbox.resolve_tmpdir()}])
+    tmpdir = Map.get(spec, :tmpdir) || EvoGit.Sandbox.resolve_tmpdir()
+    env = Helpers.port_env([{"TMPDIR", tmpdir}])
 
     port =
       Port.open(
@@ -567,17 +599,18 @@ defmodule EvoGit.Sandbox.Background do
             {:args, Platform.shell_args(spec.command)},
             {:cd, spec.cwd}
           ] ++
-          env_option()
+          env_option(spec)
       )
 
     {:ok, port_handle(port, backend)}
   end
 
-  # The managed per-task tmpdir (when one is installed on this process) is
-  # exported to the child exactly like the non-sandboxed foreground paths do.
-  # `{:env, []}` is omitted entirely rather than passed empty.
-  defp env_option do
-    case Helpers.temp_env_vars() do
+  # The caller-threaded managed per-task tmpdir (when one was resolved in the
+  # per-task process) is exported to the child exactly like the non-sandboxed
+  # foreground paths do; `nil` means "no grant", so the child simply inherits
+  # the caller env. `{:env, []}` is omitted entirely rather than passed empty.
+  defp env_option(spec) do
+    case Helpers.temp_env_vars(Map.get(spec, :task_tmpdir)) do
       [] -> []
       vars -> [{:env, Helpers.port_env(vars)}]
     end
@@ -889,11 +922,31 @@ defmodule EvoGit.Sandbox.Background do
     if command == "" or cwd == "" or output_path == "" or job_id == "" do
       {:error, {:invalid_spec, spec}}
     else
-      :ok
+      validate_optional_paths(spec)
     end
   end
 
   defp validate_spec(spec), do: {:error, {:invalid_spec, spec}}
+
+  # The caller-resolved `:tmpdir` / `:task_tmpdir` values are OPTIONAL: an
+  # absent key or a present `nil` is fine ("resolve live" / "no grant"), while a
+  # present non-binary or blank value makes the whole spec invalid.
+  defp validate_optional_paths(spec) do
+    if Enum.all?([:tmpdir, :task_tmpdir], &valid_optional_path?(spec, &1)) do
+      :ok
+    else
+      {:error, {:invalid_spec, spec}}
+    end
+  end
+
+  defp valid_optional_path?(spec, key) do
+    case Map.fetch(spec, key) do
+      :error -> true
+      {:ok, nil} -> true
+      {:ok, value} when is_binary(value) and value != "" -> true
+      {:ok, _other} -> false
+    end
+  end
 
   # The working directory is validated for EVERY backend, not just the ones that
   # notice: an unusable cwd fails the systemd-run client loudly, but
