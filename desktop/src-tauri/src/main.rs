@@ -16,6 +16,7 @@ mod backend_watchdog;
 mod shell_log;
 mod sidecar;
 mod sidecar_path;
+mod window_chrome;
 
 use backend_watchdog::BackendManager;
 
@@ -924,9 +925,31 @@ fn run_gui() {
             //    config window entry and `build.devUrl` were removed — a
             //    duplicate "main" label would conflict with a config-built
             //    window). Properties mirror the removed config entry: title,
-            //    1280x800, resizable, centered. The window is created BEFORE
-            //    the readiness wait so the watchdog's `show_backend` retry loop
-            //    (which waits for the window) behaves as before.
+            //    1280x800 (with a 900x600 minimum, so the dashboard top bar
+            //    that doubles as the drag strip can never be squeezed below a
+            //    usable workbench size), resizable, centered. The window is
+            //    created BEFORE the readiness wait so the watchdog's
+            //    `show_backend` retry loop (which waits for the window)
+            //    behaves as before.
+            //
+            //    WINDOW CHROME (`window_chrome`): the shell starts with NATIVE
+            //    chrome (`.decorations(true)` unconditionally — macOS'
+            //    Overlay title bar also requires decorations on) and switches
+            //    to app-drawn frameless chrome once the dashboard has loaded.
+            //    The matrix:
+            //    - Windows / Linux: toggled at RUNTIME by
+            //      `window_chrome::apply` via `set_decorations` — frameless on
+            //      the dashboard, native while a shell `data:` page shows.
+            //    - macOS: NEVER toggled — the permanent overlay title bar
+            //      below keeps the native traffic lights over the HTML top bar,
+            //      so `apply` is a no-op there.
+            //    Caveats (accepted): Windows Snap Layouts need an `HTMAXBUTTON`
+            //    hit-test that an undecorated tao window never reports, so the
+            //    maximize-button flyout does not appear; Windows' default
+            //    `shadow` (true) keeps the 1px border / Win11 rounded corners;
+            //    Linux keeps tao's edge-resize hit testing on the undecorated
+            //    window. The traffic-light inset is approximate and tunable
+            //    only on real macOS.
             //
             //    The INITIAL URL is `about:blank`, never the backend URL: the
             //    backend was spawned moments earlier and is not listening yet
@@ -951,37 +974,68 @@ fn run_gui() {
             //    finished load of the BACKEND URL is the shell's only real
             //    "the dashboard loaded" signal.
             let dashboard_loaded: Arc<AtomicBool> = manager.dashboard_loaded_handle();
-            tauri::WebviewWindowBuilder::new(
+            let builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
                 tauri::WebviewUrl::External("about:blank".parse()?),
             )
             .title("Genesis Dashboard")
             .inner_size(1280.0, 800.0)
+            .min_inner_size(900.0, 600.0)
             .resizable(true)
-            .center()
-            .on_page_load(move |_window, payload| {
-                // `Finished` fires for ANY finished navigation (including the
-                // `data:` error page and external navigations), so the latch
-                // may only be set for the URL the backend is served on.
-                if payload.event() == tauri::webview::PageLoadEvent::Finished
-                    && backend_watchdog::url_is_backend(payload.url(), BACKEND_HOST, port)
-                {
-                    // `swap` (not `store`) so the shell log records at most
-                    // one line per successful load — the hook fires for
-                    // every finished navigation. This is the ONLY place the
-                    // real "the dashboard loaded" signal becomes visible in
-                    // the log, which is what makes a slow-load incident
-                    // diagnosable after the fact.
-                    if !dashboard_loaded.swap(true, Ordering::SeqCst) {
-                        shell_log::log(&format!(
-                            "webview loaded the dashboard ({})",
-                            payload.url()
-                        ));
+            // Native chrome at startup; the dashboard load switches it to
+            // frameless (Windows/Linux) — and macOS' Overlay title bar
+            // requires decorations to stay on anyway.
+            .decorations(true)
+            .center();
+            // macOS only: a PERMANENT overlay title bar, never toggled. The
+            // title bar becomes a transparent overlay over the HTML top bar, so
+            // the native traffic lights float on top of the dashboard chrome.
+            //
+            // The traffic-light inset: tao 0.37.1 computes the title-bar
+            // container height as `close_button_height + y` and takes the
+            // container's origin.x/y from `x`/`y`, so `.y` is the vertical
+            // space the container reserves below the traffic-light cluster and
+            // `.x` is the cluster's left gutter. The 12pt cluster + 16pt = 28pt
+            // reproduces the classic macOS title-bar height and centres the
+            // cluster in the dashboard's 44pt top bar (`--shell-topbar-h`);
+            // 14pt of left gutter matches that bar's inline padding.
+            #[cfg(target_os = "macos")]
+            let builder = builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true)
+                .traffic_light_position(tauri::LogicalPosition::new(14.0, 16.0));
+            builder
+                .on_page_load(move |window, payload| {
+                    // `Finished` fires for ANY finished navigation (including the
+                    // `data:` error page and external navigations), so the latch
+                    // may only be set for the URL the backend is served on.
+                    if payload.event() == tauri::webview::PageLoadEvent::Finished
+                        && backend_watchdog::url_is_backend(payload.url(), BACKEND_HOST, port)
+                    {
+                        // `swap` (not `store`) so the shell log records at most
+                        // one line per successful load — the hook fires for
+                        // every finished navigation. This is the ONLY place the
+                        // real "the dashboard loaded" signal becomes visible in
+                        // the log, which is what makes a slow-load incident
+                        // diagnosable after the fact.
+                        if !dashboard_loaded.swap(true, Ordering::SeqCst) {
+                            shell_log::log(&format!(
+                                "webview loaded the dashboard ({})",
+                                payload.url()
+                            ));
+                        }
+                        // A finished DASHBOARD load is the ONLY signal that
+                        // turns the frameless chrome on. Because every shell
+                        // page navigates back to native chrome, this rule is
+                        // self-healing: after a crash the error page restores
+                        // the OS title bar and the recovery reload turns
+                        // frameless chrome back on.
+                        window_chrome::apply(&window, window_chrome::ChromeState::Dashboard);
+                        window_chrome::install_drag_strip(&window);
                     }
-                }
-            })
-            .build()?;
+                })
+                .build()?;
 
             // 6a. The Genesis loading page is shown by the boot thread (step 6b)
             //     as its FIRST action, before it waits for the backend — see
