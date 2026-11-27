@@ -4,6 +4,10 @@
      #main-content the remaining space after the bar and frame; simple_nav
      pages have neither. In-shell pages must not derive a viewport height. */
   --shell-topbar-h: var(--workbench-topbar-size, calc(var(--control-h) + var(--card-pad) / 4));
+  /* The desktop custom title-bar strip only exists in a Tauri desktop window
+     (`#app-layout[data-desktop="true"]`); a browser render keeps 0 so every
+     chrome-anchored offset below resolves to its unchanged value. */
+  --shell-titlebar-h: 0px;
   /* The rails' own interaction tones. The FILLS come from the shared surface
      vocabulary (`surfaces.css`: `--surface-shell`, `--surface-rail`,
      `--surface-hover`, `--surface-selected`); these stay as the local names the
@@ -18,6 +22,101 @@
 @media (max-width: 1023.98px), (pointer: coarse) {
   #app-layout { --workbench-topbar-size: calc(var(--touch-target) + var(--card-pad) * .75); }
 }
+
+/* A Tauri desktop window adds one in-flow strip above the shell row, so the
+   token takes a real row height; everywhere else it stays 0px. */
+#app-layout[data-desktop="true"] { --shell-titlebar-h: var(--row-h); }
+
+/* === Desktop custom title bar ===
+   The strip is the first child of `#app-layout` (a flex column in a desktop
+   window) and holds the window drag region, the brand and — on Windows/Linux —
+   the window controls. It is LAYER 0 chrome: the top bar's shell tone plus one
+   hairline, no elevation, no stacking context, and it takes its height from the
+   ONE `--shell-titlebar-h` token instead of a literal. Browser/dev renders no
+   strip at all, so nothing here may shift the browser layout. */
+#desktop-titlebar {
+  /* Windows/Linux render their own controls at the inline end, so the lead is
+     the frame gutter; macOS overlays its native traffic lights instead (below). */
+  --titlebar-lead: var(--page-gutter);
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  flex: 0 0 var(--shell-titlebar-h);
+  height: var(--shell-titlebar-h);
+  min-width: 0;
+  padding-inline-start: var(--titlebar-lead);
+  background: var(--surface-shell);
+  border-bottom: 1px solid var(--border-hairline);
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* macOS draws the traffic lights OVER the strip's inline start, so the brand
+   and the drag region start clear of them. */
+#desktop-titlebar[data-os="macos"] { --titlebar-lead: 5.25rem; }
+
+.desktop-titlebar-brand {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-width: 0;
+  text-decoration: none;
+}
+.desktop-titlebar-brand:focus-visible {
+  outline: 2px solid var(--color-primary-standalone);
+  outline-offset: 2px;
+}
+
+/* The drag handle is the flexible middle; the controls keep their own width. */
+.desktop-titlebar-drag {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 0;
+}
+
+.desktop-titlebar-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-self: stretch;
+}
+
+.desktop-titlebar-control {
+  display: grid;
+  place-items: center;
+  width: 2.875rem;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-base-content) 80%, transparent);
+  cursor: default;
+  transition: background-color .12s ease, color .12s ease;
+}
+.desktop-titlebar-control:hover {
+  background: var(--surface-hover);
+  color: var(--color-base-content);
+}
+.desktop-titlebar-control:focus-visible {
+  outline: 2px solid var(--color-primary-standalone);
+  outline-offset: -2px;
+}
+/* Windows-style red close hover; the glyph is `currentColor`. */
+.desktop-titlebar-control-close:hover {
+  background: var(--color-error);
+  color: var(--color-error-content);
+}
+@media (prefers-reduced-motion: reduce) {
+  .desktop-titlebar-control { transition: none; }
+}
+
+/* Chrome-anchored fixed surfaces clear the strip when one is present. The
+   fallback is ALWAYS spelled out: `#flash-group` also renders in the
+   `workbench_window` clause, outside `#app-layout`, where the token is
+   undefined and a bare `var()` would make `top` invalid. */
+#sidebar-mobile-toggle-wrap { top: calc(var(--shell-titlebar-h, 0px) + .375rem); }
+#flash-group { top: calc(var(--shell-titlebar-h, 0px) + 1rem); }
+#guide-panel { top: calc(var(--shell-titlebar-h, 0px) + 1rem); }
 
 .workbench-main, .workbench-center {
   display: flex;
