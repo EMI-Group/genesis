@@ -81,6 +81,38 @@ fn begin_quit(manager: tauri::State<'_, BackendHandle>) {
     manager.begin_quit();
 }
 
+/// Tauri command invoked by the dashboard's JavaScript: the dashboard has
+/// verified its own `#desktop-titlebar` strip exists and bound its controls,
+/// so the shell may now go frameless (Windows/Linux).
+///
+/// `active: false` restores the native OS title bar. Native chrome is the
+/// DEFAULT and the shell never removes the decorations on its own initiative —
+/// this command is the only way into frameless chrome, which keeps a broken or
+/// older dashboard (one that never calls this) fully usable with the native
+/// title bar. An `active: true` that arrives before the dashboard load latch is
+/// set is anomalous (the request should only come from the loaded dashboard);
+/// it is logged and then HONORED regardless — never refused.
+#[tauri::command]
+fn set_custom_titlebar(
+    window: tauri::WebviewWindow,
+    manager: tauri::State<'_, BackendHandle>,
+    active: bool,
+) {
+    if active && !manager.dashboard_loaded() {
+        shell_log::log(
+            "window chrome: error: set_custom_titlebar(active: true) arrived before the dashboard load latch was set",
+        );
+    }
+    window_chrome::apply(
+        &window,
+        if active {
+            window_chrome::ChromeState::Dashboard
+        } else {
+            window_chrome::ChromeState::Shell
+        },
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Auto-update commands (JSON contracts pinned with the dashboard workstream —
 // do not rename keys or statuses)
@@ -812,6 +844,7 @@ fn run_gui() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             begin_quit,
+            set_custom_titlebar,
             check_update,
             download_update,
             begin_update
@@ -932,17 +965,26 @@ fn run_gui() {
             //    `show_backend` retry loop (which waits for the window)
             //    behaves as before.
             //
-            //    WINDOW CHROME (`window_chrome`): the shell starts with NATIVE
-            //    chrome (`.decorations(true)` unconditionally — macOS'
-            //    Overlay title bar also requires decorations on) and switches
-            //    to app-drawn frameless chrome once the dashboard has loaded.
+            //    WINDOW CHROME (`window_chrome`): the shell builds the window
+            //    with NATIVE chrome (`.decorations(true)` unconditionally —
+            //    macOS' Overlay title bar also requires decorations on) and
+            //    NATIVE IS THE DEFAULT: the shell NEVER removes the decorations
+            //    on its own initiative. Frameless chrome is only the EXPLICIT,
+            //    dashboard-requested state: the dashboard invokes the
+            //    `set_custom_titlebar(active: true)` command once it has
+            //    verified its own `#desktop-titlebar` strip exists and bound its
+            //    controls. Native chrome is restored on every navigation START
+            //    (`PageLoadEvent::Started` — reloads, shell `data:` pages, crash
+            //    recovery) and on `set_custom_titlebar(active: false)`.
             //    The matrix:
             //    - Windows / Linux: toggled at RUNTIME by
-            //      `window_chrome::apply` via `set_decorations` — frameless on
-            //      the dashboard, native while a shell `data:` page shows.
+            //      `window_chrome::apply` via `set_decorations`.
             //    - macOS: NEVER toggled — the permanent overlay title bar
             //      below keeps the native traffic lights over the HTML top bar,
             //      so `apply` is a no-op there.
+            //    Failure mode is SAFE: an older or broken dashboard that never
+            //    asks for frameless chrome simply keeps the native OS title bar,
+            //    so the window stays movable / minimizable / closable.
             //    Caveats (accepted): Windows Snap Layouts need an `HTMAXBUTTON`
             //    hit-test that an undecorated tao window never reports, so the
             //    maximize-button flyout does not appear; Windows' default
@@ -983,9 +1025,10 @@ fn run_gui() {
             .inner_size(1280.0, 800.0)
             .min_inner_size(900.0, 600.0)
             .resizable(true)
-            // Native chrome at startup; the dashboard load switches it to
-            // frameless (Windows/Linux) — and macOS' Overlay title bar
-            // requires decorations to stay on anyway.
+            // Native chrome is the DEFAULT; only an explicit dashboard request
+            // (`set_custom_titlebar(active: true)`) goes frameless
+            // (Windows/Linux) — and macOS' Overlay title bar requires
+            // decorations to stay on anyway.
             .decorations(true)
             .center();
             // macOS only: a PERMANENT overlay title bar, never toggled. The
@@ -1007,6 +1050,15 @@ fn run_gui() {
                 .traffic_light_position(tauri::LogicalPosition::new(14.0, 16.0));
             builder
                 .on_page_load(move |window, payload| {
+                    // Native chrome is the DEFAULT. Every navigation START
+                    // restores it, so a reload, a shell `data:` page and crash
+                    // recovery all leave the window with its OS title bar — the
+                    // shell never removes the decorations on its own initiative.
+                    // Frameless chrome comes back only when the freshly loaded
+                    // dashboard explicitly asks for it (`set_custom_titlebar`).
+                    if payload.event() == tauri::webview::PageLoadEvent::Started {
+                        window_chrome::apply(&window, window_chrome::ChromeState::Shell);
+                    }
                     // `Finished` fires for ANY finished navigation (including the
                     // `data:` error page and external navigations), so the latch
                     // may only be set for the URL the backend is served on.
@@ -1019,21 +1071,18 @@ fn run_gui() {
                         // real "the dashboard loaded" signal becomes visible in
                         // the log, which is what makes a slow-load incident
                         // diagnosable after the fact.
+                        //
+                        // Deliberately NO chrome change here: the window keeps
+                        // its native OS title bar until the dashboard itself
+                        // asks for frameless chrome, so a dashboard whose
+                        // `#desktop-titlebar` strip is missing or broken stays
+                        // movable/minimizable/closable.
                         if !dashboard_loaded.swap(true, Ordering::SeqCst) {
                             shell_log::log(&format!(
                                 "webview loaded the dashboard ({})",
                                 payload.url()
                             ));
                         }
-                        // A finished DASHBOARD load is the ONLY signal that
-                        // turns the frameless chrome on. Because every shell
-                        // page navigates back to native chrome, this rule is
-                        // self-healing: after a crash the error page restores
-                        // the OS title bar and the recovery reload turns
-                        // frameless chrome back on. The drag region itself is
-                        // dashboard markup (`#desktop-titlebar` + its drag
-                        // spacer), so the shell injects nothing here.
-                        window_chrome::apply(&window, window_chrome::ChromeState::Dashboard);
                     }
                 })
                 .build()?;
