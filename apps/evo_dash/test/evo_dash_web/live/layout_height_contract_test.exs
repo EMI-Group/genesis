@@ -126,7 +126,7 @@ defmodule EvoDashWeb.LayoutHeightContractTest do
              "a browser shell must not render the desktop title bar strip"
 
       refute html =~ "data-tauri-drag-region",
-             "no element may advertise a Tauri drag region outside the desktop shell"
+             "the DesktopTitlebar hook owns dragging, so no element may advertise a Tauri drag region"
 
       refute html =~ ~r/id="desktop-titlebar-[^"]+"/,
              "the window controls (minimize/maximize/close) must not render in a browser"
