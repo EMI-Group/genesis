@@ -290,6 +290,63 @@ test("the agents fill chain keeps ONE xl height and ONE both-axis scroller", () 
     `app.css:${commits.line}: commits mode must drop the max-height cap and fill the panel`
   );
 });
+test("the agents panels are flat and ONE hairline separates the columns", () => {
+  const rules = leafRules("app.css");
+  // ONE shared surface rule for BOTH panels: borderless, transparent, no shadow.
+  const panels = rules.filter(rule => rule.selectors.includes(".agents-panel"));
+  assert.equal(panels.length, 1, "app.css: expected ONE shared .agents-panel rule");
+  const chrome = values(panels[0].body);
+  assert.equal(chrome.border, "0", "app.css: the agents panels carry no border");
+  assert.equal(
+    chrome.background,
+    "transparent",
+    "app.css: the agents panels sit directly on the content canvas"
+  );
+  assert.equal(chrome["box-shadow"], "none", "app.css: a content surface carries no shadow");
+  // Stacked (< xl): ONE horizontal hairline above the detail column.
+  const detail = rules.filter(rule => rule.selectors.includes(".agents-detail-col"));
+  const stacked = detail.find(
+    rule => values(rule.body)["border-block-start"] === "1px solid var(--border-hairline)"
+  );
+  assert.ok(stacked, "app.css: the stacked detail column needs a horizontal hairline");
+  // xl+: the gutter is gone and ONE vertical hairline separates the columns.
+  const separated = detail.find(
+    rule => values(rule.body)["border-inline-start"] === "1px solid var(--border-hairline)"
+  );
+  assert.ok(separated, "app.css: the xl detail column needs a vertical hairline separator");
+  assert.equal(
+    values(separated.body)["border-block-start"],
+    "0",
+    "app.css: the xl separator replaces the stacked hairline instead of adding to it"
+  );
+  const xlLeft = rules.find(
+    rule => rule.selectors.includes(".agents-left-col") && "padding-inline-end" in values(rule.body)
+  );
+  assert.equal(
+    values(xlLeft.body)["padding-inline-end"],
+    "1rem",
+    "app.css: the left column keeps symmetric inline padding off the hairline"
+  );
+  assert.equal(
+    values(separated.body)["padding-inline-start"],
+    "1rem",
+    "app.css: the detail column keeps symmetric inline padding off the hairline"
+  );
+  // Markup: both panels share the class and carry neither fill nor border utility.
+  for (const file of ["tree_panel.ex", "detail_panel.ex"]) {
+    const markup = readFileSync(join(APP_DIR, "lib/evo_dash_web/live/agents_live", file), "utf8");
+    const card = [...markup.matchAll(/<div class="([^"]*\bagents-panel\b[^"]*)"/g)].map(
+      match => match[1]
+    );
+    assert.equal(card.length, 1, `${file}: expected ONE .agents-panel card`);
+    assert.match(card[0], /\bcard\b/, `${file}: the panel keeps the DaisyUI card class`);
+    assert.doesNotMatch(
+      card[0],
+      /\b(?:border|bg-base-100|rounded-lg)\b/,
+      `${file}: the panel surface lives in CSS, not in markup utilities`
+    );
+  }
+});
 
 // --- the rendered page markup ---------------------------------------------
 

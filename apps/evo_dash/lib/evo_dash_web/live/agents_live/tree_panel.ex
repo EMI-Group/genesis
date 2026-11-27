@@ -64,7 +64,7 @@ defmodule EvoDashWeb.AgentsLive.TreePanel do
         </div>
       <% end %>
       <!-- Agent Tree View -->
-      <div class="agents-tree-panel card bg-base-100 border border-base-300 rounded-lg">
+      <div class="agents-tree-panel agents-panel card">
         <%!-- Mode hook for the CSS flex chain: in commits mode the card body must
         fill the panel so the commit list is the ONE bounded scroller
         (`#cg-scroll`, whose `position: sticky` lane header resolves against
