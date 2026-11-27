@@ -4,7 +4,12 @@ defmodule EvoGit.BackgroundJobsTest do
   # the platform shell; where only registry bookkeeping is under test, a job is
   # registered through the same production start path with a systemd `:unit`
   # stand-in handle instead) and they all share the ONE process-wide scratch
-  # directory (`<sandbox tmpdir>`), where each job writes `genesis_job_<id>.log`.
+  # directory (`<sandbox tmpdir>`), where each job writes
+  # `genesis_job_<os-pid>-<vm-unique>_<id>.log` — the FILE name carries a
+  # per-REGISTRY-instance token because ids restart at `bash-1` in every registry
+  # while the scratch dir is host-wide, so an id alone is not a unique file
+  # address (a sibling registry, or a concurrent `mix test` VM, would otherwise
+  # truncate/delete a live job's log).
   # File hygiene is per JOB, not per directory window: the registry returns the
   # exact `:output_path` it created, so every job start registers an `on_exit`
   # that removes that ONE file — never a `File.ls` of a scratch directory the
@@ -164,17 +169,22 @@ defmodule EvoGit.BackgroundJobsTest do
       assert third.id == "bash-3"
     end
 
-    test "truncates a stale output file left behind under the same id", %{tmp_dir: tmp_dir} do
-      # Ids restart at `bash-1` for every registry and the scratch dir is shared
-      # host-wide, so a file from an earlier lifetime of the same id must never
-      # leak into a new job's reads.
-      path = Path.join(EvoGit.Sandbox.resolve_tmpdir(), "genesis_job_bash-1.log")
-      File.mkdir_p!(Path.dirname(path))
+    test "truncates a stale output file at the same per-registry path", %{tmp_dir: tmp_dir} do
+      # The output FILE name carries a per-registry-instance token, so no other
+      # registry on this host can reach this path at all. What still needs
+      # proving is that a job reusing an id INSIDE the same registry truncates
+      # its own leftover file instead of leaking those bytes into the new reads.
+      first = start_job!(%{command: "echo first", cwd: tmp_dir})
+      path = first.output_path
+      await_status!(first.id, :completed)
+      assert File.read!(path) =~ "first"
       File.write!(path, "STALE OUTPUT\n")
-      on_exit(fn -> _ = File.rm(path) end)
-
+      # Drop the retained record and rewind the counter so the NEXT job reuses
+      # id `bash-1` — and therefore, in this same registry, this exact path.
+      :sys.replace_state(registry(), fn state -> %{state | jobs: %{}, next_id: 1} end)
       job = start_job!(%{command: "echo fresh", cwd: tmp_dir})
       assert job.id == "bash-1"
+      assert job.output_path == path
       # Truncation is deterministic (it happens BEFORE the spawn): the stale
       # bytes are gone even while the child is still writing its own output.
       refute File.read!(job.output_path) =~ "STALE OUTPUT"
@@ -183,6 +193,73 @@ defmodule EvoGit.BackgroundJobsTest do
       assert {:ok, %{text: text}} = BackgroundJobs.read(job.id)
       refute text =~ "STALE OUTPUT"
       assert text =~ "fresh"
+    end
+
+    test "a sibling registry's job with the same id cannot truncate or delete this job's log", %{
+      tmp_dir: tmp_dir,
+      registry: registry_a,
+      process_manager: manager
+    } do
+      # The reported bug: job ids restart at `bash-1` in EVERY registry and the
+      # scratch dir is host-wide, so an id alone used to be a shared file address
+      # — a second registry (another BEAM, or a `mix test` VM) truncated a LIVE
+      # job's log at start and deleted it at cleanup. The per-registry token in
+      # the file name is what makes the two paths disjoint.
+      job_a = start_job!(%{command: "echo alpha; sleep 30", cwd: tmp_dir})
+      assert job_a.id == "bash-1"
+      assert %{kind: :port} = job_a.handle
+      assert is_integer(job_a.handle.os_pid)
+      path_a = job_a.output_path
+      # The child's first write lands asynchronously through the port.
+      wait_until(
+        fn -> File.read(path_a) == {:ok, "alpha\n"} end,
+        @deadline_ms,
+        "registry A's log never received the job's output"
+      )
+
+      # A SECOND isolated registry in the same test, on the SAME host scratch dir
+      # (the `id:` override is required because the module has no custom
+      # `child_spec/1`, so two children of one supervisor would share its id).
+      registry_b = :"bg_jobs_sibling_#{System.unique_integer([:positive])}"
+
+      start_supervised!(
+        Supervisor.child_spec(
+          {EvoGit.BackgroundJobs, [name: registry_b, process_manager: manager]},
+          id: registry_b
+        )
+      )
+
+      # `BackgroundJobs.server/0` reads the seam at CALL time, so this switches
+      # every call below to registry B.
+      Process.put(:evogit_background_jobs_server, registry_b)
+      job_b = start_job!(%{command: "echo beta", cwd: tmp_dir})
+      assert job_b.id == "bash-1"
+      path_b = job_b.output_path
+      refute path_a == path_b
+      # B's start-time truncation cannot reach A's file.
+      assert File.exists?(path_a)
+      assert File.read!(path_a) =~ "alpha"
+
+      await_status!(job_b.id, :completed)
+      # Simulate the test-harness cleanup that deletes one job's own log, then
+      # prove A's live job is untouched and still readable.
+      File.rm!(path_b)
+      refute File.exists?(path_b)
+      Process.put(:evogit_background_jobs_server, registry_a)
+      assert File.read!(path_a) =~ "alpha"
+      assert {:ok, %{text: text, job: read_job}} = BackgroundJobs.read("bash-1")
+      assert text == "alpha\n"
+      assert read_job.status == :running
+      assert {:ok, %{status: :running}} = BackgroundJobs.job("bash-1")
+      # Clean up registry A's still-running child for real.
+      assert {:ok, %{status: :killed}} = BackgroundJobs.kill(job_a.id)
+      await_status!(job_a.id, :killed)
+
+      wait_until(
+        fn -> not pid_alive?(job_a.handle.os_pid) end,
+        @deadline_ms,
+        "registry A's OS process survived the kill"
+      )
     end
 
     test "records an integer os_pid for a job that is still running", %{tmp_dir: tmp_dir} do

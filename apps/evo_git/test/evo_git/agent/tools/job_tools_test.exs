@@ -31,8 +31,10 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   never a fixed sleep used as the assertion), every long job is killed and its
   OS pid reaped before the test ends, and every job start registers an `on_exit`
   that removes that job's OWN `genesis_job_*.log` — the path the registry
-  returns on the record, so the cleanup is exact and never lists the scratch
-  directory (which can hold thousands of unrelated entries on a busy host).
+  returns on the record (its file name embeds a per-registry-instance token on
+  top of the job id, so no other registry or test VM can share it), so the
+  cleanup is exact and never lists the scratch directory (which can hold
+  thousands of unrelated entries on a busy host).
   """
   use ExUnit.Case, async: false
 
@@ -137,8 +139,11 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
   ## Scratch-directory hygiene
 
-  # A job's output file is `<scratch dir>/genesis_job_<job_id>.log`
-  # (`EvoGit.BackgroundJobs.scratch_dir/0` = `EvoGit.Sandbox.resolve_tmpdir/0`).
+  # A job's output file is
+  # `<scratch dir>/genesis_job_<os-pid>-<vm-unique>_<job_id>.log`
+  # (`EvoGit.BackgroundJobs.scratch_dir/0` = `EvoGit.Sandbox.resolve_tmpdir/0`,
+  # plus the per-REGISTRY-instance token that keeps the path unique even though
+  # ids restart at `bash-1` in every registry).
   # The scratch dir is shared with the whole host, so a window-style
   # snapshot/restore would have to `File.ls` it — a directory that legitimately
   # holds thousands of unrelated entries, i.e. milliseconds per listing, twice

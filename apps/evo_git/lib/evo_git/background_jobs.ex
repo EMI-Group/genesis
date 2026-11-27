@@ -2,7 +2,7 @@ defmodule EvoGit.BackgroundJobs do
   @moduledoc """
   Registry for detached ("background") shell jobs started by agents.
 
-  `start_job/1` starts a command through `EvoGit.Sandbox.spawn_detached/1` (the ONE detached entry point, answered by every sandbox backend) and records it; the command's stdout/stderr accumulate in a per-job log file under the sandbox scratch directory, so callers poll `job/2` for status and drain the log with `read/2`, which returns only the bytes produced since the previous read.
+  `start_job/1` starts a command through `EvoGit.Sandbox.spawn_detached/1` (the ONE detached entry point, answered by every sandbox backend) and records it; the command's stdout/stderr accumulate in a per-job log file under the sandbox scratch directory, so callers poll `job/2` for status and drain the log with `read/2`, which returns only the bytes produced since the previous read. The FILE name carries a per-registry-instance token (`genesis_job_<os-pid>-<vm-unique>_<id>.log`) because ids are only unique within ONE registry — every instance restarts at `bash-1` while the scratch directory is host-wide — so an output path can never collide with another registry's live job.
   Job lifetime — every job is bound to its OWNING AGENT process (`:owner_pid`); `start_job/1` installs ONE `Process.monitor/1` per owner, and when that process dies EVERY job it started is killed and the monitor bookkeeping is dropped. Because agent processes are unlinked `Task.Supervisor.async_nolink` children killed by `Lifecycle.cancel_agent/2`, this single monitor covers every way an agent can end — normal completion, crash, graceful cancel AND force kill — so no hooks are needed at `EvoGit.TaskRegistry`'s terminal-write sites. The monitor is deliberately installed on the AGENT pid, never on the short-lived tool task that calls this module.
   Completion detection — ONE primary mechanism plus two cheap, idempotent fallbacks: the **observer port** (every backend keeps a port on the handle that reports the job's exit — a `:port` job's own child, and a `:unit` job's `systemd-run --wait` client, which exits with the UNIT's status), the **lazy reconcile** (every `read/2` / `list/1` / `job/2` re-checks a live job against the backend via `EvoGit.BackgroundJobs.StatusProbe` and the registry's per-job probe cache) and the **periodic tick** (while at least one live job uses a `:unit` handle, ONE `@tick_interval_ms` timer re-reconciles them so `finished_at` / `exit_code` land promptly even if nobody reads; it is disarmed as soon as no such job remains). `{:unknown, nil}` from the backend is never treated as "running forever": a job that stays unreportable with no live observer port is settled terminally as `:failed` after a bounded `@unknown_grace_ms` grace.
   No handler blocks on the OS — a `:unit` handle's status probe (`systemctl --user show`, one subprocess) NEVER runs inside this GenServer: `StatusProbe.start/2` computes it in its own unlinked task and reports back with `{:probe_result, job_id, result}`, and `reconcile_job/2` applies only the CACHED result of a live `:unit` job (never inventing a status it has not observed). A `:port` handle's probe is `Port.info/2` and stays synchronous. `@probe_min_interval_ms` (call-time seam `:background_probe_min_interval_ms`) bounds how often one job may be re-probed, so a tight poll loop cannot fork a subprocess per call.
@@ -94,6 +94,9 @@ defmodule EvoGit.BackgroundJobs do
   # `state.jobs` OR by a tombstone in `state.tombstones`, so an id is never
   # reused while ANY answer for it exists. `bash-<n>` is also safe as a
   # systemd unit-name component (`Sandbox.Background.unit_name/1`).
+  # An id is unique only WITHIN one registry (every instance starts at
+  # `bash-1`), so it is never used as a file address on its own — the output
+  # file name carries a per-instance token as well (`output_file_name/2`).
   @id_prefix "bash-"
 
   @type status :: :running | :stopping | :completed | :killed | :failed
@@ -625,6 +628,11 @@ defmodule EvoGit.BackgroundJobs do
        tombstones: %{},
        retention: retention_from(opts),
        next_id: 1,
+       # Per-INSTANCE file-name token (see `instance_token/0` and
+       # `output_file_name/2`): resolved once for the whole lifetime of this
+       # registry, so every job it starts writes a path no other registry can
+       # collide with.
+       path_token: instance_token(),
        process_manager: process_manager_from(opts),
        notice_table: NoticeMirror.new(server_name_from(opts))
      }}
@@ -1058,7 +1066,7 @@ defmodule EvoGit.BackgroundJobs do
 
   defp do_start_job(spec, handle_override, state) do
     {id, next_id} = generate_id(state, state.next_id)
-    output_path = Path.join(scratch_dir(), "genesis_job_#{id}.log")
+    output_path = Path.join(scratch_dir(), output_file_name(state.path_token, id))
 
     with :ok <- prepare_output_file(output_path),
          {:ok, handle} <-
@@ -1213,15 +1221,43 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   # Output destination is decided ONCE, at spawn time, and stored on the job: a detached process has no process dictionary to re-derive it from later.
+  # This is the BEAM's tmpdir, resolved in THIS long-lived GenServer, which never
+  # carries the per-task `EvoGit.TaskTmpdir` seam — so in production it is the
+  # host-wide system tmpdir.
+  # ONE host path serves every backend: the PORT backends (none / disabled /
+  # bwrap / macOS) leave the child's output on the port this registry owns, and
+  # `append_output/2` writes those chunks to this path on the host, while the
+  # systemd backend passes the same host path in
+  # `StandardOutput=append:<path>`/`StandardError=append:<path>`
+  # (`EvoGit.Sandbox.Linux.detached_args/5`) — systemd opens it outside the
+  # job's private tmpfs. So nothing ever writes a sandbox-private path.
   defp scratch_dir do
     EvoGit.Sandbox.resolve_tmpdir()
   end
 
+  # Output file names must be unique per REGISTRY INSTANCE, not merely per job
+  # id: ids restart at `bash-1` in EVERY registry, and the scratch dir is the
+  # host-wide system tmpdir whenever no per-task tmpdir is installed on this
+  # (long-lived registry) process — so an id alone is not a unique file
+  # address. A second registry on the same host (another BEAM, or a `mix test`
+  # VM) would otherwise truncate at start and delete at cleanup the log of a
+  # LIVE job that happens to share the id.
+  # The token is `<os pid>-<vm-unique integer>`: safe in a file name and as a
+  # systemd `StandardOutput=append:<path>` value, distinct across concurrent
+  # OS processes (distinct pids) and across sibling registries inside one VM
+  # (unique integer). The recognizable `genesis_job_` prefix and `.log` suffix
+  # stay; only the file name changes, never the agent-facing id.
+  defp instance_token do
+    "#{System.pid()}-#{System.unique_integer([:positive, :monotonic])}"
+  end
+
+  defp output_file_name(token, id), do: "genesis_job_#{token}_#{id}.log"
+
   # Non-bang on purpose: a permission problem must surface as prose, never as a crash of the shared registry.
-  # The file is CREATED/TRUNCATED to empty (never merely `touch`ed): ids are short
-  # and sequential, so a reused id in a reused scratch dir (the system tmpdir when
-  # no per-task tmpdir is installed) would otherwise leak a previous job's output
-  # into this job's reads.
+  # The file is CREATED/TRUNCATED to empty (never merely `touch`ed): a reused path
+  # (the per-registry token keeps it fresh, but a restarted registry can land on
+  # the same token/id pair) would otherwise leak a previous job's output into
+  # this job's reads.
   defp prepare_output_file(path) do
     with :ok <- File.mkdir_p(Path.dirname(path)),
          :ok <- File.write(path, "") do

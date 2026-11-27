@@ -465,7 +465,12 @@ defmodule EvoGit.Sandbox.BackgroundTest do
   describe "Linux.detached_args/5 (background) vs Linux.args/4 (foreground)" do
     setup do
       cwd = System.tmp_dir!()
-      output_path = Path.join(System.tmp_dir!(), "genesis_job_test.log")
+      # Per-TEST unique fixtures: two sibling `mix test` runs on one host share
+      # the tmpdir, so a fixed name would let one run's cleanup remove the
+      # other's file.
+      output_path =
+        Path.join(System.tmp_dir!(), "genesis_job_test_#{System.unique_integer([:positive])}.log")
+
       unit = "genesis-job-b#{System.pid()}-bash-0123456789abcdef"
       command = "echo detached-shape"
 
@@ -607,7 +612,11 @@ defmodule EvoGit.Sandbox.BackgroundTest do
                Sandbox.spawn_detached(%{
                  command: "",
                  cwd: System.tmp_dir!(),
-                 output_path: Path.join(System.tmp_dir!(), "genesis_job_test_invalid.log"),
+                 output_path:
+                   Path.join(
+                     System.tmp_dir!(),
+                     "genesis_job_test_invalid_#{System.unique_integer([:positive])}.log"
+                   ),
                  job_id: "bash-invalid"
                })
     end
@@ -622,7 +631,11 @@ defmodule EvoGit.Sandbox.BackgroundTest do
       spec = %{
         command: "true",
         cwd: cwd,
-        output_path: Path.join(System.tmp_dir!(), "genesis_job_test_nocwd.log"),
+        output_path:
+          Path.join(
+            System.tmp_dir!(),
+            "genesis_job_test_nocwd_#{System.unique_integer([:positive])}.log"
+          ),
         job_id: "bash-nocwd"
       }
 
