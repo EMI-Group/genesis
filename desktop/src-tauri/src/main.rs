@@ -98,6 +98,10 @@ fn set_custom_titlebar(
     manager: tauri::State<'_, BackendHandle>,
     active: bool,
 ) {
+    // Recorded FIRST and for BOTH `active` values: `{active: false}` also
+    // proves the dashboard's hook ran, so only a total absence of invocations
+    // counts as "the dashboard never asked".
+    CHROME_REQUESTED.store(true, Ordering::SeqCst);
     if active && !manager.dashboard_loaded() {
         shell_log::log(
             "window chrome: error: set_custom_titlebar(active: true) arrived before the dashboard load latch was set",
@@ -524,6 +528,24 @@ fn resolve_backend_port() -> u16 {
 /// Signal-safe shutdown flag set by the SIGINT / SIGTERM handler.
 static SHUTDOWN_FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Set by the `set_custom_titlebar` command on EVERY invocation (whatever the
+/// `active` value), i.e. "the dashboard's window-chrome hook is alive".
+///
+/// The shell keeps the native OS title bar when the dashboard never asks for
+/// frameless chrome — the safe default — but that also makes a missing request
+/// invisible. This flag is what the once-per-process diagnostic below reads to
+/// tell "the hook is alive and merely prefers native chrome" apart from "no
+/// hook ever ran".
+static CHROME_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Guards the missing-request diagnostic so it logs at most ONCE per process.
+///
+/// The `dashboard_loaded.swap` of a single load is not enough: a reload or a
+/// crash-recovery reload re-enters that branch and would arm a second warning
+/// thread. Deliberately never reset.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+static CHROME_WARNING_ARMED: AtomicBool = AtomicBool::new(false);
+
 #[cfg(unix)]
 mod signal_handler {
     use std::sync::atomic::Ordering;
@@ -707,6 +729,24 @@ fn run_headless() {
 /// Pure so the routing is unit-testable without a tauri app.
 pub(crate) fn quit_needs_confirmation(backend_healthy: bool, dashboard_loaded: bool) -> bool {
     backend_healthy && dashboard_loaded
+}
+
+/// True when the diagnostic should WARN that the dashboard never asked for the
+/// custom title bar (i.e. no `set_custom_titlebar` invocation at all).
+///
+/// Native OS chrome is the default and is kept in that case — a safe failure
+/// mode, but a silent one. The likely real-world cause is a stale dashboard
+/// asset bundle: `apps/evo_dash/priv/static/assets/` is gitignored and the
+/// release has no assets step, so a locally built desktop app can ship an
+/// `app.js` built without the `DesktopTitlebar` hook (and without the strip
+/// CSS), and then no request is ever sent.
+///
+/// Pure so the predicate is unit-testable without a tauri app. The spawning
+/// block is non-macOS only (macOS never toggles decorations), hence the
+/// `dead_code` exemption there.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn should_warn_missing_request(requested: bool) -> bool {
+    !requested
 }
 
 /// Routes a user-initiated quit through the web-page confirmation flow.
@@ -1082,6 +1122,42 @@ fn run_gui() {
                                 "webview loaded the dashboard ({})",
                                 payload.url()
                             ));
+                            // One-shot diagnostic: on the FIRST load of this
+                            // process, warn if the dashboard never invoked
+                            // `set_custom_titlebar` within ~8s. Native OS chrome
+                            // being the default makes that case SAFE (the window
+                            // stays fully usable) but undiagnosable, so a single
+                            // line names the likely cause: a stale/missing
+                            // dashboard asset bundle whose `app.js` was built
+                            // without the `DesktopTitlebar` hook.
+                            //
+                            // Off the event loop (a plain spawned thread that is
+                            // never joined) and armed once per process, so a
+                            // reload or a crash-recovery reload cannot repeat it
+                            // and nothing here ever blocks or polls.
+                            #[cfg(not(target_os = "macos"))]
+                            {
+                                if CHROME_WARNING_ARMED
+                                    .compare_exchange(
+                                        false,
+                                        true,
+                                        Ordering::SeqCst,
+                                        Ordering::SeqCst,
+                                    )
+                                    .is_ok()
+                                {
+                                    std::thread::spawn(|| {
+                                        std::thread::sleep(std::time::Duration::from_secs(8));
+                                        if should_warn_missing_request(
+                                            CHROME_REQUESTED.load(Ordering::SeqCst),
+                                        ) {
+                                            shell_log::log(
+                                                "window chrome: warning: the dashboard never requested the custom title bar within ~8s of the first dashboard load — keeping the native OS title bar (the safe default); the likely cause is a stale or missing dashboard asset bundle (apps/evo_dash/priv/static/assets/app.js built without the DesktopTitlebar hook) — run `mix assets.deploy` before `mix release genesis_desktop`",
+                                            );
+                                        }
+                                    });
+                                }
+                            }
                         }
                     }
                 })
@@ -1636,6 +1712,21 @@ mod tests {
         assert!(
             !quit_needs_confirmation(false, false),
             "backend down and no dashboard → immediate path"
+        );
+    }
+
+    /// The missing-request diagnostic fires ONLY when no `set_custom_titlebar`
+    /// invocation was seen at all; any invocation (even `{active: false}`)
+    /// means the dashboard's hook is alive, so nothing is logged.
+    #[test]
+    fn should_warn_missing_request_truth_table() {
+        assert!(
+            should_warn_missing_request(false),
+            "no set_custom_titlebar invocation → warn about the missing request"
+        );
+        assert!(
+            !should_warn_missing_request(true),
+            "the dashboard's chrome hook ran → no warning"
         );
     }
 
