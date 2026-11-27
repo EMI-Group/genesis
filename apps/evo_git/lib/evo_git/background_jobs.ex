@@ -1241,7 +1241,8 @@ defmodule EvoGit.BackgroundJobs do
   # registry owns, and `append_output/2` writes those chunks to this path on the
   # host, while the systemd backend passes the same host path in
   # `StandardOutput=append:<path>`/`StandardError=append:<path>`
-  # (`EvoGit.Sandbox.Linux.detached_args/5`) — systemd opens it outside the
+  # (`EvoGit.Sandbox.Linux.detached_args/6`, which receives the caller-resolved
+  # `tmpdir:`/`task_tmpdir:` pair) — systemd opens it outside the
   # job's private tmpfs, and it stays writable because the per-task dir is a
   # granted writable path. So nothing ever writes a sandbox-private path.
   defp scratch_dir do

@@ -61,7 +61,7 @@ The caller now resolves and threads `spec.tmpdir` (the log directory) and `spec.
 The log therefore lives in the per-task dir, so `TaskTmpdir.reclaim/2` at task end removes it; `read/2` then answers honest prose naming the path and that cause without changing the recorded status.
 `<os-pid>` separates concurrent OS processes and `<vm-unique>` separates sibling registries inside one VM; both are safe in a file name and in a systemd `StandardOutput=append:<path>` value.
 The agent-facing id stays short (`bash-1`, repeated in `job_output`/`job_kill` and in tombstone prose) — only the FILE name carries the token, so ids, answers and retention rules are unchanged.
-One host path serves every backend: systemd appends to it directly (`Sandbox.Linux.detached_args/5`), and the port backends have the BEAM append the child's chunks (`append_output/2`).
+One host path serves every backend: systemd appends to it directly (`Sandbox.Linux.detached_args/6`), and the port backends have the BEAM append the child's chunks (`append_output/2`).
 `prepare_output_file/1` still truncates the file at start: the token makes a COLLISION unreachable, but a restarted registry can legitimately land on the same token/id pair.
 
 ## Constraints
