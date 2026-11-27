@@ -329,3 +329,9 @@ Everything below applies only to the explicitly requested frameless state: verif
 - **Linux (GTK client-side decorations)** — dragging from the dashboard's `#desktop-titlebar` strip, double-click-to-maximize and general CSD behaviour are unverified.
 - **Edge resizing on all three platforms** — expected through tao hit-testing + `undecorated_resizing`, untested.
 - **Taskbar minimize/restore** and **dragging the window from the dashboard's `#desktop-titlebar`** — untested on every platform.
+
+### Missing-request diagnostic (shell.log)
+
+On the FIRST finished dashboard load of the process, the shell spawns one detached thread that sleeps ~8s and then logs a single `window chrome: warning: …` line to `shell.log` if `set_custom_titlebar` was never invoked at all (`{active: false}` counts as invoked).
+The line is deliberately ONCE PER PROCESS (a reload or crash-recovery reload re-enters the latch branch but cannot repeat it) and never blocks, joins or polls — the event loop stays fully live.
+It means only that the native OS title bar is being kept, which is the safe default; the likely cause is a stale/missing dashboard asset bundle (`apps/evo_dash/priv/static/assets/` is gitignored and the release has no assets step, so `app.js` can be built without the `DesktopTitlebar` hook), remedied by running `mix assets.deploy` before `mix release genesis_desktop`.
