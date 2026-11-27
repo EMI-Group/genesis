@@ -709,8 +709,11 @@ defmodule EvoDashWeb.LayoutsTest do
       refute Enum.any?(element_children(layout), &has_class?(&1, "workbench-main"))
     end
 
-    test "Windows and Linux render exactly the minimize/maximize/close controls" do
-      for os <- [:windows, :linux] do
+    # Every OS except macOS is a windowed host WITH usable chrome: `:unknown` is
+    # treated as windowed too, so a host we cannot identify never ends up with a
+    # control-less (unclosable) strip.
+    test "Windows, Linux and an unknown OS render exactly the minimize/maximize/close controls" do
+      for os <- [:windows, :linux, :unknown] do
         tree = render_app(desktop?: true, os: os) |> parse()
         strip = titlebar(tree)
 
@@ -746,32 +749,51 @@ defmodule EvoDashWeb.LayoutsTest do
     end
 
     # macOS draws native traffic lights OVER the strip (which reserves that
-    # space in CSS) and an unknown host has no control vocabulary at all.
-    test "macOS and an unknown OS render no window controls" do
-      for os <- [:macos, :unknown] do
-        tree = render_app(desktop?: true, os: os) |> parse()
+    # space in CSS), so it is the ONLY OS that renders no window controls.
+    test "macOS renders no window controls" do
+      strip = render_app(desktop?: true, os: :macos) |> parse() |> titlebar()
 
-        # The strip itself still renders — only the controls are absent.
-        strip = titlebar(tree)
-        assert Floki.find(strip, ".desktop-titlebar-controls") == []
+      # The strip itself still renders — only the controls are absent.
+      assert Floki.find(strip, ".desktop-titlebar-controls") == []
 
-        for id <- ~w(desktop-titlebar-minimize desktop-titlebar-maximize desktop-titlebar-close) do
-          assert Floki.find(strip, "[id='#{id}']") == []
-        end
+      for id <- ~w(desktop-titlebar-minimize desktop-titlebar-maximize desktop-titlebar-close) do
+        assert Floki.find(strip, "[id='#{id}']") == []
       end
     end
 
-    # Tauri starts a window drag only when the event TARGET itself carries the
-    # attribute, so it sits on the strip root and the flex spacer — never on
-    # the brand link or a control button.
-    test "the drag region is the strip root plus the spacer, never an interactive child" do
-      for os <- [:macos, :windows] do
-        strip = render_app(desktop?: true, os: os) |> parse() |> titlebar()
+    # THE regression pin: an unidentified host OS used to render a strip with no
+    # controls at all — a chrome-less desktop window that could not be closed.
+    # An unknown OS must stay windowed, with the full closable control set.
+    test "an unknown host OS still renders a complete, closable title bar" do
+      strip = render_app(desktop?: true, os: :unknown) |> parse() |> titlebar()
 
-        assert Floki.attribute(strip, "data-tauri-drag-region") != []
+      assert Floki.attribute(strip, "data-os") == ["unknown"]
+
+      assert [_controls] = Floki.find(strip, ".desktop-titlebar-controls")
+
+      for id <- ~w(desktop-titlebar-minimize desktop-titlebar-maximize desktop-titlebar-close) do
+        assert [_button] = Floki.find(strip, "[id='#{id}']")
+      end
+
+      assert [close] = Floki.find(strip, "#desktop-titlebar-close")
+      assert has_class?(close, "desktop-titlebar-control-close")
+    end
+
+    # The `DesktopTitlebar` JS hook owns pointer dragging, and Tauri injects its
+    # OWN document-level drag handler whenever a `data-tauri-drag-region`
+    # attribute is present — which would double-fire against the hook. So the
+    # attribute must never come back: exactly ONE drag path (the hook), with the
+    # `.desktop-titlebar-drag` spacer kept only as a flex spacer.
+    test "no element advertises a Tauri drag region — the hook owns the one drag path" do
+      for os <- [:macos, :windows, :linux, :unknown] do
+        tree = render_app(desktop?: true, os: os) |> parse()
+        strip = titlebar(tree)
+
+        assert Floki.find(strip, "[data-tauri-drag-region]") == []
+        assert Floki.find(tree, "[data-tauri-drag-region]") == []
 
         assert [drag] = Floki.find(strip, ".desktop-titlebar-drag")
-        assert Floki.attribute(drag, "data-tauri-drag-region") != []
+        assert Floki.attribute(drag, "data-tauri-drag-region") == []
         assert Floki.attribute(drag, "aria-hidden") == ["true"]
 
         assert [brand] = Floki.find(strip, "a")

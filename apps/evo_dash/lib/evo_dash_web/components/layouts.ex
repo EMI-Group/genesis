@@ -136,7 +136,8 @@ defmodule EvoDashWeb.Layouts do
     default: :unknown,
     doc:
       "the host OS from EvoGit.Platform.os/0 (:linux | :macos | :windows | :unknown); " <>
-        "the title bar renders window controls on Windows/Linux only and reserves the macOS traffic-light inset"
+        "the title bar renders window controls on every OS except macOS (an :unknown OS counts as windowed, so the " <>
+        "strip is never control-less) and macOS reserves the native traffic-light inset instead"
   )
 
   slot(:inner_block, required: true)
@@ -198,10 +199,13 @@ defmodule EvoDashWeb.Layouts do
       data-workbench-chats={gettext("Conversations")}
     >
       <%!-- Desktop-only layer-0 chrome: the custom window title bar rendered
-           INSIDE the Tauri shell (frameless window on Windows/Linux, overlay
-           title bar on macOS). It is the first row of the #app-layout flex
-           column, so the strip and the shell row below it share the viewport
-           height without any position: fixed. --%>
+           INSIDE the Tauri shell. The shell keeps its native OS decorations
+           until the strip's hook requests frameless chrome
+           (`set_custom_titlebar {active: true}`), so a strip that never mounts
+           leaves the native title bar in place; macOS keeps its overlay title
+           bar. It is the first row of the #app-layout flex column, so the strip
+           and the shell row below it share the viewport height without any
+           position: fixed. --%>
       <EvoDashWeb.DesktopTitlebar.titlebar
         :if={@desktop?}
         os={@os}

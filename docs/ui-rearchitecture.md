@@ -69,9 +69,11 @@ Three layers, expressed as tokens in `apps/evo_dash/assets/css/surfaces.css`:
 
 Rules that keep it coherent:
 
-- **The desktop title bar is desktop-only layer-0 chrome.** `#desktop-titlebar` is the full-width strip above `header.workbench-top`, rendered only when the shell marks the page as desktop (`--shell-titlebar-h` is `0px` in a browser, so browser rendering is unchanged).
-It names the app with the shared brand and carries the window drag region; the rail's leading label still names the page, and the in-shell pages still carry no `h1`.
+- **The desktop title bar is desktop-only layer-0 chrome.** `#desktop-titlebar` is the full-width strip above `header.workbench-top`, rendered only in desktop mode (`--shell-titlebar-h` is `0px` in a browser, so browser rendering is unchanged).
+It names the app with the shared brand; the rail's leading label still names the page, and the in-shell pages still carry no `h1`.
+Dragging is not a markup attribute: the strip's JS hook owns it with one `pointerdown` → `startDragging()` (excluding interactive descendants) and one `dblclick` → `toggleMaximize()`.
 Window controls (minimize / maximize / close) exist only in the strip, and only on Windows and Linux — macOS leaves that space to the native traffic lights.
+The strip is the window chrome only because the dashboard explicitly asks the shell for frameless chrome (`set_custom_titlebar {active: true}` once the strip exists and its controls are bound); every navigation start and page teardown restores native chrome, so a stale asset bundle that never mounts a working strip leaves a fully usable native title bar rather than an unclosable window.
 - The sidebar and right dock frame the canvas rather than competing with it. The sidebar uses spacing and hover/selected fills instead of repeated dividers. The canvas frame serves both the page and the Git-diff portal without adding another scroll container.
 - Lists use flat rows. History uses spacing instead of rules; task cards on `/tasks` default to a flat row with a hairline. A card (`data-variant="raised"`) is an opt-in for content read or decided as one unit (a review repo block, a submit confirm), not a treatment for the canvas or docks.
 - Hover, selected and focus are three different treatments; reserve accent for primary actions, the current object and the separate pending-navigation cue.

@@ -310,6 +310,16 @@ test("the desktop title bar is layer-0 chrome and the fixed surfaces clear it", 
   assert.equal(declared["box-shadow"], undefined, "an in-flow strip never elevates (layer 0)");
   assert.equal(declared["z-index"], undefined, "an in-flow strip needs no stacking order");
   assert.equal(declared.position, undefined, "the strip stays in flow — never fixed or absolute");
+  // The strip IS the window's drag surface (the `DesktopTitlebar` hook starts the
+  // drag on primary-button pointerdown), so it is chrome: no text selection and
+  // no touch scroll gesture may compete with the drag.
+  assert.equal(
+    declared["touch-action"],
+    "none",
+    "workbench.css: the strip owns pointer dragging, so a touch/touchpad drag is never a scroll"
+  );
+  assert.equal(declared["user-select"], "none", "workbench.css: dragging the strip must not select its text");
+  assert.equal(declared.cursor, "default", "workbench.css: the strip shows a chrome cursor, not text");
   // The window-control inset is a token so the two OS branches can retarget it.
   assert.equal(
     declared["--titlebar-lead"],
@@ -354,6 +364,21 @@ test("the macOS inset and the window controls keep their chrome contract", () =>
   assert.equal(controls.length, 1, "workbench.css: .desktop-titlebar-controls needs ONE base rule");
   assert.equal(values(controls[0].body).display, "flex");
   assert.equal(values(controls[0].body).flex, "0 0 auto");
+
+  // The grab gutter is the strip's main drag area; it must stay inert chrome so
+  // no selection or touch scroll gesture competes with the hook's pointer drag.
+  const drag = leafRules("workbench.css").filter(
+    rule => rule.selectors.includes(".desktop-titlebar-drag")
+  );
+  assert.equal(drag.length, 1, "workbench.css: .desktop-titlebar-drag needs exactly ONE leaf rule");
+  const gutter = values(drag[0].body);
+  assert.equal(gutter.flex, "1 1 auto", "workbench.css: the grab gutter takes the strip's free width");
+  assert.equal(
+    gutter["touch-action"],
+    "none",
+    "workbench.css: a touch/touchpad drag on the grab gutter must not become a scroll"
+  );
+  assert.equal(gutter.cursor, "default", "workbench.css: the grab gutter shows the chrome cursor");
 
   const control = leafRules("workbench.css").filter(
     rule => rule.selectors.includes(".desktop-titlebar-control") && "width" in values(rule.body)

@@ -29,13 +29,19 @@
 
 /* === Desktop custom title bar ===
    The strip is the first child of `#app-layout` (a flex column in a desktop
-   window) and holds the window drag region, the brand and — on Windows/Linux —
-   the window controls. It is LAYER 0 chrome: the top bar's shell tone plus one
-   hairline, no elevation, no stacking context, and it takes its height from the
-   ONE `--shell-titlebar-h` token instead of a literal. Browser/dev renders no
-   strip at all, so nothing here may shift the browser layout. */
+   window) and is that window's CHROME: the brand, the flexible grab gutter and —
+   on every OS except macOS — the window controls. The `DesktopTitlebar` JS hook starts
+   the window drag on primary-button `pointerdown` anywhere on the strip and
+   toggles maximize on title-bar double-click, so the strip itself is the drag
+   surface. It is LAYER 0 chrome: the top bar's shell tone plus one hairline, no
+   elevation, no stacking context, and it takes its height from the ONE
+   `--shell-titlebar-h` token instead of a literal. `user-select: none` keeps the
+   brand text from being selected mid-drag and `touch-action: none` keeps a
+   touch/touchpad drag from being consumed as a scroll gesture — this strip is
+   chrome, never a scroll surface. Browser/dev renders no strip at all, so nothing
+   here may shift the browser layout. */
 #desktop-titlebar {
-  /* Windows/Linux render their own controls at the inline end, so the lead is
+  /* Every OS except macOS puts the controls at the inline end, so the lead is
      the frame gutter; macOS overlays its native traffic lights instead (below). */
   --titlebar-lead: var(--page-gutter);
   display: flex;
@@ -49,6 +55,7 @@
   border-bottom: 1px solid var(--border-hairline);
   user-select: none;
   -webkit-user-select: none;
+  touch-action: none;
   cursor: default;
 }
 
@@ -68,11 +75,15 @@
   outline-offset: 2px;
 }
 
-/* The drag handle is the flexible middle; the controls keep their own width. */
+/* The grab gutter is the flexible middle; the controls keep their own width.
+   The hook's pointer handler lives on the strip root, so this spacer only needs
+   to stay inert chrome: no selection and no touch scroll gesture either. */
 .desktop-titlebar-drag {
   flex: 1 1 auto;
   align-self: stretch;
   min-width: 0;
+  touch-action: none;
+  cursor: default;
 }
 
 .desktop-titlebar-controls {

@@ -81,6 +81,42 @@ fn begin_quit(manager: tauri::State<'_, BackendHandle>) {
     manager.begin_quit();
 }
 
+/// Tauri command invoked by the dashboard's JavaScript: the dashboard has
+/// verified its own `#desktop-titlebar` strip exists and bound its controls,
+/// so the shell may now go frameless (Windows/Linux).
+///
+/// `active: false` restores the native OS title bar. Native chrome is the
+/// DEFAULT and the shell never removes the decorations on its own initiative —
+/// this command is the only way into frameless chrome, which keeps a broken or
+/// older dashboard (one that never calls this) fully usable with the native
+/// title bar. An `active: true` that arrives before the dashboard load latch is
+/// set is anomalous (the request should only come from the loaded dashboard);
+/// it is logged and then HONORED regardless — never refused.
+#[tauri::command]
+fn set_custom_titlebar(
+    window: tauri::WebviewWindow,
+    manager: tauri::State<'_, BackendHandle>,
+    active: bool,
+) {
+    // Recorded FIRST and for BOTH `active` values: `{active: false}` also
+    // proves the dashboard's hook ran, so only a total absence of invocations
+    // counts as "the dashboard never asked".
+    CHROME_REQUESTED.store(true, Ordering::SeqCst);
+    if active && !manager.dashboard_loaded() {
+        shell_log::log(
+            "window chrome: error: set_custom_titlebar(active: true) arrived before the dashboard load latch was set",
+        );
+    }
+    window_chrome::apply(
+        &window,
+        if active {
+            window_chrome::ChromeState::Dashboard
+        } else {
+            window_chrome::ChromeState::Shell
+        },
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Auto-update commands (JSON contracts pinned with the dashboard workstream —
 // do not rename keys or statuses)
@@ -492,6 +528,24 @@ fn resolve_backend_port() -> u16 {
 /// Signal-safe shutdown flag set by the SIGINT / SIGTERM handler.
 static SHUTDOWN_FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Set by the `set_custom_titlebar` command on EVERY invocation (whatever the
+/// `active` value), i.e. "the dashboard's window-chrome hook is alive".
+///
+/// The shell keeps the native OS title bar when the dashboard never asks for
+/// frameless chrome — the safe default — but that also makes a missing request
+/// invisible. This flag is what the once-per-process diagnostic below reads to
+/// tell "the hook is alive and merely prefers native chrome" apart from "no
+/// hook ever ran".
+static CHROME_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Guards the missing-request diagnostic so it logs at most ONCE per process.
+///
+/// The `dashboard_loaded.swap` of a single load is not enough: a reload or a
+/// crash-recovery reload re-enters that branch and would arm a second warning
+/// thread. Deliberately never reset.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+static CHROME_WARNING_ARMED: AtomicBool = AtomicBool::new(false);
+
 #[cfg(unix)]
 mod signal_handler {
     use std::sync::atomic::Ordering;
@@ -677,6 +731,24 @@ pub(crate) fn quit_needs_confirmation(backend_healthy: bool, dashboard_loaded: b
     backend_healthy && dashboard_loaded
 }
 
+/// True when the diagnostic should WARN that the dashboard never asked for the
+/// custom title bar (i.e. no `set_custom_titlebar` invocation at all).
+///
+/// Native OS chrome is the default and is kept in that case — a safe failure
+/// mode, but a silent one. The likely real-world cause is a stale dashboard
+/// asset bundle: `apps/evo_dash/priv/static/assets/` is gitignored and the
+/// release has no assets step, so a locally built desktop app can ship an
+/// `app.js` built without the `DesktopTitlebar` hook (and without the strip
+/// CSS), and then no request is ever sent.
+///
+/// Pure so the predicate is unit-testable without a tauri app. The spawning
+/// block is non-macOS only (macOS never toggles decorations), hence the
+/// `dead_code` exemption there.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn should_warn_missing_request(requested: bool) -> bool {
+    !requested
+}
+
 /// Routes a user-initiated quit through the web-page confirmation flow.
 ///
 /// Called from BOTH the tray menu's "Quit Genesis" item and the macOS Cmd+Q
@@ -812,6 +884,7 @@ fn run_gui() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             begin_quit,
+            set_custom_titlebar,
             check_update,
             download_update,
             begin_update
@@ -932,17 +1005,26 @@ fn run_gui() {
             //    `show_backend` retry loop (which waits for the window)
             //    behaves as before.
             //
-            //    WINDOW CHROME (`window_chrome`): the shell starts with NATIVE
-            //    chrome (`.decorations(true)` unconditionally — macOS'
-            //    Overlay title bar also requires decorations on) and switches
-            //    to app-drawn frameless chrome once the dashboard has loaded.
+            //    WINDOW CHROME (`window_chrome`): the shell builds the window
+            //    with NATIVE chrome (`.decorations(true)` unconditionally —
+            //    macOS' Overlay title bar also requires decorations on) and
+            //    NATIVE IS THE DEFAULT: the shell NEVER removes the decorations
+            //    on its own initiative. Frameless chrome is only the EXPLICIT,
+            //    dashboard-requested state: the dashboard invokes the
+            //    `set_custom_titlebar(active: true)` command once it has
+            //    verified its own `#desktop-titlebar` strip exists and bound its
+            //    controls. Native chrome is restored on every navigation START
+            //    (`PageLoadEvent::Started` — reloads, shell `data:` pages, crash
+            //    recovery) and on `set_custom_titlebar(active: false)`.
             //    The matrix:
             //    - Windows / Linux: toggled at RUNTIME by
-            //      `window_chrome::apply` via `set_decorations` — frameless on
-            //      the dashboard, native while a shell `data:` page shows.
+            //      `window_chrome::apply` via `set_decorations`.
             //    - macOS: NEVER toggled — the permanent overlay title bar
             //      below keeps the native traffic lights over the HTML top bar,
             //      so `apply` is a no-op there.
+            //    Failure mode is SAFE: an older or broken dashboard that never
+            //    asks for frameless chrome simply keeps the native OS title bar,
+            //    so the window stays movable / minimizable / closable.
             //    Caveats (accepted): Windows Snap Layouts need an `HTMAXBUTTON`
             //    hit-test that an undecorated tao window never reports, so the
             //    maximize-button flyout does not appear; Windows' default
@@ -983,9 +1065,10 @@ fn run_gui() {
             .inner_size(1280.0, 800.0)
             .min_inner_size(900.0, 600.0)
             .resizable(true)
-            // Native chrome at startup; the dashboard load switches it to
-            // frameless (Windows/Linux) — and macOS' Overlay title bar
-            // requires decorations to stay on anyway.
+            // Native chrome is the DEFAULT; only an explicit dashboard request
+            // (`set_custom_titlebar(active: true)`) goes frameless
+            // (Windows/Linux) — and macOS' Overlay title bar requires
+            // decorations to stay on anyway.
             .decorations(true)
             .center();
             // macOS only: a PERMANENT overlay title bar, never toggled. The
@@ -1007,6 +1090,15 @@ fn run_gui() {
                 .traffic_light_position(tauri::LogicalPosition::new(14.0, 16.0));
             builder
                 .on_page_load(move |window, payload| {
+                    // Native chrome is the DEFAULT. Every navigation START
+                    // restores it, so a reload, a shell `data:` page and crash
+                    // recovery all leave the window with its OS title bar — the
+                    // shell never removes the decorations on its own initiative.
+                    // Frameless chrome comes back only when the freshly loaded
+                    // dashboard explicitly asks for it (`set_custom_titlebar`).
+                    if payload.event() == tauri::webview::PageLoadEvent::Started {
+                        window_chrome::apply(&window, window_chrome::ChromeState::Shell);
+                    }
                     // `Finished` fires for ANY finished navigation (including the
                     // `data:` error page and external navigations), so the latch
                     // may only be set for the URL the backend is served on.
@@ -1019,21 +1111,54 @@ fn run_gui() {
                         // real "the dashboard loaded" signal becomes visible in
                         // the log, which is what makes a slow-load incident
                         // diagnosable after the fact.
+                        //
+                        // Deliberately NO chrome change here: the window keeps
+                        // its native OS title bar until the dashboard itself
+                        // asks for frameless chrome, so a dashboard whose
+                        // `#desktop-titlebar` strip is missing or broken stays
+                        // movable/minimizable/closable.
                         if !dashboard_loaded.swap(true, Ordering::SeqCst) {
                             shell_log::log(&format!(
                                 "webview loaded the dashboard ({})",
                                 payload.url()
                             ));
+                            // One-shot diagnostic: on the FIRST load of this
+                            // process, warn if the dashboard never invoked
+                            // `set_custom_titlebar` within ~8s. Native OS chrome
+                            // being the default makes that case SAFE (the window
+                            // stays fully usable) but undiagnosable, so a single
+                            // line names the likely cause: a stale/missing
+                            // dashboard asset bundle whose `app.js` was built
+                            // without the `DesktopTitlebar` hook.
+                            //
+                            // Off the event loop (a plain spawned thread that is
+                            // never joined) and armed once per process, so a
+                            // reload or a crash-recovery reload cannot repeat it
+                            // and nothing here ever blocks or polls.
+                            #[cfg(not(target_os = "macos"))]
+                            {
+                                if CHROME_WARNING_ARMED
+                                    .compare_exchange(
+                                        false,
+                                        true,
+                                        Ordering::SeqCst,
+                                        Ordering::SeqCst,
+                                    )
+                                    .is_ok()
+                                {
+                                    std::thread::spawn(|| {
+                                        std::thread::sleep(std::time::Duration::from_secs(8));
+                                        if should_warn_missing_request(
+                                            CHROME_REQUESTED.load(Ordering::SeqCst),
+                                        ) {
+                                            shell_log::log(
+                                                "window chrome: warning: the dashboard never requested the custom title bar within ~8s of the first dashboard load — keeping the native OS title bar (the safe default); the likely cause is a stale or missing dashboard asset bundle (apps/evo_dash/priv/static/assets/app.js built without the DesktopTitlebar hook) — run `mix assets.deploy` before `mix release genesis_desktop`",
+                                            );
+                                        }
+                                    });
+                                }
+                            }
                         }
-                        // A finished DASHBOARD load is the ONLY signal that
-                        // turns the frameless chrome on. Because every shell
-                        // page navigates back to native chrome, this rule is
-                        // self-healing: after a crash the error page restores
-                        // the OS title bar and the recovery reload turns
-                        // frameless chrome back on. The drag region itself is
-                        // dashboard markup (`#desktop-titlebar` + its drag
-                        // spacer), so the shell injects nothing here.
-                        window_chrome::apply(&window, window_chrome::ChromeState::Dashboard);
                     }
                 })
                 .build()?;
@@ -1587,6 +1712,21 @@ mod tests {
         assert!(
             !quit_needs_confirmation(false, false),
             "backend down and no dashboard → immediate path"
+        );
+    }
+
+    /// The missing-request diagnostic fires ONLY when no `set_custom_titlebar`
+    /// invocation was seen at all; any invocation (even `{active: false}`)
+    /// means the dashboard's hook is alive, so nothing is logged.
+    #[test]
+    fn should_warn_missing_request_truth_table() {
+        assert!(
+            should_warn_missing_request(false),
+            "no set_custom_titlebar invocation → warn about the missing request"
+        );
+        assert!(
+            !should_warn_missing_request(true),
+            "the dashboard's chrome hook ran → no warning"
         );
     }
 
