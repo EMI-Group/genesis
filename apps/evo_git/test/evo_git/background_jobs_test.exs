@@ -779,6 +779,31 @@ defmodule EvoGit.BackgroundJobsTest do
   end
 
   describe "per-owner job cap" do
+    # HOST-DEPENDENT CAPACITY: every start acquires an AgentScheduler TOOL PERMIT
+    # (`BackgroundJobs.start_job_with_handle/2` → `start_with_permit/2` →
+    # `AgentScheduler.acquire_tool_permit/1`) and the permit stays held for the
+    # job's whole lifetime, so filling the cap needs `max_jobs_per_owner/0`
+    # permits AT ONCE. That pool defaults to the host's logical CPU count
+    # (`[:scheduler, :max_tool_concurrency]` → `EvoGit.Platform.cpu_threads/0`)
+    # and `acquire_tool_permit/1` is a `GenServer.call(…, :infinity)` that QUEUES
+    # the caller once the pool is exhausted — so on a host with fewer than ten
+    # CPUs the 5th synthetic slot would block forever and time the test out. Raise
+    # the pool above the cap (never lower it) and restore the previous value, so
+    # no other sync module inherits the raised capacity. The app-global scheduler
+    # is why this module is `async: false`.
+    setup do
+      original = :sys.get_state(EvoGit.AgentScheduler).max_tool_concurrency
+      # Ten live jobs hold ten permits; one more is needed for the REFUSED 11th
+      # start (its permit is acquired before the registry answers the cap error),
+      # plus headroom.
+      wanted = max(original, BackgroundJobs.max_jobs_per_owner() + 2)
+      :ok = EvoGit.AgentScheduler.update_config(max_tool_concurrency: wanted)
+
+      on_exit(fn ->
+        EvoGit.AgentScheduler.update_config(max_tool_concurrency: original)
+      end)
+    end
+
     test "refuses an 11th live job and reports the limit", %{tmp_dir: tmp_dir} do
       # ONE real detached OS job pins that a real child counts toward the cap; the
       # remaining slots are filled with live `:unit`-handle records (the systemd
