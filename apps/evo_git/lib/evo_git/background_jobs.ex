@@ -230,7 +230,7 @@ defmodule EvoGit.BackgroundJobs do
   Reads output produced since the previous read. The job's `:cursor` advances ONLY by the bytes actually returned, so a capped read never loses data: when more output is pending, the returned `:text` ends with `"[... more output pending; call job_output again]"`.
   Options: `:max_bytes` — maximum number of output bytes returned BY THIS CALL (positive integer, default `#{@default_max_bytes}`; bytes beyond the cap stay unread for the next call); `:owner_pid` — fences ownership (another owner's job is an error).
   Returns `{:ok, %{text: String.t(), job: job}}` or `{:error, message}` — one actionable prose sentence (unknown/foreign job, missing output file, bad `:max_bytes`, unreachable registry).
-  A missing output log is a legitimate cause distinct from retention eviction: when the job's per-task scratch directory is reclaimed at task end the log is deleted, so the answer names that path and cause, points at `job/2` for the real status, and does NOT change the recorded status.
+  A missing output log is a legitimate cause distinct from retention eviction, and reclaiming a per-task scratch directory at task end is one legitimate way a log disappears (an external cleanup can remove it too), so the answer names that path and the OS reason it was absent, points at `job/2` for the real status, and does NOT change the recorded status.
   A tombstone serves the surviving log tail from its saved cursor (advancing it), and when the log file is gone it returns one honest `{:error, message}` naming the final status/exit code, the retention eviction and the former log path — never an "unknown job" message.
   """
   @spec read(String.t(), keyword()) ::
@@ -1768,7 +1768,7 @@ defmodule EvoGit.BackgroundJobs do
 
       {:error, reason} ->
         {:error,
-         "The output log for background job #{inspect(job.id)} is missing at #{path} (#{describe(reason)}). A per-task scratch directory is reclaimed when its task ends, which deletes the log, so this is not a status change — call `job/2` for the real status and start a new background job to capture output again."}
+         "The output log for background job #{inspect(job.id)} is missing at #{path} (#{describe(reason)}). If this job's task has ended, its per-task scratch directory was reclaimed together with the log; either way the job's recorded status is unchanged — call `job/2` for the real status, and start a new background job to capture output again."}
     end
   end
 
