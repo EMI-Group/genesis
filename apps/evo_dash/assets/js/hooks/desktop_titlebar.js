@@ -1,42 +1,91 @@
 // Desktop title bar hook: drives the strip a Tauri window shows above the
 // dashboard (`#desktop-titlebar`), which the server only renders when it
-// detected desktop mode. A normal browser never reaches the controls: the strip
-// is hidden and `data-desktop` is dropped from `#app-layout`, so
-// `--shell-titlebar-h` falls back to 0 and the fixed chrome offsets keep their
-// browser values.
+// detected desktop mode.
+//
+// The CLIENT is never the visibility authority: the strip is always visible and
+// `data-desktop` on `#app-layout` is never touched, because a missing Tauri
+// handle must not leave a chrome-less desktop window (that regression hid the
+// strip while the shell had already dropped its native decorations). A missing
+// handle keeps the strip visible but INERT and logs loudly.
 //
 // DOM contract (the Elixir side owns the markup; this hook only reads it):
 //   * the hook mounts on `#desktop-titlebar[data-os="macos|windows|linux|unknown"]`;
-//     the strip itself is the Tauri drag region and double-click-to-maximize
-//     comes free from the shell, so the hook never wires dragging.
+//     there is NO `data-tauri-drag-region` any more — the hook owns dragging
+//     (one `pointerdown` → `startDragging()`, one `dblclick` → `toggleMaximize()`)
+//     for every non-interactive target, which naturally covers the
+//     `.desktop-titlebar-drag` spacer as a child of the strip.
 //   * `#desktop-titlebar-minimize`, `#desktop-titlebar-maximize` (carrying the
 //     `.desktop-titlebar-glyph-maximize` / `.desktop-titlebar-glyph-restore`
 //     SVGs, the restore one starting with the `hidden` class) and
-//     `#desktop-titlebar-close` exist on Windows/Linux only — macOS keeps its
-//     native traffic lights, so there are no controls to bind there.
+//     `#desktop-titlebar-close` are rendered on EVERY OS except macOS, an
+//     unknown OS included — macOS keeps its native traffic lights.
 //   * close calls the window's `close()`: the Rust shell intercepts
 //     `CloseRequested` and hides to the tray, so it is NEVER a quit.
+//   * frameless chrome is requested by the DASHBOARD, only after the strip is
+//     live: `set_custom_titlebar {active: true}` once the handle is acquired and
+//     every listener is bound, and `{active: false}` on `pagehide`,
+//     `beforeunload` or teardown so native OS chrome comes back.
 // The OS comes from the server-rendered `data-os`; `window.__TAURI__.os` is not
 // available in the dashboard and must never be used.
 
 // --- DesktopTitlebar: pure chrome decision
 // The ONE place the OS/window-state → chrome decision lives. Total and
 // side-effect free so `desktop_titlebar.test.cjs` can run this block through
-// node:vm. `visible` is false without the Tauri shell; macOS and an unknown OS
-// get NO window controls (macOS keeps its native traffic lights); the middle
-// control of a windows/linux strip is "maximize" or "restore" and `maxLabel`
-// mirrors it (the English label the server also renders).
+// node:vm.
+//   * `visible` is ALWAYS true: the server only renders the strip in desktop
+//     mode, so hiding it (and dropping `data-desktop`, and with it the reserved
+//     `--shell-titlebar-h`) from the client is the regression, never a fix.
+//   * `interactive` says whether window IPC is available (`isTauri === true`,
+//     strictly — no truthiness coercion).
+//   * `controls` is minimize / maximize-or-restore / close for EVERY OS that is
+//     not exactly "macos" (an unknown or missing OS is a windowed OS, never a
+//     control-less one); macOS keeps its native traffic lights, so it gets none.
+//   * `maxLabel` mirrors the middle control ("maximize" or "restore"), the
+//     English label the server also renders.
+const INTERACTIVE_TAGS = ["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "LABEL", "SUMMARY"]
+const INTERACTIVE_ROLES = ["button", "link", "menuitem", "tab", "checkbox", "radio", "switch", "option"]
+
 function chromeState(state = {}) {
   const {isTauri, os, isMaximized} = state || {}
-  const visible = isTauri === true
-  const windowed = os === "windows" || os === "linux"
+  const visible = true
+  const interactive = isTauri === true
   const middle = isMaximized === true ? "restore" : "maximize"
-  const controls = visible && windowed ? ["minimize", middle, "close"] : []
-  return {visible, controls, maxLabel: middle}
+  const controls = os === "macos" ? [] : ["minimize", middle, "close"]
+  return {visible, interactive, controls, maxLabel: middle}
+}
+
+// Pure: should a primary-button press on `el` start a window drag? True only
+// when neither `el` nor ANY ancestor is interactive, so a press on a control
+// (or on a link/input inside the strip) keeps its native behaviour. Duck-typed
+// on purpose — it runs in node:vm with no DOM.
+function isDragTarget(el) {
+  if (!el || typeof el !== "object" || !el.tagName) return false
+  let node = el
+  while (node && node.tagName) {
+    if (INTERACTIVE_TAGS.includes(String(node.tagName).toUpperCase())) return false
+    if (node.isContentEditable === true) return false
+    if (typeof node.getAttribute === "function") {
+      const contentEditable = node.getAttribute("contenteditable")
+      if (contentEditable !== null && contentEditable !== undefined && String(contentEditable).toLowerCase() !== "false") {
+        return false
+      }
+      const tabindex = node.getAttribute("tabindex")
+      if (tabindex !== null && tabindex !== undefined) {
+        const value = String(tabindex).trim() === "" ? 0 : Number(tabindex)
+        if (!Number.isNaN(value) && value >= 0) return false
+      }
+      const role = node.getAttribute("role")
+      if (role !== null && role !== undefined && INTERACTIVE_ROLES.includes(String(role).toLowerCase())) return false
+    }
+    node = node.parentElement
+  }
+  return true
 }
 // DesktopTitlebar hook:
 
 const MAXIMIZE_DEBOUNCE_MS = 50
+
+const CUSTOM_TITLEBAR_COMMAND = "set_custom_titlebar"
 
 // The English labels the server renders on the maximize control; the hook only
 // swaps between these two, never to a translated string (gettext lives in HEEx).
@@ -66,23 +115,30 @@ const DesktopTitlebar = {
       return
     }
 
-    this._controls = []
+    this._listeners = []
     this._unlisten = null
     this._unlistenPromise = null
     this._maxTimer = null
     this._win = null
     this._os = this.el.dataset.os || "unknown"
     this._maximized = false
-    this._hidden = false
     this._disposed = false
+    this._chromeRequested = false
+    this._pageHideHandler = null
 
     const win = this._currentWindow()
-    const state = chromeState({isTauri: win !== null, os: this._os, isMaximized: false})
-    if (!state.visible) {
-      this.hide()
+    if (!win) {
+      // NEVER hide the strip and NEVER drop `data-desktop`: without a handle the
+      // window keeps its native decorations, and a hidden strip would leave the
+      // user with no chrome at all (an unclosable, unmovable desktop window).
+      console.error(
+        "[desktop-titlebar] no Tauri window handle: the title bar strip stays visible but inert and the native OS chrome remains (stale shell build?). " +
+          "Rebuild the desktop shell to get a frameless title bar with window controls."
+      )
       return
     }
 
+    const state = chromeState({isTauri: true, os: this._os, isMaximized: false})
     this._win = win
     this.el.dataset[BOUND_FLAG] = "true"
 
@@ -98,34 +154,28 @@ const DesktopTitlebar = {
       this._bindControl("close", () => this._win.close())
     }
 
+    // The hook owns window dragging now (the markup carries no
+    // `data-tauri-drag-region`).
+    this._bindDrag()
+
     this._watchResized()
     this._refreshMaximized()
+    // Frameless chrome is requested by the dashboard, and only once the strip is
+    // live — a failure here leaves the native title bar in place (safe).
+    this._requestFrameless()
+    this._bindPageHide()
   },
   updated() {
     if (!this.el || this._inactive) return
     // A patch can rewrite the server-rendered markup (the glyph classes,
-    // data-maximized, aria-label/title) and re-add data-desktop; re-assert the
-    // last known state instead of re-binding anything.
-    if (this._hidden) {
-      this.hide()
-      return
-    }
+    // data-maximized, aria-label/title); re-assert the last known state instead
+    // of re-binding anything.
     if (this.el.dataset[BOUND_FLAG] !== "true") return
     this._applyMaximized(this._maximized)
   },
   destroyed() {
     if (this._inactive) return
     this.teardown()
-  },
-
-  // Outside the shell (or without a usable window handle) the strip is hidden
-  // WITHOUT removing it (LiveView keeps patching it) and `data-desktop` is
-  // dropped so `--shell-titlebar-h` falls back to 0 — no leftover layout gap.
-  hide() {
-    this._hidden = true
-    if (this.el) this.el.style.display = "none"
-    const layout = document.getElementById("app-layout")
-    if (layout) layout.removeAttribute("data-desktop")
   },
 
   _currentWindow() {
@@ -146,6 +196,13 @@ const DesktopTitlebar = {
     }
   },
 
+  // ONE place that registers a DOM listener, so teardown releases every one.
+  _listen(target, type, handler) {
+    if (!target || typeof target.addEventListener !== "function") return
+    target.addEventListener(type, handler)
+    this._listeners.push({target, type, handler})
+  },
+
   _bindControl(name, call) {
     const button = this.el.querySelector(`#${CONTROL_IDS[name]}`)
     if (!button) return
@@ -153,8 +210,23 @@ const DesktopTitlebar = {
       if (event) event.preventDefault()
       this._invoke(name, call)
     }
-    button.addEventListener("click", handler)
-    this._controls.push({button, handler})
+    this._listen(button, "click", handler)
+  },
+
+  // Dragging and double-click-to-zoom both live on the strip root so the
+  // `.desktop-titlebar-drag` spacer is covered as a child; `isDragTarget/1`
+  // keeps interactive descendants out of both. No `preventDefault()` on the
+  // press — that would break text selection in inputs.
+  _bindDrag() {
+    this._listen(this.el, "pointerdown", (event) => {
+      if (!event || event.button !== 0) return
+      if (!isDragTarget(event.target)) return
+      this._invoke("startDragging", () => this._win.startDragging())
+    })
+    this._listen(this.el, "dblclick", (event) => {
+      if (!event || !isDragTarget(event.target)) return
+      this._invoke("toggleMaximize", () => this._win.toggleMaximize())
+    })
   },
 
   // Every IPC call is wrapped: a rejection or a synchronous throw is logged
@@ -170,6 +242,45 @@ const DesktopTitlebar = {
     if (result && typeof result.then === "function") {
       result.then(undefined, (err) => console.error(`[desktop-titlebar] ${name} failed:`, err))
     }
+  },
+
+  // `set_custom_titlebar {active: true}` tells the Rust shell to go frameless;
+  // without the command (stale shell build) the native title bar simply stays —
+  // never throw, never retry.
+  _invokeChrome(active) {
+    const core = window.__TAURI__ && window.__TAURI__.core
+    const invoke = core && core.invoke
+    if (typeof invoke !== "function") {
+      console.error(
+        `[desktop-titlebar] window.__TAURI__.core.invoke unavailable: cannot request ${CUSTOM_TITLEBAR_COMMAND} (active: ${active}) — stale shell build? The native title bar stays.`
+      )
+      return
+    }
+    this._invoke(`core.invoke ${CUSTOM_TITLEBAR_COMMAND}`, () => invoke.call(core, CUSTOM_TITLEBAR_COMMAND, {active}))
+  },
+
+  // Only ever one `true` request per instance; `_chromeRequested` is what makes
+  // teardown / pagehide send `false` at most once, and only after a real `true`.
+  _requestFrameless() {
+    if (this._chromeRequested) return
+    this._chromeRequested = true
+    this._invokeChrome(true)
+  },
+
+  _releaseFrameless() {
+    if (!this._chromeRequested) return
+    this._chromeRequested = false
+    this._invokeChrome(false)
+  },
+
+  // The shell must restore native OS chrome when the page goes away, otherwise
+  // the next window can be left frameless with no dashboard to ask again.
+  _bindPageHide() {
+    if (typeof window.addEventListener !== "function") return
+    const handler = () => this._releaseFrameless()
+    this._pageHideHandler = handler
+    window.addEventListener("pagehide", handler)
+    window.addEventListener("beforeunload", handler)
   },
 
   _watchResized() {
@@ -254,15 +365,16 @@ const DesktopTitlebar = {
 
   teardown() {
     this._disposed = true
-    this._hidden = false
     if (this._maxTimer) {
       clearTimeout(this._maxTimer)
       this._maxTimer = null
     }
-    ;(this._controls || []).forEach(({button, handler}) => {
-      button.removeEventListener("click", handler)
+    ;(this._listeners || []).forEach(({target, type, handler}) => {
+      if (target && typeof target.removeEventListener === "function") {
+        target.removeEventListener(type, handler)
+      }
     })
-    this._controls = []
+    this._listeners = []
     // Safe if the resize subscription has not resolved yet: nulling the
     // promise makes its then-callback unlisten immediately instead of storing.
     this._unlistenPromise = null
@@ -270,6 +382,13 @@ const DesktopTitlebar = {
       this._unlisten()
       this._unlisten = null
     }
+    if (this._pageHideHandler && typeof window !== "undefined" && typeof window.removeEventListener === "function") {
+      window.removeEventListener("pagehide", this._pageHideHandler)
+      window.removeEventListener("beforeunload", this._pageHideHandler)
+    }
+    this._pageHideHandler = null
+    // Native chrome comes back only when a `true` request actually went out.
+    this._releaseFrameless()
     if (this.el && this.el.dataset[BOUND_FLAG] === "true") {
       delete this.el.dataset[BOUND_FLAG]
     }
@@ -277,5 +396,5 @@ const DesktopTitlebar = {
   }
 }
 
-export {DesktopTitlebar, chromeState}
+export {DesktopTitlebar, chromeState, isDragTarget}
 export default DesktopTitlebar
