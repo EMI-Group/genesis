@@ -370,6 +370,182 @@ defmodule EvoGit.Adapters.GitTest do
     end
   end
 
+  describe "merge commits and the co-author trailer" do
+    # Each test resolves config through its OWN isolated config directory
+    # (`ConfigDir.isolate!/1`), so `save_user_config/1` never touches the real
+    # `~/.config/genesis/config.toml` and the `:persistent_term` config cache
+    # (keyed by file path) cannot collide with another module's.
+    setup do
+      EvoGit.TestSupport.ConfigDir.isolate!("evogit-git-adapter-merge-trailer")
+      :ok
+    end
+
+    test "merge/2 appends the trailer to the merge commit it creates", %{tmp_dir: tmp_dir} do
+      set_co_author!(true)
+      {_branch, feature_sha} = divergent_branches!(tmp_dir)
+
+      assert {:ok, _} = Git.merge(tmp_dir, feature_sha)
+
+      body = git!(tmp_dir, ["log", "-1", "--pretty=%B"])
+      # git's OWN default merge message is preserved...
+      assert body =~ ~r/\AMerge /
+      # ...and exactly ONE co-author trailer line was appended.
+      assert body |> String.split("\n") |> Enum.count(&(&1 == co_author_line())) == 1
+      # A merge commit, not a fast-forward.
+      assert parent_count(tmp_dir) == 2
+    end
+
+    test "merge_octopus/2 appends the trailer to the octopus merge commit", %{tmp_dir: tmp_dir} do
+      set_co_author!(true)
+      {_branch, octopus_shas} = octopus_branches!(tmp_dir)
+
+      assert {:ok, _} = Git.merge_octopus(tmp_dir, octopus_shas)
+
+      body = git!(tmp_dir, ["log", "-1", "--pretty=%B"])
+      assert body =~ ~r/\AMerge /
+      assert body |> String.split("\n") |> Enum.count(&(&1 == co_author_line())) == 1
+      assert parent_count(tmp_dir) >= 3
+    end
+
+    test "a disabled setting leaves the merge commit body untouched", %{tmp_dir: tmp_dir} do
+      set_co_author!(false)
+      {_branch, feature_sha} = divergent_branches!(tmp_dir)
+
+      assert {:ok, _} = Git.merge(tmp_dir, feature_sha)
+
+      body = git!(tmp_dir, ["log", "-1", "--pretty=%B"])
+      assert body =~ ~r/\AMerge /
+      refute body =~ "Co-Authored-By:"
+      assert parent_count(tmp_dir) == 2
+    end
+
+    test "a fast-forward merge creates no commit and adds no trailer", %{tmp_dir: tmp_dir} do
+      set_co_author!(true)
+      {ff_sha, ff_message} = fast_forwardable!(tmp_dir)
+
+      assert {:ok, _} = Git.merge(tmp_dir, ff_sha)
+
+      # HEAD is EXACTLY the merged commit: no merge commit, no trailer.
+      assert git!(tmp_dir, ["rev-parse", "HEAD"]) == ff_sha
+      assert git!(tmp_dir, ["log", "-1", "--pretty=%B"]) == ff_message
+      assert parent_count(tmp_dir) == 1
+
+      # Merging the same commit again is a no-op ("Already up to date."): HEAD
+      # does not move, so nothing is appended either.
+      assert {:ok, _} = Git.merge(tmp_dir, ff_sha)
+      assert git!(tmp_dir, ["rev-parse", "HEAD"]) == ff_sha
+      assert git!(tmp_dir, ["log", "-1", "--pretty=%B"]) == ff_message
+      assert parent_count(tmp_dir) == 1
+    end
+
+    # Writes the requested value through the same config seam production uses.
+    defp set_co_author!(enabled) do
+      assert :ok =
+               EvoGit.Config.save_user_config(%{git: %{co_authored_by_enabled: enabled}})
+
+      assert EvoGit.Config.resolve([:git, :co_authored_by_enabled]) == enabled
+    end
+
+    defp co_author_line, do: "Co-Authored-By: Genesis <noreply@evogit.ai>"
+
+    # Initial commit on the default branch + a `feature` branch diverging from
+    # it with its own commit, with the default branch left checked out at its
+    # own divergent commit. Returns `{current_branch, feature_sha}` — merging
+    # `feature_sha` therefore CANNOT fast-forward.
+    defp divergent_branches!(repo) do
+      File.write!(Path.join(repo, "a.txt"), "initial\n")
+      {:ok, _} = Git.add(repo, "a.txt")
+      {:ok, _} = Git.commit(repo, "Initial commit")
+      {:ok, base} = Git.rev_parse(repo, "HEAD")
+      {:ok, branch} = Git.current_branch(repo)
+
+      {:ok, _} = Git.create_branch(repo, "feature", base)
+      {:ok, _} = Git.checkout(repo, "feature")
+      File.write!(Path.join(repo, "feature.txt"), "feature\n")
+      {:ok, _} = Git.add(repo, "feature.txt")
+      {:ok, _} = Git.commit(repo, "Feature commit")
+
+      {:ok, _} = Git.checkout(repo, branch)
+      File.write!(Path.join(repo, "main.txt"), "main\n")
+      {:ok, _} = Git.add(repo, "main.txt")
+      {:ok, _} = Git.commit(repo, "Main commit")
+
+      {:ok, feature_sha} = Git.rev_parse(repo, "feature")
+      {branch, feature_sha}
+    end
+
+    # Two sibling branches off one base commit, each with its own file, and the
+    # default branch diverging from that base with its own commit — so merging
+    # both heads is a real octopus merge (HEAD cannot fast-forward to either).
+    defp octopus_branches!(repo) do
+      File.write!(Path.join(repo, "a.txt"), "initial\n")
+      {:ok, _} = Git.add(repo, "a.txt")
+      {:ok, _} = Git.commit(repo, "Initial commit")
+      {:ok, base} = Git.rev_parse(repo, "HEAD")
+      {:ok, branch} = Git.current_branch(repo)
+
+      shas =
+        for {name, file} <- [{"oct1", "one.txt"}, {"oct2", "two.txt"}] do
+          {:ok, _} = Git.create_branch(repo, name, base)
+          {:ok, _} = Git.checkout(repo, name)
+          File.write!(Path.join(repo, file), name <> "\n")
+          {:ok, _} = Git.add(repo, file)
+          {:ok, _} = Git.commit(repo, "Commit on #{name}")
+          {:ok, sha} = Git.rev_parse(repo, name)
+          sha
+        end
+
+      {:ok, _} = Git.checkout(repo, branch)
+      File.write!(Path.join(repo, "main.txt"), "main\n")
+      {:ok, _} = Git.add(repo, "main.txt")
+      {:ok, _} = Git.commit(repo, "Main commit")
+
+      {branch, shas}
+    end
+
+    # One commit on a `ff` branch off the base, with the default branch left at
+    # the base — merging `ff` fast-forwards. The fixture commit is created with
+    # raw git so its message carries NO trailer of its own (the assertion then
+    # proves the MERGE added nothing). Returns `{ff_sha, ff_message}`.
+    defp fast_forwardable!(repo) do
+      message = "Fast-forward commit"
+
+      File.write!(Path.join(repo, "a.txt"), "initial\n")
+      {:ok, _} = Git.add(repo, "a.txt")
+      {:ok, _} = Git.commit(repo, "Initial commit")
+      {:ok, base} = Git.rev_parse(repo, "HEAD")
+      {:ok, branch} = Git.current_branch(repo)
+
+      {:ok, _} = Git.create_branch(repo, "ff", base)
+      {:ok, _} = Git.checkout(repo, "ff")
+      File.write!(Path.join(repo, "ff.txt"), "ff\n")
+      git!(repo, ["add", "ff.txt"])
+      git!(repo, ["commit", "-m", message])
+      {:ok, ff_sha} = Git.rev_parse(repo, "HEAD")
+
+      {:ok, _} = Git.checkout(repo, branch)
+      {ff_sha, message}
+    end
+
+    # Raw git invocation used purely for assertions. Forces LC_ALL=C so the
+    # parsed messages are locale-stable.
+    defp git!(repo, args) do
+      {out, code} =
+        System.cmd("git", args, cd: repo, stderr_to_stdout: true, env: [{"LC_ALL", "C"}])
+
+      assert code == 0, "git #{Enum.join(args, " ")} exited #{code}:\n#{out}"
+      String.trim(out)
+    end
+
+    defp parent_count(repo) do
+      repo
+      |> git!(["rev-list", "--parents", "-n", "1", "HEAD"])
+      |> String.split()
+      |> length()
+      |> Kernel.-(1)
+    end
+  end
+
   describe "clone, fetch, merge_ff_only, rev_parse_short, remote_url" do
     test "clone/3 shallow-clones a repository and clone/2 works with defaults", %{
       tmp_dir: tmp_dir

@@ -6,9 +6,9 @@ defmodule EvoGit.Agent.Tools.Shared do
   @curly_quotes ~r/\x{2018}|\x{2019}|\x{201C}|\x{201D}/u
 
   # Appended to every commit message this module writes, but ONLY when
-  # `[:git, :co_authored_by_enabled]` is not `false` (see `co_author_trailer/0`).
+  # `[:git, :co_authored_by_enabled]` is not `false` (see
+  # `EvoGit.GitEnv.commit_trailer/0`, which owns the trailer string).
   # Never hardcode a username anywhere else.
-  @co_author_trailer "\n\nCo-Authored-By: Genesis <noreply@evogit.ai>"
 
   # `git commit` exits 1 when nothing was staged. Every wording below means
   # "there was nothing to commit" (a no-op, not a failure) — git picks one of
@@ -949,7 +949,7 @@ defmodule EvoGit.Agent.Tools.Shared do
     temp_path = commit_message_file_path()
 
     try do
-      case File.write(temp_path, message <> co_author_trailer()) do
+      case File.write(temp_path, message <> EvoGit.GitEnv.commit_trailer()) do
         :ok ->
           run_sandboxed_git(
             repo_path,
@@ -989,12 +989,6 @@ defmodule EvoGit.Agent.Tools.Shared do
       "genesis_git_commit_msg_#{System.pid()}_" <>
         "#{System.unique_integer([:positive, :monotonic])}.txt"
     )
-  end
-
-  defp co_author_trailer do
-    if EvoGit.Config.resolve([:git, :co_authored_by_enabled]) != false,
-      do: @co_author_trailer,
-      else: ""
   end
 
   # MSYS2 (git-for-Windows) mangles backslashes in argv elements; forward
