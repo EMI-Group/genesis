@@ -150,6 +150,7 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   @doc """
   Persists conversation state. Unsaved browser and workbench drafts keep their
   edits in the temporary draft store until a message or a task starts a conversation.
+  An interactive start keeps that draft until the runtime returns a session ID.
 
   Writes are gated on the AUTHORITATIVE-state signature: a lifecycle or
   structural change writes immediately, `force: true` always writes, and pure
@@ -164,6 +165,11 @@ defmodule EvoDashWeb.HomeLive.ChatState do
       key = draft_key(assigns)
 
       cond do
+        match?(%{kind: :start}, assigns[:send_pending]) ->
+          # The optimistic transcript still has the draft's ID. Persisting it
+          # would leave an ended row under that ID after session adoption.
+          :ok
+
         is_nil(key) or conversation?(assigns) ->
           state = build(assigns)
 

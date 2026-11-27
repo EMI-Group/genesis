@@ -400,7 +400,6 @@ defmodule EvoDashWeb.HomeLive.SendPath do
           prev: prev
         }
       )
-      |> ChatState.persist()
 
     case SafeCall.start(self(), {:chat_send_result, seq}, fn ->
            SessionActions.start(node, opts)

@@ -2129,15 +2129,15 @@ defmodule EvoDashWeb.SystemLive do
 
   defp tool_badge(assigns) do
     ~H"""
-    <div class="flex items-center gap-1.5">
+    <div class="flex min-w-0 max-w-full items-start gap-1.5">
       <%= if @check.available do %>
-        <.icon name="hero-check-circle" class="size-4 text-success" />
-        <span class="text-sm">{@name}</span>
-        <span class="text-xs text-base-content/60">{@check.version}</span>
+        <.icon name="hero-check-circle" class="mt-0.5 size-4 shrink-0 text-success" />
+        <span class="shrink-0 whitespace-nowrap text-sm">{@name}</span>
+        <span class="min-w-0 whitespace-pre-line wrap-anywhere text-xs text-base-content/60">{@check.version}</span>
       <% else %>
-        <.icon name="hero-x-circle" class="size-4 text-error" />
-        <span class="text-sm text-error">{@name}</span>
-        <span class="text-xs text-error/60">{@check.error}</span>
+        <.icon name="hero-x-circle" class="mt-0.5 size-4 shrink-0 text-error" />
+        <span class="shrink-0 whitespace-nowrap text-sm text-error">{@name}</span>
+        <span class="min-w-0 whitespace-pre-line wrap-anywhere text-xs text-error/60">{@check.error}</span>
       <% end %>
     </div>
     """

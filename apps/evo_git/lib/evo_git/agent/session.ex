@@ -1684,6 +1684,7 @@ defmodule EvoGit.Agent.Session do
           data.state.turn
         )
 
+      message = %{message | metadata: Map.put(message.metadata || %{}, :user_authored, false)}
       state = %{data.state | context: ReqLLM.Context.append(data.state.context, message)}
       Persistence.checkpoint(data.state, state)
       {:ok, %{data | dispatch_ctx: ctx, state: state}}

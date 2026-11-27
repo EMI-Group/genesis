@@ -170,13 +170,23 @@ defmodule EvoDashWeb.HomeLive.DisplayMessagesTest do
         "[URGENT] Turn budget nearly exhausted.",
         @refresh_prefix <> " SUPERSEDES any earlier <context> snapshot.",
         "You have exceeded your turn budget. Wrap up now.",
-        "The task is being cancelled by the user. Save your work."
+        "The task is being cancelled by the user. Save your work.",
+        "Authoritative selected project: none. This supersedes earlier selections; existing tasks keep their original project.",
+        "Authoritative selected project: /tmp/project. This supersedes earlier selections; existing tasks keep their original project."
       ]
 
       for body <- bodies do
         assert DisplayMessages.bubble(text_message(:user, body)) == nil,
                "expected #{inspect(body)} to be dropped"
       end
+    end
+
+    test "a user can quote the project-selection notice" do
+      text =
+        "Authoritative selected project: none. This supersedes earlier selections; existing tasks keep their original project."
+
+      assert DisplayMessages.bubble(text_message(:user, text, %{user_authored: true})) ==
+               {:user, text}
     end
 
     test "plain user text still renders when the marker is absent" do

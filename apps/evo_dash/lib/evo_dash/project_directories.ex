@@ -7,6 +7,18 @@ defmodule EvoDash.ProjectDirectories do
 
   # The filesystem and path functions run on the selected node, including
   # its Path implementation. Older Genesis releases already export these APIs.
+  def browse(target, :drives) do
+    roots = for letter <- ?a..?z, do: <<letter, ?:, ?/>>
+
+    with {:ok, {:win32, _}} <- RemoteNode.call_remote(target, :os, :type, []),
+         {:ok, available} <- RemoteNode.call_remote(target, Enum, :filter, [roots, &File.dir?/1]) do
+      entries = Enum.map(available, &%{name: String.upcase(&1), path: &1})
+      {:ok, %{path: nil, parent: nil, windows?: true, entries: entries}}
+    else
+      _ -> {:error, :directory_unavailable}
+    end
+  end
+
   def browse(target, requested) do
     with {:ok, path} <- directory_path(target, requested),
          {:ok, {:ok, names}} <- RemoteNode.call_remote(target, File, :ls, [path]),
@@ -28,7 +40,16 @@ defmodule EvoDash.ProjectDirectories do
         |> Enum.map(fn {name, full} -> %{name: name, path: full} end)
         |> Enum.sort_by(&{String.downcase(&1.name), &1.name})
 
-      {:ok, %{path: path, parent: if(path == parent, do: nil, else: parent), entries: entries}}
+      windows? = match?({:ok, {:win32, _}}, RemoteNode.call_remote(target, :os, :type, []))
+
+      parent =
+        cond do
+          path != parent -> parent
+          windows? -> :drives
+          true -> nil
+        end
+
+      {:ok, %{path: path, parent: parent, windows?: windows?, entries: entries}}
     else
       {:ok, {:error, reason}} when is_atom(reason) -> {:error, reason}
       {:error, :absolute_path_required} -> {:error, :absolute_path_required}
