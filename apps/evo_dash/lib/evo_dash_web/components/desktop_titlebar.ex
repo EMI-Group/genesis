@@ -2,47 +2,56 @@ defmodule EvoDashWeb.DesktopTitlebar do
   @moduledoc """
   Desktop-only layer-0 chrome: the custom window title bar of the Tauri shell.
 
-  The shell makes the window frameless on Windows/Linux (restoring native
-  decorations only while a shell boot/error page shows) and uses a macOS
-  overlay title bar with a hidden title, so the dashboard renders its own
-  full-width strip at the very top of the app shell. The strip is IN FLOW —
-  the first child of `#app-layout`, which is a flex column — so it needs no
-  z-index; its surface and hairline come from `--surface-shell` /
+  The shell KEEPS the native OS decorations until the dashboard explicitly asks
+  for frameless chrome through the Tauri command `set_custom_titlebar` with
+  `%{active: true}`, which the `DesktopTitlebar` JS hook calls once the strip is
+  live.
+  Sending `%{active: false}` — or starting any navigation — restores the native
+  chrome, so a strip that never mounts leaves the native OS title bar in place
+  instead of an unclosable chrome-less window.
+  macOS additionally uses an overlay title bar with a hidden title, so the
+  native traffic lights hover over the dashboard's own strip, which reserves
+  that space through CSS.
+  The strip is rendered for every desktop page (only when the `:desktop?`
+  on-mount assign is true) as the FIRST child of the app shell.
+  It is IN FLOW — the first child of `#app-layout`, which is a flex column — so
+  it needs no z-index; its surface and hairline come from `--surface-shell` /
   `--border-hairline` and its height from `--shell-titlebar-h` in
   `assets/css/workbench.css`.
 
-  Stable element contract (the Rust shell and `DesktopTitlebar` JS hook only
-  read attributes, never text):
+  Stable element contract (the `DesktopTitlebar` JS hook only reads
+  attributes, never text):
 
     * `#desktop-titlebar` — the strip root, `data-os` (`linux|macos|windows|unknown`)
     * `.desktop-titlebar-brand` — the shared brand link (`brand/1`)
-    * `.desktop-titlebar-drag` — the flex drag spacer
-    * `.desktop-titlebar-controls` — Windows/Linux only; macOS renders none
-      (its native traffic lights hover over the strip, which reserves that
-      space through CSS)
+    * `.desktop-titlebar-drag` — the flex spacer between brand and controls
+    * `.desktop-titlebar-controls` — rendered on EVERY non-macOS OS
+      (`windows`, `linux` and an `unknown` OS, which is treated as windowed);
+      macOS renders none because its native traffic lights hover over the strip
     * `#desktop-titlebar-minimize` / `#desktop-titlebar-maximize` /
       `#desktop-titlebar-close` — the three window controls
     * `.desktop-titlebar-glyph-maximize` / `.desktop-titlebar-glyph-restore` —
       the maximize button's two glyphs; the hook toggles the `hidden` CLASS
       because an SVG element ignores the `hidden` attribute
 
-  `data-tauri-drag-region` sits ONLY on the strip root and the drag spacer:
-  Tauri starts a window drag only when the event target itself carries the
-  attribute, so clicks on the brand link and the control buttons still work.
-
-  Rendered only when the `:desktop?` on-mount assign is true; a dead view or
-  an error page never runs that hook and therefore renders no strip.
+  The `DesktopTitlebar` JS hook owns pointer dragging and title-bar
+  double-click maximize, so there is exactly ONE drag path.
+  There is deliberately NO `data-tauri-drag-region` attribute anywhere in this
+  markup: Tauri injects its own document-level drag handler whenever that
+  attribute is present, which would double-fire against the hook's pointer
+  handler.
   """
 
   use EvoDashWeb, :html
 
   @doc """
-  The window title bar strip — brand, drag spacer, and (Windows/Linux only)
-  the minimize / maximize / close controls.
+  The window title bar strip — brand, drag spacer, and the minimize /
+  maximize / close controls (every OS except macOS).
   """
   attr(:os, :atom,
     default: :unknown,
-    doc: "the host OS (`:linux | :macos | :windows | :unknown`) — macOS renders no controls"
+    doc:
+      "the host OS (`:linux | :macos | :windows | :unknown`); every OS except macOS renders the window controls, and an `unknown` OS is treated as windowed"
   )
 
   attr(:current_node_id, :string,
@@ -56,7 +65,6 @@ defmodule EvoDashWeb.DesktopTitlebar do
       id="desktop-titlebar"
       class="desktop-titlebar"
       data-os={to_string(@os)}
-      data-tauri-drag-region
       role="group"
       aria-label={gettext("Application window")}
       phx-hook="DesktopTitlebar"
@@ -67,8 +75,8 @@ defmodule EvoDashWeb.DesktopTitlebar do
         label_class="text-sm"
         link_class="desktop-titlebar-brand"
       />
-      <div class="desktop-titlebar-drag" data-tauri-drag-region aria-hidden="true"></div>
-      <div :if={@os in [:windows, :linux]} class="desktop-titlebar-controls">
+      <div class="desktop-titlebar-drag" aria-hidden="true"></div>
+      <div :if={@os not in [:macos]} class="desktop-titlebar-controls">
         <button
           id="desktop-titlebar-minimize"
           type="button"
