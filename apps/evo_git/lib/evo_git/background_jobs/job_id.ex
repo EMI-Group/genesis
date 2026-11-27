@@ -52,7 +52,7 @@ defmodule EvoGit.BackgroundJobs.JobId do
 
   `taken` is a map keyed by id, a `MapSet` of ids, or a 1-arity fun `(id -> boolean)`; all three become ONE predicate. Anything else raises `ArgumentError`.
 
-  Options: `:candidate_source`, a 0-arity fun returning a non-negative integer (test seam only) used instead of the crypto default.
+  Options: `:candidate_source`, a 0-arity fun returning a non-negative integer (test seam only) used instead of the crypto default; `:attempts`, the maximum number of consecutive TAKEN candidates tried before `{:error, :id_space_exhausted}` (test seam only, a positive integer, default `space/0` = one full pass — the production bound is unreachable from a suite because the space is 36^#{@payload_max}).
 
   On a collision the candidate advances deterministically by one in payload space, so an id held by a live job OR a tombstone is never reissued while any answer for it exists. After one full pass of the space with every candidate taken the answer is `{:error, :id_space_exhausted}`.
   """
@@ -61,8 +61,9 @@ defmodule EvoGit.BackgroundJobs.JobId do
   def mint(taken, opts \\ []) do
     taken? = taken_predicate(taken)
     source = candidate_source(opts)
+    attempts = attempts(opts)
 
-    case scan(source.(), taken?) do
+    case scan(source.(), taken?, attempts) do
       {:ok, id} -> id
       {:error, :id_space_exhausted} -> {:error, :id_space_exhausted}
     end
@@ -79,11 +80,13 @@ defmodule EvoGit.BackgroundJobs.JobId do
   # The candidate walks +1 in payload space on every collision, so an id held by
   # a live job or a tombstone is skipped deterministically rather than
   # re-drawn.
-  # The walk is bounded to ONE full pass of the payload space (`@space`
-  # candidates): when every one of them is taken the answer is
-  # `{:error, :id_space_exhausted}` — never an unbounded loop.
-  defp scan(int, taken?) do
-    Enum.reduce_while(1..@space, {:error, :id_space_exhausted}, fn attempt, error ->
+  # `attempts` bounds the walk; the production bound is ONE full pass of the
+  # payload space (`@space` candidates, the only reachable default) while a suite
+  # injects a small `:attempts` to exercise the exhaustion answer. When every
+  # candidate in the walk is taken the answer is `{:error, :id_space_exhausted}`
+  # — never an unbounded loop.
+  defp scan(int, taken?, attempts) do
+    Enum.reduce_while(1..attempts, {:error, :id_space_exhausted}, fn attempt, error ->
       candidate = encode(Integer.mod(int + attempt - 1, @space))
 
       if taken?.(candidate), do: {:cont, error}, else: {:halt, {:ok, candidate}}
@@ -114,6 +117,22 @@ defmodule EvoGit.BackgroundJobs.JobId do
 
       :error ->
         &default_source/0
+    end
+  end
+
+  # Defaults to one full pass of the payload space; a suite injects a small value
+  # to prove the exhaustion answer terminates.
+  defp attempts(opts) do
+    case Keyword.fetch(opts, :attempts) do
+      {:ok, attempts} when is_integer(attempts) and attempts > 0 ->
+        attempts
+
+      {:ok, other} ->
+        raise ArgumentError,
+              "expected :attempts to be a positive integer, got: #{inspect(other)}"
+
+      :error ->
+        @space
     end
   end
 end
