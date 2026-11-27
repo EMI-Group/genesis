@@ -15,6 +15,7 @@
     "shell:allow-execute",
     "shell:allow-spawn",
     "allow-begin-quit",
+    "allow-set-custom-titlebar",
     "allow-check-update",
     "allow-download-update",
     "allow-begin-update"
