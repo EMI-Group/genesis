@@ -6,8 +6,8 @@ defmodule EvoGit.Agent.Tools.JobList do
 
   One line per job, newest first —
 
-      bash-1 [bash] running — mix test
-      bash-2 [bash] completed — npm run build
+      bash-k3f9 [bash] running — mix test
+      bash-7qd [bash] completed — npm run build
 
   — or `(no background jobs)` when this agent owns none. The kind comes from the
   job record (`bash` today); the status is the public status vocabulary of
@@ -19,7 +19,7 @@ defmodule EvoGit.Agent.Tools.JobList do
   It keeps the normal line and gains ONE trailing marker naming the eviction and
   the surviving log path:
 
-      bash-1 [bash] completed — mix test (aged out of retention; log at /path/to/genesis_job_bash-1.log)
+      bash-p2xw8a [bash] completed — mix test (aged out of retention; log at /path/to/genesis_job_bash-p2xw8a.log)
 
   The marker drops its `; log at <path>` clause when the record names no log path,
   so an aged-out job is never presented as a live one.
