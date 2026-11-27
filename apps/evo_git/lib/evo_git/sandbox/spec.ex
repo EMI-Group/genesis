@@ -37,7 +37,12 @@ defmodule EvoGit.Sandbox.Spec do
     * `:home` — default `System.user_home!()`.
     * `:tmp_paths` — default `EvoGit.Platform.tmp_paths/0`.
     * `:task_tmpdir` — default `EvoGit.Sandbox.Helpers.task_tmpdir_path/0`
-      (`nil` when no per-task dir is installed).
+      (`nil` when no per-task dir is installed). An EXPLICITLY passed `nil`
+      means "no grant" (`Keyword.get_lazy/3` returns a present `nil`), so a
+      caller can suppress live resolution.
+    * `:tmpdir` — the effective `TMPDIR` value (default
+      `EvoGit.Sandbox.resolve_tmpdir/0`), for a caller that already resolved it
+      in another process (the detached registry path).
     * `:write_paths` — the RAW `[sandbox] write_paths` config value
       (default `EvoGit.Config.resolve([:sandbox, :write_paths])`), resolved
       through `EvoGit.Sandbox.Helpers.resolve_write_paths/3`.
@@ -335,6 +340,9 @@ defmodule EvoGit.Sandbox.Spec do
     repo_root = Keyword.get(opts, :repo_root)
     home = Keyword.get(opts, :home) || System.user_home!()
     credential_deny_paths = Enum.map(@credential_paths, &Path.join(home, &1))
+    # An explicitly threaded value (the detached caller already resolved it in
+    # the per-task process); otherwise resolve live here.
+    tmpdir = Keyword.get(opts, :tmpdir) || EvoGit.Sandbox.resolve_tmpdir()
 
     %__MODULE__{
       backend: backend,
@@ -358,7 +366,7 @@ defmodule EvoGit.Sandbox.Spec do
       host_tmpdir: host_tmpdir(backend, opts),
       git_binary_dir: git_binary_dir(backend),
       network: Keyword.get(opts, :network, :allow),
-      env: env(backend),
+      env: env(backend, tmpdir),
       max_processes: Keyword.get(opts, :max_processes, @default_max_processes),
       resources: %{}
     }
@@ -449,19 +457,19 @@ defmodule EvoGit.Sandbox.Spec do
   # backend re-injects PATH/HOME/TMPDIR; bwrap inherits them and only needs
   # TMPDIR pointed at a writable path; the macOS profile carries no env (env is
   # passed to `sandbox-exec` at run time).
-  defp env(:macos), do: []
+  defp env(:macos, _tmpdir), do: []
 
-  defp env(:linux) do
+  defp env(:linux, tmpdir) do
     [
       {"PATH", System.get_env("PATH")},
       {"HOME", System.get_env("HOME")},
-      {"TMPDIR", EvoGit.Sandbox.resolve_tmpdir()}
+      {"TMPDIR", tmpdir}
     ]
     |> reject_nil_env()
   end
 
-  defp env(_backend) do
-    [{"TMPDIR", EvoGit.Sandbox.resolve_tmpdir()}]
+  defp env(_backend, tmpdir) do
+    [{"TMPDIR", tmpdir}]
     |> reject_nil_env()
   end
 

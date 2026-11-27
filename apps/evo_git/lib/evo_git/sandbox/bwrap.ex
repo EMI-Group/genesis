@@ -245,14 +245,28 @@ defmodule EvoGit.Sandbox.Bwrap do
     end
   end
 
-  @doc "Generates the bwrap argument list."
-  @spec args(String.t(), String.t(), [String.t()], String.t() | nil) :: [String.t()]
-  def args(cwd, executable, args \\ [], repo_root \\ nil) when is_list(args) do
+  @doc """
+  Generates the bwrap argument list.
+
+  `opts` forwards `:tmpdir` / `:task_tmpdir` values the CALLER already resolved
+  in the per-task process (the detached registry carries no per-task tmpdir):
+  the threaded `:tmpdir` drives `--setenv TMPDIR` and the threaded
+  `:task_tmpdir` drives the extra `--bind-try` write grant. Absent keys keep the
+  live spec resolution, so a caller that passes nothing gets the historical argv
+  byte-for-byte.
+  """
+  @spec args(String.t(), String.t(), [String.t()], String.t() | nil, keyword()) :: [String.t()]
+  def args(cwd, executable, args \\ [], repo_root \\ nil, opts \\ []) when is_list(args) do
     # In :degraded mode (rootless podman etc.) the environment cannot mount a
     # fresh procfs inside a nested pid namespace, so --unshare-pid is dropped
     # (see capability/0, probe_capability/0 and the moduledoc). Everything else
     # in the argv is identical in both modes.
-    spec = Spec.build(:bwrap, cwd: cwd, repo_root: repo_root)
+    spec =
+      Spec.build(
+        :bwrap,
+        [cwd: cwd, repo_root: repo_root] ++ Keyword.take(opts, [:tmpdir, :task_tmpdir])
+      )
+
     build_args(spec, executable, args, capability() != :degraded)
   end
 
