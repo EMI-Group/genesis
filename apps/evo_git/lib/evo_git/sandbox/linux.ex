@@ -152,15 +152,22 @@ defmodule EvoGit.Sandbox.Linux do
   (following linked-worktree `gitdir:` pointers) because a detached job has no
   `repo_root` argument — pinned through the spec's `git_metadata:` option so it
   stays byte-identical to this call site's historical input.
+
+  `opts` carries the values the CALLER already resolved in the per-task process
+  (the long-lived detached registry carries none of them): `:tmpdir` feeds the
+  unit's `--setenv=TMPDIR=` and `:task_tmpdir` feeds its additional
+  `ReadWritePaths=`. Absent keys keep the live spec resolution, so a caller that
+  passes nothing gets the historical argv byte-for-byte.
   """
-  @spec detached_args(String.t(), String.t(), [String.t()], String.t(), String.t()) ::
+  @spec detached_args(String.t(), String.t(), [String.t()], String.t(), String.t(), keyword()) ::
           [String.t()]
-  def detached_args(cwd, executable, args, output_path, unit_name)
+  def detached_args(cwd, executable, args, output_path, unit_name, opts \\ [])
       when is_list(args) and is_binary(output_path) and is_binary(unit_name) do
     spec =
-      Spec.build(:linux,
-        cwd: cwd,
-        git_metadata: List.wrap(Helpers.git_metadata_dir(cwd, nil))
+      Spec.build(
+        :linux,
+        [cwd: cwd, git_metadata: List.wrap(Helpers.git_metadata_dir(cwd, nil))] ++
+          Keyword.take(opts, [:tmpdir, :task_tmpdir])
       )
 
     build_args(
@@ -184,14 +191,14 @@ defmodule EvoGit.Sandbox.Linux do
   end
 
   # Shared systemd-run argv assembly — the ONE place the common fragments are
-  # emitted, so `args/4` (foreground) and `detached_args/5` (background) can
+  # emitted, so `args/4` (foreground) and `detached_args/6` (background) can
   # never drift. Every policy path comes from `spec`
   # (`EvoGit.Sandbox.Spec`); only the shape differs:
   #
   #   * `unit_args`  — `--unit=<name>` for detached jobs, `[]` otherwise;
   #   * `mode_args`  — `--wait --pipe --collect` for foreground jobs,
   #                    `--wait` alone for detached jobs (the client is the
-  #                    completion observer, see `detached_args/5`);
+  #                    completion observer, see `detached_args/6`);
   #   * `stdio_args` — stdout/stderr properties for detached jobs (foreground
   #                    pipes the output to the caller).
   defp build_args(spec, executable, args, unit_args, mode_args, stdio_args) do

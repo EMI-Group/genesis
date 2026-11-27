@@ -222,10 +222,11 @@ A message is a legacy `String.t()` OR `%{text:, attachments:}` via `AgentSchedul
 
 ## Background Job Output Files
 
-The output path is decided ONCE in `do_start_job/3` (a detached job has no process dictionary to re-derive it later) and stored on the record as `:output_path`; `scratch_dir/0` is `EvoGit.Sandbox.resolve_tmpdir/0` evaluated in the long-lived registry, which never carries the per-task `TaskTmpdir` seam, so production resolves the HOST system tmpdir.
-The FILE name is `genesis_job_<os-pid>-<vm-unique>_<id>.log` (`instance_token/0` + `output_file_name/2`, the token resolved once at `init/1` as `state.path_token`): job ids restart at `bash-1` in EVERY registry and the scratch dir is host-wide, so an id alone is not a unique file address — without the token a second registry on the same host (another BEAM, or a `mix test` VM) would truncate a LIVE job's log at start and delete it at cleanup.
+The output path is decided ONCE in `do_start_job/3` (a detached job has no process dictionary to re-derive it later) and stored on the record as `:output_path`; it is built from the CALLER-resolved `spec.tmpdir` (`normalize_start_spec/1` runs in the caller, which carries the per-task `TaskTmpdir` seam), with `scratch_dir/0` (`EvoGit.Sandbox.resolve_tmpdir/0` in the long-lived registry) only as the fallback.
+The detached command's `$TMPDIR` and its writable-path grant come from the threaded `tmpdir`/`task_tmpdir` pair on that same spawn payload, so an agent-started job's log file and its temporary files both land in the managed per-task directory.
+The FILE name is `genesis_job_<os-pid>-<vm-unique>_<id>.log` (`instance_token/0` + `output_file_name/2`, the token resolved once at `init/1` as `state.path_token`): job ids restart at `bash-1` in EVERY registry and two registries can still share one scratch dir, so an id alone is not a unique file address — without the token a second registry on the same host (another BEAM, or a `mix test` VM) would truncate a LIVE job's log at start and delete it at cleanup.
 The agent-facing id stays `bash-1`; only the file name carries the token, and `prepare_output_file/1` still truncates (never merely touches) the file at start.
-One host path serves EVERY backend: the systemd backend passes it directly in `StandardOutput=append:<path>`/`StandardError=append:<path>` (`Sandbox.Linux.detached_args/5`, so the job's private tmpfs is irrelevant), while the port backends (none/disabled/bwrap/macOS) leave the child's output on the port the registry owns and `append_output/2` writes those chunks to the same path — nothing writes a sandbox-private path.
+One host path serves EVERY backend: it is the caller-resolved log path under the job's tmpdir (possibly the task's managed per-task dir), which the systemd backend passes directly in `StandardOutput=append:<path>`/`StandardError=append:<path>` (`Sandbox.Linux.detached_args/6`, so the job's private tmpfs is irrelevant), while the port backends (none/disabled/bwrap/macOS) leave the child's output on the port the registry owns and `append_output/2` writes those chunks to the same path — nothing writes a sandbox-private path.
 
 ## Background Job Completion Notices (`announced`)
 
@@ -267,7 +268,6 @@ Applied at `Platform.shell_args/1`'s PowerShell clause (shell tool + `Worktrees.
 
 ## Known Issues
 
-- Background launches lose the caller's per-task scratch dir across the registry boundary: `normalize_start_spec/1` keeps command/cwd/repo-root/label/owner/identities only and the launch runs `scratch_dir/0` in the singleton registry where `TaskTmpdir.current/0` is unset, so output resolves against the legacy system tmpdir — which is exactly why the file name carries the per-registry token (§ Background Job Output Files).
 - Systemd slice ownership is OS-user-wide: `SandboxSlice` hardcodes `evogit.slice`, and init cleanup and shutdown stop that whole slice, so instances under one user share budgets and cleanup boundaries.
 - `Sandbox.capabilities/0` reports nominal capabilities without consulting `enabled?/0`, while auto-selection checks executable availability, not successful isolation.
 - **scp of a remote config path containing SPACES is unhandled**: `:copying_config` creates/probes the dir with `$HOME`-rooted double-quoted paths, but the scp destination is rewritten to the `~` form by `scp_remote_path/1` (SFTP-speaking scp re-parses it), so uploading into `~/Library/Application Support/genesis` depends on scp's protocol (sftp verbatim works; legacy scp word-splits); failures stay best-effort.

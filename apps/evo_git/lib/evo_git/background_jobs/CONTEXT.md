@@ -56,10 +56,12 @@ A retention-evicted record that a live owner has not observed never degrades int
 ## Output File Naming (`genesis_job_<token>_<id>.log`)
 
 A job's log file name is `genesis_job_<os-pid>-<vm-unique>_<id>.log`: the stable, recognizable parts are the `genesis_job_` prefix, the `.log` suffix and the agent-facing id; the middle token (`instance_token/0`, resolved ONCE per registry at `init/1` as `state.path_token`) makes the path unique per REGISTRY INSTANCE.
-The token exists because an id is only unique WITHIN one registry (`generate_id/2` restarts every instance at `bash-1`) while the scratch directory is host-wide (`scratch_dir/0` runs in this long-lived registry, which never carries the per-task `TaskTmpdir` seam), so an id alone is not a unique file address: a second registry on the same host (another BEAM, or a `mix test` VM) truncated a live job's log at start and deleted it at cleanup.
+The token exists because an id is only unique WITHIN one registry (`generate_id/2` restarts every instance at `bash-1`) and two registries can still share one scratch dir (the legacy system tmpdir reached through `scratch_dir/0`), so an id alone is not a unique file address: a second registry on the same host (another BEAM, or a `mix test` VM) truncated a live job's log at start and deleted it at cleanup.
+The caller now resolves and threads `spec.tmpdir` (the log directory) and `spec.task_tmpdir` (the writable-path grant plus `$TMPDIR`) from `normalize_start_spec/1`, so an agent-started job writes its log into the task's managed directory; `scratch_dir/0` is only the total fallback.
+The log therefore lives in the per-task dir, so `TaskTmpdir.reclaim/2` at task end removes it; `read/2` then answers honest prose naming the path and that cause without changing the recorded status.
 `<os-pid>` separates concurrent OS processes and `<vm-unique>` separates sibling registries inside one VM; both are safe in a file name and in a systemd `StandardOutput=append:<path>` value.
 The agent-facing id stays short (`bash-1`, repeated in `job_output`/`job_kill` and in tombstone prose) — only the FILE name carries the token, so ids, answers and retention rules are unchanged.
-One host path serves every backend: systemd appends to it directly (`Sandbox.Linux.detached_args/5`), and the port backends have the BEAM append the child's chunks (`append_output/2`).
+One host path serves every backend: systemd appends to it directly (`Sandbox.Linux.detached_args/6`), and the port backends have the BEAM append the child's chunks (`append_output/2`).
 `prepare_output_file/1` still truncates the file at start: the token makes a COLLISION unreachable, but a restarted registry can legitimately land on the same token/id pair.
 
 ## Constraints
