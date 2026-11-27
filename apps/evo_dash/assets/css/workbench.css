@@ -41,7 +41,7 @@
    chrome, never a scroll surface. Browser/dev renders no strip at all, so nothing
    here may shift the browser layout. */
 #desktop-titlebar {
-  /* Windows/Linux render their own controls at the inline end, so the lead is
+  /* Every OS except macOS puts the controls at the inline end, so the lead is
      the frame gutter; macOS overlays its native traffic lights instead (below). */
   --titlebar-lead: var(--page-gutter);
   display: flex;
