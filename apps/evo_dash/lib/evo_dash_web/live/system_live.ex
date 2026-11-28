@@ -50,14 +50,8 @@ defmodule EvoDashWeb.SystemLive do
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
         <div class="space-y-6">
-          <%!-- ONE page title for /system (density ladder: text-xl font-semibold). --%>
-          <header class="space-y-1">
-            <h1 class="text-xl font-semibold text-base-content">{gettext("System")}</h1>
-            <p class="text-sm text-base-content/60">
-              {gettext("Runtime health, scheduler activity and system controls.")}
-            </p>
-          </header>
-
+          <%!-- The workbench tab rail carries the page name, so this page
+               renders no in-canvas title. --%>
           <%= if @update_card_visible do %>
             <!-- Software Update card (desktop shell only; hidden on remote nodes) -->
             <div
@@ -626,18 +620,14 @@ defmodule EvoDashWeb.SystemLive do
               <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
                 <%= if @remote? do %>
                   {gettext(
-                    "This will gracefully shut down the remote node's Erlang VM. All applications on the remote node will be stopped in order."
+                    "This will shut down Genesis on the remote node. Running tasks there will be interrupted."
                   )}
                 <% else %>
-                  {gettext(
-                    "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
-                  )}
+                  {gettext("This will shut down Genesis. Running tasks will be interrupted.")}
                 <% end %>
               </p>
               <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
-                {gettext(
-                  "The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
-                )}
+                {gettext("You will need to start Genesis manually afterwards.")}
               </p>
 
               <div class="flex justify-end gap-3 pt-2">
@@ -2135,15 +2125,15 @@ defmodule EvoDashWeb.SystemLive do
 
   defp tool_badge(assigns) do
     ~H"""
-    <div class="flex items-center gap-1.5">
+    <div class="flex min-w-0 max-w-full items-start gap-1.5">
       <%= if @check.available do %>
-        <.icon name="hero-check-circle" class="size-4 text-success" />
-        <span class="text-sm">{@name}</span>
-        <span class="text-xs text-base-content/60">{@check.version}</span>
+        <.icon name="hero-check-circle" class="mt-0.5 size-4 shrink-0 text-success" />
+        <span class="shrink-0 whitespace-nowrap text-sm">{@name}</span>
+        <span class="min-w-0 whitespace-pre-line wrap-anywhere text-xs text-base-content/60">{@check.version}</span>
       <% else %>
-        <.icon name="hero-x-circle" class="size-4 text-error" />
-        <span class="text-sm text-error">{@name}</span>
-        <span class="text-xs text-error/60">{@check.error}</span>
+        <.icon name="hero-x-circle" class="mt-0.5 size-4 shrink-0 text-error" />
+        <span class="shrink-0 whitespace-nowrap text-sm text-error">{@name}</span>
+        <span class="min-w-0 whitespace-pre-line wrap-anywhere text-xs text-error/60">{@check.error}</span>
       <% end %>
     </div>
     """

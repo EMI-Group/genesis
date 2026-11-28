@@ -497,7 +497,9 @@ authoritative comparison.
 
 - `bash` gained `run_in_background`; companion tools `job_output` (delta reads + optional bounded `wait`),
   `job_list`, `job_kill` mirror `dsh`'s names and envelopes; deliberately NOT `dsh`'s job-id shape — ids are
-  short per-registry sequential strings (`bash-1`, `bash-2`, …) so a model can repeat one, and `job_output`
+  short random base36 tokens (`bash-` plus 1..8 chars of `[0-9a-z]`, e.g. `bash-7f3k2`), minted by
+  `EvoGit.BackgroundJobs.JobId` with a linear scan past any live or tombstoned id, so a model can repeat one
+  and an id is globally unique (it is also the log-file address `genesis_job_<id>.log`); `job_output`
   also accepts an omitted `job_id` when the agent owns exactly one job (an error naming every id otherwise).
   `job_output`/`job_list`/`job_kill`
   are control tools (in both schema lists, never write, never serial); **starting** a background process is

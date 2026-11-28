@@ -25,30 +25,34 @@
   <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
     {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
   <% else %>
-    <!-- Page header + workbench. The title row is NON-scrolling: at xl+ the
-    wrapper is a two-row grid (`auto` header, `minmax(0, 1fr)` panels) filling
-    `main#main-content`, so `.agents-page-layout` still resolves its
+    <%!-- The workbench tab rail carries the page name, so this page renders no
+    in-canvas title. A task-scoped view keeps its scope strip NON-scrolling: at
+    xl+ the wrapper is a two-row grid (`auto` strip, `minmax(0, 1fr)` panels)
+    filling `main#main-content`, so `.agents-page-layout` still resolves its
     `height: 100%` against that panel row and each panel keeps scrolling
-    independently — the header can never eat into the panels' scrollers or
-    force page-level scroll. Below xl it is normal page flow. -->
-    <div class="grid min-h-0 gap-4 xl:h-full xl:grid-rows-[auto_minmax(0,1fr)]">
-      <header class="flex min-w-0 flex-wrap items-start justify-between gap-3">
-        <div class="min-w-0 flex-1">
-          <h1 class="text-xl font-semibold text-base-content">{gettext("Agents")}</h1>
-          <div :if={assigns[:task_scope_id]} id="agents-task-scope" class="mt-1 min-w-0">
-            <p class="truncate text-xs text-base-content/70" title={assigns[:task_scope_id]}>
-              {gettext("Task: %{id}", id: assigns[:task_scope_id])}
-            </p>
-            <p :if={scoped_task && scoped_task.objective} class="line-clamp-2 text-base">
-              {scoped_task.objective}
-            </p>
-          </div>
-          <p :if={!assigns[:task_scope_id]} class="mt-1 text-sm text-base-content/70">
-            {gettext("Inspect the agent tree, live activity and commit history on this node.")}
+    independently — the strip can never eat into the panels' scrollers or
+    force page-level scroll. Without a task scope there is no strip and the
+    panel row takes the whole height. Below xl it is normal page flow. --%>
+    <div class={[
+      "grid min-h-0 gap-4 xl:h-full",
+      if(assigns[:task_scope_id],
+        do: "xl:grid-rows-[auto_minmax(0,1fr)]",
+        else: "xl:grid-rows-[minmax(0,1fr)]"
+      )
+    ]}>
+      <header
+        :if={assigns[:task_scope_id]}
+        class="flex min-w-0 flex-wrap items-start justify-between gap-3"
+      >
+        <div id="agents-task-scope" class="min-w-0 flex-1">
+          <p class="truncate text-xs text-base-content/70" title={assigns[:task_scope_id]}>
+            {gettext("Task: %{id}", id: assigns[:task_scope_id])}
+          </p>
+          <p :if={scoped_task && scoped_task.objective} class="line-clamp-2 text-base">
+            {scoped_task.objective}
           </p>
         </div>
         <.link
-          :if={assigns[:task_scope_id]}
           id="agents-clear-task-scope"
           patch={Scope.path(nil, @current_node_id)}
           class="btn btn-sm btn-ghost shrink-0"

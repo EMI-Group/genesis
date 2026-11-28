@@ -30,7 +30,7 @@
 // test/evo_dash_web/live/layout_height_contract_test.exs.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const {readFileSync, readdirSync} = require("node:fs");
+const {readFileSync, readdirSync, existsSync} = require("node:fs");
 const {join, relative} = require("node:path");
 
 const APP_DIR = join(__dirname, "..", "..");
@@ -209,6 +209,65 @@ test("--shell-topbar-h is defined once on #app-layout and consumed by .workbench
   );
 });
 
+test("--shell-titlebar-h is 0px in a browser and one row under [data-desktop]", () => {
+  const definitions = CSS_FILES.flatMap(file =>
+    [...file.source.matchAll(/(^|[\s{;])--shell-titlebar-h\s*:\s*([^;]+);/g)].map(match => ({
+      file: file.name,
+      line: file.source.slice(0, match.index).split("\n").length,
+      value: match[2].trim()
+    }))
+  );
+
+  assert.equal(
+    definitions.length,
+    2,
+    `--shell-titlebar-h must be DEFINED exactly twice — 0px on #app-layout and var(--row-h) ` +
+      `under [data-desktop="true"] (found ${definitions
+        .map(definition => `${definition.file}:${definition.line} = ${definition.value}`)
+        .join(", ")})`
+  );
+
+  const browser = leafRules("workbench.css").filter(
+    rule =>
+      rule.selectors.includes("#app-layout") &&
+      rule.declarations.some(([property]) => property === "--shell-titlebar-h")
+  );
+  assert.equal(browser.length, 1, "workbench.css: define --shell-titlebar-h ON #app-layout");
+  assert.equal(
+    values(browser[0].body)["--shell-titlebar-h"],
+    "0px",
+    "workbench.css: a browser render must keep the strip token at 0px, so no offset moves"
+  );
+
+  const desktop = leafRules("workbench.css").filter(
+    rule =>
+      rule.selectors.includes('#app-layout[data-desktop="true"]') &&
+      rule.declarations.some(([property]) => property === "--shell-titlebar-h")
+  );
+  assert.equal(
+    desktop.length,
+    1,
+    'workbench.css: a desktop window sets --shell-titlebar-h on #app-layout[data-desktop="true"]'
+  );
+  assert.equal(
+    values(desktop[0].body)["--shell-titlebar-h"],
+    "var(--row-h)",
+    "workbench.css: the desktop strip takes one density row, not a literal height"
+  );
+
+  // ...and the strip consumes that ONE token for both its basis and its height.
+  const strip = leafRules("workbench.css").filter(rule => rule.selectors.includes("#desktop-titlebar"));
+  assert.equal(strip.length, 1, "workbench.css: #desktop-titlebar must have ONE base rule");
+  const bones = values(strip[0].body);
+  assert.equal(bones.flex, "0 0 var(--shell-titlebar-h)", "workbench.css: the strip is an in-flow fixed-basis row");
+  assert.equal(bones.height, "var(--shell-titlebar-h)", "workbench.css: the strip height IS the token");
+  assert.doesNotMatch(
+    strip[0].body,
+    /2\.5rem/,
+    "workbench.css: the strip must not repeat the row-height literal beside the token"
+  );
+});
+
 test("no page content computes height/min-height from the viewport", () => {
   const offences = [];
 
@@ -231,6 +290,182 @@ test("no page content computes height/min-height from the viewport", () => {
     "in-shell page content must not derive its height from the viewport — use .shell-fill " +
       "(height: 100%; min-height: 0) and let #app-layout own the viewport:\n  " +
       offences.join("\n  ")
+  );
+});
+
+test("the desktop title bar is layer-0 chrome and the fixed surfaces clear it", () => {
+  const [strip] = leafRules("workbench.css").filter(rule => rule.selectors.includes("#desktop-titlebar"));
+  const declared = values(strip.body);
+
+  assert.equal(
+    declared.background,
+    "var(--surface-shell)",
+    "workbench.css: the strip shares the ONE shell chrome tone"
+  );
+  assert.equal(
+    declared["border-bottom"],
+    "1px solid var(--border-hairline)",
+    "workbench.css: the strip separates from the canvas with the ONE hairline"
+  );
+  assert.equal(declared["box-shadow"], undefined, "an in-flow strip never elevates (layer 0)");
+  assert.equal(declared["z-index"], undefined, "an in-flow strip needs no stacking order");
+  assert.equal(declared.position, undefined, "the strip stays in flow — never fixed or absolute");
+  // The strip IS the window's drag surface (the `DesktopTitlebar` hook starts the
+  // drag on primary-button pointerdown), so it is chrome: no text selection and
+  // no touch scroll gesture may compete with the drag.
+  assert.equal(
+    declared["touch-action"],
+    "none",
+    "workbench.css: the strip owns pointer dragging, so a touch/touchpad drag is never a scroll"
+  );
+  assert.equal(declared["user-select"], "none", "workbench.css: dragging the strip must not select its text");
+  assert.equal(declared.cursor, "default", "workbench.css: the strip shows a chrome cursor, not text");
+  // The window-control inset is a token so the two OS branches can retarget it.
+  assert.equal(
+    declared["--titlebar-lead"],
+    "var(--page-gutter)",
+    "workbench.css: windows/linux lead with the frame gutter"
+  );
+  assert.equal(declared["padding-inline-start"], "var(--titlebar-lead)");
+
+  // Every chrome-anchored fixed surface clears the strip with an EXPLICIT 0px
+  // fallback: `#flash-group` also renders in the `workbench_window` clause,
+  // outside #app-layout, where the token is undefined.
+  const expectations = [
+    ["#sidebar-mobile-toggle-wrap", "calc(var(--shell-titlebar-h, 0px) + .375rem)"],
+    ["#flash-group", "calc(var(--shell-titlebar-h, 0px) + 1rem)"],
+    ["#guide-panel", "calc(var(--shell-titlebar-h, 0px) + 1rem)"]
+  ];
+  for (const [selector, top] of expectations) {
+    const rules = leafRules("workbench.css").filter(rule => rule.selectors.includes(selector));
+    assert.equal(rules.length, 1, `workbench.css: expected ONE ${selector} strip offset rule`);
+    assert.equal(
+      values(rules[0].body).top,
+      top,
+      `workbench.css: ${selector} must offset with the always-present 0px fallback`
+    );
+  }
+});
+
+test("the macOS inset and the window controls keep their chrome contract", () => {
+  const mac = leafRules("workbench.css").filter(
+    rule => rule.selectors.includes('#desktop-titlebar[data-os="macos"]')
+  );
+  assert.equal(mac.length, 1, "workbench.css: the macOS strip inset rule must exist");
+  assert.equal(
+    values(mac[0].body)["--titlebar-lead"],
+    "5.25rem",
+    "workbench.css: macOS reserves the lead for the overlaid native traffic lights"
+  );
+
+  const controls = leafRules("workbench.css").filter(
+    rule => rule.selectors.includes(".desktop-titlebar-controls")
+  );
+  assert.equal(controls.length, 1, "workbench.css: .desktop-titlebar-controls needs ONE base rule");
+  assert.equal(values(controls[0].body).display, "flex");
+  assert.equal(values(controls[0].body).flex, "0 0 auto");
+
+  // The grab gutter is the strip's main drag area; it must stay inert chrome so
+  // no selection or touch scroll gesture competes with the hook's pointer drag.
+  const drag = leafRules("workbench.css").filter(
+    rule => rule.selectors.includes(".desktop-titlebar-drag")
+  );
+  assert.equal(drag.length, 1, "workbench.css: .desktop-titlebar-drag needs exactly ONE leaf rule");
+  const gutter = values(drag[0].body);
+  assert.equal(gutter.flex, "1 1 auto", "workbench.css: the grab gutter takes the strip's free width");
+  assert.equal(
+    gutter["touch-action"],
+    "none",
+    "workbench.css: a touch/touchpad drag on the grab gutter must not become a scroll"
+  );
+  assert.equal(gutter.cursor, "default", "workbench.css: the grab gutter shows the chrome cursor");
+
+  const control = leafRules("workbench.css").filter(
+    rule => rule.selectors.includes(".desktop-titlebar-control") && "width" in values(rule.body)
+  );
+  assert.equal(control.length, 1, "workbench.css: .desktop-titlebar-control needs ONE base rule");
+  const shape = values(control[0].body);
+  assert.equal(shape.display, "grid");
+  assert.equal(shape.width, "2.875rem", "workbench.css: a window control keeps a native hit width");
+  assert.equal(shape.height, "100%", "workbench.css: a control fills the strip");
+  assert.equal(shape.cursor, "default");
+  assert.equal(shape.background, "transparent");
+  assert.equal(
+    shape.transition,
+    "background-color .12s ease, color .12s ease",
+    "workbench.css: only the control's fill and ink animate"
+  );
+
+  const close = leafRules("workbench.css").filter(
+    rule => rule.selectors.includes(".desktop-titlebar-control-close:hover")
+  );
+  assert.equal(close.length, 1, "workbench.css: the close button needs its Windows-style hover");
+  assert.equal(values(close[0].body).background, "var(--color-error)");
+  assert.equal(values(close[0].body).color, "var(--color-error-content)");
+
+  const reduced = blocks("@media (prefers-reduced-motion: reduce)", css["workbench.css"]);
+  assert.ok(
+    reduced.some(body => /\.desktop-titlebar-control\s*\{[^}]*transition:\s*none/.test(body)),
+    "workbench.css: reduced motion must drop the control transition"
+  );
+});
+
+// A tag by one of its attributes (attributes may span lines).
+function tagAround(source, marker) {
+  const at = source.indexOf(marker);
+  if (at === -1) return null;
+  const start = source.lastIndexOf("<", at);
+  const end = source.indexOf(">", at);
+  return start === -1 || end === -1 ? null : source.slice(start, end + 1);
+}
+
+function classTokens(tag) {
+  const match = tag && tag.match(/class="([^"]*)"/);
+  return match ? match[1].split(/\s+/).filter(Boolean) : [];
+}
+
+// The markup half of the desktop chain lands with the title-bar component in a
+// parallel change; while it is absent this reports SKIP rather than a failure.
+test("#app-layout is a column of the desktop title bar over one shell row", t => {
+  const layouts = readFileSync(join(APP_DIR, "lib/evo_dash_web/components/layouts.ex"), "utf8");
+  const titlebar = join(APP_DIR, "lib/evo_dash_web/components/desktop_titlebar.ex");
+  const shellRow = tagAround(layouts, 'id="shell-row"');
+
+  if (!existsSync(titlebar) || !shellRow) {
+    t.skip(
+      "the desktop title-bar markup (components/desktop_titlebar.ex + #shell-row in layouts.ex) " +
+        "is not in this checkout yet"
+    );
+    return;
+  }
+
+  const shell = tagAround(layouts, 'id="app-layout"');
+  assert.ok(shell, "components/layouts.ex: #app-layout is missing");
+  const shellClasses = classTokens(shell);
+  assert.ok(
+    shellClasses.includes("flex") && shellClasses.includes("flex-col"),
+    `components/layouts.ex: #app-layout must stack the strip over the shell row (found "${shellClasses.join(" ")}")`
+  );
+  assert.ok(shell.includes("data-desktop"), "components/layouts.ex: #app-layout must carry data-desktop");
+  assert.ok(
+    shell.includes("@desktop?"),
+    "components/layouts.ex: data-desktop is set only in a Tauri shell, from the desktop assign"
+  );
+
+  const rowClasses = classTokens(shellRow);
+  for (const token of ["flex", "flex-1", "min-h-0", "min-w-0"]) {
+    assert.ok(
+      rowClasses.includes(token),
+      `components/layouts.ex: #shell-row must carry ${token} (found "${rowClasses.join(" ")}")`
+    );
+  }
+
+  const stripAt = layouts.indexOf("DesktopTitlebar.titlebar");
+  assert.ok(stripAt !== -1, "components/layouts.ex: DesktopTitlebar.titlebar is not rendered");
+  assert.match(
+    layouts.slice(Math.max(0, stripAt - 40), stripAt + 400),
+    /@desktop\?/,
+    "components/layouts.ex: the strip is desktop-gated — a browser render must not include it"
   );
 });
 
@@ -289,6 +524,63 @@ test("the agents fill chain keeps ONE xl height and ONE both-axis scroller", () 
     {"flex": "1 1 auto", "min-height": "0", "max-height": "none", "overflow": "auto"},
     `app.css:${commits.line}: commits mode must drop the max-height cap and fill the panel`
   );
+});
+test("the agents panels are flat and ONE hairline separates the columns", () => {
+  const rules = leafRules("app.css");
+  // ONE shared surface rule for BOTH panels: borderless, transparent, no shadow.
+  const panels = rules.filter(rule => rule.selectors.includes(".agents-panel"));
+  assert.equal(panels.length, 1, "app.css: expected ONE shared .agents-panel rule");
+  const chrome = values(panels[0].body);
+  assert.equal(chrome.border, "0", "app.css: the agents panels carry no border");
+  assert.equal(
+    chrome.background,
+    "transparent",
+    "app.css: the agents panels sit directly on the content canvas"
+  );
+  assert.equal(chrome["box-shadow"], "none", "app.css: a content surface carries no shadow");
+  // Stacked (< xl): ONE horizontal hairline above the detail column.
+  const detail = rules.filter(rule => rule.selectors.includes(".agents-detail-col"));
+  const stacked = detail.find(
+    rule => values(rule.body)["border-block-start"] === "1px solid var(--border-hairline)"
+  );
+  assert.ok(stacked, "app.css: the stacked detail column needs a horizontal hairline");
+  // xl+: the gutter is gone and ONE vertical hairline separates the columns.
+  const separated = detail.find(
+    rule => values(rule.body)["border-inline-start"] === "1px solid var(--border-hairline)"
+  );
+  assert.ok(separated, "app.css: the xl detail column needs a vertical hairline separator");
+  assert.equal(
+    values(separated.body)["border-block-start"],
+    "0",
+    "app.css: the xl separator replaces the stacked hairline instead of adding to it"
+  );
+  const xlLeft = rules.find(
+    rule => rule.selectors.includes(".agents-left-col") && "padding-inline-end" in values(rule.body)
+  );
+  assert.equal(
+    values(xlLeft.body)["padding-inline-end"],
+    "1rem",
+    "app.css: the left column keeps symmetric inline padding off the hairline"
+  );
+  assert.equal(
+    values(separated.body)["padding-inline-start"],
+    "1rem",
+    "app.css: the detail column keeps symmetric inline padding off the hairline"
+  );
+  // Markup: both panels share the class and carry neither fill nor border utility.
+  for (const file of ["tree_panel.ex", "detail_panel.ex"]) {
+    const markup = readFileSync(join(APP_DIR, "lib/evo_dash_web/live/agents_live", file), "utf8");
+    const card = [...markup.matchAll(/<div class="([^"]*\bagents-panel\b[^"]*)"/g)].map(
+      match => match[1]
+    );
+    assert.equal(card.length, 1, `${file}: expected ONE .agents-panel card`);
+    assert.match(card[0], /\bcard\b/, `${file}: the panel keeps the DaisyUI card class`);
+    assert.doesNotMatch(
+      card[0],
+      /\b(?:border|bg-base-100|rounded-lg)\b/,
+      `${file}: the panel surface lives in CSS, not in markup utilities`
+    );
+  }
 });
 
 // --- the rendered page markup ---------------------------------------------

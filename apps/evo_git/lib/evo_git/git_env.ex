@@ -1,7 +1,8 @@
 defmodule EvoGit.GitEnv do
   @moduledoc """
   Shared git environment helpers — single source of truth for the `GIT_EDITOR`,
-  `LC_ALL`, and commit-identity env vars injected into every git invocation.
+  `LC_ALL`, and commit-identity env vars injected into every git invocation, and
+  for the co-author trailer appended to commit messages (`commit_trailer/0`).
 
   Both git execution paths in the codebase delegate to this module:
 
@@ -43,6 +44,12 @@ defmodule EvoGit.GitEnv do
   # :persistent_term key caching the resolved path to the `true` executable.
   # Resolving it scans PATH, so we memoize once for the VM's lifetime.
   @true_path_key {__MODULE__, :true_path}
+
+  # Appended to every commit message Genesis writes (agent commits and the merge
+  # commits it creates itself), but ONLY when
+  # `[:git, :co_authored_by_enabled]` is not `false` — see `commit_trailer/0`.
+  # Never hardcode a username anywhere else.
+  @co_author_trailer "\n\nCo-Authored-By: Genesis <noreply@evogit.ai>"
 
   # Fallback identity used ONLY when neither the inherited environment nor git
   # config provides a value. Kept so automated commits never fail with
@@ -100,6 +107,23 @@ defmodule EvoGit.GitEnv do
   @doc "Like `git_env_list/0`, but resolves the identity from `repo_path`."
   @spec git_env_list(String.t() | nil) :: [{String.t(), String.t()}]
   def git_env_list(repo_path), do: Map.to_list(git_env(repo_path))
+
+  @doc """
+  Returns the co-author trailer to append to a commit message, or `""` when
+  `[:git, :co_authored_by_enabled]` is `false`.
+
+  This is the SINGLE source of the trailer string for every commit Genesis
+  writes: plain commits (`EvoGit.Adapters.Git.commit/2`,
+  `EvoGit.Agent.Tools.Shared.commit_files/4`) and the merge commits the Git
+  adapter creates (`merge/2`, `merge_octopus/2`). The trailer starts with a
+  blank line, so it is appended directly to the message body.
+  """
+  @spec commit_trailer() :: String.t()
+  def commit_trailer do
+    if EvoGit.Config.resolve([:git, :co_authored_by_enabled]) != false,
+      do: @co_author_trailer,
+      else: ""
+  end
 
   # Test helper: clears the memoized `git config` identity for `repo_path`
   # (or the global resolution when `repo_path` is `nil`). The runtime

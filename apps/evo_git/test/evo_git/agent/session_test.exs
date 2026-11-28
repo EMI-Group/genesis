@@ -502,7 +502,9 @@ defmodule EvoGit.Agent.SessionTest do
     assert :ok = Session.update_assistant_workspace(pid, nil)
     {:ok, cleared} = SchedStore.get_sched_meta(id)
     assert cleared.spec.opts[:assistant_workspace] == nil
-    assert transcript_text(Session.history(pid)) =~ "Authoritative selected project: none"
+    notice = List.last(Session.history(pid))
+    assert notice.metadata.user_authored == false
+    assert transcript_text([notice]) =~ "Authoritative selected project: none"
   end
 
   test "concurrent project sends cannot queue a message against another tab's selected project",

@@ -134,6 +134,25 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert is_list(missing)
       assert is_list(warnings)
     end
+
+    # The workbench tab rail owns the page name ("Agents"), so the canvas must
+    # not repeat it: no in-canvas <h1> title and none of the descriptor
+    # subtitle the old header carried. The canvas starts at the tree/inspector
+    # panels instead.
+    test "the tab rail owns the page name: no in-canvas title or subtitle", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      html = flush_agents_load(view)
+
+      # Non-vacuous: `main` IS the page canvas, and the panels render inside it.
+      assert [main] = html |> Floki.parse_document!() |> Floki.find("#main-content")
+      headings = main |> Floki.find("h1") |> Enum.map(&(&1 |> Floki.text() |> String.trim()))
+      refute "Agents" in headings
+      refute html =~ "Inspect the agent tree, live activity and commit history on this node."
+
+      # The functional rows that replaced the header still render.
+      assert has_element?(view, "#main-content .agents-page-layout")
+      assert has_element?(view, "#main-content .agents-page-layout #left-view-tree")
+    end
   end
 
   describe "async agent load" do

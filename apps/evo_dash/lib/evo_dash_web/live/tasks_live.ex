@@ -93,9 +93,10 @@ defmodule EvoDashWeb.TasksLive do
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
-        <h1 :if={!@focused_task_id} class="text-xl font-semibold mb-4">
-          {gettext("Task History")}
-        </h1>
+        <!-- The workbench tab rail carries the page name ("Tasks"), so this
+             page renders no in-canvas title; the filter bar IS the first row
+             (its own `mb-4` supplies the gap to the list). A task-scoped view
+             hides the filter bar and starts at the focused card. -->
         <div
           :if={!@focused_task_id}
           class="rounded-lg border border-base-300 bg-base-100 p-3 sm:p-4 mb-4"

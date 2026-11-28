@@ -762,18 +762,29 @@ button, a, input, textarea, select, summary,
 /* Mobile-first: normal flow (single column, page scrolls). `height: auto` keeps
    the `.shell-fill` utility (height: 100%) inert on these widths — below xl the
    page grows with its content inside the `#main-scroll` scroller, and only the
-   xl+ block below pins it to the shell content box. */
+   xl+ block below pins it to the shell content box. The column gap is 0: the
+   two panels are separated by ONE hairline on `.agents-detail-col`, never by a
+   gutter (see below). */
 .agents-page-layout {
-  @apply flex flex-col gap-4;
+  @apply flex flex-col;
   height: auto;
 }
 
 .agents-left-col {
   @apply flex flex-col gap-4;
+  /* Room for the stacked-mode hairline below the tree panel. */
+  padding-block-end: 1rem;
 }
 
-.agents-tree-panel {
-  /* normal card on mobile */
+/* Both /agents panels — the LEFT tree/commit panel and the RIGHT detail panel —
+   are FLAT on the workbench content canvas: no border, no fill, no elevation.
+   The DaisyUI card's flex column stays, so the two panels read as ONE surface
+   split by the hairline on `.agents-detail-col` instead of two framed boxes. */
+.agents-panel {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 /* Legend — compact chip cluster pinned to the bottom-right of the tree box.
@@ -823,8 +834,12 @@ button, a, input, textarea, select, summary,
   opacity: 1;
 }
 
+/* Stacked (below xl): the two panels sit one above the other, so the ONE
+   separator is a horizontal hairline ABOVE the detail column (the page gap is
+   0; `.agents-left-col` supplies the space on the other side). */
 .agents-detail-col {
-  /* normal flow on mobile */
+  border-block-start: 1px solid var(--border-hairline);
+  padding-block-start: 1rem;
 }
 
 /* Desktop (xl+): the page fills the shell content box and never scrolls. The
@@ -835,7 +850,9 @@ button, a, input, textarea, select, summary,
   .agents-page-layout {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 1rem;
+    /* No grid gutter: the columns are separated by ONE vertical hairline on
+       `.agents-detail-col` below, with symmetric inline padding on both. */
+    gap: 0;
     height: 100%; /* of #main-content's content box */
     min-height: 0;
     overflow: hidden;
@@ -847,6 +864,9 @@ button, a, input, textarea, select, summary,
     gap: 1rem;
     min-height: 0; /* allow flex children to shrink */
     overflow: hidden;
+    /* The stacked-mode block padding gives way to the inline gutter. */
+    padding-block-end: 0;
+    padding-inline-end: 1rem;
   }
 
   .agents-tree-panel {
@@ -864,9 +884,15 @@ button, a, input, textarea, select, summary,
     scrollbar-color: oklch(0.7 0 0 / 0.3) transparent;
   }
 
+  /* The ONE separator between the two panels; the stacked-mode horizontal
+     hairline is reset here. */
   .agents-detail-col {
     min-height: 0;
     overflow: hidden;
+    border-block-start: 0;
+    border-inline-start: 1px solid var(--border-hairline);
+    padding-block-start: 0;
+    padding-inline-start: 1rem;
   }
 
   .agents-detail-col > .card {

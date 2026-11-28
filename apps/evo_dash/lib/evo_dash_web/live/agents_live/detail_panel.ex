@@ -36,7 +36,7 @@ defmodule EvoDashWeb.AgentsLive.DetailPanel do
     <% page = @assigns %>
     <!-- Right Column: Agent Details Panel — full vertical space -->
     <div class="agents-detail-col">
-      <div class="card bg-base-100 border border-base-300 rounded-lg">
+      <div class="agents-panel card">
         <div class="card-body p-4">
           <%= if page.selected_agent_id do %>
             <% agent = Inspector.selected_inspector_agent(page) %>

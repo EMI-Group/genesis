@@ -11,7 +11,7 @@ defmodule EvoGit.Agent.BackgroundJobNoticeTest do
   defp job(overrides \\ []) do
     Map.merge(
       %{
-        id: "bash-0123456789abcdef",
+        id: "bash-k3f9",
         kind: "bash",
         label: "mix test",
         status: :running,
@@ -40,7 +40,7 @@ defmodule EvoGit.Agent.BackgroundJobNoticeTest do
       assert section =~ "`job_output`"
       assert section =~ "`job_list`"
       assert section =~ "as `job_id`"
-      assert section =~ "bash-0123456789abcdef"
+      assert section =~ "bash-k3f9"
       assert section =~ "running"
       assert section =~ "mix test"
     end
@@ -150,12 +150,12 @@ defmodule EvoGit.Agent.BackgroundJobNoticeTest do
 
       assert String.starts_with?(notice, "[NOTICE]")
       assert notice =~ "1 background shell job finished"
-      assert notice =~ "bash-0123456789abcdef"
+      assert notice =~ "bash-k3f9"
       assert notice =~ "mix test"
       assert notice =~ "completed (exit code: 0)"
       assert notice =~ "`job_output`"
       assert notice =~ "`job_list`"
-      assert notice =~ ~s|Call `job_output` with job_id "bash-0123456789abcdef"|
+      assert notice =~ ~s|Call `job_output` with job_id "bash-k3f9"|
     end
 
     test "lists multiple finished jobs and pluralizes the header" do

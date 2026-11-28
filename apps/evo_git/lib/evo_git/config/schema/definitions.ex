@@ -599,7 +599,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         category: :git,
         sub_category: nil,
         description:
-          "When true, appends a 'Co-authored-by: Genesis <noreply@evogit.ai>' trailer to all agent-generated git commits. Disable to omit the co-author attribution."
+          "When true, appends a 'Co-authored-by: Genesis <noreply@evogit.ai>' trailer to all agent-generated git commits and to every merge commit Genesis itself creates (subagent result merges, the final task merge, phylo-graph merges — fast-forwards create no commit and get none). Disable to omit the co-author attribution."
       },
       %{
         key_path: [:git, :cow_worktree_creation],

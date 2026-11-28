@@ -49,11 +49,11 @@ defmodule EvoGit.Agent.BackgroundJobNotice do
 
       ## Background Jobs
       These are THIS agent's background shell jobs, live or finished. Read a job's output by calling `job_output` with that job's id as `job_id` (the id shown in backticks on each line below), and list them with `job_list`.
-      - `bash-1` — running — `mix test`
-      - `bash-2` — completed (exit code: 0) — `mix format --check-formatted`
+      - `bash-k3f9` — running — `mix test`
+      - `bash-7qd` — completed (exit code: 0) — `mix format --check-formatted`
 
   The orientation line deliberately names no concrete id: a fabricated example
-  (`bash-1`) can collide with a REAL job of another snapshot, so it points at
+  (`bash-k3f9`) can collide with a REAL job of another snapshot, so it points at
   the ids the per-job lines already render instead.
 
   Each job line is `- `id` — status (detail) — label`; the parenthesised
@@ -90,9 +90,9 @@ defmodule EvoGit.Agent.BackgroundJobNotice do
   handed in newest first — so the copy-ready `job_id` spelling is literal):
 
       [NOTICE] 2 background shell jobs finished:
-      - `bash-1` — completed (exit code: 0) — `mix test`
-      - `bash-2` — failed (exit code: 1) — `mix credo`
-      Call `job_output` with job_id "bash-1" to read that job's output, or `job_list` to see all of this agent's jobs.
+      - `bash-k3f9` — completed (exit code: 0) — `mix test`
+      - `bash-7qd` — failed (exit code: 1) — `mix credo`
+      Call `job_output` with job_id "bash-k3f9" to read that job's output, or `job_list` to see all of this agent's jobs.
 
   When the first job carries no usable id (nil, non-map or blank), the line
   falls back to the generic wording that names no concrete `job_id` value, so

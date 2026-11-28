@@ -127,6 +127,30 @@ defmodule EvoDashWeb.TasksLiveTest do
     assert has_element?(view, "#app-layout[data-workbench-project='/tmp/workbench']")
   end
 
+  # The workbench tab rail owns the page name ("Tasks"), so the canvas must not
+  # repeat it: no in-canvas <h1> title (the old header read "Task History") and
+  # no descriptor subtitle. The filter bar IS the page's first row.
+  test "the tab rail owns the page name: the filter bar is the first row", %{conn: conn} do
+    id =
+      insert_fixture!(
+        project_path: "/tmp/tasks-title",
+        opts: [path: "/tmp/tasks-title", objective: "Pin the tab rail title owner"]
+      )
+
+    {:ok, view, _html} = live(conn, ~p"/tasks")
+    html = flush_tasks_load(view)
+
+    # Non-vacuous: `main` IS the page canvas, and this test's card renders in it.
+    assert [main] = html |> Floki.parse_document!() |> Floki.find("#main-content")
+    headings = main |> Floki.find("h1") |> Enum.map(&(&1 |> Floki.text() |> String.trim()))
+    refute "Tasks" in headings
+    refute "Task History" in headings
+
+    # The functional rows that replaced the header still render.
+    assert has_element?(view, "#main-content #task-filters")
+    assert has_element?(view, "#main-content #tasks-list #task-#{id}")
+  end
+
   # Drains the async page load (via the shared EvoDashWeb.TestHelpers.flush_loading/4)
   # AND synchronizes the test proxy before returning: flush_loading stops as soon
   # as the "Loading tasks..." marker leaves the proxy's cached tree, but that tree

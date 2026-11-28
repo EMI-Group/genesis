@@ -31,7 +31,8 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   never a fixed sleep used as the assertion), every long job is killed and its
   OS pid reaped before the test ends, and every job start registers an `on_exit`
   that removes that job's OWN `genesis_job_*.log` — the path the registry
-  returns on the record, so the cleanup is exact and never lists the scratch
+  returns on the record (its file name IS the job's id, i.e.
+  `genesis_job_<id>.log`), so the cleanup is exact and never lists the scratch
   directory (which can hold thousands of unrelated entries on a busy host).
   """
   use ExUnit.Case, async: false
@@ -138,7 +139,8 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   ## Scratch-directory hygiene
 
   # A job's output file is `<scratch dir>/genesis_job_<job_id>.log`
-  # (`EvoGit.BackgroundJobs.scratch_dir/0` = `EvoGit.Sandbox.resolve_tmpdir/0`).
+  # (`EvoGit.BackgroundJobs.scratch_dir/0` = `EvoGit.Sandbox.resolve_tmpdir/0`,
+  # with the job's own short random id as the file address).
   # The scratch dir is shared with the whole host, so a window-style
   # snapshot/restore would have to `File.ls` it — a directory that legitimately
   # holds thousands of unrelated entries, i.e. milliseconds per listing, twice
@@ -550,7 +552,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       # the wait marker that proves the wait path (not just a read) ran, and the
       # trailing inferred-read note.
       assert text =~
-               ~r/\Awaited\n\[status: completed, exit code: 0\]\n\[wait: finished after \d+ ms, status: completed\]\n\[note: no job_id given — read the only background job bash-\d+; pass job_id explicitly next time\]\z/
+               ~r/\Awaited\n\[status: completed, exit code: 0\]\n\[wait: finished after \d+ ms, status: completed\]\n\[note: no job_id given — read the only background job bash-[0-9a-z]{1,8}; pass job_id explicitly next time\]\z/
     end
 
     test "omitted job_id with no jobs explains how to start one", %{tmp_dir: cwd} do
@@ -611,8 +613,13 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       await_job_status(first.id, :completed)
       await_job_status(second.id, :completed)
 
-      # Short sequential ids in one isolated registry.
-      assert {first.id, second.id} == {"bash-1", "bash-2"}
+      # Two DISTINCT ids of the mintable shape — the schema pins no ordering, so
+      # only the shape and the distinctness are asserted.
+      for id <- [first.id, second.id] do
+        assert id =~ ~r/\Abash-[0-9a-z]{1,8}\z/
+      end
+
+      refute first.id == second.id
 
       assert JobOutput.execute(%{"job_id" => first.id}, cwd, cwd) =~ "one"
       assert JobOutput.execute(%{"job_id" => second.id}, cwd, cwd) =~ "two"
@@ -680,6 +687,8 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
     end
 
     test "every failure is an Error: string and never raises", %{tmp_dir: cwd} do
+      # 16 payload chars — longer than the 8-char maximum, so this id can never
+      # be minted and always reads as "an id never issued".
       unknown = "bash-0000000000000000"
 
       not_found = JobOutput.execute(%{"job_id" => unknown}, cwd, cwd)
@@ -1125,7 +1134,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       assert length(lines) == 2
 
       for line <- lines do
-        assert line =~ ~r/\Abash-\d+ \[bash\] (running|completed|killed|failed) — .+/
+        assert line =~ ~r/\Abash-[0-9a-z]{1,8} \[bash\] (running|completed|killed|failed) — .+/
         # The separator is the EM DASH (U+2014), not a hyphen.
         assert line =~ "—"
         # The label is the command's first line.
@@ -1302,6 +1311,8 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
     end
 
     test "every failure is an Error: string and never raises", %{tmp_dir: cwd} do
+      # 16 payload chars — longer than the 8-char maximum, so this id can never
+      # be minted and always reads as "an id never issued".
       unknown = "bash-0000000000000000"
 
       not_found = JobKill.execute(%{"job_id" => unknown}, cwd, cwd)
@@ -1395,9 +1406,9 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       result = ShellTool.execute(%{"command" => command, "run_in_background" => true}, cwd, cwd)
 
       assert result =~
-               ~r/\Astarted background job bash-\d+ — read its output with job_output using job_id "bash-\d+"\z/
+               ~r/\Astarted background job bash-[0-9a-z]{1,8} — read its output with job_output using job_id "bash-[0-9a-z]{1,8}"\z/
 
-      [_, id] = Regex.run(~r/\Astarted background job (bash-\d+) /, result)
+      [_, id] = Regex.run(~r/\Astarted background job (bash-[0-9a-z]{1,8}) /, result)
       assert result =~ ~s|using job_id "#{id}"|
 
       jobs = BackgroundJobs.list()
@@ -1425,9 +1436,9 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       refute String.starts_with?(result, "Error: ")
 
       assert result =~
-               ~r/\Astarted background job bash-\d+ — read its output with job_output using job_id "bash-\d+"\z/
+               ~r/\Astarted background job bash-[0-9a-z]{1,8} — read its output with job_output using job_id "bash-[0-9a-z]{1,8}"\z/
 
-      [_, id] = Regex.run(~r/\Astarted background job (bash-\d+) /, result)
+      [_, id] = Regex.run(~r/\Astarted background job (bash-[0-9a-z]{1,8}) /, result)
       assert result =~ ~s|using job_id "#{id}"|
 
       job = await_job_status(id, :running)

@@ -182,8 +182,8 @@ defmodule EvoGit.Sandbox.MacOS do
   # started — the cached rejection decision is the only signal available, so
   # the stripped profile must be chosen up front.
   @doc false
-  def effective_profile(cwd, repo_root \\ nil) do
-    profile = generate_profile(cwd, repo_root)
+  def effective_profile(cwd, repo_root \\ nil, opts \\ []) do
+    profile = generate_profile(cwd, repo_root, opts)
     if process_limit_rejected?(), do: strip_unverified_rules(profile), else: profile
   end
 
@@ -214,10 +214,14 @@ defmodule EvoGit.Sandbox.MacOS do
   def generate_profile(cwd, repo_root \\ nil, opts \\ []) when is_binary(cwd) do
     # The ONE place Genesis sandbox semantics live (roots, credential list,
     # cache dirs, git metadata, tmp/task/config/data dirs) — this module only
-    # renders them as SBPL. `:host_tmpdir` is forwarded ONLY when present, so
-    # an absent option keeps the spec's own `$TMPDIR` read; the renderer
-    # never touches the environment or the config.
-    spec_opts = [cwd: cwd, repo_root: repo_root] ++ Keyword.take(opts, [:host_tmpdir])
+    # renders them as SBPL. `:host_tmpdir`, `:tmpdir` and `:task_tmpdir` are
+    # forwarded ONLY when present, so an absent option keeps the spec's own
+    # `$TMPDIR` read / live task-tmpdir resolution; the renderer never touches
+    # the environment or the config.
+    spec_opts =
+      [cwd: cwd, repo_root: repo_root] ++
+        Keyword.take(opts, [:host_tmpdir, :tmpdir, :task_tmpdir])
+
     spec = Spec.build(:macos, spec_opts)
 
     # Path → spellings (logical first, resolved alias second) — see

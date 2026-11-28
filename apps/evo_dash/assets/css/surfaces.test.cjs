@@ -3,9 +3,12 @@
 // Contract (detail: assets/css/CONTEXT.md, "Surfaces & elevation"):
 //   * `surfaces.css` is the ONE owner of the layering vocabulary and it is
 //     imported right after `density.css`, before every component sheet.
-//   * three layers — chrome (`--surface-shell` / `--surface-rail` / `--surface-dock`), the content
+//   * three layers — chrome (`--surface-shell` / `--surface-rail`), the content
 //     canvas (`--surface-canvas`) and the overlays (`--surface-raised` plus
 //     `--elev-1/2/3`). Overlays are the ONLY shadowed surfaces.
+//   * the rail is ONE restrained step BENEATH the content canvas in both
+//     themes, so the sidebar and the canvas read as one continuous surface;
+//     only the shell (top bar) wears the chrome step.
 //   * every token is declared exactly once, on `:root` (plus a
 //     `[data-theme="dark"]` counterpart whose values differ) and never in
 //     another stylesheet.
@@ -81,7 +84,6 @@ function merge(rules) {
 const TONES = [
   "--surface-shell",
   "--surface-rail",
-  "--surface-dock",
   "--surface-canvas",
   "--surface-text-muted",
   "--surface-hover",
@@ -255,7 +257,10 @@ test("the compact bottom-aligned rail contains horizontal overflow", () => {
   const [tab] = rulesWith(".workbench-tab", workbench, {exactSelectorText: true});
   assert.equal(values(tab.body).flex, "0 0 auto", "scroll rather than squeeze a tab");
   assert.equal(values(tab.body)["block-size"], "calc(var(--control-h-sm) + 2px)");
-  assert.equal(values(tab.body)["max-inline-size"], "min(10rem, 55vw, 100%)", "a long tab can fit within its rail");
+  const cap = values(tab.body)["max-inline-size"];
+  assert.equal(cap, "min(10rem, 55vw)", "a long tab can fit within its rail");
+  assert.doesNotMatch(cap, /%/,
+    "the cap must stay DEFINITE: a percentage would resolve against this same scroller's content box while that box is still sized from the tabs' max-content widths, so the strip would settle at the tabs' uncapped width and trail dead space before Create");
   const [separator] = rulesWith('.workbench-tab[data-tab-group-start="true"]:not(.is-current)::before', workbench);
   assert.equal(values(separator.body)["pointer-events"], "none");
   assert.equal(values(separator.body)["border-inline-start"], "1px solid var(--border-hairline)");
@@ -286,7 +291,10 @@ test("only committed tabs flare out to the same canvas, within the scrolling rai
 
   const strip = merge(rulesWith(".workbench-tabs", workbench));
   assert.equal(strip.gap, paint["inline-size"], "the adjacent pending tab's edge stays clear");
-  assert.equal(strip["padding-inline"], "calc(var(--workbench-tab-flare) + var(--workbench-tab-start-inset, var(--radius-box))) var(--workbench-tab-flare)");
+  assert.equal(strip["padding-inline"], "var(--workbench-rail-start-inset) var(--workbench-tab-flare)",
+    "the first flare keeps the shared start inset, and the END keeps exactly one constant paint room");
+  assert.equal(strip["padding-inline"].split(/\s+/)[1], "var(--workbench-tab-flare)",
+    "the trailing space before Create is the flare alone — never a second, growing reserve");
   assert.equal(merge(rulesWith(".workbench-tab", workbench))["scroll-margin-inline"], paint["inline-size"]);
   const [wide, narrow] = rulesWith(".workbench-tab-rail", workbench);
   assert.equal(values(wide.body)["--workbench-tab-flare"], "var(--radius-tab)");
@@ -305,6 +313,38 @@ test("the compact context label yields room to tabs and fixed toolbar controls",
   assert.equal(title["white-space"], "nowrap");
   assert.equal(title["text-overflow"], "ellipsis");
   assert.equal(title["font-size"], "var(--text-sm)");
+
+  // The label owns the rail's start-inset line — the SAME token the strip pads
+  // by — so it is never flush against the bar's own gutter.
+  assert.equal(title["margin-inline-start"], "var(--workbench-rail-start-inset)");
+  const [strip] = rulesWith(".workbench-tabs", workbench, {exactSelectorText: true});
+  assert.equal(values(strip.body)["padding-inline"].split(/\s+/)[0], title["margin-inline-start"],
+    "the label and the strip must consume ONE shared start-inset token");
+});
+
+test("ONE rail token carries the start inset for both the label and the strip", () => {
+  const [rail] = rulesWith(".workbench-tab-rail", workbench);
+  assert.equal(values(rail.body)["--workbench-rail-start-inset"],
+    "calc(var(--workbench-tab-flare) + var(--workbench-tab-start-inset, var(--radius-box)))",
+    "the inset is the flare paint room plus the canvas corner radius, derived — never a fresh literal");
+
+  // Narrow rails drop the corner-radius part of the token (the fixed sidebar
+  // toggle shift lives on the bar's padding), and the smallest width halves
+  // the flare; both reach the token because it is derived, not copied.
+  const narrow = workbench.slice(workbench.lastIndexOf("@media (max-width: 1023.98px)"))
+    .split("@media (max-width: 480px)")[0];
+  assert.equal(merge(rulesWith(".workbench-top", narrow))["--workbench-tab-start-inset"], "0px",
+    "the narrow branch must zero the token, not add a second hardcoded offset");
+  assert.deepEqual(values(rulesWith(".workbench-tab-rail", workbench)[1].body), {
+    "--workbench-tab-flare": "calc(var(--radius-tab) / 2)",
+    gap: "calc(var(--card-pad) / 4)"
+  }, "the 480px branch retargets the flare the token derives from");
+});
+
+test("a strip that follows the context label adds no second start indent", () => {
+  const [following] = rulesWith(".workbench-context-title + .workbench-tabs", workbench, {exactSelectorText: true});
+  assert.deepEqual(values(following.body), {"padding-inline-start": "var(--workbench-tab-flare)"},
+    "the label already carries the start inset, so the strip keeps only its flare paint room");
 });
 
 test("the inset canvas retains its frame and meets the committed tab at the hairline", () => {
@@ -399,29 +439,47 @@ test("the published tab hooks are styled", () => {
 
 // --- docked right panel ----------------------------------------------------
 
-test("History shares the sidebar fill without a divider; only Git keeps the tinted dock and hairline", () => {
+test("Source Control shares Project History's fill and keeps only the hairline", () => {
   const declared = merge(rulesWith(".workbench-history", workbench, {exactSelectorText: true}));
   const history = merge(rulesWith("#workbench-history", workbench));
   const sidebar = merge(rulesWith("#app-layout #sidebar", workbench));
   const git = merge(rulesWith(".workbench-history:where(#workbench-git)", workbench));
+  const gitFill = merge(rulesWith(".workbench-git", workbench));
   assert.equal(history.background, "var(--surface-rail)");
-  assert.equal(history.background, sidebar.background);
-  assert.equal(git.background, "var(--surface-dock)");
-  assert.equal(git["border-inline-start"], "1px solid var(--border-hairline)");
-  assert.equal(({...declared, ...history})["border-inline-start"], undefined);
-  for (const theme of [":root", '[data-theme="dark"]']) {
-    const palette = values(rulesWith(theme)[0].body);
-    assert.notEqual(palette["--surface-dock"], palette["--surface-rail"]);
-    assert.match(palette["--surface-dock"], /var\(--color-secondary\) [1-9]%/,
-      "Git has a restrained secondary wash in either theme");
-    assert.match(palette["--surface-dock"], /var\(--color-base-200\)/,
-      "start with neutral chrome, not the near-white canvas");
-  }
+  assert.equal(history.background, sidebar.background,
+    "the docked panels share the left sidebar's fill in either theme");
+  assert.equal(git.background, undefined, "no separate dock wash for Source Control");
+  assert.equal(gitFill.background, "var(--surface-rail)",
+    "Source Control takes the same rail fill as Project History");
+  assert.equal(git["border-inline-start"], "1px solid var(--border-hairline)",
+    "only Source Control keeps the one separating hairline");
+  assert.equal(declared["border-inline-start"], undefined, "the base panel frame declares no divider");
+  assert.equal(history["border-inline-start"], undefined, "Project History keeps no divider");
   assert.match(declared["--workbench-selected"], /var\(--color-primary\) 10%/, "accents tint local choices, not the whole dock");
   for (const surface of [declared, history, git]) {
     assert.equal(surface["box-shadow"], undefined, "neither dock floats");
   }
   assert.equal(declared.padding, "calc(var(--card-pad) / 2)", "the panel frame uses the shared density scale");
+});
+
+test("the rail sits one step beneath the canvas in both themes", () => {
+  const light = values(rulesWith(":root")[0].body);
+  const dark = values(rulesWith('[data-theme="dark"]')[0].body);
+
+  // Light: the canvas IS base-100 and the rail is a chrome step just under it.
+  assert.equal(light["--surface-canvas"], "var(--color-base-100)");
+  assert.match(light["--surface-rail"], /var\(--color-base-200\) 86%/,
+    "the light rail derives from the neutral chrome step");
+  assert.match(light["--surface-rail"], /var\(--color-base-300\)/);
+  assert.doesNotMatch(light["--surface-rail"], /var\(--color-base-100\)/,
+    "the light rail is a chrome step, not the canvas itself");
+
+  // Dark: base-200 is LIGHTER than base-100, so the rail anchors on base-100.
+  assert.match(dark["--surface-canvas"], /var\(--color-base-100\) 94%/);
+  assert.equal(dark["--surface-rail"], "var(--color-base-100)",
+    "the dark rail anchors on base-100 so it never lifts above the canvas");
+  assert.doesNotMatch(dark["--surface-rail"], /var\(--color-base-20[02]\)|var\(--color-base-300\)/,
+    "anchoring the dark rail on base-200/base-300 lifted the sidebar above the canvas");
 });
 
 test("the composer and History placeholders use the opaque muted foreground", () => {
@@ -528,7 +586,8 @@ test("the task-card chrome is styled as the surface consumers", () => {
   assert.equal(raised["box-shadow"], "var(--elev-1)");
 
   const panel = values(rulesWith(".task-card-panel", surfaces, {exactSelectorText: true})[0].body);
-  assert.equal(panel.background, "var(--surface-shell)");
+  assert.equal(panel.background, "var(--surface-rail)",
+    "a nested panel is recessed in both themes: the rail tone lifts in neither");
   assert.equal(panel.border, "1px solid var(--border-hairline)");
   assert.equal(panel["border-radius"], "0.5rem");
   assert.equal(panel["box-shadow"], "none", "a nested panel is recessed, not raised");

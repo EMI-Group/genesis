@@ -814,6 +814,17 @@ impl BackendManager {
         navigate_webview(&window, url)
     }
 
+    /// Navigates to a shell-rendered `data:` page (loading/error/startup) and
+    /// restores NATIVE window chrome first — these pages cannot host the
+    /// frameless dashboard chrome (a `data:` origin is ACL-rejected for
+    /// `start_dragging`), so the OS title bar must be back before they show.
+    fn show_shell_page(&self, app: &AppHandle, url: &str) -> bool {
+        if let Some(window) = app.get_webview_window("main") {
+            crate::window_chrome::apply(&window, crate::window_chrome::ChromeState::Shell);
+        }
+        self.navigate(app, url)
+    }
+
     /// Shows the backend-unavailable error page (single attempt; the next
     /// failure cycle re-attempts it once the window exists).
     fn show_error_page(&self, app: &AppHandle) {
@@ -823,7 +834,7 @@ impl BackendManager {
         // recovery window emit `quit-requested` into the error page, which can
         // never render the confirm dialog.
         self.reset_dashboard_loaded();
-        self.navigate(app, &error_page_data_url(&self.backend_url));
+        self.show_shell_page(app, &error_page_data_url(&self.backend_url));
     }
 
     /// Shows the NEUTRAL startup page: the backend is healthy but the dashboard
@@ -834,7 +845,7 @@ impl BackendManager {
         // Navigation away from the dashboard — the latch must describe the page
         // CURRENTLY loaded, so clear it (same reasoning as `show_error_page`).
         self.reset_dashboard_loaded();
-        self.navigate(app, &startup_page_data_url(&self.backend_url));
+        self.show_shell_page(app, &startup_page_data_url(&self.backend_url));
     }
 
     /// Shows the boot LOADING page (Genesis branding + CSS spinner): the first
@@ -852,7 +863,7 @@ impl BackendManager {
     /// and idempotent).
     pub fn show_loading_page(&self, app: &AppHandle) -> bool {
         self.reset_dashboard_loaded();
-        self.navigate(app, &loading_page_data_url())
+        self.show_shell_page(app, &loading_page_data_url())
     }
 
     /// True when the backend child is alive AND answers an HTTP request — the

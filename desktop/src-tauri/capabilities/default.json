@@ -1,13 +1,21 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capabilities for the Genesis desktop shell: shell access for the Phoenix backend sidecar.",
+  "description": "Default capabilities for the Genesis desktop shell: shell access for the Phoenix backend sidecar, plus the window commands the app-drawn (frameless) title bar needs from the dashboard's remote origin.",
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
     "shell:allow-execute",
     "shell:allow-spawn",
     "allow-begin-quit",
+    "allow-set-custom-titlebar",
     "allow-check-update",
     "allow-download-update",
     "allow-begin-update"

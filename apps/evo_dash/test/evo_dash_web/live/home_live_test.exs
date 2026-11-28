@@ -4589,6 +4589,68 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).chat_draft == "unfinished message"
     end
 
+    test "recent projects are shown first and a browsed folder selects into the same chat", %{
+      conn: conn
+    } do
+      older = mount_test_project!("older")
+      recent = mount_test_project!("recent")
+      path = Path.join(recent.path, "folder to browse")
+      File.mkdir_p!(path)
+      on_exit(fn -> EvoDash.NodeContext.forget_project(node(), path) end)
+
+      {:ok, view, _} = live(conn, "/assistant")
+      chat_id = assigns(view).chat_id
+      render_change(view, "chat_input", %{"message" => "keep my draft"})
+      render_click(view, "workspace_toggle")
+      wait_until(fn -> not assigns(view).workspace_loading end)
+
+      assert has_element?(view, "#workspace-recent", "Recent projects")
+      assert has_element?(view, "#workspace-browse[data-workbench-project-window=select]")
+      assert has_element?(view, "#workspace-manual:not([open]) #workspace-form")
+
+      recent_paths =
+        view
+        |> element("#workspace-recent")
+        |> render()
+        |> Floki.parse_fragment!()
+        |> Floki.attribute("button", "phx-value-path")
+
+      assert Enum.filter(recent_paths, &(&1 in [older.path, recent.path])) ==
+               [recent.path, older.path]
+
+      render_hook(with_target(view, "#workbench-project-window-component"), "prepare", %{
+        "mode" => "select"
+      })
+
+      render_click(view, "workspace_close")
+      view |> form("#project-picker-path-form", %{"path" => path}) |> render_submit()
+      render_async(view, @async_wait_budget_ms)
+
+      assert has_element?(view, "#project-location[disabled]")
+
+      view
+      |> element("#workbench-project-window button[phx-click=open]", "Select project")
+      |> render_click()
+
+      assert_push_event(view, "workbench_project_window_close", %{})
+      wait_until(fn -> get_in(assigns(view), [:workspace, :path]) == path end)
+      assert assigns(view).chat_id == chat_id
+      assert assigns(view).chat_draft == "keep my draft"
+      assert has_element?(view, "#workspace-toggle[title='#{path}']")
+
+      render_hook(with_target(view, "#workbench-project-window-component"), "prepare", %{
+        "mode" => "select"
+      })
+
+      view |> form("#project-picker-path-form", %{"path" => older.path}) |> render_submit()
+      render_async(view, @async_wait_budget_ms)
+
+      render_click(view, "new_chat")
+      assert assigns(view).chat_id != chat_id
+      assert has_element?(view, "#workbench-project-window button[phx-click=open][disabled]")
+      assert assigns(view).workspace.path == path
+    end
+
     test "the picker lists workspaces and expanding one reveals members and missing refs", %{
       conn: conn
     } do
@@ -5382,9 +5444,22 @@ defmodule EvoDashWeb.HomeLiveTest do
       local_node = node()
 
       install_session_seam(:home_session_start_runner, fn node, opts ->
-        send(test_pid, {:session_start_called, node, opts})
-        {:ok, 4242}
+        send(test_pid, {:session_start_called, self(), node, opts})
+
+        receive do
+          :finish_start -> {:ok, 4242}
+        after
+          @async_wait_budget_ms -> {:error, :timeout}
+        end
       end)
+
+      install_session_seam(:home_session_list_runner, fn _node ->
+        {[], []}
+      end)
+
+      # An older conversation can legitimately share the opening message.
+      cached_id = 1_000_004_242
+      seed_cached_chat(cached_id, [%{id: "u1", role: :user, text: text, streaming: false}])
 
       install_snapshot_fixture(4242, attach_history("re-attached transcript"), :running)
 
@@ -5393,11 +5468,27 @@ defmodule EvoDashWeb.HomeLiveTest do
         running_attach(4242, attach_history("re-attached transcript"))
       )
 
+      conn = put_connect_params(conn, %{"guide_client_id" => "interactive-session-sidebar"})
       {:ok, view, _html} = live(conn, "/assistant")
+      temporary_id = assigns(view).chat_id
+      render_change(view, "chat_input", %{"message" => text})
       html = render_submit(view, "send_message", %{"message" => text})
 
-      assert_receive {:session_start_called, start_node, opts}
+      assert_receive {:session_start_called, start_pid, start_node, opts}
       assert start_node == node()
+
+      try do
+        render_change(view, "chat_input", %{"message" => ""})
+        assert EvoDash.ChatHistory.get_state(temporary_id) == nil
+
+        assert %{chat_draft: ^text} =
+                 EvoDash.ChatHistory.get_draft(
+                   {:assistant, "interactive-session-sidebar", {nil, node()}}
+                 )
+      after
+        send(start_pid, :finish_start)
+      end
+
       # The Assistant session spec: repo-less, interactive, and the RAW typed
       # text as the objective (the one-shot transcript preamble is NOT built
       # for a session — it owns the whole conversation).
@@ -5436,6 +5527,9 @@ defmodule EvoDashWeb.HomeLiveTest do
       settled = assigns(view)
       assert settled.session_id == 4242
       assert settled.chat_status == :running
+      wait_until(fn -> has_element?(view, "#chat-session-4242") end)
+      assert has_element?(view, "#chat-session-#{cached_id}")
+      refute has_element?(view, "#chat-session-#{temporary_id}")
 
       assert Enum.any?(
                settled.transcript,
@@ -5451,7 +5545,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       html2 = render_submit(view, "send_message", %{"message" => "second message"})
       assert_receive {:session_send_called, ^local_node, 4242, "second message", :queue}
-      refute_receive {:session_start_called, _node, _opts}, 0
+      refute_receive {:session_start_called, _pid, _node, _opts}, 0
       assert html2 =~ "second message"
       # Mid-run sends are QUEUED, so the echo line renders (the message is not
       # lost, just deferred to the next turn boundary).
@@ -5692,6 +5786,25 @@ defmodule EvoDashWeb.HomeLiveTest do
   # It must NEVER start a task, so tests also pin the empty task store.
   # ─────────────────────────────────────────────────────────────────────────────
   describe "interactive session reattach (?session=)" do
+    test "restores history without displaying an old project-selection notice", %{conn: conn} do
+      session_id = 6_510
+
+      notice =
+        "Authoritative selected project: none. This supersedes earlier selections; existing tasks keep their original project."
+
+      history =
+        attach_history("Before the selection notice") ++
+          attach_history(notice) ++ [history_assistant_message("Restored assistant reply")]
+
+      install_watch_seams(session_id, self(), snapshot_answer(7, history, phase: :awaiting_input))
+
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
+
+      wait_until(fn -> has_element?(view, "#chat-messages", "Restored assistant reply") end)
+      assert has_element?(view, "#chat-messages", "Before the selection notice")
+      refute has_element?(view, "#chat-messages", notice)
+    end
+
     test "adopts a parked session from the cache in ONE attach and starts no task", %{conn: conn} do
       test_pid = self()
       session_id = 6_501

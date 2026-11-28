@@ -4,6 +4,10 @@
      #main-content the remaining space after the bar and frame; simple_nav
      pages have neither. In-shell pages must not derive a viewport height. */
   --shell-topbar-h: var(--workbench-topbar-size, calc(var(--control-h) + var(--card-pad) / 4));
+  /* The desktop custom title-bar strip only exists in a Tauri desktop window
+     (`#app-layout[data-desktop="true"]`); a browser render keeps 0 so every
+     chrome-anchored offset below resolves to its unchanged value. */
+  --shell-titlebar-h: 0px;
   /* The rails' own interaction tones. The FILLS come from the shared surface
      vocabulary (`surfaces.css`: `--surface-shell`, `--surface-rail`,
      `--surface-hover`, `--surface-selected`); these stay as the local names the
@@ -18,6 +22,112 @@
 @media (max-width: 1023.98px), (pointer: coarse) {
   #app-layout { --workbench-topbar-size: calc(var(--touch-target) + var(--card-pad) * .75); }
 }
+
+/* A Tauri desktop window adds one in-flow strip above the shell row, so the
+   token takes a real row height; everywhere else it stays 0px. */
+#app-layout[data-desktop="true"] { --shell-titlebar-h: var(--row-h); }
+
+/* === Desktop custom title bar ===
+   The strip is the first child of `#app-layout` (a flex column in a desktop
+   window) and is that window's CHROME: the brand, the flexible grab gutter and —
+   on every OS except macOS — the window controls. The `DesktopTitlebar` JS hook starts
+   the window drag on primary-button `pointerdown` anywhere on the strip and
+   toggles maximize on title-bar double-click, so the strip itself is the drag
+   surface. It is LAYER 0 chrome: the top bar's shell tone plus one hairline, no
+   elevation, no stacking context, and it takes its height from the ONE
+   `--shell-titlebar-h` token instead of a literal. `user-select: none` keeps the
+   brand text from being selected mid-drag and `touch-action: none` keeps a
+   touch/touchpad drag from being consumed as a scroll gesture — this strip is
+   chrome, never a scroll surface. Browser/dev renders no strip at all, so nothing
+   here may shift the browser layout. */
+#desktop-titlebar {
+  /* Every OS except macOS puts the controls at the inline end, so the lead is
+     the frame gutter; macOS overlays its native traffic lights instead (below). */
+  --titlebar-lead: var(--page-gutter);
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  flex: 0 0 var(--shell-titlebar-h);
+  height: var(--shell-titlebar-h);
+  min-width: 0;
+  padding-inline-start: var(--titlebar-lead);
+  background: var(--surface-shell);
+  border-bottom: 1px solid var(--border-hairline);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  cursor: default;
+}
+
+/* macOS draws the traffic lights OVER the strip's inline start, so the brand
+   and the drag region start clear of them. */
+#desktop-titlebar[data-os="macos"] { --titlebar-lead: 5.25rem; }
+
+.desktop-titlebar-brand {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-width: 0;
+  text-decoration: none;
+}
+.desktop-titlebar-brand:focus-visible {
+  outline: 2px solid var(--color-primary-standalone);
+  outline-offset: 2px;
+}
+
+/* The grab gutter is the flexible middle; the controls keep their own width.
+   The hook's pointer handler lives on the strip root, so this spacer only needs
+   to stay inert chrome: no selection and no touch scroll gesture either. */
+.desktop-titlebar-drag {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 0;
+  touch-action: none;
+  cursor: default;
+}
+
+.desktop-titlebar-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-self: stretch;
+}
+
+.desktop-titlebar-control {
+  display: grid;
+  place-items: center;
+  width: 2.875rem;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-base-content) 80%, transparent);
+  cursor: default;
+  transition: background-color .12s ease, color .12s ease;
+}
+.desktop-titlebar-control:hover {
+  background: var(--surface-hover);
+  color: var(--color-base-content);
+}
+.desktop-titlebar-control:focus-visible {
+  outline: 2px solid var(--color-primary-standalone);
+  outline-offset: -2px;
+}
+/* Windows-style red close hover; the glyph is `currentColor`. */
+.desktop-titlebar-control-close:hover {
+  background: var(--color-error);
+  color: var(--color-error-content);
+}
+@media (prefers-reduced-motion: reduce) {
+  .desktop-titlebar-control { transition: none; }
+}
+
+/* Chrome-anchored fixed surfaces clear the strip when one is present. The
+   fallback is ALWAYS spelled out: `#flash-group` also renders in the
+   `workbench_window` clause, outside `#app-layout`, where the token is
+   undefined and a bare `var()` would make `top` invalid. */
+#sidebar-mobile-toggle-wrap { top: calc(var(--shell-titlebar-h, 0px) + .375rem); }
+#flash-group { top: calc(var(--shell-titlebar-h, 0px) + 1rem); }
+#guide-panel { top: calc(var(--shell-titlebar-h, 0px) + 1rem); }
 
 .workbench-main, .workbench-center {
   display: flex;
@@ -125,6 +235,13 @@
 }
 .workbench-tab-rail {
   --workbench-tab-flare: var(--radius-tab);
+  /* The rail's ONE start-inset line: the canvas frame's corner radius plus the
+     paint room the first tab's outward flare needs. The context title and the
+     tab strip both consume it, so the label and a leading tab start on the same
+     line instead of the label sitting flush at the bar's own gutter. The
+     `coarse`/narrow branches retarget `--workbench-tab-flare` or zero
+     `--workbench-tab-start-inset`, and this token follows both. */
+  --workbench-rail-start-inset: calc(var(--workbench-tab-flare) + var(--workbench-tab-start-inset, var(--radius-box)));
   display: flex;
   align-items: center;
   align-self: stretch;
@@ -136,6 +253,8 @@
   flex: 0 1 auto;
   min-inline-size: 0;
   max-inline-size: min(12rem, 30%);
+  /* Land the label on the rail's start-inset line (the canvas content line). */
+  margin-inline-start: var(--workbench-rail-start-inset);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -152,8 +271,10 @@
   flex: 0 1 auto;
   min-width: 0;
   /* Keep the first flare inside the straight part of the canvas hairline and
-     reserve paint room at both scroll extremes without widening any tab. */
-  padding-inline: calc(var(--workbench-tab-flare) + var(--workbench-tab-start-inset, var(--radius-box))) var(--workbench-tab-flare);
+     reserve paint room at both scroll extremes without widening any tab. The
+     start inset is the shared rail token, and the end flare room is the ONE
+     constant between the last tab and the Create control. */
+  padding-inline: var(--workbench-rail-start-inset) var(--workbench-tab-flare);
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-inline: contain;
@@ -163,6 +284,9 @@
 }
 .workbench-tabs::-webkit-scrollbar { display: none; }
 .workbench-tabs:empty { display: none; }
+/* The context title already carries the start inset, so a strip that follows it
+   needs only its own flare room — no second indent beside the label. */
+.workbench-context-title + .workbench-tabs { padding-inline-start: var(--workbench-tab-flare); }
 
 /* Keep the strip flush against the canvas without painting past the scroller. */
 .workbench-tab {
@@ -172,7 +296,11 @@
   flex: 0 0 auto;
   scroll-margin-inline: var(--workbench-tab-flare);
   block-size: calc(var(--control-h-sm) + 2px);
-  max-inline-size: min(10rem, 55vw, 100%);
+  /* A definite cap only. A percentage here would resolve against this same
+     scroller's content box while that box is still being sized from the tabs'
+     max-content widths, so the strip would settle at the tabs' UNCAPPED width
+     and leave the difference as dead space between the last tab and Create. */
+  max-inline-size: min(10rem, 55vw);
   border: 1px solid transparent;
   border-radius: var(--radius-tab) var(--radius-tab) 0 0;
   font-size: var(--text-xs);
@@ -501,10 +629,10 @@
     padding var(--motion-slow) var(--motion-ease-out),
     border-inline-start-width var(--motion-slow) var(--motion-ease-out);
 }
-/* Keep specificity below the docked collapse states so the Git divider can
-   still animate to zero. History instead shares the sidebar's unlined fill. */
+/* Both docked panels share the sidebar's fill; only Source Control keeps the
+   one hairline. Keep specificity below the docked collapse states so that
+   divider can still animate to zero. */
 .workbench-history:where(#workbench-git) {
-  background: var(--surface-dock);
   border-inline-start: 1px solid var(--border-hairline);
 }
 /* Closed AND closing share ONE collapsed geometry: "closed" is the resolved
@@ -670,7 +798,7 @@
   padding: .2rem;
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-field);
-  background: var(--surface-shell);
+  background: var(--surface-rail);
 }
 .workbench-segmented button {
   min-width: 0;
@@ -684,7 +812,7 @@
 }
 .workbench-segmented button:hover { background: var(--workbench-hover); }
 .workbench-segmented button[aria-pressed="true"] {
-  background: var(--surface-canvas);
+  background: var(--surface-raised);
   border-color: var(--border-strong);
   color: var(--color-base-content);
   font-weight: 600;
@@ -955,8 +1083,9 @@
   outline-offset: 2px;
 }
 
-/* The left sidebar and History use exactly the same tone in either theme. */
-#app-layout #sidebar, #workbench-history { background: var(--surface-rail); }
+/* The left sidebar and BOTH docked panels share the rail fill in either theme
+   (the class spelling keeps this tone rule out of the combined-id flex rule). */
+#app-layout #sidebar, #workbench-history, .workbench-git { background: var(--surface-rail); }
 #app-layout #sidebar {
   flex-shrink: 0;
   border-right: 0;
@@ -969,7 +1098,10 @@
     box-shadow: var(--elev-2);
   }
   #sidebar[data-sidebar-collapsed="false"] { width: min(18rem, 86vw); }
-  /* Clear the fixed sidebar toggle; the offset also clears the frame corner. */
+  /* Clear the fixed sidebar toggle; the offset also clears the frame corner.
+     Zeroing the token (rather than adding an offset) carries the shift into
+     `--workbench-rail-start-inset`, so the label and the first tab stay on the
+     same line here too — only the flare paint room survives. */
   .workbench-top {
     --workbench-tab-start-inset: 0px;
     padding-inline-start: calc(var(--shell-topbar-h) + .05rem);
@@ -1131,7 +1263,7 @@
   position: sticky;
   inset-block-start: 0;
   z-index: 1;
-  background: var(--surface-dock);
+  background: var(--surface-rail);
 }
 .workbench-git-history-entry {
   display: grid;
@@ -1153,7 +1285,7 @@
   padding: .5rem .6rem;
   border: 1px solid var(--color-base-300);
   border-radius: .75rem;
-  background: var(--color-base-100);
+  background: var(--surface-raised);
 }
 .workbench-git-summary-line {
   display: flex;

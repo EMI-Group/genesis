@@ -817,6 +817,48 @@ defmodule EvoDashWeb.ProjectComponentsTest do
     end
   end
 
+  # ONE disclosure vocabulary across the task form and the project settings
+  # panel: a leading right-chevron that rotates open. The panel only renders
+  # while open, so it keeps the rotated chevron and never carries a second
+  # (cog/up-chevron) icon in front of its label.
+  describe "project_settings_panel/1 disclosure" do
+    test "an open panel leads with the shared right-chevron, not a cog or an up-chevron" do
+      html =
+        render_component(&ProjectComponents.project_settings_panel/1,
+          active_project: "/home/user/project",
+          show: true
+        )
+
+      doc = parse(html)
+      assert [header] = Floki.find(doc, "[phx-click=toggle_project_settings]")
+
+      # The disclosure icon is the FIRST element of the header row, ahead of
+      # the label.
+      assert [first_element | _] = header |> Floki.children() |> Enum.reject(&is_binary/1)
+      first_classes = classes(first_element)
+      assert "hero-chevron-right" in first_classes
+      assert "size-4" in first_classes
+      assert "shrink-0" in first_classes
+
+      # The icons this row used to carry must never come back.
+      assert Floki.find(doc, "span.hero-cog-6-tooth") == []
+      assert Floki.find(doc, "span.hero-chevron-up") == []
+
+      # The row still names the panel it opens.
+      assert header |> Floki.text() =~ "Project Settings"
+    end
+
+    test "a closed panel renders nothing" do
+      html =
+        render_component(&ProjectComponents.project_settings_panel/1,
+          active_project: "/home/user/project",
+          show: false
+        )
+
+      assert String.trim(html) == ""
+    end
+  end
+
   # --- helpers ---
 
   # A VCT mount as the palette receives it (one entry of the project registry).
@@ -874,4 +916,9 @@ defmodule EvoDashWeb.ProjectComponentsTest do
 
   # Floki's find/2 + attribute/2 require a parsed tree, not a raw binary.
   defp parse(html), do: Floki.parse_document!(html)
+
+  # A rendered element's class attribute split into its individual tokens.
+  defp classes(element) do
+    element |> Floki.attribute("class") |> List.first() |> to_string() |> String.split()
+  end
 end

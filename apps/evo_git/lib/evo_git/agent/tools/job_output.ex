@@ -16,7 +16,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
       (no new output)
       [status: running]
-      [note: no job_id given — read the only background job bash-1; pass job_id explicitly next time]
+      [note: no job_id given — read the only background job bash-k3f9; pass job_id explicitly next time]
 
   The delta is followed by a newline unless it already ends with one; an empty
   delta reads `(no new output)`. The status line is `[status: <status>]`, or
@@ -31,7 +31,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
       <the surviving log tail>
       [status: completed, exit code: 0]
-      [note: this job's record aged out of retention (retention); finished with exit code 0; its log is at /path/to/genesis_job_bash-1.log]
+      [note: this job's record aged out of retention (retention); finished with exit code 0; its log is at /path/to/genesis_job_bash-7qd.log]
 
   The note names the eviction reason, the recorded exit code (that clause is
   omitted when the job records none) and the logging path.
@@ -146,7 +146,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
           "job_id" => %{
             "type" => "string",
             "description" =>
-              "The id of the background job to read, exactly as returned by the tool that started it (for example \"bash-3\"). Always pass it — call `job_list` to see this agent's job ids if you do not have one."
+              "The id of the background job to read, exactly as returned by the tool that started it (for example \"bash-p2xw8a\"). Always pass it — call `job_list` to see this agent's job ids if you do not have one."
           },
           "wait" => %{
             "type" => "boolean",

@@ -30,7 +30,7 @@ Sizes are a ladder, not a menu. Keep the utility names; the values live in `asse
 | UI default | `text-sm` | 14 px / 20 px | labels, buttons, list rows, table cells, form values on fine pointers, card body copy |
 | Reading | `text-base` | 15 px / 24 px | markdown prose, objectives, task titles, descriptions, the task composer |
 | Card / section title | `text-lg` | 17 px / 24 px | card headers, section headers |
-| Page title | `text-xl` | 20 px / 26 px | the one `h1` per page |
+| Page title | `text-xl` | 20 px / 26 px | a page-scoped headline that is NOT the page name (onboarding, a review header) |
 | Hero (rare) | `text-2xl` | 24 px / 30 px | welcome / empty-state heading only |
 
 Rules:
@@ -39,7 +39,7 @@ Rules:
 - Micro text is for all-caps labels, badges and chips — never for a sentence, a helper explanation or an id a user may need to read.
 - Weights are **400 / 500 / 600 only**; `700` is reserved for numbers, badges and `<strong>` in prose. Never use numeric weights (`450`, `550`, `650`).
 - Metadata is not an excuse for density: a 13 px line still gets 18 px line-height.
-- One `h1` per page at `text-xl font-semibold`. Section headers `text-lg font-semibold`. Card titles `text-base font-semibold`.
+- In-shell pages carry **no page `h1`**: the workbench tab rail names the page (`.workbench-context-title`, `text-sm font-semibold`, aligned with the rounded canvas' content line), so a page renders only content and state headings. A `text-xl font-semibold` `h1` is reserved for a page-scoped headline that is not the page name (onboarding, a review header). Section headers `text-lg font-semibold`. Card titles `text-base font-semibold`.
 - Long-form/reading surfaces use the `1.6` leading (`--leading-body`), UI text uses the token line-height.
 
 ## Density tokens
@@ -124,10 +124,11 @@ A scroller never gets `scroll-behavior: smooth`, and it keeps `overscroll-behavi
 | Surface | Target |
 |---------|--------|
 | `/settings` | Gutters reduced from `px-8 py-8` to `px-4 sm:px-6 py-4 sm:py-6`; sticky section header `p-4`; list rows 40 px (`px-4 py-3`) with 14 px labels, 13 px help (no 11 px); inputs 14 px / 16 px coarse; provider roster rows `px-4 py-3`. |
-| `/system` | Cards `p-4`, `space-y-4`, section headers `text-lg`; Self-Check cells `p-4 gap-3`; body `text-sm`, secondary `text-xs`; add the page `h1` at `text-xl`. |
-| `/tasks` | `h1 text-xl`; filter bar `p-3 sm:p-4`; card `p-4 gap-4`; title `text-base`; meta `text-xs` (never smaller); actions `btn-sm`, coarse 44 px. |
-| `/agents` | Page `h1 text-xl`; tree rows 32–36 px, lane chips `text-2xs`, commit rows keep 44 px; inspector body 14 px, mono 13 px; panels `p-4`; coarse-pointer rows 44 px. |
-| `/processes` | Page `h1 text-xl`; row min-height 40 px desktop / 44 px coarse; command `text-sm`, meta `text-xs`; expand control and square actions ≥ 36 px (44 px coarse). |
+| `/system` | Cards `p-4`, `space-y-4`, section headers `text-lg`; Self-Check cells `p-4 gap-3`; body `text-sm`, secondary `text-xs`; no page `h1` (the rail names the page). |
+| `/tasks` | No page `h1` (the rail names the page); filter bar `p-3 sm:p-4`; card `p-4 gap-4`; title `text-base`; meta `text-xs` (never smaller); actions `btn-sm`, coarse 44 px. |
+| `/agents` | No page `h1` (the rail names the page); tree rows 32–36 px, lane chips `text-2xs`, commit rows keep 44 px; inspector body 14 px, mono 13 px; panels `p-4`; coarse-pointer rows 44 px. |
+| `/processes` | No page `h1` (the rail names the page); row min-height 40 px desktop / 44 px coarse; command `text-sm`, meta `text-xs`; expand control and square actions ≥ 36 px (44 px coarse). |
+| Desktop title bar | Desktop mode puts `#desktop-titlebar` above `header.workbench-top`: `--shell-titlebar-h` is `var(--row-h)` and `--shell-topbar-h` keeps the workbench rail height, so both heights come from existing density tokens (a browser renders the strip at `0px`). |
 | Workbench rail | `--shell-topbar-h` derives from the control and padding tokens, with a touch-target override for narrow screens or coarse pointers; tabs scroll horizontally without squeezing the rail controls. |
 | `/projects` workbench | Shared composer surface (`text-base`, 16 px radius) with flat toolbar triggers; preserve the coarse-pointer floor and the 36 px file-tree/picker row target (`--row-h-sm`). |
 | `/assistant` | Reading body stays 15 px / 1.6; sidebar rows 40 px (`--row-h`), 44 px coarse; composer 16 px; actions 32 px desktop / 44 px coarse; no `btn-xs` for interrupt/approve. |

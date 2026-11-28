@@ -3,13 +3,14 @@
 
    THREE layers, and only the top one is shadowed:
 
-     Layer 0  chrome / shell   recessed, recessive   --surface-shell, --surface-rail,
-                                                     --surface-dock
-              the workbench top bar, the sidebar, the docked right panel and the
-              Settings window's nav rail.
+     Layer 0  chrome / shell   recessed, recessive   --surface-shell, --surface-rail
+              `--surface-shell` is the workbench top bar and the frame gutter;
+              `--surface-rail` is the left sidebar, BOTH docked right panels and
+              the Settings window's nav rail, plus a recessed panel nested in a
+              task card.
      Layer 1  content canvas   continuous, flat     --surface-canvas
-              the center column (#main-content / #main-scroll), a flat task-card
-              row, a nested task-card panel.
+              the center column (#main-content / #main-scroll) and a flat
+              task-card row.
      Layer 2  overlays         the ONLY shadowed   --surface-raised,
               surfaces                            --elev-1 / --elev-2 / --elev-3
               the command palette, native dialogs, popover menus and tooltips.
@@ -17,6 +18,10 @@
    A content surface NEVER carries an elevation shadow: depth on layer 0/1 is
    expressed with a hairline border plus the two surface tones. Focus rings and
    accent glows (`0 0 0 2px …`) are NOT elevation and stay exactly as they are.
+
+   The rail is ONE restrained step BENEATH the content canvas in both themes, so
+   the sidebar and the canvas read as one continuous surface; only the top bar
+   wears the chrome step.
 
    Rules:
      * every tone derives from the EXISTING theme roles through `color-mix()`
@@ -35,13 +40,11 @@
    =========================================================================== */
 
 :root {
-  /* --- Layer 0: chrome (top bar, rails, docked right panel) ---------------- */
+  /* --- Layer 0: chrome (top bar, rails, docked right panels) -------------- */
   --surface-shell: color-mix(in srgb, var(--color-base-200) 94%, var(--color-base-300));
+  /* One restrained step BENEATH the canvas: the sidebar, both docked panels,
+     the Settings nav rail and a nested task-card panel share it. */
   --surface-rail: color-mix(in srgb, var(--color-base-200) 86%, var(--color-base-300));
-  /* Start from neutral chrome, not white, so the dock reads separately from
-     both the draft canvas and the sidebar without a stronger border. */
-  --surface-dock: color-mix(in srgb, var(--color-secondary) 5%,
-    color-mix(in srgb, var(--color-base-200) 55%, var(--color-base-300)));
 
   /* --- Layer 1: the content canvas (flat, continuous, never shadowed) ------ */
   --surface-canvas: var(--color-base-100);
@@ -67,13 +70,16 @@
   --radius-tab: 0.5rem;
 }
 
-/* Dark: the canvas stays the darkest tone while the chrome and the rails lift
-   ABOVE it (the libadwaita headerbar relationship), and the elevations carry
-   real alpha — a dark surface separates by light, not by a hairline alone. */
+/* Dark: the top bar (the shell tone) is the ONE chrome tone that lifts ABOVE
+   the canvas; the rail sits just under the canvas so the sidebar and the
+   content read as one tone, exactly like the light theme. The elevations still
+   carry real alpha — a dark surface separates by light, not by a hairline. */
 [data-theme="dark"] {
   --surface-shell: color-mix(in srgb, var(--color-base-200) 78%, var(--color-base-300));
-  --surface-rail: color-mix(in srgb, var(--color-base-200) 88%, var(--color-base-100));
-  --surface-dock: color-mix(in srgb, var(--color-secondary) 6%, var(--color-base-200));
+  /* In the dark palette base-200 is LIGHTER than base-100, so anchoring the
+     rail there lifted the sidebar above the canvas; base-100 keeps the rail
+     at/below the canvas exactly like the light theme. */
+  --surface-rail: var(--color-base-100);
   --surface-canvas: color-mix(in srgb, var(--color-base-100) 94%, var(--color-base-300));
   --surface-text-muted: color-mix(in srgb, var(--color-base-content) 65%, var(--color-base-100));
   --surface-hover: color-mix(in srgb, var(--color-base-content) 10%, transparent);
@@ -123,10 +129,11 @@
   box-shadow: var(--elev-1);
 }
 
-/* A nested detail/options panel is RECESSED inside its card: the shell tone
+/* A nested detail/options panel is RECESSED inside its card in BOTH themes —
+   the shell tone lifts in the dark theme, the rail never does: the rail tone
    plus a hairline, never a shadow. */
 .task-card-panel {
-  background: var(--surface-shell);
+  background: var(--surface-rail);
   border: 1px solid var(--border-hairline);
   border-radius: 0.5rem;
   box-shadow: none;

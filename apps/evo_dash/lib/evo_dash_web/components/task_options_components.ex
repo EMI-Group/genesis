@@ -3,6 +3,13 @@ defmodule EvoDashWeb.TaskOptionsComponents do
 
   use EvoDashWeb, :html
 
+  # ONE shell for both boolean toggles: the same row-height hit area and the
+  # same internal padding, so the pair stays aligned whether the grid puts them
+  # side by side or stacks them on a narrow width.
+  defp option_toggle_class,
+    do:
+      "workbench-task-option-toggle flex min-h-[var(--row-h-tall)] cursor-pointer items-center gap-3 py-1"
+
   def options(assigns) do
     ~H"""
     <section
@@ -23,7 +30,7 @@ defmodule EvoDashWeb.TaskOptionsComponents do
           "These options apply to this run. Use Project Settings for shared configuration and repositories."
         )}
       </p>
-      <div class="workbench-task-options-fields grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div class="workbench-task-options-fields mt-3 grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <label
           :if={String.starts_with?(@mode, "genesis")}
           class="workbench-task-option-field grid gap-1 text-sm font-medium"
@@ -40,7 +47,7 @@ defmodule EvoDashWeb.TaskOptionsComponents do
             </option>
           </select>
         </label>
-        <label class="workbench-task-option-toggle flex min-h-[var(--row-h-tall)] cursor-pointer items-center gap-3">
+        <label class={option_toggle_class()}>
           <input
             type="checkbox"
             name="archive"
@@ -62,7 +69,7 @@ defmodule EvoDashWeb.TaskOptionsComponents do
       <details
         :if={@advanced?}
         id="task-advanced-options"
-        class="workbench-task-options-advanced group motion-disclosure"
+        class="workbench-task-options-advanced group mt-3 motion-disclosure"
         open={prefilled?([@node_path, @starting_commit, @resume_from])}
         phx-hook="DisclosureMotion"
         phx-mounted={JS.ignore_attributes("open")}
@@ -135,7 +142,7 @@ defmodule EvoDashWeb.TaskOptionsComponents do
   def persist_agent_state_toggle(assigns) do
     ~H"""
     <label
-      class="workbench-task-option-toggle flex min-h-[var(--row-h-tall)] cursor-pointer items-center gap-3"
+      class={option_toggle_class()}
       title={gettext("Save agent state so work survives a restart")}
     >
       <input
